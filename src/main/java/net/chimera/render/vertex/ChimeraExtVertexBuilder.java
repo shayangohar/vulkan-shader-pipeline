@@ -12,6 +12,13 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
     public static final int BLOCK_RENDER_TYPE = 0;
     /** mc_Entity.y of a fluid's quads. */
     public static final int FLUID_RENDER_TYPE = 1;
+    /** How far into its block the light-block voxel quad sits on each axis. */
+    static final float LIGHT_BLOCK_INSET = 0.25F;
+    /**
+     * The voxel quad's normal: Iris normalizes its zero-area face normal to NaN, which
+     * XHFPTerrainVertex's octahedral encoding stores as (0, 0) and the shader decodes as +Z.
+     */
+    static final int LIGHT_BLOCK_NORMAL = ChimeraEntityVertexData.pack(0.0F, 0.0F, 1.0F, 0.0F);
 
     private final TerrainMaterialPlan materialPlan;
     private final int vertexSize;
@@ -21,6 +28,8 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
     private int blockX;
     private int blockY;
     private int blockZ;
+    /** True while the light-block voxel quad is written: its at_midBlock keeps only the emission. */
+    private boolean ignoreMidBlock;
     private final long[] polygonPointers = new long[4];
     private final float[] polygonValues = new float[20];
     private final int[] polygonNormals = new int[4];
@@ -53,6 +62,25 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         this.blockX = localX;
         this.blockY = localY;
         this.blockZ = localZ;
+    }
+
+    /**
+     * Writes Iris's voxelizeLightBlocks quad for a light block, which has no model, from ptr
+     * (MixinChunkMeshBuildTask.iris$setLightBlock): four vertices at one point a quarter block
+     * into it, so it covers no pixel, with its id and render type 0. Colour and texture
+     * coordinates are 0, both lightmap coordinates are the emission, and at_midBlock keeps only
+     * the emission, as Iris ignores the mid-block offset for it.
+     */
+    public void lightBlockQuad(long ptr, int materialId, int emission, int localX, int localY, int localZ) {
+        setBlockData(materialId, BLOCK_RENDER_TYPE, emission);
+        setBlockPosition(localX, localY, localZ);
+        ignoreMidBlock = true;
+        int light = emission << 4 | emission << 20;
+        for (int corner = 0; corner < 4; corner++) {
+            vertex(ptr + (long) corner * vertexSize, localX + LIGHT_BLOCK_INSET, localY + LIGHT_BLOCK_INSET,
+                    localZ + LIGHT_BLOCK_INSET, 0, 0.0F, 0.0F, light, LIGHT_BLOCK_NORMAL);
+        }
+        ignoreMidBlock = false;
     }
 
     @Override
@@ -161,10 +189,12 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
      * raced neighbouring blocks into one voxel, and its light sources flickered.
      */
     private int encodeMidBlock(float x, float y, float z) {
+        int emission = (blockEmission & 0xFF) << 24;
+        if (ignoreMidBlock) return emission;
         return midBlockOffset(blockX + 0.5F - x)
                 | (midBlockOffset(blockY + 0.5F - y) << 8)
                 | (midBlockOffset(blockZ + 0.5F - z) << 16)
-                | ((blockEmission & 0xFF) << 24);
+                | emission;
     }
 
     private static int midBlockOffset(float offset) {

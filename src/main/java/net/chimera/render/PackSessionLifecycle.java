@@ -587,8 +587,9 @@ final class PackSessionLifecycle {
                         + pass.shadowPass.shadowCulling.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(pass.packPlan.terrainMaterial());
         TerrainShadingDirectives shading = pass.packPlan.terrainShading();
-        LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}{}", shading.oldLighting(),
-                shading.separateAo(), shading.deviations().isEmpty() ? "" : " " + shading.deviations());
+        LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}, voxelizeLightBlocks={}{}",
+                shading.oldLighting(), shading.separateAo(), shading.voxelizeLightBlocks(),
+                shading.deviations().isEmpty() ? "" : " " + shading.deviations());
         ChimeraTerrainPipelines.setTerrainShading(shading);
     }
 

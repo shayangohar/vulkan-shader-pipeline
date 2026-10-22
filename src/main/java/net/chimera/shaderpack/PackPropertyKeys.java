@@ -17,23 +17,23 @@ final class PackPropertyKeys {
 
     /**
      * Keys Chimera reads: clouds (PackPlan), shadow.culling (ShadowCullingPlan), the hand-light,
-     * terrain-shading, shadow-caster, sky and screen-overlay directives, separateEntityDraws
-     * (ParticleDirectives), and the option menu's screen and sliders. A source const's name
-     * (colortexNFormat, shadowMapResolution) is no key here: neither reader takes it from this file.
+     * terrain-shading (voxelizeLightBlocks included), shadow-caster, sky and screen-overlay
+     * directives, separateEntityDraws (ParticleDirectives), and the option menu's screen and
+     * sliders. A source const's name (colortexNFormat, shadowMapResolution) is no key here: neither
+     * reader takes it from this file.
      */
     private static final Set<String> APPLIED_NAMES = Set.of(
             "clouds", "shadow.culling", "oldHandLight", "oldLighting", "separateAo", "shadowTerrain",
             "shadowTranslucent", "shadowEntities", "shadowPlayer", "shadowBlockEntities",
             "shadowLightBlockEntities", "underwaterOverlay", "vignette", "sun", "moon", "stars", "sky",
-            "separateEntityDraws", "screen", "sliders");
+            "voxelizeLightBlocks", "separateEntityDraws", "screen", "sliders");
 
     /** ShaderProperties keys Iris 1.21.1 reads that Chimera does not apply. */
     private static final Set<String> IRIS_ONLY_NAMES = Set.of(
             "dhClouds", "dynamicHandLight", "backFace.solid", "backFace.cutout", "backFace.cutoutMipped",
             "backFace.translucent", "rain.depth", "allowConcurrentCompute", "beacon.beam.depth",
-            "voxelizeLightBlocks", "frustum.culling", "occlusion.culling",
-            "shadow.enabled", "skipAllRendering", "dhShadow.enabled", "prepareBeforeShadow",
-            "supportsColorCorrection", "fallbackTex", "weather");
+            "frustum.culling", "occlusion.culling", "shadow.enabled", "skipAllRendering", "dhShadow.enabled",
+            "prepareBeforeShadow", "supportsColorCorrection", "fallbackTex", "weather");
     private static final List<String> IRIS_ONLY_PREFIXES = List.of("scale.");
 
     private PackPropertyKeys() {}

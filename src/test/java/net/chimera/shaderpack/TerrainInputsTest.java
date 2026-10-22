@@ -191,12 +191,13 @@ final class TerrainInputsTest {
     void terrainShadingDirectives() {
         assertEquals(new TerrainShadingDirectives(false, false, List.of()),
                 TerrainShadingDirectives.fromProperties(Map.of()),
-                "Iris's oldLighting and separateAo default to off");
+                "Iris's oldLighting, separateAo and voxelizeLightBlocks default to off");
         assertTrue(TerrainShadingDirectives.DEFAULTS.disablesDirectionalShading()
                         && !TerrainShadingDirectives.VANILLA.disablesDirectionalShading()
-                        && !TerrainShadingDirectives.VANILLA.separateAo(),
+                        && !TerrainShadingDirectives.VANILLA.separateAo()
+                        && !TerrainShadingDirectives.VANILLA.voxelizeLightBlocks(),
                 "a pack without directives lights faces itself; vanilla keeps shading and AO in RGB");
-        for (String key : List.of("oldLighting", "separateAo")) {
+        for (String key : List.of("oldLighting", "separateAo", "voxelizeLightBlocks")) {
             for (String value : List.of("true", "1", " true ")) {
                 var directives = TerrainShadingDirectives.fromProperties(Map.of(key, value));
                 assertTrue(terrainShading(directives, key) && directives.deviations().isEmpty(),
@@ -208,10 +209,12 @@ final class TerrainInputsTest {
                         key + "=" + value + " switches off");
             }
         }
-        var malformed = TerrainShadingDirectives.fromProperties(Map.of("oldLighting", "yes", "separateAo", "maybe"));
+        var malformed = TerrainShadingDirectives.fromProperties(Map.of("oldLighting", "yes", "separateAo", "maybe",
+                "voxelizeLightBlocks", "on"));
         assertTrue(malformed.disablesDirectionalShading() && !malformed.separateAo()
-                        && malformed.deviations().containsAll(List.of(
-                                "OLD_LIGHTING_DIRECTIVE_MALFORMED", "SEPARATE_AO_DIRECTIVE_MALFORMED")),
+                        && !malformed.voxelizeLightBlocks()
+                        && malformed.deviations().containsAll(List.of("OLD_LIGHTING_DIRECTIVE_MALFORMED",
+                                "SEPARATE_AO_DIRECTIVE_MALFORMED", "VOXELIZE_LIGHT_BLOCKS_DIRECTIVE_MALFORMED")),
                 "unexpected values keep Iris's defaults and are reported: " + malformed);
     }
 
@@ -246,7 +249,8 @@ final class TerrainInputsTest {
     @Test
     void terrainShading(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"), "oldLighting=true\nseparateAo=true\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "oldLighting=true\nseparateAo=true\nvoxelizeLightBlocks=true\n");
         Files.writeString(shaders.resolve("final.fsh"), """
                 #version 120
                 uniform sampler2D colortex0;
@@ -255,8 +259,8 @@ final class TerrainInputsTest {
                 }
                 """);
         var shading = PackProbe.analyze(root).plan().terrainShading();
-        assertTrue(shading.oldLighting() && shading.separateAo(),
-                "the pack plan reads shaders.properties oldLighting and separateAo: " + shading);
+        assertTrue(shading.oldLighting() && shading.separateAo() && shading.voxelizeLightBlocks(),
+                "the pack plan reads shaders.properties oldLighting, separateAo and voxelizeLightBlocks: " + shading);
     }
 
     @Test
@@ -328,7 +332,11 @@ final class TerrainInputsTest {
     }
 
     static boolean terrainShading(TerrainShadingDirectives directives, String key) {
-        return key.equals("oldLighting") ? directives.oldLighting() : directives.separateAo();
+        return switch (key) {
+            case "oldLighting" -> directives.oldLighting();
+            case "separateAo" -> directives.separateAo();
+            default -> directives.voxelizeLightBlocks();
+        };
     }
 
     static void compileVertex(String source, String name) {

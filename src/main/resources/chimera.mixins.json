@@ -28,6 +28,7 @@
     "ChimeraItemBlockRenderTypesMixin",
     "ChimeraTerrainBufferBuilderAccessor",
     "ChimeraBlockRendererMixin",
+    "ChimeraBuildTaskMixin",
     "ChimeraBlockSeparateAoMixin",
     "ChimeraClientLevelShadeMixin",
     "ChimeraGuiVignetteMixin",

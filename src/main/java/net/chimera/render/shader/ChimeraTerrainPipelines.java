@@ -75,24 +75,34 @@ public final class ChimeraTerrainPipelines {
     }
 
     /**
-     * Applies the installed pack's oldLighting, separateAo and ambientOcclusionLevel, or
-     * {@link TerrainShadingDirectives#VANILLA} when no pack is installed. Chunk meshes bake
-     * them into their vertex colours, so a change rebuilds the live level once, as Iris reloads
+     * True while the installed pack meshes each light block as a voxel quad (Iris
+     * voxelizeLightBlocks); chunk builders read it.
+     */
+    public static boolean voxelizeLightBlocks() {
+        return shading.voxelizeLightBlocks();
+    }
+
+    /**
+     * Applies the installed pack's oldLighting, separateAo, ambientOcclusionLevel and
+     * voxelizeLightBlocks, or {@link TerrainShadingDirectives#VANILLA} when no pack is installed.
+     * Chunk meshes bake them in, so a change rebuilds the live level once, as Iris reloads
      * chunks when one of its WorldRenderingSettings values changes.
      */
     public static void setTerrainShading(TerrainShadingDirectives directives) {
         TerrainShadingDirectives next = directives == null ? TerrainShadingDirectives.VANILLA : directives;
         boolean shadingDisabled = next.disablesDirectionalShading();
         if (directionalShadingDisabled == shadingDisabled && separateAo == next.separateAo()
-                && shading.ambientOcclusionLevel() == next.ambientOcclusionLevel()) {
+                && shading.ambientOcclusionLevel() == next.ambientOcclusionLevel()
+                && shading.voxelizeLightBlocks() == next.voxelizeLightBlocks()) {
             return;
         }
         directionalShadingDisabled = shadingDisabled;
         separateAo = next.separateAo();
         shading = next;
-        ChimeraMod.LOGGER.info("[chimera] terrain shading: directional shading {}, ambient occlusion {} at level {}",
-                shadingDisabled ? "off (pack lights faces)" : "vanilla",
-                separateAo ? "in vertex alpha (separateAo)" : "in vertex RGB", next.ambientOcclusionLevel());
+        ChimeraMod.LOGGER.info("[chimera] terrain shading: directional shading {}, ambient occlusion {} at level {}"
+                        + ", light-block voxels {}", shadingDisabled ? "off (pack lights faces)" : "vanilla",
+                separateAo ? "in vertex alpha (separateAo)" : "in vertex RGB", next.ambientOcclusionLevel(),
+                next.voxelizeLightBlocks());
         if (initialized && extendedMode) {
             // Build the matching fixed pipeline here rather than on first draw.
             fixedPipeline();

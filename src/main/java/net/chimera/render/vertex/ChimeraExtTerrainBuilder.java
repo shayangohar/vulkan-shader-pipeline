@@ -38,6 +38,19 @@ public final class ChimeraExtTerrainBuilder extends TerrainBufferBuilder {
         extendedVertexBuilder.setBlockPosition(localX, localY, localZ);
     }
 
+    /**
+     * Appends Iris's voxelizeLightBlocks quad for the light block at this position within the
+     * section ({@link ChimeraExtVertexBuilder#lightBlockQuad}); its id is the pack's for the state.
+     */
+    public void lightBlockQuad(BlockState blockState, int localX, int localY, int localZ) {
+        ensureCapacity();
+        extendedVertexBuilder.lightBlockQuad(getPtr(), materialResolver.resolve(blockState),
+                LightEmission.of(blockState), localX, localY, localZ);
+        for (int corner = 0; corner < 4; corner++) {
+            endVertex();
+        }
+    }
+
     @Override
     public void setBlockAttributes(BlockState blockState) {
         extendedVertexBuilder.setBlockData(materialResolver.resolve(blockState),
