@@ -698,18 +698,19 @@ record PackSettingsPlan(
                         custom.group(3), PackConditionals.expandMacros(custom.group(4), conditions.macros()).trim()));
                 return;
             }
-            if (key.startsWith("image.") || key.startsWith("customImage.")) {
-                deviations.add("CUSTOM_IMAGE_UNSUPPORTED:" + key);
-            } else if (key.startsWith("bufferObject.")) {
-                // Bounded bufferObject.N declarations are admitted. The
-                // source plan remains responsible for proving that a
-                // matching std430 block and supported schedule exist.
-                deviations.add("STORAGE_BUFFER_DECLARED:" + key);
-            } else if (key.startsWith("ssbo.") || key.startsWith("storage.")) {
-                deviations.add("STORAGE_RESOURCE_UNSUPPORTED:" + key);
-            } else if (!isSupportedProperty(key)) {
-                deviations.add("SETTING_UNSUPPORTED:" + key);
-            }
+            String unread = unreadKey(key);
+            if (unread != null) deviations.add(unread + ":" + key);
+        }
+
+        /** Why a key no other reading took is recorded, or null for a property Chimera reads elsewhere. */
+        private static String unreadKey(String key) {
+            if (key.startsWith("image.") || key.startsWith("customImage.")) return "CUSTOM_IMAGE_UNSUPPORTED";
+            // Bounded bufferObject.N declarations are admitted. The source plan remains responsible
+            // for proving that a matching std430 block and supported schedule exist.
+            if (key.startsWith("bufferObject.")) return "STORAGE_BUFFER_DECLARED";
+            if (key.startsWith("ssbo.") || key.startsWith("storage.")) return "STORAGE_RESOURCE_UNSUPPORTED";
+            if (key.startsWith("texture.")) return "TEXTURE_STAGE_UNKNOWN";
+            return isSupportedProperty(key) ? null : "SETTING_UNSUPPORTED";
         }
 
         /**
@@ -800,6 +801,9 @@ record PackSettingsPlan(
      */
     private static final List<String> RESOURCE_PREFIXES = List.of(
             "customTexture.", "texture.", "bufferObject.", "indirect.");
+    /** The stages a {@code texture.<stage>.<sampler>} may name (Iris TextureStage.parse). */
+    static final Set<String> TEXTURE_STAGES = Set.of(
+            "setup", "begin", "shadowcomp", "prepare", "gbuffers", "deferred", "composite");
 
     /** Property key prefixes Chimera reads; "shadow" covers every shadow setting. */
     private static final List<String> SUPPORTED_PROPERTY_PREFIXES = List.of(
@@ -829,7 +833,8 @@ record PackSettingsPlan(
         }
         if (key.startsWith("texture.")) {
             String[] parts = key.split("\\.", 3);
-            if (parts.length == 3 && !parts[1].isBlank() && !parts[2].isBlank()) {
+            // Iris ignores, with a warning, a stage it does not know: a program name, shadow, *.
+            if (parts.length == 3 && TEXTURE_STAGES.contains(parts[1]) && !parts[2].isBlank()) {
                 // Iris keeps only the sampler name: `texture.deferred.colortex6.1` declares a
                 // second texture for colortex6, told apart from the first by its type.
                 String sampler = parts[2].split("\\.")[0];

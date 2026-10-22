@@ -258,9 +258,9 @@ public final class PackResourcePlan {
     }
 
     /**
-     * The {@code texture.<program|stage|*>} declaration of this sampler, under any of the names Iris
-     * registers its texture with ({@code names}), which Iris applies through the sampler
-     * interceptor (choose); one a pass deactivated is none.
+     * The {@code texture.<stage>} declaration of this sampler for the program's Iris texture stage,
+     * under any of the names Iris registers its texture with ({@code names}), which Iris applies
+     * through the sampler interceptor (choose); one a pass deactivated is none.
      */
     private static PackResourceDeclaration stageDeclaration(String program, UniformRegistry.SamplerBinding sampler,
                                                             List<String> names,
@@ -270,11 +270,9 @@ public final class PackResourcePlan {
         String name = sampler.name();
         String textureStage = textureStage(program);
         PackResourceDeclaration declaration = null;
-        for (String scope : textureStage == null ? List.of(program, "*") : List.of(program, textureStage, "*")) {
-            for (String registered : names) {
-                if (declaration == null) {
-                    declaration = textureDeclaration(declarations, scope, registered, sampler.glslType());
-                }
+        for (String registered : names) {
+            if (declaration == null && textureStage != null) {
+                declaration = textureDeclaration(declarations, textureStage, registered, sampler.glslType());
             }
         }
         // A 1D or 3D raw texture is its own uniform under Iris (TextureTransformer renames it by

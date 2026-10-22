@@ -283,6 +283,33 @@ final class PassComputeSamplerTest {
     }
 
     /**
+     * Iris reads texture.<stage>.<sampler> for its seven texture stages only (TextureStage.parse)
+     * and ignores any other scope with a warning: a program name, shadow (Rethinking Voxels' texture.shadow
+     * entries; shadow programs read the gbuffers stage), or *.
+     */
+    @Test
+    void stageTexturesNameAnIrisStage(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                texture.composite1.samA = red.png
+                texture.*.samA = red.png
+                texture.composite.samB = red.png
+                """);
+        Files.write(shaders.resolve("red.png"), new byte[] {1});
+        Files.writeString(shaders.resolve("composite1.fsh"), "#version 120\nuniform sampler2D samA;\n"
+                + "uniform sampler2D samB;\nvoid main() {\n/* RENDERTARGETS: 0 */\n"
+                + " gl_FragData[0] = texture2D(samA, vec2(0.5)) + texture2D(samB, vec2(0.5));\n}\n");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        // With no texture of its own, samA is a sampler Iris does not serve: it reads colortex0.
+        assertTrue(plan.resources().binding("composite1", "samA") == null
+                && plan.program("composite1").deviations().contains("SAMPLER_UNIT0_COLORTEX0:samA"),
+                plan.resources().bindings("composite1").toString());
+        assertEquals("red.png", plan.resources().binding("composite1", "samB").source());
+        assertTrue(plan.settings().deviations().containsAll(List.of("TEXTURE_STAGE_UNKNOWN:texture.composite1.samA",
+                "TEXTURE_STAGE_UNKNOWN:texture.*.samA")), plan.settings().deviations().toString());
+    }
+
+    /**
      * A stage texture replaces only what a registration through the sampler interceptor binds. A
      * composite registers its customTexture entries on its own builder, so samC reads the entry; a
      * world program registers them through the interceptor, so samC reads texture.gbuffers.samC; and
