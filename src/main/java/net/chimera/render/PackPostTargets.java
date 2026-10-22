@@ -399,12 +399,12 @@ public final class PackPostTargets {
         this.mipSampling.clear();
     }
 
-    /** Pack targets render to level 0 only, through an identity view of exactly one level. */
     /** A pack target's clear colour in its format's kind (PackTargetImages.clearValue). */
     public static void clearColorValue(MemoryStack stack, VkClearColorValue clear, int vkFormat, float[] color) {
         PackTargetImages.clearValue(stack, clear, vkFormat, color);
     }
 
+    /** Pack targets render to level 0 only, through an identity view of exactly one level. */
     public static long attachmentView(VulkanImage image) {
         return image.getLevelImageViews() != null ? image.getLevelImageView(0) : image.getImageView();
     }

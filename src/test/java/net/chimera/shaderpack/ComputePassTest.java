@@ -596,11 +596,6 @@ final class ComputePassTest {
     }
 
     /**
-     * A pass with computes and no fragment program runs its computes at its place in the chain
-     * (Iris CompositeRenderer.ComputeOnlyPass): Alpha Piscium's composite2 is composite2.csh alone.
-     * The schedule gives it the window its name gives a program, and the report its translation.
-     */
-    /**
      * A shadowcomp the pack switches off is no source to Iris: BSL switches shadowcomp off with its
      * coloured lighting, whose shadowcomp.csh then stops at an #error.
      */
@@ -658,6 +653,11 @@ final class ComputePassTest {
                 analysis.report().program("composite4").deviations().toString());
     }
 
+    /**
+     * A pass with computes and no fragment program runs its computes at its place in the chain
+     * (Iris CompositeRenderer.ComputeOnlyPass): Alpha Piscium's composite2 is composite2.csh alone.
+     * The schedule gives it the window its name gives a program, and the report its translation.
+     */
     @Test
     void computeOnlyPasses(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));

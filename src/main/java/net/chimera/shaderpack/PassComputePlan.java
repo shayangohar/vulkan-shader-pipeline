@@ -317,7 +317,7 @@ public final class PassComputePlan {
         }
 
         /**
-         * Binds each used {@code colorimgN} (0 to 15, a float image2D) in its target's format, and
+         * Binds each used {@code colorimgN} in its target's format and kind (targetImageForm), and
          * each used pack image (Iris IrisImages.addCustomImages) in its own. The usage analysis
          * tracks 3D images only; with unreachable functions blanked, any reference left besides the
          * declaration is a use.
@@ -348,7 +348,6 @@ public final class PassComputePlan {
             return result.toString();
         }
 
-        /** A pack image this session creates, or null. */
         /**
          * A pack image in its own format, or in the same-size one its layout names as a GL image
          * unit reinterprets it (AdvancedImageDeclarations.viewFormat): Alpha Piscium reads its R32F
@@ -377,6 +376,7 @@ public final class PassComputePlan {
             return format == null ? null : new StorageForm(format, type);
         }
 
+        /** A pack image this session creates, or null. */
         private static PackAdvancedResourcePlan.ImageSpec packImage(PackAdvancedResourcePlan.ImageSpec spec) {
             return spec != null && spec.supported() ? spec : null;
         }
@@ -385,7 +385,8 @@ public final class PassComputePlan {
          * Binds each live sampler as the pass's program would read it (samplerBinding). A sampler
          * the scope-aware usage analysis finds unread is inactive in GL and binds nothing, its
          * declaration dropped: Rethinking Voxels' prepare4 compute declares the specular sampler
-         * and reads only a local float of that name.
+         * and reads only a local float of that name. Were the analysis to miss a read, the name
+         * would be left undeclared, which the compile gate (PackCompileTest) reports.
          */
         private String bindSamplers(String body, GlslResourceUsage.Analysis usage, Work work) {
             Matcher sampler = SAMPLER_DECLARATION.matcher(body);
@@ -427,8 +428,9 @@ public final class PassComputePlan {
         /**
          * Points each storage block at the pack buffer it names, as for programs
          * (StorageBufferDeclarations.matchingBufferSpecs): Iris binds bufferObject.N at index N for
-         * every program and compute (ShaderStorageBufferHolder). A block no supported buffer serves,
-         * or one without a std430 layout or a binding to rewrite, stops the compute.
+         * every program and compute (ShaderStorageBufferHolder). A block nothing reads is dropped. A
+         * read block no supported buffer serves, one spelled shared or packed (no Vulkan layout), or
+         * one without a binding to rewrite stops the compute.
          */
         private String bindStorageBuffers(String body, Work work) {
             List<GlslStorageBufferParser.Block> blocks;
