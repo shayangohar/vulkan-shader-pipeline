@@ -239,6 +239,38 @@ final class ComputePassTest {
     }
 
     /**
+     * colorimgN binds the target in its own format, so an integer target is an integer image:
+     * Rethinking Voxels' prepare4 compute writes its RGBA16I colortex11 as iimage2D.
+     */
+    @Test
+    void passComputesWriteIntegerTargets(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "/*\nconst int colortex11Format = RGBA16I;\n*/\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgba16i) uniform iimage2D colorimg11;
+                void main() { imageStore(colorimg11, ivec2(0), ivec4(1)); }
+                """);
+        Files.writeString(shaders.resolve("composite1_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgba16i) uniform iimage2D colorimg2;
+                void main() { imageStore(colorimg2, ivec2(0), ivec4(1)); }
+                """);
+        PassComputePlan computes = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders);
+        PassComputePlan.PassCompute compute = computes.compute("composite_a");
+        assertEquals(List.of(new PassComputePlan.Binding("colorimg11", 0, PassComputePlan.Kind.TARGET_IMAGE, 11,
+                "rgba16i", null)), compute.bindings(), compute.deviations().toString());
+        assertEquals(List.of("PASS_COMPUTE_IMAGE_UNSUPPORTED:colorimg2"), computes.compute("composite1_a").deviations(),
+                "a float target is no integer image");
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+    }
+
+    /**
      * A sampler only a local of its name is read through is inactive in GL and binds nothing: Rethinking
      * Voxels' prepare4 compute declares the specular sampler and computes a local float specular.
      */

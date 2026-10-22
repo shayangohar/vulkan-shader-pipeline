@@ -348,10 +348,16 @@ public final class PassComputePlan {
                     AdvancedImageDeclarations.storageImageType(pack, view));
         }
 
-        /** colorimgN: the target's format as a float image2D; null for a target out of range. */
+        /**
+         * colorimgN: the target's format, as the image type its kind takes (Iris
+         * IrisImages.addRenderTargetImages binds the target's own internal format): Rethinking
+         * Voxels' prepare4 compute writes its RGBA16I colortex11 as iimage2D. Null out of range.
+         */
         private StorageForm targetImageForm(int target) {
-            return target >= 0 && target <= PackTargetGraphPlan.MAX_TARGET
-                    ? new StorageForm(imageFormat(targetFormat(target)), "image2D") : null;
+            if (target < 0 || target > PackTargetGraphPlan.MAX_TARGET) return null;
+            String format = imageFormat(targetFormat(target));
+            String type = targetSamplerType(target).replace("sampler", "image");
+            return format == null ? null : new StorageForm(format, type);
         }
 
         private static PackAdvancedResourcePlan.ImageSpec packImage(PackAdvancedResourcePlan.ImageSpec spec) {
