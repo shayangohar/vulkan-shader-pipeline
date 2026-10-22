@@ -186,8 +186,9 @@ final class AdvancedImagePlanTest {
     /**
      * A storage image nothing reads is inactive, as GL leaves it, and its declaration is dropped
      * (Pegasus's gbuffers declare cimage3_colored_light, which only voxelizing writes). So is one
-     * only a helper main never calls reads: GL compiles the helper away, as the converters do,
-     * and Iris binds no inactive image (Rethinking Voxels' composite7).
+     * only a helper main never calls reads: GL compiles the helper away, and Iris binds no
+     * inactive image (Rethinking Voxels' composite7). The stage goes to the converters without
+     * that helper, on the same lines.
      */
     @Test
     void anImageOnlyADeadHelperReadsIsDroppedAsAnUnreadOne(@TempDir Path root) throws Exception {
@@ -212,6 +213,8 @@ final class AdvancedImagePlanTest {
         assertTrue(advanced.imagesServable("composite") && plan.shouldAttempt("composite")
                 && !advanced.declaresUnplannedResource("composite"), advanced.deviations().toString());
         PackProgramPlan composite = plan.program("composite");
+        String prepared = composite.stages().get("fragment").source();
+        assertTrue(prepared.contains("in vec2 uv;\n\nvoid main()"), prepared);
         String fragment = PackDescriptorContracts.bindStorageImages(composite.convertedFragment(), "composite",
                 advanced, advanced.bindingLayout("composite"), VK_SHADER_STAGE_FRAGMENT_BIT);
         assertTrue(!fragment.contains("image3D light") && !fragment.contains("image3D spare")

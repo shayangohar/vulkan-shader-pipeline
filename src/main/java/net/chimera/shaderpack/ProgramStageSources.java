@@ -67,8 +67,9 @@ final class ProgramStageSources {
      * inactive, and Vulkan GLSL would need a binding for it: Reverie's programs all declare its
      * screen-sized images (image0-2, water_depth_min, atm_image) and most read none of them. A read
      * in a function main never reaches is none: GL compiles it away, and so do the converters
-     * (Rethinking Voxels' composite7 comments out the call that reaches its voxel images). Line
-     * breaks stay, so line numbers do not move.
+     * (Rethinking Voxels' composite7 comments out the call that reaches its voxel images). Such a
+     * stage goes on without its dead functions, so no converter meets a read of an image that is
+     * no longer declared. Line breaks stay, so line numbers do not move.
      */
     private static Map<String, PreparedShaderSource> withoutInactiveImages(Map<String, PreparedShaderSource> stages) {
         Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
@@ -77,19 +78,35 @@ final class ProgramStageSources {
             String source = prepared.source();
             if (source == null || !source.contains("image")) continue;
             String reachable = LegacyGlslConverter.pruneUnreachableFunctions(source);
-            Matcher declaration = PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(source);
-            StringBuilder active = new StringBuilder();
-            while (declaration.find()) {
-                String kept = GlslTokenRewriter.identifierCount(reachable, declaration.group(2)) > 1
-                        ? declaration.group() : declaration.group().replaceAll("[^\\r\\n]", "");
-                declaration.appendReplacement(active, Matcher.quoteReplacement(kept));
-            }
-            String rewritten = declaration.appendTail(active).toString();
+            String rewritten = withoutUnread(readOnlyInDeadCode(source, reachable) ? reachable : source, reachable);
             if (rewritten.equals(source)) continue;
             result.put(entry.getKey(), new PreparedShaderSource(prepared.stage(), prepared.relativePath(),
                     rewritten, prepared.dependencies(), prepared.deviations()));
         }
         return result;
+    }
+
+    /** {@code text} with each image declaration {@code reachable} does not read blanked. */
+    private static String withoutUnread(String text, String reachable) {
+        Matcher declaration = PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(text);
+        StringBuilder active = new StringBuilder();
+        while (declaration.find()) {
+            String kept = GlslTokenRewriter.identifierCount(reachable, declaration.group(2)) > 1
+                    ? declaration.group() : declaration.group().replaceAll("[^\\r\\n]", "");
+            declaration.appendReplacement(active, Matcher.quoteReplacement(kept));
+        }
+        return declaration.appendTail(active).toString();
+    }
+
+    /** Whether an image declaration is read only in functions main never reaches. */
+    private static boolean readOnlyInDeadCode(String source, String reachable) {
+        Matcher declaration = PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(reachable);
+        while (declaration.find()) {
+            String name = declaration.group(2);
+            if (GlslTokenRewriter.identifierCount(reachable, name) <= 1
+                    && GlslTokenRewriter.identifierCount(source, name) > 1) return true;
+        }
+        return false;
     }
 
     private static Map<String, PreparedShaderSource> normalizeModernPostStages(

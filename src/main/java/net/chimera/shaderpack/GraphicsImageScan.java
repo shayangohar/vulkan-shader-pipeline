@@ -73,17 +73,15 @@ final class GraphicsImageScan {
     private void scanStage(String program, String stage, String source) {
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source, imageSamplerNames);
         deviations.addAll(usage.deviations());
+        // Vulkan GLSL needs a binding for every opaque declaration, even one nothing reads (Solas
+        // declares voxelSampler in terrain but only the shadow pass writes voxel_img). An image
+        // declaration nothing reachable reads is already gone, with any dead code that read it
+        // (ProgramStageSources.withoutInactiveImages); samplers stay. Give every declared pack
+        // image and every declared or referenced pack image sampler a descriptor. Runtime
+        // eligibility remains based on the live uses in usesAdvancedResource, and only a live
+        // store makes a program the image's producer.
         // The pattern opens with optional parts, so it is tried at every character; a stage
-        // without an image3D declaration (most of them) cannot match at all.
-        // Vulkan GLSL needs a binding for every opaque declaration,
-        // even one only an unreachable helper reads (Solas declares
-        // voxelSampler in terrain but only the shadow pass writes
-        // voxel_img).  An image declaration nothing reads is already
-        // gone (ProgramStageSources.withoutInactiveImages).  Give every
-        // declared pack image and every declared or referenced pack
-        // image sampler a descriptor.  Runtime eligibility remains
-        // based on the live uses in usesAdvancedResource, and only a
-        // live store makes a program the image's producer.
+        // without an image declaration (most of them) cannot match at all.
         Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image") ? source : "");
         while (image.find()) {
             String symbol = image.group(3);
