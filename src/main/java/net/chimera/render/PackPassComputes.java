@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.IntPredicate;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -38,6 +39,8 @@ import static org.lwjgl.vulkan.VK10.*;
  */
 final class PackPassComputes implements AutoCloseable {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
+    /** The three uint work-group counts an indirect dispatch reads (VkDispatchIndirectCommand). */
+    static final long INDIRECT_COUNTS_BYTES = 12L;
 
     /** One compute that loaded: its plan and its pipeline. */
     private record Loaded(PassComputePlan.PassCompute plan, ComputeKernel kernel) {}
@@ -68,6 +71,8 @@ final class PackPassComputes implements AutoCloseable {
     private final PackAdvancedImageOwner packImages;
     private final PackStorageBufferOwner buffers;
     private final Set<String> failed = new HashSet<>();
+    /** Computes that have skipped a frame, each logged once. */
+    private final Set<String> skipped = new HashSet<>();
 
     private PackPassComputes(List<Loaded> loaded, PackResourceOwner resources, PackAdvancedImageOwner packImages,
                              PackStorageBufferOwner buffers) {
@@ -141,23 +146,54 @@ final class PackPassComputes implements AutoCloseable {
         return targets;
     }
 
-    /** Runs the computes of this pass, in order, over the images the pass is about to read. */
+    /**
+     * Runs the computes of this pass, in order, over the images the pass is about to read. One that
+     * cannot dispatch this frame (frameGap) skips the frame, before it records anything; one that
+     * fails to record runs no more.
+     */
     void dispatchBefore(String pass, VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
         for (Loaded compute : loaded) {
-            if (!compute.plan().pass().equals(pass) || failed.contains(compute.plan().name())) continue;
+            String name = compute.plan().name();
+            if (!compute.plan().pass().equals(pass) || failed.contains(name)) continue;
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                dispatch(stack, commandBuffer, compute, sources, width, height);
+                List<VulkanImage> images = images(compute.plan(), sources);
+                PassComputePlan.Indirect indirect = compute.plan().indirect();
+                String gap = frameGap(compute.plan(), binding -> images.get(binding) != null,
+                        indirect == null ? 0L : buffers.buffer(indirect.buffer()).getBufferSize());
+                if (gap == null) {
+                    dispatch(stack, commandBuffer, compute, images, sources, width, height);
+                } else if (skipped.add(name)) {
+                    LOGGER.warn("[chimera] pack compute {} skips a frame: {}", name, gap);
+                }
             } catch (RuntimeException failure) {
-                failed.add(compute.plan().name());
+                failed.add(name);
                 LOGGER.warn("[chimera] pack compute {} dispatch failed; it no longer runs: {}",
-                        compute.plan().name(), failure.getMessage(), failure);
+                        name, failure.getMessage(), failure);
             }
         }
     }
 
-    private void dispatch(MemoryStack stack, VkCommandBuffer commandBuffer, Loaded compute, ImageSources sources,
-                          int width, int height) {
-        List<VulkanImage> images = images(compute.plan(), sources);
+    /**
+     * Why {@code compute} cannot dispatch this frame, or null when it can: an image it binds is
+     * missing ({@code bound} false for its binding), as when the pass that writes it did not run, or
+     * its indirect counts lie past the buffer, as a relative buffer's size can make them at some
+     * screen sizes. glDispatchComputeIndirect dispatches nothing then (INVALID_OPERATION).
+     */
+    static String frameGap(PassComputePlan.PassCompute compute, IntPredicate bound, long indirectBufferSize) {
+        for (PassComputePlan.Binding binding : compute.bindings()) {
+            if (binding.kind() != PassComputePlan.Kind.STORAGE_BUFFER && !bound.test(binding.binding())) {
+                return binding.symbol() + " has no image this frame";
+            }
+        }
+        PassComputePlan.Indirect indirect = compute.indirect();
+        if (indirect != null && indirect.offset() + INDIRECT_COUNTS_BYTES > indirectBufferSize) {
+            return "indirect counts at " + indirect.offset() + " lie past bufferObject." + indirect.buffer();
+        }
+        return null;
+    }
+
+    private void dispatch(MemoryStack stack, VkCommandBuffer commandBuffer, Loaded compute, List<VulkanImage> images,
+                          ImageSources sources, int width, int height) {
         Map<VulkanImage, Boolean> written = new IdentityHashMap<>();
         for (PassComputePlan.Binding binding : compute.plan().bindings()) {
             if (binding.kind() == PassComputePlan.Kind.TARGET_IMAGE) {
@@ -241,14 +277,8 @@ final class PackPassComputes implements AutoCloseable {
             vkCmdDispatch(commandBuffer, groups[0], groups[1], groups[2]);
             return;
         }
-        PackStorageBuffer buffer = buffers.buffer(indirect.buffer());
-        // A relative buffer's size follows the screen; the three counts must still lie inside it.
-        if (indirect.offset() + 12 > buffer.getBufferSize()) {
-            throw new IllegalStateException("indirect counts at " + indirect.offset() + " lie past bufferObject."
-                    + indirect.buffer());
-        }
         PackVulkanBarriers.beforeIndirectDispatch(commandBuffer, stack);
-        vkCmdDispatchIndirect(commandBuffer, buffer.getId(), indirect.offset());
+        vkCmdDispatchIndirect(commandBuffer, buffers.buffer(indirect.buffer()).getId(), indirect.offset());
     }
 
     /** The image one binding reads or writes this frame, or null when it has none. */
@@ -266,8 +296,8 @@ final class PackPassComputes implements AutoCloseable {
     }
 
     /**
-     * The image each binding reads or writes this frame, null for a buffer; throws when one is
-     * missing or not storable.
+     * The image each binding reads or writes this frame, null for a buffer or an image missing this
+     * frame; throws when a target image is not storable.
      */
     private List<VulkanImage> images(PassComputePlan.PassCompute compute, ImageSources sources) {
         List<VulkanImage> images = new ArrayList<>();
@@ -277,8 +307,7 @@ final class PackPassComputes implements AutoCloseable {
                 continue;
             }
             VulkanImage image = image(binding, sources);
-            if (image == null) throw new IllegalStateException(binding.symbol() + " has no image this frame");
-            if (binding.kind() == PassComputePlan.Kind.TARGET_IMAGE
+            if (image != null && binding.kind() == PassComputePlan.Kind.TARGET_IMAGE
                     && (((ChimeraVulkanImageAccessor) image).chimera$usage() & VK_IMAGE_USAGE_STORAGE_BIT) == 0) {
                 throw new IllegalStateException(binding.symbol() + " image was not created for storage");
             }
