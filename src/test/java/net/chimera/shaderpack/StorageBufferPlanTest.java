@@ -82,14 +82,14 @@ final class StorageBufferPlanTest {
     private static void assertBufferSpecsParsed(PackAdvancedResourcePlan plan) {
         PackAdvancedResourcePlan.BufferSpec named = plan.buffers().get(0);
         PackAdvancedResourcePlan.BufferSpec unnamed = plan.buffers().get(1);
-        PackAdvancedResourcePlan.BufferSpec upper = plan.buffers().get(12);
+        PackAdvancedResourcePlan.BufferSpec upper = plan.buffers().get(8);
         assertTrue(named != null && named.supported() && named.size() == 64
                         && named.requestedName().equals("blockDataBuffer"),
                 "named absolute buffer was not parsed");
         assertTrue(unnamed != null && unnamed.supported() && unnamed.size() == 32,
                 "unnamed absolute buffer was not parsed");
         assertTrue(upper != null && upper.supported(),
-                "logical buffer index 12 was not accepted");
+                "logical buffer index 8, Iris's highest, was not accepted");
     }
 
     private static void assertStorageProgramsAdmitted(PackProbe.Analysis supported, PackProgramPlan shadow,
@@ -148,15 +148,16 @@ final class StorageBufferPlanTest {
     /** Invalid storage disables only the program that depends on it. */
     private static void assertInvalidStorageStaysScoped(PackProbe.Analysis unsupported) {
         PackAdvancedResourcePlan unsupportedPlan = unsupported.plan().advancedResources();
-        PackAdvancedResourcePlan.BufferSpec invalidZero = unsupportedPlan.buffers().get(0);
         PackAdvancedResourcePlan.BufferSpec invalidIndex = unsupportedPlan.buffers().get(13);
-        assertTrue(invalidZero != null && !invalidZero.supported()
-                        && invalidZero.deviations().stream()
-                        .anyMatch(value -> value.startsWith("STORAGE_BUFFER_SIZE_UNSUPPORTED:")),
-                "zero-size rejection is missing");
+        // Iris creates no buffer for a size below 1, as for an index above 8 (ShaderProperties).
+        assertTrue(unsupportedPlan.buffers().get(0) == null && unsupportedPlan.buffers().get(1) == null
+                        && unsupportedPlan.deviations().containsAll(List.of("STORAGE_BUFFER_DISABLED:0",
+                        "STORAGE_BUFFER_DISABLED:1")), "a zero or negative size must switch the buffer off");
         assertTrue(invalidIndex != null && !invalidIndex.supported()
-                        && invalidIndex.deviations().contains("STORAGE_BUFFER_INDEX_UNSUPPORTED:13"),
-                "index-13 rejection is missing");
+                        && invalidIndex.deviations().contains("STORAGE_BUFFER_INDEX_UNSUPPORTED:13")
+                        && unsupportedPlan.buffers().get(12).deviations()
+                        .contains("STORAGE_BUFFER_INDEX_UNSUPPORTED:12"),
+                "indices 12 and 13 are reserved");
         PackProgramPlan unsupportedShadow = unsupported.plan().program("shadow");
         assertTrue(unsupportedShadow != null && !unsupportedShadow.executable()
                         && !unsupported.plan().shouldAttempt("shadow"),
@@ -899,6 +900,16 @@ final class StorageBufferPlanTest {
             assertTrue(StorageBufferDeclarations.parseBuffer(1, empty).deviations()
                     .contains("STORAGE_BUFFER_SIZE_UNSUPPORTED:1"), empty);
         }
+        // ShaderProperties: a size below 1 switches the buffer off, an index above 8 is reserved,
+        // and the values split on single spaces.
+        for (String off : List.of("0", "-4", "0 true 1.0 1.0")) {
+            assertEquals(List.of("STORAGE_BUFFER_DISABLED:3"),
+                    StorageBufferDeclarations.parseBuffer(3, off).deviations(), off);
+        }
+        assertTrue(StorageBufferDeclarations.parseBuffer(9, "64").deviations()
+                .contains("STORAGE_BUFFER_INDEX_UNSUPPORTED:9"));
+        assertTrue(StorageBufferDeclarations.parseBuffer(1, "64  name").deviations()
+                .contains("STORAGE_BUFFER_PROPERTY_MALFORMED:1"), "a double space makes three values");
         // Any byte count binds: RenderPearl's BUFFER_16_8 declares bufferObject.0=6.
         assertTrue(StorageBufferDeclarations.parseBuffer(0, "6").supported()
                 && StorageBufferDeclarations.parseBuffer(1, "2 true 1.0 1.0").supported());

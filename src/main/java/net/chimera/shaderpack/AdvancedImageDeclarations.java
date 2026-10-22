@@ -20,6 +20,8 @@ import java.util.stream.Collectors;
 final class AdvancedImageDeclarations {
     /** The sampler name ShaderProperties reads as no sampler. */
     private static final String NO_SAMPLER = "none";
+    /** Iris's image limit (ShaderProperties). */
+    static final int MAX_IMAGES = 16;
 
     private AdvancedImageDeclarations() {}
 
@@ -43,11 +45,40 @@ final class AdvancedImageDeclarations {
         return images;
     }
 
+    /** ShaderProperties's image values: the value split on single spaces. */
+    private static String[] values(String raw) {
+        return raw == null ? new String[0] : raw.stripLeading().split(" ");
+    }
+
+    private static boolean relative(String[] values) {
+        return values.length > 5 && Boolean.parseBoolean(values[5]);
+    }
+
+    /**
+     * Iris adds at most 16 images (ShaderProperties: "Only up to 16 images are allowed"): the first in
+     * file order that it adds, a relative one or a fixed one of 7, 8 or 9 values. Every later image
+     * entry is dropped from {@code orderedProperties} before anything reads it.
+     */
+    static void dropImagesPastIrisLimit(Map<String, String> orderedProperties, List<String> deviations) {
+        int added = 0;
+        for (var entries = orderedProperties.entrySet().iterator(); entries.hasNext(); ) {
+            var entry = entries.next();
+            if (!entry.getKey().startsWith("image.")) continue;
+            if (added >= MAX_IMAGES) {
+                entries.remove();
+                deviations.add("ADVANCED_IMAGE_LIMIT_EXCEEDED:" + entry.getKey().substring("image.".length()));
+                continue;
+            }
+            String[] values = values(entry.getValue());
+            if (relative(values) || values.length >= 7 && values.length <= 9) added++;
+        }
+    }
+
     /**
      * One image.<name> declaration as Iris's ShaderProperties reads it: its sampler (or none), pixel
      * format, internal format, pixel type, clear and relative flags, then a relative image's share
      * of the screen, or a fixed image's width, height and depth, as many as it has dimensions (7, 8
-     * or 9 values).
+     * or 9 values), split on single spaces.
      */
     static PackAdvancedResourcePlan.ImageSpec parseImage(
             String key,
@@ -56,8 +87,8 @@ final class AdvancedImageDeclarations {
     ) {
         String name = key.substring("image.".length());
         List<String> deviations = new ArrayList<>();
-        String[] values = raw == null ? new String[0] : raw.trim().split("\\s+");
-        boolean relative = values.length > 5 && Boolean.parseBoolean(values[5]);
+        String[] values = values(raw);
+        boolean relative = relative(values);
         if (relative ? values.length < 8 : values.length < 7 || values.length > 9) {
             deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
             return image(name, values, new int[3], 0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);

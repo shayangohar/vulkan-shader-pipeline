@@ -50,11 +50,15 @@ final class StorageBufferDeclarations {
                         return;
                     }
                     PackAdvancedResourcePlan.BufferSpec spec = parseBuffer(index, entry.getValue());
-                    result.put(index, spec);
+                    // A size below 1 is the pack switching the buffer off: Iris creates none.
+                    if (!spec.deviations().contains(DISABLED + index)) result.put(index, spec);
                     deviations.addAll(spec.deviations());
                 });
         return result;
     }
+
+    /** ShaderProperties skips a buffer whose size is below 1: "the shader dev intended to disable the buffer". */
+    static final String DISABLED = "STORAGE_BUFFER_DISABLED:";
 
     static PackAdvancedResourcePlan.BufferSpec parseBuffer(int index, String raw) {
         List<String> deviations = new ArrayList<>();
@@ -63,8 +67,9 @@ final class StorageBufferDeclarations {
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
                     deviations);
         }
-        String[] values = raw == null ? new String[0] : raw.trim().split("\\s+");
-        // ShaderProperties: "size [name]", or "size relative scaleX scaleY" read from its first four.
+        // ShaderProperties splits the value on single spaces: "size [name]", or "size relative scaleX
+        // scaleY" read from its first four values.
+        String[] values = raw == null ? new String[0] : raw.stripLeading().split(" ");
         if (values.length == 0 || values[0].isEmpty() || values.length == 3) {
             deviations.add("STORAGE_BUFFER_PROPERTY_MALFORMED:" + index);
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
@@ -101,7 +106,8 @@ final class StorageBufferDeclarations {
         }
         checkSize(index, size, deviations);
         boolean relative = Boolean.parseBoolean(values[1]);
-        if (relative && !(scaleX > 0F && scaleY > 0F && Float.isFinite(scaleX) && Float.isFinite(scaleY))) {
+        boolean emptyShare = !(scaleX > 0F && scaleY > 0F && Float.isFinite(scaleX) && Float.isFinite(scaleY));
+        if (size >= 1L && relative && emptyShare) {
             // Iris sizes such a buffer at zero bytes or fewer, which GL refuses to create.
             deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
         }
@@ -110,11 +116,14 @@ final class StorageBufferDeclarations {
     }
 
     /**
-     * Chimera's limits on a declared size: positive and within one buffer's budget. Any byte count
-     * binds, as Iris's buffers take any size: the buffer is filled whole (VK_WHOLE_SIZE).
+     * A size below 1 switches the buffer off, as in Iris (DISABLED). Beyond that, Chimera's one limit:
+     * one buffer's budget. Any byte count binds, as Iris's buffers take any size: the buffer is
+     * filled whole (VK_WHOLE_SIZE).
      */
     private static void checkSize(int index, long size, List<String> deviations) {
-        if (size <= 0L || size > PackAdvancedResourcePlan.MAX_STORAGE_BUFFER_BYTES) {
+        if (size < 1L) {
+            deviations.add(DISABLED + index);
+        } else if (size > PackAdvancedResourcePlan.MAX_STORAGE_BUFFER_BYTES) {
             deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
         }
     }

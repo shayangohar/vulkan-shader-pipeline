@@ -122,9 +122,12 @@ final class AdvancedImagePlanTest {
     void imagesOfEveryIrisShape(@TempDir Path root) throws Exception {
         PackAdvancedResourcePlan.ImageSpec line = AdvancedImageDeclarations.parseImage("image.line",
                 "lineSampler RED_INTEGER R32UI UNSIGNED_INT false false 64", Map.of());
-        // Any whitespace separates the values: a tab as well as a space.
         PackAdvancedResourcePlan.ImageSpec plane = AdvancedImageDeclarations.parseImage("image.plane",
-                "none\tRGBA RGBA8\tBYTE false false 32\t16", Map.of());
+                "none RGBA RGBA8 BYTE false false 32 16", Map.of());
+        // ShaderProperties splits on single spaces: a tab or a double space shifts the values.
+        assertTrue(!AdvancedImageDeclarations.parseImage("image.tabbed", "none\tRGBA RGBA8\tBYTE false false 32\t16",
+                Map.of()).supported() && !AdvancedImageDeclarations.parseImage("image.spaced",
+                "none RGBA  RGBA8 BYTE false false 32 16", Map.of()).supported());
         PackAdvancedResourcePlan.ImageSpec screen = AdvancedImageDeclarations.parseImage("image.screen",
                 "screenSampler RGBA RGBA16F HALF_FLOAT true true SHARE 0.25", Map.of("SHARE", "0.5"));
         assertTrue(line.supported() && plane.supported() && screen.supported());
@@ -166,6 +169,21 @@ final class AdvancedImagePlanTest {
      * Chimera served them only alongside a supported shadowcomp, so Pegasus's gbuffers programs,
      * which read an image its prepare computes write, fell back.
      */
+    /** Iris adds the first 16 images in file order and drops the rest (ShaderProperties). */
+    @Test
+    void irisKeepsTheFirstSixteenImages(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        StringBuilder properties = new StringBuilder();
+        for (int image = 17; image >= 0; image--) {
+            properties.append(String.format("image.n%02d = none RGBA RGBA8 BYTE false false 4 4%n", image));
+        }
+        Files.writeString(shaders.resolve("shaders.properties"), properties);
+        PackSettingsPlan settings = PackProbe.analyze(root).settings();
+        assertTrue(settings.deviations().containsAll(List.of("ADVANCED_IMAGE_LIMIT_EXCEEDED:n01",
+                "ADVANCED_IMAGE_LIMIT_EXCEEDED:n00")) && settings.propertyValues().containsKey("image.n17")
+                && !settings.propertyValues().containsKey("image.n00"), settings.deviations().toString());
+    }
+
     @Test
     void imagesServeEachProgramWithoutAShadowcomp(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));

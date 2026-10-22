@@ -29,7 +29,8 @@ import java.util.stream.Collectors;
  */
 public final class PackAdvancedResourcePlan {
     public static final long MAX_TOTAL_BYTES = 768L * 1024L * 1024L;
-    public static final int MAX_BUFFER_INDEX = 12;
+    /** ShaderProperties refuses a bufferObject index above 8: "they're reserved". */
+    public static final int MAX_BUFFER_INDEX = 8;
     public static final long MAX_STORAGE_BUFFER_BYTES = 64L * 1024L * 1024L;
 
     static final Pattern VALUE_UNIFORM_DECLARATION = Pattern.compile(

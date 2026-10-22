@@ -150,6 +150,7 @@ record PackSettingsPlan(
             toggles.addAll(disabled);
             macros = parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
                     required, optional, customValues, resourceDeclarations, deviations, macros, toggles);
+            AdvancedImageDeclarations.dropImagesPastIrisLimit(properties, deviations);
         }
         // Iris drops a !program.NAME program of the matching profile whatever its own switch says.
         environment.disabledPrograms().forEach(program -> programEnabled.put(program, false));
