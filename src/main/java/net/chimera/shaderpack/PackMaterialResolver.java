@@ -1,6 +1,9 @@
 package net.chimera.shaderpack;
 
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.Property;
@@ -10,10 +13,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -21,6 +24,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,12 +32,13 @@ import java.util.regex.Pattern;
  * Immutable resolver for block.properties mappings, read through the same
  * continuation and conditional handling as shaders.properties. A token is a
  * block name, optionally followed by state predicates as Iris writes them
- * ({@code minecraft:tall_grass:half=lower}, {@code leaves:waterlogged=false}).
- * Tags are rejected instead of being guessed.
+ * ({@code minecraft:tall_grass:half=lower}, {@code leaves:waterlogged=false}),
+ * or a block tag ({@code %walls:north=low}).
  *
  * <p>A state takes the first entry, in file order, that matches it, as Iris's
  * BlockMaterialMapping puts each id's states with putIfAbsent: a plain name
- * matches every state, so it wins over a later predicate entry for that block.</p>
+ * matches every state, so it wins over a later predicate entry for that block.
+ * Tag entries come after every block entry, as Iris adds them last.</p>
  */
 public final class PackMaterialResolver {
     private static final Pattern MAPPING = Pattern.compile(
@@ -60,6 +65,9 @@ public final class PackMaterialResolver {
         }
     }
 
+    /** One {@code %tag} entry: the block tag it names, and the entry its states then match. */
+    record TagEntry(TagKey<Block> key, Entry entry) {}
+
     /**
      * The chunk render layer a {@code layer.<name>} line puts its blocks in, as OptiFine names them: the
      * pack draws them through that layer's program. Complementary and Bliss put glass, panes and beacons
@@ -82,38 +90,36 @@ public final class PackMaterialResolver {
 
     private final Map<String, Integer> ids;
     private final Map<String, List<Entry>> entries;
+    private final List<TagEntry> tags;
     private final Map<String, Layer> layers;
     private final List<String> deviations;
     private final Map<BlockState, Integer> stateCache = new ConcurrentHashMap<>();
     private final Map<Block, Optional<Layer>> layerCache = new ConcurrentHashMap<>();
 
-    private PackMaterialResolver(
-            Map<String, Integer> ids,
-            Map<String, List<Entry>> entries,
-            Map<String, Layer> layers,
-            Collection<String> deviations
-    ) {
-        this.ids = Collections.unmodifiableMap(new TreeMap<>(ids));
+    private PackMaterialResolver(Collected collected, Map<String, Layer> layers) {
+        this.ids = Collections.unmodifiableMap(new TreeMap<>(collected.ids()));
         Map<String, List<Entry>> copy = new TreeMap<>();
-        entries.forEach((name, list) -> copy.put(name, List.copyOf(list)));
+        collected.entries().forEach((name, list) -> copy.put(name, List.copyOf(list)));
         this.entries = Collections.unmodifiableMap(copy);
+        this.tags = List.copyOf(collected.tags());
         this.layers = Collections.unmodifiableMap(new TreeMap<>(layers));
-        this.deviations = List.copyOf(new TreeSet<>(deviations));
+        this.deviations = List.copyOf(new TreeSet<>(collected.deviations()));
     }
 
     /**
-     * What one block.properties read collects: each name's plain id, every block's entries in file
-     * order, each layer key's value, deviations.
+     * What one block.properties read collects: each name's plain id, every block's entries and
+     * the tag entries in file order, each layer key's value, deviations.
      */
-    private record Collected(Map<String, Integer> ids, Map<String, List<Entry>> entries,
+    private record Collected(Map<String, Integer> ids, Map<String, List<Entry>> entries, List<TagEntry> tags,
                              Map<Layer, String> layerLines, Set<String> deviations) {
         Collected() {
-            this(new TreeMap<>(), new TreeMap<>(), new EnumMap<>(Layer.class), new TreeSet<>());
+            this(new TreeMap<>(), new TreeMap<>(), new ArrayList<>(), new EnumMap<>(Layer.class), new TreeSet<>());
         }
 
         void clear() {
             ids.clear();
             entries.clear();
+            tags.clear();
             layerLines.clear();
         }
     }
@@ -189,12 +195,12 @@ public final class PackMaterialResolver {
             sourceHash = null;
         }
         Map<String, Layer> layers = layers(collected.layerLines(), collected.deviations());
-        return new ParseResult(new PackMaterialResolver(collected.ids(), collected.entries(), layers,
-                collected.deviations()), true, sourceHash, List.copyOf(collected.deviations()));
+        return new ParseResult(new PackMaterialResolver(collected, layers), true, sourceHash,
+                List.copyOf(collected.deviations()));
     }
 
     public static PackMaterialResolver empty() {
-        return new PackMaterialResolver(Map.of(), Map.of(), Map.of(), List.of());
+        return new PackMaterialResolver(new Collected(), Map.of());
     }
 
     /**
@@ -247,10 +253,24 @@ public final class PackMaterialResolver {
     private int resolveUncached(BlockState state) {
         try {
             String name = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-            return resolveState(name, property -> stateValue(state, property));
+            Function<String, String> stateValue = property -> stateValue(state, property);
+            int id = resolveState(name, stateValue);
+            return id != -1 ? id : resolveTags(state::is, stateValue);
         } catch (RuntimeException ignored) {
             return -1;
         }
+    }
+
+    /**
+     * The id of the first tag entry, in file order, whose tag holds the state and whose predicates
+     * match it, or -1. Iris adds tag entries after every block entry (createBlockStateIdMap), so a
+     * state a block entry maps never reaches its tags; a tag the registries lack holds nothing.
+     */
+    int resolveTags(Predicate<TagKey<Block>> holds, Function<String, String> stateValue) {
+        for (TagEntry tag : tags) {
+            if (holds.test(tag.key()) && tag.entry().matches(stateValue)) return tag.entry().id();
+        }
+        return -1;
     }
 
     private static String stateValue(BlockState state, String propertyName) {
@@ -319,7 +339,7 @@ public final class PackMaterialResolver {
                 continue;
             }
             if (token.startsWith("%")) {
-                deviations.add("BLOCK_TAG_UNSUPPORTED");
+                addTag(token, mappedId, collected);
                 continue;
             }
             addEntry(token, mappedId, collected);
@@ -365,30 +385,52 @@ public final class PackMaterialResolver {
      * last value wins. The first plain mapping of a name is its resolveName id.
      */
     private static void addEntry(String token, int id, Collected collected) {
+        Token parsed = parseToken(token, collected.deviations());
+        if (parsed == null) return;
+        collected.entries().computeIfAbsent(parsed.name(), key -> new ArrayList<>())
+                .add(new Entry(id, parsed.predicates()));
+        if (parsed.hasPredicates()) return;
+        Integer previous = collected.ids().putIfAbsent(parsed.name(), id);
+        if (previous != null && previous != id) {
+            collected.deviations().add("BLOCK_MAPPING_CONFLICT");
+        }
+    }
+
+    /**
+     * One {@code %[namespace:]tag[:prop=value...]} token, read as BlockEntry.parse reads it once its
+     * '%' signs are gone, with the tag's name lower-cased as BlockMaterialMapping.addTag compares
+     * names ignoring case.
+     */
+    private static void addTag(String token, int id, Collected collected) {
+        Token parsed = parseToken(token.replace("%", "").toLowerCase(Locale.ROOT), collected.deviations());
+        if (parsed == null) return;
+        TagKey<Block> key = TagKey.create(Registries.BLOCK, ResourceLocation.parse(parsed.name()));
+        collected.tags().add(new TagEntry(key, new Entry(id, parsed.predicates())));
+    }
+
+    /** A token's normalized name and predicates, and whether it named any predicate segment. */
+    private record Token(String name, Map<String, String> predicates, boolean hasPredicates) {}
+
+    /** Splits a token as BlockEntry.parse does; null, with a deviation, when its name is invalid. */
+    private static Token parseToken(String token, Set<String> deviations) {
         String[] segments = token.split(":");
         int first = segments.length > 1 && segments[1].indexOf('=') >= 0 ? 1 : Math.min(segments.length, 2);
         String name = first == 1 ? segments[0] : segments[0] + ":" + segments[1];
         String normalized = normalizeName(name);
         if (normalized == null) {
-            collected.deviations().add("BLOCK_PROPERTIES_INVALID");
-            return;
+            deviations.add("BLOCK_PROPERTIES_INVALID");
+            return null;
         }
         Map<String, String> predicates = new TreeMap<>();
         for (int index = first; index < segments.length; index++) {
             String[] parts = segments[index].split("=");
             if (parts.length != 2) {
-                collected.deviations().add("BLOCK_PROPERTIES_INVALID");
+                deviations.add("BLOCK_PROPERTIES_INVALID");
                 continue;
             }
             predicates.put(parts[0], parts[1]);
         }
-        collected.entries().computeIfAbsent(normalized, key -> new ArrayList<>())
-                .add(new Entry(id, Collections.unmodifiableMap(predicates)));
-        if (first < segments.length) return;
-        Integer previous = collected.ids().putIfAbsent(normalized, id);
-        if (previous != null && previous != id) {
-            collected.deviations().add("BLOCK_MAPPING_CONFLICT");
-        }
+        return new Token(normalized, Collections.unmodifiableMap(predicates), first < segments.length);
     }
 
     private static String normalizeName(String name) {

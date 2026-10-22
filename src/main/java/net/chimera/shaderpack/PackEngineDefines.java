@@ -26,8 +26,8 @@ public final class PackEngineDefines {
      * on Minecraft 1.21.1, the one version Chimera targets. Packs branch on these
      * everywhere, {@code MC_VERSION} above all: undefined, it reads as 0 and
      * selects a pack's pre-1.13 paths. Vendor, mipmap-level and texture-format macros
-     * depend on the live device and options, and IRIS_TAG_SUPPORT promises
-     * block.properties tags Chimera does not read yet; none are defined here.
+     * depend on the live device and options, and are not defined here. IRIS_TAG_SUPPORT
+     * promises block.properties tags (PackMaterialResolver).
      */
     private static final Map<String, String> STANDARD = standardMacros();
 
@@ -41,6 +41,7 @@ public final class PackEngineDefines {
         result.put("MC_GLSL_VERSION", "460");
         result.put(osMacro(), "1");
         result.put("IRIS_HAS_TRANSLUCENCY_SORTING", "1");
+        result.put("IRIS_TAG_SUPPORT", "2");
         result.put("MC_NORMAL_MAP", "1");
         result.put("MC_SPECULAR_MAP", "1");
         result.put("MC_RENDER_QUALITY", "1.0");
