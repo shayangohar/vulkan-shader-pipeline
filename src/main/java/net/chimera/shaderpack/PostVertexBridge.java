@@ -50,7 +50,8 @@ final class PostVertexBridge {
                 case GlslTree.InterfaceBlock block -> block.qualifiers();
                 default -> List.of();
             };
-            if (qualifiers.size() < 2 || !keyword(tree, qualifiers.get(0)).equals("layout")) continue;
+            if (qualifiers.size() < 2 || !keyword(tree, qualifiers.get(0)).equals("layout")
+                    || GlslDeclarations.qualifiersOnly(external)) continue;
             int storage = INTERPOLATION.contains(keyword(tree, qualifiers.get(1))) && qualifiers.size() > 2 ? 2 : 1;
             if (INPUT_STORAGE.contains(keyword(tree, qualifiers.get(storage)))) {
                 edits.add(new GlslDeclarations.TextEdit(tree.offset(qualifiers.get(0).range().start()),

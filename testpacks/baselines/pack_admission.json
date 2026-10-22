@@ -3,7 +3,6 @@
     "dh_shadow",
     "dh_terrain",
     "dh_water",
-    "gbuffers_armor_glint",
     "gbuffers_terrain_cutout",
     "gbuffers_terrain_solid",
     "gbuffers_textured_lit",
@@ -105,7 +104,6 @@
     "gbuffers_terrain_solid"
   ],
   "Noble v1.9.9.zip": [
-    "deferred4",
     "dh_shadow",
     "dh_terrain",
     "dh_water",

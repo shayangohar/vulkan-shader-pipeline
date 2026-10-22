@@ -264,13 +264,13 @@ public final class GlslInterfaceScanner {
     }
 
     /**
-     * The interface statement a declaration makes, or null when it declares none this can read,
-     * with its deviation added. Only precision may follow the storage qualifier: another word
-     * there reads as the type, which no interface variable has.
+     * The declaration of a variable this can read the interface of, or null, with any deviation
+     * added. Only precision may follow the storage qualifier: another word there reads as the
+     * type, which no interface variable has. A default-qualifier statement, such as Alpha
+     * Piscium's {@code layout(early_fragment_tests) in;}, declares no variable and stays as written.
      */
-    private static Statement statement(GlslTree tree, GlslTree.External external, List<GlslTree.Qualifier> qualifiers,
-                                       int[] storage, boolean vertexStage, Map<String, Integer> structSlots,
-                                       List<String> deviations) {
+    private static GlslTree.Declaration variableDeclaration(GlslTree tree, GlslTree.External external,
+            List<GlslTree.Qualifier> qualifiers, int[] storage, List<String> deviations) {
         for (int index = storage[1] + 1; index < qualifiers.size(); index++) {
             if (!isPrecision(keyword(tree, qualifiers, index))) {
                 deviations.add("PROGRAM_VARYING_TYPE_UNSUPPORTED:" + keyword(tree, qualifiers, index));
@@ -282,10 +282,17 @@ public final class GlslInterfaceScanner {
             return null;
         }
         GlslTree.Declaration declaration = (GlslTree.Declaration) external;
-        if (declaration.type() == null) {
-            deviations.add(DECLARATION_UNSUPPORTED);
-            return null;
-        }
+        if (declaration.type() != null) return declaration;
+        if (!declaration.declarators().isEmpty()) deviations.add(DECLARATION_UNSUPPORTED);
+        return null;
+    }
+
+    /** The interface statement a declaration makes, or null when it declares none this can read. */
+    private static Statement statement(GlslTree tree, GlslTree.External external, List<GlslTree.Qualifier> qualifiers,
+                                       int[] storage, boolean vertexStage, Map<String, Integer> structSlots,
+                                       List<String> deviations) {
+        GlslTree.Declaration declaration = variableDeclaration(tree, external, qualifiers, storage, deviations);
+        if (declaration == null) return null;
         String type = typeName(tree, declaration.type());
         Integer typeSlots = BUILTIN_SLOTS.containsKey(type) ? BUILTIN_SLOTS.get(type) : structSlots.get(type);
         if (typeSlots == null) {
@@ -317,15 +324,19 @@ public final class GlslInterfaceScanner {
     private record InterfaceType(String type, String interpolation, boolean input, boolean output, int slots) {}
 
     /**
-     * The variables one interface statement declares, each with any array size, or null when the
-     * type has array sizes or a declarator has an initializer or a size this cannot read.
+     * The variables one interface statement declares, each with any array size, or null when a
+     * declarator has an initializer, a size this cannot read, or a size besides the type's. The
+     * size may sit on the type, as in Noble's {@code flat in vec3[9] skyIlluminanceCoefficients}.
      */
     private static List<Declaration> declarators(GlslTree tree, GlslTree.Declaration declaration, int start, int end,
                                                  InterfaceType kind) {
-        if (!declaration.type().arrays().isEmpty()) return null;
+        int typeLength = arrayLength(tree, declaration.type().arrays());
+        if (typeLength < 0) return null;
         List<Declaration> declared = new ArrayList<>();
         for (GlslTree.Declarator declarator : declaration.declarators()) {
-            int length = arrayLength(tree, declarator);
+            int length = arrayLength(tree, declarator.arrays());
+            if (typeLength > 0 && length != 0) return null;
+            length = Math.max(length, typeLength);
             if (length < 0 || declarator.initializer() != null) return null;
             String name = tree.text(declarator.name());
             boolean referenced = referencedOutsideDeclaration(tree.tokens(), name, start, end);
@@ -336,13 +347,13 @@ public final class GlslInterfaceScanner {
     }
 
     /**
-     * A declarator's array length: 0 without one, the literal {@code N} of one {@code [N]}, or -1
-     * for anything else (a named or unsized length, more than one dimension).
+     * The length of a type's or a declarator's array sizes: 0 without one, the literal {@code N} of
+     * one {@code [N]}, or -1 for anything else (a named or unsized length, more than one dimension).
      */
-    private static int arrayLength(GlslTree tree, GlslTree.Declarator declarator) {
-        if (declarator.arrays().isEmpty()) return 0;
-        if (declarator.arrays().size() > 1) return -1;
-        GlslTree.Range array = declarator.arrays().get(0);
+    private static int arrayLength(GlslTree tree, List<GlslTree.Range> arrays) {
+        if (arrays.isEmpty()) return 0;
+        if (arrays.size() > 1) return -1;
+        GlslTree.Range array = arrays.get(0);
         int size = GlslLexer.nextSignificant(tree.tokens(), array.start());
         int close = size < 0 ? -1 : GlslLexer.nextSignificant(tree.tokens(), size);
         if (close != array.end() - 1) return -1;
@@ -380,7 +391,7 @@ public final class GlslInterfaceScanner {
             Integer typeSlots = BUILTIN_SLOTS.containsKey(type) ? BUILTIN_SLOTS.get(type) : structs.get(type);
             if (typeSlots == null) return null;
             for (GlslTree.Declarator declarator : member.declarators()) {
-                int length = arrayLength(tree, declarator);
+                int length = arrayLength(tree, declarator.arrays());
                 if (length < 0 || declarator.initializer() != null) return null;
                 total += typeSlots * Math.max(length, 1);
             }

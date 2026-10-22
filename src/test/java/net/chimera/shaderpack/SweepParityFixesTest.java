@@ -182,6 +182,44 @@ final class SweepParityFixesTest {
                 UniformRegistry.Stage.SHADOW, Map.of()), "shadow programs have the render targets too");
     }
 
+    /**
+     * GLSL forms Iris passes through: a default-qualifier statement (Alpha Piscium's
+     * layout(early_fragment_tests) in;) declares no variable, and an array size may sit on the type
+     * (Noble's flat in vec3[9] skyIlluminanceCoefficients).
+     */
+    @Test
+    void interfaceScanningReadsDefaultQualifiersAndTypeArrays(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.vsh"), """
+                #version 330 compatibility
+                out vec2 uv;
+                flat out vec3[2] light;
+                void main() {
+                    gl_Position = ftransform();
+                    uv = gl_MultiTexCoord0.xy;
+                    light[0] = vec3(1);
+                    light[1] = vec3(0);
+                }
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 330 compatibility
+                layout(early_fragment_tests) in;
+                in vec2 uv;
+                flat in vec3[2] light;
+                void main() { gl_FragData[0] = vec4(light[0] + light[1], uv.x); }
+                """);
+        GlslInterfaceScanner.StageInterface fragment = GlslInterfaceScanner.scan(
+                Files.readString(shaders.resolve("composite.fsh")), false);
+        assertTrue(fragment.deviations().isEmpty(), fragment.deviations().toString());
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackProgramPlan composite = plan.program("composite");
+        assertTrue(plan.shouldAttempt("composite"), composite.deviations().toString());
+        assertTrue(composite.convertedFragment().contains("layout(early_fragment_tests) in;"),
+                composite.convertedFragment());
+        EntityRealPackTest.compileStage(composite.convertedVertex(), true, "type-array vertex");
+        EntityRealPackTest.compileStage(composite.convertedFragment(), false, "type-array fragment");
+    }
+
     /** Shrimple sizes its light bins with #if arithmetic; JCPP evaluates conditions in C long arithmetic. */
     @Test
     void conditionsEvaluateAsJcppDoes() {

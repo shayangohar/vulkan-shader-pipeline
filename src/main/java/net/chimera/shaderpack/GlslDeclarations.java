@@ -78,6 +78,14 @@ final class GlslDeclarations {
         return start == 0 || source.charAt(start - 1) == '\n' || source.charAt(start - 1) == '\r' ? start : -1;
     }
 
+    /**
+     * A statement of qualifiers alone, such as {@code layout(early_fragment_tests) in;}: it sets a
+     * default and declares nothing, so its layout is no interface variable's.
+     */
+    static boolean qualifiersOnly(GlslTree.External external) {
+        return external instanceof GlslTree.Declaration declaration && declaration.type() == null;
+    }
+
     /** Every name declared by a variable declaration at file scope, in source order. */
     static List<Variable> variables(GlslTree tree) {
         List<Variable> variables = new ArrayList<>();

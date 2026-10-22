@@ -181,6 +181,7 @@ public final class LegacyGlslConverter {
                 default -> List.of();
             };
             if (qualifiers.size() < 2 || !tree.text(qualifiers.get(0).keyword()).equals("layout")
+                    || GlslDeclarations.qualifiersOnly(external)
                     || tree.text(qualifiers.get(0).range()).matches("(?s).*[\\r\\n].*")
                     || GlslDeclarations.indentationStart(source, tree.offset(external.range().start())) < 0) {
                 continue;
