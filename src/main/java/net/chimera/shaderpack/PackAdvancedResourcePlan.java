@@ -582,7 +582,7 @@ public final class PackAdvancedResourcePlan {
             PackSettingsPlan settings,
             boolean customImages
     ) {
-        if (shadersDir == null) return Set.of();
+        if (shadersDir == null || settings != null && !settings.enabled(selectedFolder, "shadowcomp")) return Set.of();
         Path root = selectedFolder == null || selectedFolder.isBlank()
                 ? shadersDir : shadersDir.resolve(selectedFolder);
         Path source = root.resolve("shadowcomp.csh").normalize();
@@ -625,12 +625,12 @@ public final class PackAdvancedResourcePlan {
         // compute preparation must see the same feature or guarded sampler
         // declarations will be removed while their uses remain active.
         GraphicsImageScan graphics = GraphicsImageScan.scan(plan, images, deviations);
-        Map<String, ComputeSpec> compute = AdvancedImageDeclarations.discoverCompute(
-                shadersDir, plan.resolution().selectedSourceFolder(), images, deviations,
-                computeMacros,
-                PackEngineDefines.lockedNames(plan.settings().overriddenNames(), customImages, true),
-                graphics.producedImages,
-                plan.settings().runtimeSettings().customDescriptors());
+        // A shadowcomp the pack switches off is no source to Iris (ShaderPack's source provider).
+        String folder = plan.resolution().selectedSourceFolder();
+        Map<String, ComputeSpec> compute = !plan.settings().enabled(folder, "shadowcomp") ? Map.of()
+                : AdvancedImageDeclarations.discoverCompute(shadersDir, folder, images, deviations, computeMacros,
+                        PackEngineDefines.lockedNames(plan.settings().overriddenNames(), customImages, true),
+                        graphics.producedImages, plan.settings().runtimeSettings().customDescriptors());
         addCapabilityDeviations(images, graphics.customImageFeaturePrograms, deviations);
         List<String> bufferDependent = new ArrayList<>();
         List<String> storageEligible = new ArrayList<>();

@@ -742,10 +742,32 @@ final class ComputePassTest {
      * (Iris CompositeRenderer.ComputeOnlyPass): Alpha Piscium's composite2 is composite2.csh alone.
      * The schedule gives it the window its name gives a program, and the report its translation.
      */
+    /**
+     * A shadowcomp the pack switches off is no source to Iris: BSL switches shadowcomp off with its
+     * coloured lighting, whose shadowcomp.csh then stops at an #error.
+     */
+    @Test
+    void switchedOffShadowcompIsNoStage(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "program.shadowcomp.enabled = false\n");
+        Files.writeString(shaders.resolve("shadowcomp.csh"), "#version 430\n#error colored lighting is off\n");
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        assertTrue(plan.isProgramDisabled("shadowcomp"));
+        assertTrue(plan.advancedResources().computeStages().isEmpty()
+                && plan.advancedResources().deviations().stream().noneMatch(value -> value.contains("shadowcomp")),
+                plan.advancedResources().deviations().toString());
+    }
+
     @Test
     void passesRunAlone(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"), "program.composite2.enabled = false\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "program.composite2.enabled = false\nprogram.composite5.enabled = false\n");
+        // A pass of computes alone switched off runs nothing: Shrimple switches off its composite1.csh.
+        Files.writeString(shaders.resolve("composite5.csh"), "#version 430\nlayout(local_size_x = 1) in;\n"
+                + "void main() {}\n");
         String fragment = "#version 120\nuniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n";
         for (String pass : List.of("composite", "composite2")) {
@@ -769,6 +791,9 @@ final class ComputePassTest {
                 "a pass with a fragment stage draws");
         assertTrue(PassComputePlan.runsAlone(plan, "composite1") && PassComputePlan.runsAlone(plan, "composite2")
                 && PassComputePlan.runsAlone(plan, "composite3"), "vertex only, switched off, missing");
+        assertTrue(plan.isProgramDisabled("composite5") && !plan.isProgramDisabled("composite3"),
+                "a switched-off pass of computes alone is disabled; a missing one is not");
+        assertTrue(PassComputePlan.build(plan, shaders).compute("composite5") == null, "its compute does not run");
         // composite4.csh shares composite4's row, which stays the program's.
         assertTrue(analysis.report().program("composite4").deviations().stream()
                 .noneMatch(deviation -> deviation.startsWith("PASS_COMPUTE_")),

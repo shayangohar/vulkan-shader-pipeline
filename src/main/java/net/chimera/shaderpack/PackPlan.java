@@ -144,9 +144,15 @@ public record PackPlan(
         return settings.overriddenNames();
     }
 
+    /**
+     * Whether the pack switches a program or pass off. A pass of computes alone has no resolved
+     * program, so its switch is read directly: Iris's source provider then reads none of its files
+     * (ShaderPack), and the pass runs nothing. Shrimple switches off its compute-only composite1.
+     */
     public boolean isProgramDisabled(String name) {
         PackProgramResolution value = resolution.resolution(name);
-        return value != null && !value.enabled();
+        if (value != null) return !value.enabled();
+        return settings != null && !settings.enabled(selectedSourceFolder(), name);
     }
 
     /**
