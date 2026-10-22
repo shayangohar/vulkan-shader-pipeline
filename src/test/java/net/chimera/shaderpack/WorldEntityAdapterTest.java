@@ -134,8 +134,27 @@ final class WorldEntityAdapterTest {
             }
             assertEquals(null, ChimeraEntityBridge.shadowFamily(shader, block, null), "terrain casts no entity shadow");
         }
-        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_crumbling", block, Family.BLOCK), "crumbling");
+        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_crumbling", block, Family.BLOCK),
+                "crumbling is no block entity's model");
         assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_beacon_beam", block, Family.BLOCK), "beams");
+    }
+
+    /** Iris widens every BLOCK buffer to TERRAIN, so the crumbling overlay is its own lane wherever it is written. */
+    @Test
+    void crumblingBatchesAsDamagedBlockInAnyContext() {
+        var block = DefaultVertexFormat.BLOCK;
+        assertEquals(Family.DAMAGED_BLOCK, ChimeraEntityBridge.worldTypeFamily("rendertype_crumbling", block));
+        ChimeraEntityBridge.beginBlockEntity(0);
+        try {
+            assertEquals(Family.DAMAGED_BLOCK, ChimeraEntityBridge.worldTypeFamily("rendertype_crumbling", block),
+                    "a block entity's overlay");
+            assertEquals(Family.MOVING_BLOCK, ChimeraEntityBridge.worldTypeFamily("rendertype_solid", block));
+        } finally {
+            ChimeraEntityBridge.endContext();
+        }
+        assertEquals(null, ChimeraEntityBridge.worldTypeFamily("rendertype_crumbling",
+                DefaultVertexFormat.NEW_ENTITY), "the overlay only widens BLOCK buffers");
+        assertEquals(null, ChimeraEntityBridge.worldTypeFamily("rendertype_solid", block), "terrain");
     }
 
     /** Iris reports BLOCK_ENTITIES for whatever a block entity draws, in either pass, and ENTITIES for an entity's. */
@@ -147,6 +166,8 @@ final class WorldEntityAdapterTest {
                     "a moving piston");
             assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.SHADOW_ENTITIES),
                     "a block entity's eyes in the shadow pass");
+            assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.writePhase(Family.DAMAGED_BLOCK),
+                    "the crumbling batch draws after every block entity's wrapper closed; Iris never sets DESTROY");
             ChimeraEntityBridge.beginEntity("minecraft:zombie");
             try {
                 assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.ENTITY),
@@ -161,6 +182,7 @@ final class WorldEntityAdapterTest {
         try {
             assertEquals(PackRenderingPhase.ENTITIES, ChimeraEntityBridge.writePhase(Family.MOVING_BLOCK),
                     "a falling block");
+            assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.writePhase(Family.DAMAGED_BLOCK));
         } finally {
             ChimeraEntityBridge.endContext();
         }

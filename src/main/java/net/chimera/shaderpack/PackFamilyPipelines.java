@@ -7,6 +7,7 @@ import net.chimera.render.vertex.ChimeraVertexFormats;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 
 /**
  * Builds the pipelines of the host geometry families a pack program can replace: entities, block
@@ -44,15 +45,8 @@ public final class PackFamilyPipelines {
     public static PackPipelines.PackEntity buildDamagedBlock(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        if (plan == null || !plan.executable()) return null;
-        try {
-            String vertex = EntityVertexBridge.withoutEntityIds(
-                    EntityVertexBridge.layoutVertexForFormat(plan.convertedVertex(), DefaultVertexFormat.BLOCK));
-            return buildEntityLike(plan, UniformRegistry.Stage.BLOCK, "pack_" + plan.name(),
-                    ChimeraVertexFormats.EXTENDED_BLOCK, advancedResources, storageOwner, vertex);
-        } catch (IllegalArgumentException unsupported) {
-            return null;
-        }
+        return buildLayoutVariant(plan, DefaultVertexFormat.BLOCK, "crumbling", advancedResources, storageOwner,
+                EntityVertexBridge::withoutEntityIds);
     }
 
     /** Builds the block-entity adapter on the same append-only host format. */
@@ -78,10 +72,18 @@ public final class PackFamilyPipelines {
             PackProgramPlan plan, VertexFormat host, String layout,
             PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
+        return buildLayoutVariant(plan, host, layout, advancedResources, storageOwner, UnaryOperator.identity());
+    }
+
+    /** {@link #buildLayoutVariant}, with {@code inputs} rewriting the layout's vertex inputs. */
+    private static PackPipelines.PackEntity buildLayoutVariant(
+            PackProgramPlan plan, VertexFormat host, String layout, PackAdvancedResourcePlan advancedResources,
+            PackStorageBufferOwner storageOwner, UnaryOperator<String> inputs
+    ) {
         VertexFormat extended = host == null ? null : ChimeraVertexFormats.extendedLayout(host);
         if (plan == null || !plan.executable() || extended == null) return null;
         try {
-            String vertex = EntityVertexBridge.layoutVertexForFormat(plan.convertedVertex(), host);
+            String vertex = inputs.apply(EntityVertexBridge.layoutVertexForFormat(plan.convertedVertex(), host));
             return buildEntityLike(plan, plan.familyAdapter().stage(), "pack_" + plan.name() + "_" + layout,
                     extended, advancedResources, storageOwner, vertex);
         } catch (IllegalArgumentException unsupported) {

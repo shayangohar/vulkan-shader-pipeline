@@ -136,9 +136,9 @@ public final class ChimeraEntityBridge {
             Map.entry("rendertype_eyes", EntityShader.EYES),
             Map.entry("rendertype_entity_translucent_emissive", EntityShader.EMISSIVE),
             Map.entry("rendertype_entity_alpha", EntityShader.ALPHA));
-    /** The chunk shaders Iris draws as MOVING_BLOCK when an entity or block entity draws with them. */
     /** The block-breaking overlay's shader (RenderType.CRUMBLING, ModelBakery.DESTROY_TYPES). */
     private static final String CRUMBLING_SHADER = "rendertype_crumbling";
+    /** The chunk shaders Iris draws as MOVING_BLOCK when an entity or block entity draws with them. */
     private static final Set<String> MOVING_BLOCK_SHADERS = Set.of("rendertype_solid", "rendertype_cutout_mipped",
             "rendertype_cutout", "rendertype_translucent", "rendertype_translucent_moving_block",
             "rendertype_tripwire");
@@ -543,7 +543,7 @@ public final class ChimeraEntityBridge {
      * wherever it is written, as Iris widens every BLOCK buffer to TERRAIN, and otherwise the
      * entity or block entity drawing it (worldFamily).
      */
-    private static Family worldTypeFamily(String shader, VertexFormat format) {
+    public static Family worldTypeFamily(String shader, VertexFormat format) {
         if (format == DefaultVertexFormat.BLOCK && CRUMBLING_SHADER.equals(shader)) return Family.DAMAGED_BLOCK;
         Family context = context();
         return context == null ? null : worldFamily(shader, format, context);
@@ -761,7 +761,8 @@ public final class ChimeraEntityBridge {
      * The Iris rendering phase a family batch written now draws in: BLOCK_ENTITIES for whatever a
      * block entity draws, as Iris wraps a block entity's render types in BlockEntityRenderStateShard
      * in either pass, and otherwise the family's own. A block entity's crumbling overlay is written
-     * from the crumbling source, outside that wrapper.
+     * from the crumbling source, outside that wrapper, and draws in NONE: vanilla ends the crumbling
+     * batch after every block entity's wrapper has closed, and Iris never sets DESTROY.
      */
     public static PackRenderingPhase writePhase(Family family) {
         return family != Family.DAMAGED_BLOCK && context() == Family.BLOCK
@@ -774,7 +775,6 @@ public final class ChimeraEntityBridge {
             // Iris holds the ENTITIES phase for entities and their shadow casters.
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, MOVING_BLOCK, SHADOW_ENTITIES -> PackRenderingPhase.ENTITIES;
             case BLOCK, BLOCK_TRANSLUCENT, SHADOW_BLOCK -> PackRenderingPhase.BLOCK_ENTITIES;
-            case DAMAGED_BLOCK -> PackRenderingPhase.DESTROY;
             case HAND -> PackRenderingPhase.HAND_SOLID;
             case HAND_WATER -> PackRenderingPhase.HAND_TRANSLUCENT;
             case PARTICLE, PARTICLE_TRANSLUCENT -> PackRenderingPhase.PARTICLES;

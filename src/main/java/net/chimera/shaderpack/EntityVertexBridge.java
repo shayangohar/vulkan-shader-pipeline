@@ -859,8 +859,9 @@ public final class EntityVertexBridge {
     }
 
     /**
-     * The crumbling overlay's entity ids: it is written before a block entity draws and drawn after,
-     * so the block entity id its widened layout would carry is none of the overlay's. It reads 0.
+     * The crumbling overlay's entity ids read 0. Iris's TERRAIN layout carries no entity ids, so a
+     * crumbling draw reads the captured ones when its batch draws, after every entity and block
+     * entity has reset them to 0 (MixinEntityRenderDispatcher, MixinBlockEntityRenderDispatcher).
      */
     public static String withoutEntityIds(String source) {
         return source.replaceFirst("layout\\(location = \\d+\\) in uvec4 EntityIds;",
