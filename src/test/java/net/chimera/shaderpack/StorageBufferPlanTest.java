@@ -875,6 +875,31 @@ final class StorageBufferPlanTest {
     }
 
     /**
+     * ShaderProperties skips a bufferObject value it cannot parse (three values, or a size or scale
+     * that is no number), as it skips a reserved index: Iris creates no buffer under that index.
+     */
+    @Test
+    void malformedDeclarationsCreateNoBuffer() throws IOException {
+        Path root = Files.createTempDirectory("chimera-malformed-buffer-");
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "bufferObject.1=4 true 1.0\nbufferObject.2=big\nbufferObject.3=64 true wide 1.0\nbufferObject.4=64\n");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform sampler2D colortex0;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(colortex0, uv); }
+                """);
+        PackAdvancedResourcePlan resources = PackProbe.analyze(root).plan().advancedResources();
+        for (int index = 1; index <= 3; index++) {
+            assertTrue(resources.buffers().get(index) == null
+                            && resources.deviations().contains("STORAGE_BUFFER_PROPERTY_MALFORMED:" + index),
+                    "bufferObject." + index + " is skipped: " + resources.deviations());
+        }
+        assertTrue(resources.buffers().get(4) != null, "a well-formed neighbour still declares its buffer");
+    }
+
+    /**
      * Iris's ShaderProperties reads "size [name]", or "size relative scaleX scaleY" from the first
      * four values. A relative buffer holds size bytes for each pixel of its truncated share of the
      * screen (ShaderStorageBuffer.resizeIfRelative). Alpha Piscium declares bufferObject.1=4 true 1.0 1.0.

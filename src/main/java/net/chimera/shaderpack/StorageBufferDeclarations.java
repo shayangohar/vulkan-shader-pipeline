@@ -50,7 +50,7 @@ final class StorageBufferDeclarations {
                         return;
                     }
                     PackAdvancedResourcePlan.BufferSpec spec = parseBuffer(index, entry.getValue());
-                    // A size below 1 or an index above 8: Iris creates no buffer.
+                    // A size below 1, an index above 8 or a value it cannot parse: Iris creates no buffer.
                     if (!skipped(spec)) result.put(index, spec);
                     deviations.addAll(spec.deviations());
                 });
@@ -61,11 +61,14 @@ final class StorageBufferDeclarations {
     static final String DISABLED = "STORAGE_BUFFER_DISABLED:";
     /** ShaderProperties skips a buffer numbered above 8: "they're reserved". */
     static final String RESERVED = "STORAGE_BUFFER_INDEX_RESERVED:";
+    /** ShaderProperties skips a value it cannot parse: a size or scale that is no number, or three values. */
+    static final String MALFORMED = "STORAGE_BUFFER_PROPERTY_MALFORMED:";
 
     /** Whether Iris skips the declaration, so that no buffer exists under its index. */
     private static boolean skipped(PackAdvancedResourcePlan.BufferSpec spec) {
         int index = spec.logicalIndex();
-        return spec.deviations().contains(DISABLED + index) || spec.deviations().contains(RESERVED + index);
+        return spec.deviations().contains(DISABLED + index) || spec.deviations().contains(RESERVED + index)
+                || spec.deviations().contains(MALFORMED + index);
     }
 
     static PackAdvancedResourcePlan.BufferSpec parseBuffer(int index, String raw) {
@@ -79,7 +82,7 @@ final class StorageBufferDeclarations {
         // scaleY" read from its first four values.
         String[] values = raw == null ? new String[0] : raw.stripLeading().split(" ");
         if (values.length == 0 || values[0].isEmpty() || values.length == 3) {
-            deviations.add("STORAGE_BUFFER_PROPERTY_MALFORMED:" + index);
+            deviations.add(MALFORMED + index);
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
                     deviations);
         }
@@ -88,7 +91,7 @@ final class StorageBufferDeclarations {
         try {
             size = Long.parseLong(values[0]);
         } catch (RuntimeException failure) {
-            deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
+            deviations.add(MALFORMED + index);
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, values.length == 2 ? values[1] : "",
                     PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }
@@ -108,7 +111,7 @@ final class StorageBufferDeclarations {
             scaleX = Float.parseFloat(values[2]);
             scaleY = Float.parseFloat(values[3]);
         } catch (NumberFormatException failure) {
-            deviations.add("STORAGE_BUFFER_PROPERTY_MALFORMED:" + index);
+            deviations.add(MALFORMED + index);
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
                     deviations);
         }

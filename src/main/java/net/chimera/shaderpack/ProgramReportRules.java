@@ -64,7 +64,7 @@ final class ProgramReportRules {
             addUnplannedPostDeviations(inventory, fragment, relaxed, targetResult, interfacePlan,
                     deviations);
         }
-        addVertexDeviations(inventory, programPlan, fragment, postName, deviations);
+        addVertexDeviations(inventory, packPlan, programPlan, fragment, postName, deviations);
         addSourceDeviations(inventory, packPlan, programPlan, source, samplers, relaxed, modern, deviations);
         addTargetCountDeviations(name, programPlan, targetResult, targets, deviations);
         if (!hasFragment) {
@@ -132,13 +132,13 @@ final class ProgramReportRules {
     }
 
     /** The vertex bridge the program takes, and what its installed family fixes to the host. */
-    static void addVertexDeviations(PackProbe.Inventory inventory, PackProgramPlan programPlan, String fragment,
-                                            boolean postName, Set<String> deviations) {
+    static void addVertexDeviations(PackProbe.Inventory inventory, PackPlan packPlan, PackProgramPlan programPlan,
+                                    String fragment, boolean postName, Set<String> deviations) {
         String name = inventory.name;
         boolean hasVertex = inventory.stages.contains("vertex");
         String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         String vertexBridge = programPlan != null
-                ? plannedVertexBridge(name, hasVertex, programPlan, postName)
+                ? plannedVertexBridge(name, hasVertex, programPlan, packPlan, postName)
                 : unplannedVertexBridge(name, hasVertex, vertex, fragment);
         if (vertexBridge != null) {
             deviations.add(vertexBridge);
@@ -314,12 +314,15 @@ final class ProgramReportRules {
                 : ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
     }
 
-    /** How a planned program's vertex stage is bridged, as its report names it; null when it has none. */
+    /**
+     * How a planned program's vertex stage is bridged, as its report names it; null when it has none.
+     * A cloud program that runs empty (PackPlan.cloudRunsEmpty) has no vertex bridge to name.
+     */
     static String plannedVertexBridge(
-            String name, boolean hasVertex, PackProgramPlan plan, boolean postName) {
+            String name, boolean hasVertex, PackProgramPlan plan, PackPlan packPlan, boolean postName) {
         boolean converted = plan.convertedVertex() != null;
         if (hasVertex) {
-            if (FamilyAdapterRegistry.isCloudFamily(name) && plan.cloudDrawsNothing()) {
+            if (packPlan != null && packPlan.cloudRunsEmpty(name)) {
                 return PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT;
             }
             boolean modern = plan.terrainMaterial().modern();

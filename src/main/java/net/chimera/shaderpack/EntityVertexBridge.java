@@ -860,8 +860,9 @@ public final class EntityVertexBridge {
 
     /**
      * The crumbling overlay's entity ids read 0. Iris's TERRAIN layout carries no entity ids, so a
-     * crumbling draw reads the captured ones when its batch draws, after every entity and block
-     * entity has reset them to 0 (MixinEntityRenderDispatcher, MixinBlockEntityRenderDispatcher).
+     * crumbling draw reads them as uniforms (CommonUniforms): entityId the captured entity, 0 by the
+     * time the batch draws (MixinEntityRenderDispatcher), but blockEntityId and currentRenderedItemId
+     * the constant -1, which this constant does not give (KNOW-832).
      */
     public static String withoutEntityIds(String source) {
         return source.replaceFirst("layout\\(location = \\d+\\) in uvec4 EntityIds;",
