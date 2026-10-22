@@ -209,8 +209,6 @@
     "shadow_water"
   ],
   "Shrimple_v0.12.zip": [
-    "composite13",
-    "composite17",
     "dh_generic",
     "dh_shadow",
     "dh_terrain",
@@ -287,8 +285,6 @@
     "shadow_water"
   ],
   "rethinking-voxels_r0.1-beta9.zip": [
-    "composite7",
-    "deferred1",
     "dh_terrain",
     "dh_water",
     "gbuffers_clouds",

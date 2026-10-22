@@ -819,13 +819,15 @@ public final class PackAdvancedResourcePlan {
      */
     static boolean containsAdvancedDeclarations(String source) {
         if (containsStorageBlock(source)) return true;
+        // A reference in a function main never reaches is none: GL compiles it away.
+        String reachable = source.contains("image") ? LegacyGlslConverter.pruneUnreachableFunctions(source) : source;
         List<GlslLexer.Token> tokens = GlslLexer.lex(source);
         for (int index = 0; index < tokens.size(); index++) {
             GlslLexer.Token token = tokens.get(index);
             if (token.kind() != GlslLexer.Kind.IDENTIFIER || !IMAGE_TYPE.matcher(token.text()).matches()) continue;
             int name = GlslLexer.nextSignificant(tokens, index);
             if (name < 0 || tokens.get(name).kind() != GlslLexer.Kind.IDENTIFIER
-                    || GlslTokenRewriter.identifierCount(source, tokens.get(name).text()) > 1) {
+                    || GlslTokenRewriter.identifierCount(reachable, tokens.get(name).text()) > 1) {
                 return true;
             }
         }

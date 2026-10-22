@@ -289,7 +289,7 @@ public final class EntityVertexBridge {
             VertexSamplerPlan samplerPlan
     ) {
         String liveInputs = stripComments(EntityDeclarations.removeEntityAttributes(
-                LegacyGlslConverter.pruneUnreachableVertexFunctions(
+                LegacyGlslConverter.pruneUnreachableFunctions(
                         LegacyGlslConverter.prepareSource(source, sourceFile, true))));
         if (LegacyGlslConverter.containsIdentifier(liveInputs, "mc_midTexCoord")
                 || LegacyGlslConverter.containsIdentifier(liveInputs, "at_tangent")) {
@@ -334,7 +334,7 @@ public final class EntityVertexBridge {
     ) {
         String src = LegacyGlslConverter.prepareSource(source, sourceFile, true);
         src = LegacyGlslConverter.expandModernVaryingLists(src);
-        src = LegacyGlslConverter.pruneUnreachableVertexFunctions(src);
+        src = LegacyGlslConverter.pruneUnreachableFunctions(src);
         String stripped = stripComments(src);
         GlslVersion.requireSupported(stripped, "entity vertex", true);
         if (GlslDeclarations.main(GlslTree.parse(stripped)) == null

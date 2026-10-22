@@ -184,13 +184,13 @@ final class AdvancedImagePlanTest {
     }
 
     /**
-     * A storage image a stage reads only in a helper main never calls still needs a descriptor:
-     * Vulkan GLSL compiles the helper. One nothing reads is inactive, as GL leaves it, and its
-     * declaration is dropped (Pegasus's gbuffers declare cimage3_colored_light, which only
-     * voxelizing writes).
+     * A storage image nothing reads is inactive, as GL leaves it, and its declaration is dropped
+     * (Pegasus's gbuffers declare cimage3_colored_light, which only voxelizing writes). So is one
+     * only a helper main never calls reads: GL compiles the helper away, as the converters do,
+     * and Iris binds no inactive image (Rethinking Voxels' composite7).
      */
     @Test
-    void anImageOnlyADeadHelperReadsIsBoundAndAnUnreadOneIsDropped(@TempDir Path root) throws Exception {
+    void anImageOnlyADeadHelperReadsIsDroppedAsAnUnreadOne(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), """
                 image.light = lightSampler RGBA RGBA8 BYTE false false 16 16 16
@@ -206,15 +206,18 @@ final class AdvancedImagePlanTest {
                 vec4 neverCalled() { return imageLoad(light, ivec3(0)); }
                 void main() { gl_FragData[0] = texture(lightSampler, vec3(uv, 0.5)); }
                 """);
-        PackPlan plan = PackProbe.analyze(root).plan();
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackPlan plan = analysis.plan();
         PackAdvancedResourcePlan advanced = plan.advancedResources();
-        assertTrue(advanced.imagesServable("composite") && plan.shouldAttempt("composite"),
-                advanced.deviations().toString());
+        assertTrue(advanced.imagesServable("composite") && plan.shouldAttempt("composite")
+                && !advanced.declaresUnplannedResource("composite"), advanced.deviations().toString());
         PackProgramPlan composite = plan.program("composite");
         String fragment = PackDescriptorContracts.bindStorageImages(composite.convertedFragment(), "composite",
                 advanced, advanced.bindingLayout("composite"), VK_SHADER_STAGE_FRAGMENT_BIT);
-        assertTrue(fragment.matches("(?s).*layout\\(rgba8, binding = \\d+\\) uniform image3D light;.*")
-                && !fragment.contains("image3D spare"), fragment);
+        assertTrue(!fragment.contains("image3D light") && !fragment.contains("image3D spare")
+                && !fragment.contains("neverCalled"), fragment);
+        assertTrue(!analysis.report().program("composite").deviations().contains("ADVANCED_RESOURCE_UNSUPPORTED"),
+                analysis.report().program("composite").deviations().toString());
     }
 
     /**

@@ -514,12 +514,12 @@ public final class LegacyGlslConverter {
     }
 
     /**
-     * Drops functions the vertex main never reaches so dead library code
-     * cannot ghost-reference samplers or uniforms into the feature checks.
-     * Best-effort: an unanalyzable source keeps its dead code and fails
-     * loudly downstream instead of being rewritten on a guess.
+     * Drops functions a stage's main never reaches, as GL compiles them away, so dead
+     * library code cannot ghost-reference samplers, images or uniforms into the feature
+     * checks. Best-effort: an unanalyzable source keeps its dead code and fails loudly
+     * downstream instead of being rewritten on a guess.
      */
-    static String pruneUnreachableVertexFunctions(String src) {
+    static String pruneUnreachableFunctions(String src) {
         try {
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(src);
             if (!usage.successful()) {

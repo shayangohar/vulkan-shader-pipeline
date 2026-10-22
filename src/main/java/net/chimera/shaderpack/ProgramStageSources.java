@@ -65,7 +65,9 @@ final class ProgramStageSources {
     /**
      * Each stage without the image declarations nothing in it reads. GL leaves such a uniform
      * inactive, and Vulkan GLSL would need a binding for it: Reverie's programs all declare its
-     * screen-sized images (image0-2, water_depth_min, atm_image) and most read none of them. Line
+     * screen-sized images (image0-2, water_depth_min, atm_image) and most read none of them. A read
+     * in a function main never reaches is none: GL compiles it away, and so do the converters
+     * (Rethinking Voxels' composite7 comments out the call that reaches its voxel images). Line
      * breaks stay, so line numbers do not move.
      */
     private static Map<String, PreparedShaderSource> withoutInactiveImages(Map<String, PreparedShaderSource> stages) {
@@ -74,10 +76,11 @@ final class ProgramStageSources {
             PreparedShaderSource prepared = entry.getValue();
             String source = prepared.source();
             if (source == null || !source.contains("image")) continue;
+            String reachable = LegacyGlslConverter.pruneUnreachableFunctions(source);
             Matcher declaration = PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(source);
             StringBuilder active = new StringBuilder();
             while (declaration.find()) {
-                String kept = GlslTokenRewriter.identifierCount(source, declaration.group(2)) > 1
+                String kept = GlslTokenRewriter.identifierCount(reachable, declaration.group(2)) > 1
                         ? declaration.group() : declaration.group().replaceAll("[^\\r\\n]", "");
                 declaration.appendReplacement(active, Matcher.quoteReplacement(kept));
             }
