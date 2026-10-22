@@ -47,8 +47,6 @@ record PackAlphaTestPlan(
 
     private static final Pattern VERSION_LINE =
             Pattern.compile("(?m)^[ \\t]*#[ \\t]*version\\b[^\\r\\n]*\\R?");
-    private static final Pattern MODERN_OUTPUT_ZERO = Pattern.compile(
-            "layout\\s*\\(\\s*location\\s*=\\s*0\\s*\\)\\s*out\\s+vec4\\s+(\\w+)\\s*;");
 
     private static final List<String> FUNCTIONS = List.of(
             "NEVER", "LESS", "EQUAL", "LEQUAL", "GREATER", "NOTEQUAL", "GEQUAL", "ALWAYS");
@@ -110,7 +108,8 @@ record PackAlphaTestPlan(
      * Appends the entity-family alpha test to the authored fragment, as Iris
      * does, before its interface is planned. The dynamic test declares the
      * per-draw reference uniform, so the ordinary descriptor contract carries
-     * it. A fragment with no location-0 colour output is left unchanged.
+     * it. Iris tests only gl_FragData[0], indexed by a literal, or gl_FragColor, which it
+     * renames to that (CommonTransformer); a fragment writing neither is left unchanged.
      * With {@code vertexAlpha} a negative reference tests against the vertex
      * colour's alpha instead (Iris AlphaTests.VERTEX_ALPHA), which the entity
      * vertex bridge forwards as {@link #VERTEX_ALPHA_VARYING}.
@@ -118,9 +117,8 @@ record PackAlphaTestPlan(
     String injectDrawTest(String fragment, boolean vertexAlpha) {
         if (fragment == null || !active()
                 || (!perDrawReference() && mode != Mode.FIXED)) return fragment;
-        String output = GlslTokenRewriter.containsIdentifier(fragment, "gl_FragData") ? "gl_FragData[0]"
-                : GlslTokenRewriter.containsIdentifier(fragment, "gl_FragColor") ? "gl_FragColor"
-                : modernOutputZero(fragment);
+        String output = indexesFragDataZero(fragment) ? "gl_FragData[0]"
+                : GlslTokenRewriter.containsIdentifier(fragment, "gl_FragColor") ? "gl_FragColor" : null;
         if (output == null) return fragment;
         String reference = UniformRegistry.ENTITY_ALPHA_REFERENCE;
         String referenceTest = reference + " > 0.0 && !(" + output + ".a > " + reference + ")";
@@ -167,9 +165,16 @@ record PackAlphaTestPlan(
                 : declaration + source;
     }
 
-    private static String modernOutputZero(String fragment) {
-        Matcher matcher = MODERN_OUTPUT_ZERO.matcher(fragment);
-        return matcher.find() ? matcher.group(1) : null;
+    /** Whether the fragment names gl_FragData[0] with a literal index, outside comments. */
+    private static boolean indexesFragDataZero(String fragment) {
+        List<GlslLexer.Token> tokens = GlslLexer.lex(fragment).stream().filter(GlslLexer.Token::significant).toList();
+        for (int i = 0; i + 3 < tokens.size(); i++) {
+            if (tokens.get(i).identifier("gl_FragData") && tokens.get(i + 1).symbol("[")
+                    && tokens.get(i + 2).text().equals("0") && tokens.get(i + 3).symbol("]")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static PackAlphaTestPlan parse(String programName, String authored) {

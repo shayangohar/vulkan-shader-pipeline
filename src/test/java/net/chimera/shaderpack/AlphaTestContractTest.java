@@ -64,18 +64,22 @@ final class AlphaTestContractTest {
                         + UniformRegistry.ENTITY_ALPHA_REFERENCE + "))"),
                 "entity test does not follow Iris's GREATER reference");
 
-        String modern = "#version 460\nlayout(location = 0) out vec4 albedo;\n"
-                + "void main() { albedo = vec4(1.0, 0.0, 0.0, 0.05); }\n";
         PackAlphaTestPlan fixed = PackAlphaTestPlan.forProgram("gbuffers_entities",
                 settings(Map.of("alphaTest.gbuffers_entities", "GREATER 0.5")));
-        String fixedSource = fixed.injectDrawTest(modern);
-        assertTrue(fixed.mode() == PackAlphaTestPlan.Mode.FIXED && fixedSource.contains("albedo.a > 0.5")
+        String fragColor = "#version 120\nvoid main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 0.05); }\n";
+        String fixedSource = fixed.injectDrawTest(fragColor);
+        assertTrue(fixed.mode() == PackAlphaTestPlan.Mode.FIXED && fixedSource.contains("gl_FragColor.a > 0.5")
                         && !fixedSource.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
                 "pack alphaTest directive does not fix the entity test");
-        compileFragment(fixedSource);
-        compileFragment(dynamic.injectDrawTest(modern).replace(
-                "uniform float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + ";",
-                "layout(binding = 0) uniform Ref { float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + "; };"));
+
+        // Iris tests only gl_FragData[0] or gl_FragColor (CommonTransformer): a modern output, or
+        // a fragment indexing other buffers only, keeps its authored main.
+        String modern = "#version 460\nlayout(location = 0) out vec4 albedo;\n"
+                + "void main() { albedo = vec4(1.0, 0.0, 0.0, 0.05); }\n";
+        String otherBuffer = "#version 120\nvoid main() { gl_FragData[1] = vec4(1.0); }\n";
+        assertTrue(fixed.injectDrawTest(modern).equals(modern) && dynamic.injectDrawTest(modern).equals(modern)
+                        && dynamic.injectDrawTest(otherBuffer).equals(otherBuffer),
+                "a fragment Iris leaves untested was tested");
 
         // Iris ENTITIES_ALPHA (AlphaTests.VERTEX_ALPHA): a negative reference tests the vertex alpha,
         // which the entity vertex bridge forwards once the fragment reads it.
@@ -168,18 +172,38 @@ final class AlphaTestContractTest {
                         + (textBackground == null ? "no plan" : textBackground.convertedFragment()));
     }
 
-    private static void compileFragment(String source) {
-        long compiler = Shaderc.shaderc_compiler_initialize();
-        long result = Shaderc.shaderc_compile_into_spv(compiler, source,
-                Shaderc.shaderc_glsl_fragment_shader, "entity_alpha.fsh", "main", 0L);
-        try {
-            assertTrue(result != 0 && Shaderc.shaderc_result_get_compilation_status(result)
-                            == Shaderc.shaderc_compilation_status_success,
-                    result == 0 ? "no shader result" : Shaderc.shaderc_result_get_error_message(result));
-        } finally {
-            if (result != 0) Shaderc.shaderc_result_release(result);
-            Shaderc.shaderc_compiler_release(compiler);
-        }
+    /**
+     * Iris appends the alpha test only in compatibility mode (CommonTransformer, core false): a
+     * core-profile fragment, here 330 with no profile, keeps its authored main and tests itself
+     * against alphaTestRef, which still reads the draw's reference.
+     */
+    @Test
+    void coreProfileFragmentsTestThemselves(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 330
+                in vec3 vaPosition;
+                in vec4 vaColor;
+                uniform mat4 modelViewMatrix;
+                uniform mat4 projectionMatrix;
+                out vec4 color;
+                void main() {
+                    color = vaColor;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(vaPosition, 1.0);
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 330
+                uniform float alphaTestRef;
+                in vec4 color;
+                layout(location = 0) out vec4 albedo;
+                void main() { if (color.a < alphaTestRef) discard; albedo = color; }
+                """);
+        String fragment = PackProbe.analyze(root).plan().program("gbuffers_entities").convertedFragment();
+        String reference = UniformRegistry.ENTITY_ALPHA_REFERENCE;
+        assertTrue(fragment != null && !fragment.contains(reference + " > 0.0 &&")
+                        && fragment.contains(reference + " < 0.0 ? 3.4028235e38"),
+                "a core-profile fragment was tested, or lost its alphaTestRef: " + fragment);
     }
 
     @Test

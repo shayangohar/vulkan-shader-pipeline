@@ -228,8 +228,7 @@ public final class PackPlanBuilder {
         private void prepareIrisCoreProfile() {
             String overlay = stage == UniformRegistry.Stage.POST || isTerrainMaterialFamily(name)
                     ? IrisCoreProfile.NO_OVERLAY : "UV1";
-            IrisCoreProfile.Patch patch = IrisCoreProfile.patchFor(name, stage,
-                    lineLayout() && directiveProgram.equals("gbuffers_line"));
+            IrisCoreProfile.Patch patch = irisPatch();
             if (vertex != null && patch != IrisCoreProfile.Patch.LINES) {
                 vertex = IrisCoreProfile.prepareIrisCoreProfile(vertex, vertexFile(), true, overlay,
                         IrisCoreProfile.coreMode(program.executableVertexSource()), patch);
@@ -320,16 +319,17 @@ public final class PackPlanBuilder {
             if (vertex == null) {
                 return;
             }
+            boolean irisTests = irisAppendsAlphaTest();
             if (FamilyAdapterRegistry.isEntityLike(name) || FamilyAdapterRegistry.isParticleLike(name)
                     || FamilyAdapterRegistry.isWeatherFamily(name) || FamilyAdapterRegistry.isGlintFamily(name)) {
                 // Iris draws ENTITIES_ALPHA (the dying dragon) with gbuffers_entities alone.
-                fragment = alphaTestPlan.injectDrawTest(fragment, name.equals("gbuffers_entities"));
+                if (irisTests) fragment = alphaTestPlan.injectDrawTest(fragment, name.equals("gbuffers_entities"));
                 if (FamilyAdapterRegistry.isEntityLike(name) && !name.equals("gbuffers_damagedblock")) {
                     fragment = EntityOverlayColor.inject(fragment);
                     vertex = EntityOverlayColor.withoutUnreadVertexDeclaration(vertex);
                 }
-            } else if (!FamilyAdapterRegistry.isCloudFamily(name)
-                    || !AuthoredOutput.producesNothing(vertex, fragment)) {
+            } else if (irisTests && (!FamilyAdapterRegistry.isCloudFamily(name)
+                    || !AuthoredOutput.producesNothing(vertex, fragment))) {
                 // Any other program tests as its plan says (Iris ShaderCreator: the pack's
                 // alphaTest.<program>, else its key's), and an untested one is left alone. Terrain
                 // and shadow terrain test by layer and entity casters at 0.1, set per layer by the
@@ -339,6 +339,22 @@ public final class PackPlanBuilder {
                 // how the plan proves it (AuthoredOutput).
                 fragment = alphaTestPlan.injectDrawTest(fragment);
             }
+        }
+
+        /**
+         * Whether Iris appends the alpha test to this program's fragment: only in compatibility
+         * mode (CommonTransformer.transform's {@code !core}; the Sodium and composite core
+         * transformers never call it). A core-profile fragment, and every stage of a pack's own
+         * gbuffers_line, tests itself against alphaTestRef.
+         */
+        private boolean irisAppendsAlphaTest() {
+            return fragment != null && !IrisCoreProfile.coreMode(program.executableFragmentSource())
+                    && irisPatch() != IrisCoreProfile.Patch.LINES;
+        }
+
+        /** The Iris patch that compiles this program (IrisCoreProfile.patchFor). */
+        private IrisCoreProfile.Patch irisPatch() {
+            return IrisCoreProfile.patchFor(name, stage, lineLayout() && directiveProgram.equals("gbuffers_line"));
         }
 
         /**

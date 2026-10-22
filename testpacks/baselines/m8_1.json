@@ -43,7 +43,7 @@
       ]
     },
     "unsupported_terrain": {
-      "reportSha256": "89cf9aef9d67eee8567a27ebfbf33cd4fc2fd6f8aabca82c84dcb2202156fa47",
+      "reportSha256": "0f1ace04a676d5f1c82ecfa8abe1700e0034831ac39a7ba43cc8b056c3c6ec70",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "d4b257c6f083b143879e04c04cd6eadbc1443615eff684a2ca527dfefbff60bb",
         "gbuffers_terrain.vsh": "244c2f59bb81a169c09d178e2b50107035cc206db26e38ef087d0095629240e1"
@@ -61,7 +61,6 @@
         "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
         "BLOCK_VERTEX_CONVERSION_FAILED:entity vertex requires a desktop GLSL version from 110 to 460, not 300 es",
         "FRAGMENT_OUTPUT_DISCARDED:1",
-        "LIVE_UNIFORM_BRIDGE",
         "MODERN_GLSL_UNSUPPORTED",
         "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain",
         "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain",
