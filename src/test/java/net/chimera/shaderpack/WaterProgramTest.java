@@ -129,11 +129,13 @@ final class WaterProgramTest {
         assertTrue(!current.executable()
                         && current.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:colortex0"),
                 "water accepted colortex0, which aliases a host selector: " + current.deviations());
+        // depthtex0 is a capture taken before the layer draws (KNOW-760), never the depth it writes.
         UniformRegistry.ProgramInterface depth = UniformRegistry.plan(
                 "uniform sampler2D depthtex0; void main() { gl_FragColor = texture2D(depthtex0, vec2(0.0)); }",
                 UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(!depth.executable() && depth.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
-                "water accepted depthtex0, the depth it is writing: " + depth.deviations());
+        assertTrue(depth.executable() && depth.samplers().stream().anyMatch(sampler ->
+                        sampler.name().equals("depthtex0") && sampler.slot() == 6),
+                "water refused depthtex0: " + depth.deviations());
     }
 
     /**

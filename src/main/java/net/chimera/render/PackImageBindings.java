@@ -145,6 +145,8 @@ final class PackImageBindings {
      * True when every pack target and depth snapshot the water program samples
      * holds this frame's data. A failed early window or depth capture leaves
      * one invalid, and the manifest resolver would then reject the draw.
+     * depthtex0 counts while the world depth can still be captured: the
+     * program's prepare captures it before the layer draws.
      */
     boolean packTranslucentInputsReady(PackPipelines.PackTerrain water) {
         ChimeraMainPass.ProgramImages program = this.programImages.get(water.pipeline());
@@ -154,7 +156,8 @@ final class PackImageBindings {
                 case COLOR_TARGET -> pass.packPostTargets.isConfigured()
                         && pass.packPostTargets.currentTargetAvailable(
                                 PackResourcePlan.targetIndex(entry.resourceKey()));
-                case DEPTH_TARGET -> pass.packDepthTargets.image(entry.resourceKey()) != null;
+                case DEPTH_TARGET -> pass.packDepthTargets.image(entry.resourceKey()) != null
+                        || entry.resourceKey().equals("depthtex0") && pass.depth.drawnDepthCapturable();
                 default -> true;
             };
             if (!ready) return false;

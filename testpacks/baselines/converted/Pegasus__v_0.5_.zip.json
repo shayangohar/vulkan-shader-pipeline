@@ -74,6 +74,8 @@
   "gbuffers_terrain.vsh": "b22405ad4e8af021 69c29c2993001969",
   "gbuffers_textured.fsh": "2ed87fea3e59231e f8d292828239703e",
   "gbuffers_textured.vsh": "a037ecf4641f364d 963fa7ec5f8ec36f",
+  "gbuffers_water.fsh": "e567d8e30ba84527 aa50fd3fafced404",
+  "gbuffers_water.vsh": "b22405ad4e8af021 69c29c2993001969",
   "gbuffers_weather.fsh": "dfaf93a66b223c49 c42929d7654168f9",
   "gbuffers_weather.vsh": "d59861fa61919a9d e848181f4d23cc69",
   "prepare.csh": "5adc9791ee0dd6e3 551fc17523300bb3",

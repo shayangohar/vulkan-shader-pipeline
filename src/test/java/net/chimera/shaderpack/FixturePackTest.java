@@ -574,14 +574,20 @@ final class FixturePackTest {
 
     @Test
     void translucentInterfaceEdgeCases() {
-        // A sampler nothing reads is inactive in GL, so each probe reads the one it tests.
+        // A sampler nothing reads is inactive in GL, so each probe reads the one it tests. Iris gives
+        // water all three depth textures (addWorldDepthSamplers); depthtex0 is a capture (KNOW-760).
         UniformRegistry.ProgramInterface depth = UniformRegistry.plan(
-                "uniform sampler2D texture; uniform sampler2D depthtex0;"
-                        + " void main() { gl_FragColor = texture2D(depthtex0, vec2(0.5)); }",
+                "uniform sampler2D texture; uniform sampler2D depthtex0; uniform sampler2D depthtex2;"
+                        + " void main() { gl_FragColor = texture2D(depthtex0, vec2(0.5))"
+                        + " + texture2D(depthtex2, vec2(0.5)); }",
                 UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(!depth.executable(), "depth input was accepted");
-        assertTrue(depth.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
-                "depth input deviation is missing");
+        assertTrue(depth.executable(), "depth inputs were refused: " + depth.deviations());
+        // Terrain, sky and clouds read them too (Mellow's terrain reads depthtex1).
+        UniformRegistry.ProgramInterface terrain = UniformRegistry.plan(
+                "uniform sampler2D depthtex1; void main() { gl_FragColor = texture2D(depthtex1, vec2(0.5)); }",
+                UniformRegistry.Stage.GEOMETRY);
+        assertTrue(terrain.executable() && terrain.samplers().stream().anyMatch(sampler ->
+                sampler.name().equals("depthtex1") && sampler.slot() == 12), terrain.deviations().toString());
 
         UniformRegistry.ProgramInterface unknownSampler = UniformRegistry.plan(
                 "uniform sampler2D noise; void main() { gl_FragColor = texture2D(noise, vec2(0.5)); }",
@@ -604,8 +610,8 @@ final class FixturePackTest {
         assertTrue(water != null, "unsupported water program was not discovered");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
                 water.support(), "unsupported water support");
-        assertTrue(water.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
-                "unsupported water depth deviation is missing");
+        assertTrue(water.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:volume"),
+                "unsupported water sampler deviation is missing: " + water.deviations());
         assertTrue(!report.shouldAttempt("gbuffers_water"),
                 "unsupported water must not execute");
 

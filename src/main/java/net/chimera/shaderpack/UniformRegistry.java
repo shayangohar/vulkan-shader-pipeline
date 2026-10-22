@@ -358,7 +358,10 @@ public final class UniformRegistry {
             Map.entry("noisetex", 7)
     );
 
-    /** Geometry stage: the host's registry slots the terrain draw path fills. */
+    /**
+     * Terrain, sky and clouds: the host slots and Iris's addWorldDepthSamplers depths on post's selectors
+     * (depthtex0 the world drawn before the group, KNOW-760; depthtex1 and depthtex2 their last captures).
+     */
     public static final Map<String, Integer> GEOMETRY_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
             Map.entry("tex", 0),
@@ -368,7 +371,10 @@ public final class UniformRegistry {
             Map.entry("shadowtex0", 5),
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", 3),
-            Map.entry("noisetex", 7)
+            Map.entry("noisetex", 7),
+            Map.entry("depthtex0", 6),
+            Map.entry("depthtex1", 12),
+            Map.entry("depthtex2", 13)
     );
 
     /** Shadow writes must not sample the resource they are currently filling. */
@@ -382,10 +388,9 @@ public final class UniformRegistry {
     );
 
     /**
-     * Translucent terrain is terrain on the host translucent lane: the
-     * geometry slots, plus the opaque depth Iris gives gbuffers_water as
-     * depthtex1. The pack colour targets it reads come from
-     * {@link #gbufferColorInputSlot}.
+     * Translucent terrain: the geometry slots with this frame's depths (depthtex0 and depthtex1 the
+     * opaque depth, depthtex2 the pre-hand depth Iris copies just before translucents). Its colour
+     * targets come from {@link #gbufferColorInputSlot}.
      */
     public static final Map<String, Integer> TRANSLUCENT_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
@@ -397,7 +402,9 @@ public final class UniformRegistry {
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", 3),
             Map.entry("noisetex", 7),
-            Map.entry("depthtex1", 12)
+            Map.entry("depthtex0", 6),
+            Map.entry("depthtex1", 12),
+            Map.entry("depthtex2", 13)
     );
 
     /**
