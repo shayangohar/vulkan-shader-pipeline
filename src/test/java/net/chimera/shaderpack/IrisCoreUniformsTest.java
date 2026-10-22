@@ -101,6 +101,23 @@ final class IrisCoreUniformsTest {
                 + "unsetPlain;"), initialized.source());
     }
 
+    /**
+     * In a compute, a uniform Iris sets drops its initializer, which the value Iris uploads replaces
+     * and Vulkan GLSL cannot take; one Iris never sets reads its initializer as a constant.
+     */
+    @Test
+    void aComputeDropsTheInitializerOfAUniformIrisSets() {
+        String compute = ServedUniforms.computeSource("""
+                #version 430
+                uniform ivec3 cameraPositionInt = ivec3(-98257195);
+                uniform float viewWidth[1] = float[1](1.0), unsetScale = 2.0;
+                void main() {}
+                """, name -> UniformRegistry.irisSets(name, Map.of()));
+        assertTrue(compute.contains("uniform ivec3 cameraPositionInt;")
+                && compute.contains("uniform float viewWidth[1];")
+                && compute.contains("const float unsetScale = 2.0;"), compute);
+    }
+
     /** A compatibility pass, and a core one's fragment, read the initializer; a core vertex reads the identity. */
     @Test
     void aCompositeReadsTheIdentityOnlyWhereCompositeCoreTransformerServesIt(@TempDir Path root) throws IOException {

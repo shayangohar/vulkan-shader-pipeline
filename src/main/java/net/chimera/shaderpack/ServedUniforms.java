@@ -76,11 +76,36 @@ public final class ServedUniforms {
 
     /**
      * A compute stage's source as Iris compiles it: one declaration per name, each uniform Iris
-     * never sets reading its initializer ({@link #readInitializers}), and FogMode.OFF's fog values.
-     * Every compute path (pass computes, shadowcomp and its analysis) prepares its source here.
+     * never sets reading its initializer ({@link #readInitializers}), each one it sets without one
+     * ({@link #withoutSetInitializers}), and FogMode.OFF's fog values. Every compute path (pass
+     * computes, shadowcomp and its analysis) prepares its source here.
      */
     public static String computeSource(String source, Predicate<String> irisSets) {
-        return serveFogOff(readInitializers(GlslTokenRewriter.splitUniformDeclarators(source), irisSets).source());
+        String initialized = readInitializers(GlslTokenRewriter.splitUniformDeclarators(source), irisSets).source();
+        return serveFogOff(withoutSetInitializers(initialized, irisSets));
+    }
+
+    /**
+     * Drops the initializer of each file-scope uniform Iris sets: the value Iris uploads replaces
+     * it before any read, and Vulkan GLSL takes no initializer on a uniform. Rethinking Voxels
+     * declares {@code uniform ivec3 cameraPositionInt = ivec3(-98257195)}.
+     */
+    static String withoutSetInitializers(String source, Predicate<String> irisSets) {
+        if (source == null || !source.contains("=")) return source;
+        GlslTree tree = GlslDeclarations.parseOrNull(source);
+        if (tree == null) return source;
+        List<GlslTree.Edit> edits = new ArrayList<>();
+        for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
+            GlslTree.Declarator declarator = variable.declarator();
+            if (!variable.qualified("uniform") || declarator.initializer() == null
+                    || !irisSets.test(variable.name())) {
+                continue;
+            }
+            int end = declarator.arrays().isEmpty() ? declarator.name() + 1
+                    : declarator.arrays().get(declarator.arrays().size() - 1).end();
+            edits.add(new GlslTree.Edit(new GlslTree.Range(end, declarator.initializer().end()), ""));
+        }
+        return edits.isEmpty() ? source : tree.print(edits);
     }
 
     /** A source whose initialized unset uniforms became constants, and their names. */
