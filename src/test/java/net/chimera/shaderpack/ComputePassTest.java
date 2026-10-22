@@ -99,9 +99,11 @@ final class ComputePassTest {
                 """);
         Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
                 + "void main() {\n gl_FragColor = texture2D(colortex0, vec2(0.5));\n}\n");
-        PackAdvancedResourcePlan.ComputeSpec direct = PackProbe.analyze(root).plan().advancedResources()
-                .computeStages().get("shadowcomp");
+        PackPlan directPlan = PackProbe.analyze(root).plan();
+        PackAdvancedResourcePlan.ComputeSpec direct = directPlan.advancedResources().computeStages().get("shadowcomp");
         assertTrue(direct != null && direct.supported(), direct == null ? "missing" : direct.deviations().toString());
+        assertTrue(PassComputePlan.build(directPlan, shaders).compute("shadowcomp") == null,
+                "PackShadowCompute runs a shadowcomp that writes a pack image");
         Files.writeString(shaders.resolve("shaders.properties"), properties + "indirect.shadowcomp = 0 0\n");
         PackAdvancedResourcePlan.ComputeSpec indirect = PackProbe.analyze(root).plan().advancedResources()
                 .computeStages().get("shadowcomp");
@@ -788,9 +790,10 @@ final class ComputePassTest {
 
     /**
      * Iris runs a shadowcomp pass's computes after the shadow pass (ShadowCompositeRenderer):
-     * shadowcomp.csh, which PackShadowCompute runs, then shadowcomp_a..z, then shadowcomp1 and its
-     * own. They bind noise, custom textures and images and the shadow maps, and no colour target,
-     * colorimg or depth texture (createComputes).
+     * shadowcomp.csh, then shadowcomp_a..z, then shadowcomp1 and its own. They bind noise, custom
+     * textures and images and the shadow maps, and no colour target, colorimg or depth texture
+     * (createComputes). This shadowcomp.csh writes no pack image, so PackShadowCompute does not
+     * run it and this plan does; one PackShadowCompute runs is its own (indirectShadowcompIsRefused).
      */
     @Test
     void shadowcompComputesRunAfterTheShadowPass(@TempDir Path root) throws IOException {
@@ -818,8 +821,11 @@ final class ComputePassTest {
         Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.0 = 16\n");
         PackProbe.Analysis analysis = PackProbe.analyze(root);
         PassComputePlan computes = PassComputePlan.build(analysis.plan(), shaders);
-        assertEquals(List.of("shadowcomp_a", "shadowcomp1", "shadowcomp1_a"),
+        assertEquals(List.of("shadowcomp", "shadowcomp_a", "shadowcomp1", "shadowcomp1_a"),
                 computes.computes().stream().map(PassComputePlan.PassCompute::name).toList());
+        assertTrue(computes.compute("shadowcomp").supported()
+                && analysis.report().program("shadowcomp").deviations().contains("PASS_COMPUTE_BRIDGE:shadowcomp"),
+                analysis.report().program("shadowcomp").deviations().toString());
         assertTrue(computes.compute("shadowcomp_a").supported() && PassComputePlan.isShadowcomp("shadowcomp1"),
                 computes.compute("shadowcomp_a").deviations().toString());
         PassComputePlan.PassCompute unbound = computes.compute("shadowcomp1_a");

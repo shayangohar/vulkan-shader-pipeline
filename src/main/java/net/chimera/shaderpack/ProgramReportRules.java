@@ -524,11 +524,12 @@ final class ProgramReportRules {
     /** The report of a program that is only a compute: a native compute stage or a pass compute; else null. */
     private static ConformanceReport.ProgramReport computeOnlyProgram(PackProbe.Inventory inventory, PackPlan packPlan,
                                                                       PassComputePlan passComputes) {
+        PassComputePlan.PassCompute passCompute = passComputes == null ? null : passComputes.compute(inventory.name);
+        // shadowcomp.csh is the pass compute plan's when the native path does not run it.
         PackAdvancedResourcePlan.ComputeSpec computeSpec = nativeComputeSpec(inventory, packPlan);
-        if (computeSpec != null) {
+        if (computeSpec != null && passCompute == null) {
             return computeProgram(inventory, computeSpec, packPlan);
         }
-        PassComputePlan.PassCompute passCompute = passComputes == null ? null : passComputes.compute(inventory.name);
         // <pass>_x.csh is its own row; <pass>.csh shares the pass's, which is the compute's when it runs alone.
         if (passCompute != null && (!passCompute.name().equals(passCompute.pass())
                 || PassComputePlan.runsAlone(packPlan, passCompute.pass()))) {
