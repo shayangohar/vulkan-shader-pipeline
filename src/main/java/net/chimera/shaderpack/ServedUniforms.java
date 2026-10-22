@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,6 +39,22 @@ public final class ServedUniforms {
             }
         }
         return tree.print(edits);
+    }
+
+    /**
+     * {@code source} with each of {@code names} a uniform Iris never sets: it reads its
+     * initializer, or zero, as GL leaves it. Iris pushes no custom uniform to a setup compute
+     * (IrisRenderingPipeline runs them without CustomUniforms.push). Each name served is added to
+     * {@code served}.
+     */
+    static String serveUnset(String source, Collection<String> names, List<String> served) {
+        String result = source;
+        for (String name : names) {
+            String next = serve(result, name, "", "");
+            if (!next.equals(result)) served.add(name);
+            result = next;
+        }
+        return result;
     }
 
     /** The value a declaration reads: Iris's in its type, or a disabled uniform's initializer or zero. */

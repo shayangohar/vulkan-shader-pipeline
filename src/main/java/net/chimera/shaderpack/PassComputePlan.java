@@ -339,6 +339,7 @@ public final class PassComputePlan {
                 }
                 if (work.failed) return null;
                 String aliased = FullscreenDefaultSampler.withCompositeAliases(prepared.source(), work.deviations);
+                if (isSetup(work.pass)) aliased = withoutPushedCustomUniforms(aliased, work);
                 ServedUniforms.Compute served = ServedUniforms.computeSource(aliased,
                         name -> UniformRegistry.irisSets(name, plan.runtimeSettings().customDescriptors()));
                 served.deviations().forEach(value -> work.fail("PASS_COMPUTE_NORMALIZATION:" + value));
@@ -351,6 +352,18 @@ public final class PassComputePlan {
                 work.fail("PASS_COMPUTE_SOURCE_UNREADABLE");
                 return null;
             }
+        }
+
+        /**
+         * A setup compute's source with the pack's custom uniforms read as GL leaves them unset:
+         * Iris pushes them to no setup compute (ServedUniforms.serveUnset).
+         */
+        private String withoutPushedCustomUniforms(String source, Work work) {
+            List<String> served = new ArrayList<>();
+            String result = ServedUniforms.serveUnset(source,
+                    plan.runtimeSettings().customDescriptors().keySet(), served);
+            served.forEach(name -> work.deviations.add("PASS_COMPUTE_CUSTOM_UNIFORM_UNSET:" + name));
+            return result;
         }
 
         /**

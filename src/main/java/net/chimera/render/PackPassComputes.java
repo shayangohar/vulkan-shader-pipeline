@@ -74,6 +74,9 @@ final class PackPassComputes implements AutoCloseable {
     /** The setup computes this round has run; a session's first round starts at load. */
     private final Set<String> setupDone = new HashSet<>();
     private boolean setupDue;
+    /** Frames the round's next setup compute has skipped, and how many it may before it runs no more. */
+    private int setupTries;
+    private static final int SETUP_TRIES = 8;
 
     private PackPassComputes(List<Loaded> loaded, PackResourceOwner resources, PackAdvancedImageOwner packImages,
                              PackStorageBufferOwner buffers) {
@@ -167,25 +170,28 @@ final class PackPassComputes implements AutoCloseable {
     /**
      * Runs the setup computes, in order, as Iris does once the pipeline is made and after each
      * resize: {@code dispatch(1, 1)}, so a relative work-group count is of a one-pixel screen
-     * (IrisRenderingPipeline). One that skips the frame, as before a depth snapshot exists, runs on
-     * a later frame; each runs once a round.
+     * (IrisRenderingPipeline). One that skips the frame, as before a depth snapshot exists, holds
+     * the rest of the round to a later frame, so they run in order; after SETUP_TRIES frames it
+     * runs no more. Each runs once a round.
      */
     void dispatchSetup(VkCommandBuffer commandBuffer, ImageSources sources) {
-        boolean all = true;
         for (Loaded compute : loaded) {
             String name = compute.plan().name();
             if (!PassComputePlan.isSetup(compute.plan().pass()) || setupDone.contains(name)) continue;
-            if (run(compute, commandBuffer, sources, 1, 1)) {
-                setupDone.add(name);
-            } else {
-                all = false;
+            if (!run(compute, commandBuffer, sources, 1, 1)) {
+                if (++setupTries < SETUP_TRIES) return;
+                failed.add(name);
+                LOGGER.warn("[chimera] pack setup compute {} skipped {} frames; it no longer runs", name, setupTries);
             }
+            setupDone.add(name);
+            setupTries = 0;
         }
-        setupDue = !all;
+        setupDue = false;
     }
 
     /** Starts a setup round: the targets were made again, after a resize. */
     void requestSetup() {
+        setupTries = 0;
         setupDone.clear();
         setupDue = loaded.stream().anyMatch(compute -> PassComputePlan.isSetup(compute.plan().pass()));
     }

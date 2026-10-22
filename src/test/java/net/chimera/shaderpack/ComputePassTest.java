@@ -703,13 +703,15 @@ final class ComputePassTest {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"), "uniform.float.myScale = 2.0\n");
         for (String name : List.of("setup", "setup2", "setup10", "setup2_a")) {
             Files.writeString(shaders.resolve(name + ".csh"), """
                     #version 430
                     layout(local_size_x = 1) in;
                     const ivec3 workGroups = ivec3(4, 1, 1);
                     layout(rgba16f) uniform image2D colorimg2;
-                    void main() { imageStore(colorimg2, ivec2(gl_GlobalInvocationID.xy), vec4(1.0)); }
+                    uniform float myScale;
+                    void main() { imageStore(colorimg2, ivec2(gl_GlobalInvocationID.xy), vec4(myScale)); }
                     """);
         }
         PackProbe.Analysis analysis = PackProbe.analyze(root);
@@ -719,6 +721,11 @@ final class ComputePassTest {
         assertTrue(computes.computes().stream().allMatch(compute -> compute.supported()
                 && compute.pass().equals(compute.name()) && PassComputePlan.isSetup(compute.pass())
                 && Arrays.equals(new int[] {4, 1, 1}, compute.groups(1, 1))), computes.computes().toString());
+        // Iris pushes no custom uniform to a setup compute, so myScale reads zero, as GL leaves it.
+        PassComputePlan.PassCompute setup = computes.compute("setup");
+        assertTrue(setup.deviations().contains("PASS_COMPUTE_CUSTOM_UNIFORM_UNSET:myScale")
+                && setup.values().stream().noneMatch(value -> value.name().equals("myScale")),
+                setup.deviations() + " " + setup.values());
         assertEquals(IrisSamplerOrder.SETUP, IrisSamplerOrder.of("setup2", true));
         assertTrue(!IrisSamplerOrder.SETUP.intercepted(IrisSamplerOrder.Source.DEPTH));
         ConformanceReport.ProgramReport report = analysis.report().program("setup10");
