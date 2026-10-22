@@ -111,7 +111,8 @@ public final class PackResourcePlan {
                 String sourceProgram = resolved == null || resolved.selectedProgram().isBlank()
                         ? programPlan.name() : resolved.selectedProgram();
                 PackResourceBinding binding = resolve(sourceProgram, sampler, waterShadow, declarations,
-                        shadersDir, settings == null ? Map.of() : settings.propertyValues(), deactivatedOverrides);
+                        shadersDir, settings == null ? Map.of() : settings.propertyValues(), deactivatedOverrides,
+                        false);
                 if (!sourceProgram.equals(programPlan.name())) {
                     binding = new PackResourceBinding(programPlan.name(), binding.sampler(), binding.resourceKey(),
                             binding.kind(), binding.source(), binding.slot(), binding.filter(), binding.wrap(),
@@ -164,7 +165,7 @@ public final class PackResourcePlan {
         for (UniformRegistry.SamplerBinding sampler : iface.samplers()) {
             if (!sampler.glslType().equals("sampler2D")) continue;
             PackResourceBinding binding = resolve(program, sampler, declaresWaterShadow(iface.samplers()),
-                    resources.resourceDeclarations(), null, resources.propertyValues(), Set.of());
+                    resources.resourceDeclarations(), null, resources.propertyValues(), Set.of(), false);
             boolean albedo = sampler.slot() == 0
                     && binding.kind() == PackResourceKind.TARGET
                     && binding.status() == PackResourceStatus.HOST_ALIAS
@@ -181,28 +182,35 @@ public final class PackResourcePlan {
             Map<String, PackResourceDeclaration> declarations,
             Path shadersDir,
             Map<String, String> propertyValues,
-            Set<Integer> deactivatedOverrides
+            Set<Integer> deactivatedOverrides,
+            boolean compute
     ) {
         String name = sampler.name();
         int slot = sampler.slot();
         List<String> deviations = new ArrayList<>();
-        // Pack declarations take precedence over canonical aliases. This is
-        // important for a stage that deliberately replaces a logical target
-        // with a sampled pack texture.
+        // Of the pack's own bindings of the name and the built-in one, the one Iris registers last
+        // is what the name reads (IrisSamplerOrder). A customTexture entry is registered around the
+        // sampler interceptor, so one registered last beats a stage texture too.
+        String advancedImage = advancedImageName(propertyValues, name);
+        PackResourceDeclaration custom = packTexture(program, sampler, declarations);
+        IrisSamplerOrder.Source last = IrisSamplerOrder.last(IrisSamplerOrder.of(program, compute), name,
+                advancedImage != null, custom != null);
+        if (last == IrisSamplerOrder.Source.CUSTOM_TEXTURE) {
+            return declaredBinding(program, name, slot, custom, shadersDir, deviations);
+        }
+        // A stage texture replaces what the interceptor binds, as when a stage deliberately reads
+        // a pack texture for a logical target.
         PackResourceDeclaration stage =
                 stageDeclaration(program, sampler, declarations, deactivatedOverrides, deviations);
         if (stage != null) return declaredBinding(program, name, slot, stage, shadersDir, deviations);
-        // Iris binds custom images after customTexture entries, so an image's sampler takes the name
-        // (IrisSamplers.addCustomTextures, then addCustomImages); only a stage texture overrides it.
-        String advancedImage = advancedImageName(propertyValues, name);
-        if (advancedImage != null) {
+        if (last == IrisSamplerOrder.Source.IMAGE) {
             deviations.add("ADVANCED_RESOURCE_ALIAS:" + name + ":" + advancedImage);
             return new PackResourceBinding(program, name, advancedImage,
                     PackResourceKind.ADVANCED_IMAGE, "", slot, "linear", "repeat",
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
-        PackResourceDeclaration custom = customDeclaration(program, sampler, declarations);
-        if (custom != null) return declaredBinding(program, name, slot, custom, shadersDir, deviations);
+        PackResourceDeclaration noise = name.equals("noisetex") ? declarations.get("texture.noise") : null;
+        if (noise != null) return declaredBinding(program, name, slot, noise, shadersDir, deviations);
         if (name.equals("tex") || name.equals("gtexture") || isHostTexture(name)) {
             String hostResource = name.equals("tex") || name.equals("gtexture") ? "texture" : name;
             // The overlay is Chimera's own declaration, not a pack alias.
@@ -266,9 +274,17 @@ public final class PackResourcePlan {
         return declaration;
     }
 
-    /** {@code customTexture.<sampler>}, the atlas a post program's tex reads, or texture.noise for noisetex. */
+    /** {@link #packTexture}, or texture.noise for noisetex. */
     private static PackResourceDeclaration customDeclaration(String program, UniformRegistry.SamplerBinding sampler,
                                                              Map<String, PackResourceDeclaration> declarations) {
+        PackResourceDeclaration custom = packTexture(program, sampler, declarations);
+        if (custom != null || !sampler.name().equals("noisetex")) return custom;
+        return declarations.get("texture.noise");
+    }
+
+    /** {@code customTexture.<sampler>}, or the atlas a post program's tex reads. */
+    private static PackResourceDeclaration packTexture(String program, UniformRegistry.SamplerBinding sampler,
+                                                       Map<String, PackResourceDeclaration> declarations) {
         String name = sampler.name();
         if (appliesTo(declarations.get("customTexture." + name), sampler.glslType())) {
             return declarations.get("customTexture." + name);
@@ -276,7 +292,7 @@ public final class PackResourcePlan {
         if (name.equals("tex") && FamilyAdapterRegistry.stageFor(program) == UniformRegistry.Stage.POST) {
             return declarations.get("customTexture.textureAtlas");
         }
-        return name.equals("noisetex") ? declarations.get("texture.noise") : null;
+        return null;
     }
 
     /** A sampler the pack declares a texture for. */
@@ -574,20 +590,22 @@ public final class PackResourcePlan {
      * what the pass's program would read under that name. Iris CompositeRenderer.createComputes
      * binds a pass's computes as its program, through the same stage textures, customTexture
      * entries, noise and flippedAtLeastOnce snapshot; a compute-only pass has the snapshot its
-     * place in the chain gives it. {@code waterShadow}: the compute reads watershadow, so shadow
-     * is shadowtex1 (programResource).
+     * place in the chain gives it. The final pass's computes register in that order too, where its
+     * program takes customTexture entries after images (IrisSamplerOrder). {@code waterShadow}: the
+     * compute reads watershadow, so shadow is shadowtex1 (programResource).
      */
     public static PackResourceBinding passComputeBinding(PackPlan plan, String pass, String name, String samplerType,
                                                          boolean waterShadow, Path shadersDir) {
         PackSettingsPlan settings = plan.settings();
         PackResourceBinding binding = resolve(pass, new UniformRegistry.SamplerBinding(name, 0, samplerType),
                 waterShadow, settings == null ? Map.of() : settings.resourceDeclarations(), shadersDir,
-                settings == null ? Map.of() : settings.propertyValues(), targetsWrittenBefore(plan, pass));
+                settings == null ? Map.of() : settings.propertyValues(), targetsWrittenBefore(plan, pass), true);
         return binding.status() == PackResourceStatus.GENERATED
                 ? withNoiseResolution(binding, noiseResolution(plan)) : binding;
     }
 
-    private static String postChain(String program) {
+    /** The post chain a program runs in (final in composite's), or null for a world program. */
+    static String postChain(String program) {
         if (program.equals("final") || program.matches("composite\\d*")) return "composite";
         if (program.matches("deferred\\d*")) return "deferred";
         if (program.matches("prepare\\d*")) return "prepare";

@@ -58,16 +58,17 @@ final class SampledResourcePlanTest {
         PackResourceBinding shadow = resources.binding("composite", "shadowtex0");
         PackResourceBinding scene = resources.binding("composite", "colortex0");
 
+        // Iris binds customTexture.marker straight to the program, while texture.composite.marker
+        // only replaces what a registration through the sampler interceptor binds, and no built-in
+        // sampler or image is named marker (CompositeRenderer.createProgram, IrisSamplerOrder).
         assertTrue(marker != null && marker.status() == PackResourceStatus.PACK_FILE,
-                "stage-specific marker was not loaded");
-        assertEquals("tex/override.png", marker.source(),
-                "stage-specific declaration did not win");
-        // Iris texture stages cover numbered programs: composite1 is in the
-        // composite stage, so texture.composite.marker also wins there.
+                "marker was not loaded");
+        assertEquals("tex/custom.png", marker.source(),
+                "a stage texture took a name no interceptor registration binds");
         assertTrue(globalMarker != null && globalMarker.status() == PackResourceStatus.PACK_FILE,
                 "composite1 marker was not loaded");
-        assertEquals("tex/override.png", globalMarker.source(),
-                "composite-stage declaration did not reach composite1");
+        assertEquals("tex/custom.png", globalMarker.source(),
+                "a stage texture took composite1's marker");
         assertTrue(noise != null && noise.slot() == 7
                         && noise.status() == PackResourceStatus.PACK_FILE,
                 "noisetex plan is not a pack file at slot 7");
