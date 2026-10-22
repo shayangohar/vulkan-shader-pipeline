@@ -545,6 +545,20 @@ final class ComputePassTest {
         compute.values().forEach(value -> offsets.put(value.name(), value.offset()));
         String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, offsets);
         assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+        // iris_Fog has no other field: a compute reading one does not compile under Iris either.
+        Files.writeString(shaders.resolve("composite_b.csh"), """
+                #version 430 compatibility
+                layout(local_size_x = 1) in;
+                layout(rgba16f) uniform image2D colorimg2;
+                void main() {
+                    imageStore(colorimg2, ivec2(0), vec4(gl_Fog.index));
+                }
+                """);
+        PassComputePlan.PassCompute unknown = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .compute("composite_b");
+        assertTrue(!unknown.supported() && unknown.deviations()
+                        .contains("PASS_COMPUTE_NORMALIZATION:LEGACY_FOG_FIELD_UNSUPPORTED:index"),
+                unknown.deviations().toString());
     }
 
     /**

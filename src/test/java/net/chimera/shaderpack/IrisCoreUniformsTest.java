@@ -83,7 +83,7 @@ final class IrisCoreUniformsTest {
                 #version 450
                 uniform int fogMode, fogShape;
                 void main() { int x = fogMode + fogShape; }
-                """, name -> UniformRegistry.irisSets(name, Map.of()));
+                """, name -> UniformRegistry.irisSets(name, Map.of())).source();
         assertTrue(compute.contains("int x = 0 + -1;"), compute);
     }
 
@@ -112,7 +112,7 @@ final class IrisCoreUniformsTest {
                 uniform ivec3 cameraPositionInt = ivec3(-98257195);
                 uniform float viewWidth[1] = float[1](1.0), unsetScale = 2.0;
                 void main() {}
-                """, name -> UniformRegistry.irisSets(name, Map.of()));
+                """, name -> UniformRegistry.irisSets(name, Map.of())).source();
         assertTrue(compute.contains("uniform ivec3 cameraPositionInt;")
                 && compute.contains("uniform float viewWidth[1];")
                 && compute.contains("const float unsetScale = 2.0;"), compute);

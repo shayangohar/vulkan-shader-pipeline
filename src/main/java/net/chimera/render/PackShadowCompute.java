@@ -305,7 +305,7 @@ public final class PackShadowCompute implements AutoCloseable {
         body = removeLegacyExtensions(body);
         // As the plan read it: a name the value block serves is one Iris sets.
         body = ServedUniforms.computeSource(body, name -> UniformRegistry.irisServes(name)
-                || computeUniforms.stream().anyMatch(value -> value.name().equals(name)));
+                || computeUniforms.stream().anyMatch(value -> value.name().equals(name))).source();
         body = GlslTokenRewriter.rewriteTextureCalls(body);
         body = boundTexelFetches(body, samplerNames);
         ResourceDeclarations resources = new ResourceDeclarations(plan, imageNames, samplerNames, sampled2dNames);

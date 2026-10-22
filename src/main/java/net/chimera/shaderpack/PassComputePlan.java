@@ -302,8 +302,10 @@ public final class PassComputePlan {
                     work.fail("PASS_COMPUTE_VERSION_UNSUPPORTED");
                 }
                 if (work.failed) return null;
-                String text = ServedUniforms.computeSource(prepared.source(),
+                ServedUniforms.Compute served = ServedUniforms.computeSource(prepared.source(),
                         name -> UniformRegistry.irisSets(name, plan.runtimeSettings().customDescriptors()));
+                served.deviations().forEach(value -> work.fail("PASS_COMPUTE_NORMALIZATION:" + value));
+                String text = served.source();
                 if (!GlslResourceUsage.analyze(text).successful()) {
                     work.fail("PASS_COMPUTE_RESOURCE_USAGE_UNCLASSIFIABLE");
                 }

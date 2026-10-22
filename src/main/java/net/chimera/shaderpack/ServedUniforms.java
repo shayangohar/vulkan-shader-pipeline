@@ -81,12 +81,23 @@ public final class ServedUniforms {
      * CommonTransformer gives computes (LegacyShaderNormalizer.normalizeCompute). Every compute
      * path (pass computes, shadowcomp and its analysis) prepares its source here.
      */
-    public static String computeSource(String source, Predicate<String> irisSets) {
+    public static Compute computeSource(String source, Predicate<String> irisSets) {
         String initialized = readInitializers(GlslTokenRewriter.splitUniformDeclarators(source), irisSets).source();
         String served = serveFogOff(withoutSetInitializers(initialized, irisSets));
-        // A source the normalizer cannot read stays as it is, for the usage analysis to refuse.
         LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalizeCompute(served);
-        return normalized.successful() ? normalized.source() : served;
+        if (normalized.successful()) return new Compute(normalized.source(), List.of());
+        return new Compute(served, normalized.deviations().isEmpty()
+                ? List.of("SOURCE_NORMALIZATION_FAILED") : normalized.deviations());
+    }
+
+    /**
+     * A compute's source as Iris compiles it, or, with why the normalizer could not read it
+     * ({@code deviations}), as served: a source no compiler takes, which only the analysis reads.
+     */
+    public record Compute(String source, List<String> deviations) {
+        public boolean successful() {
+            return deviations.isEmpty();
+        }
     }
 
     /**

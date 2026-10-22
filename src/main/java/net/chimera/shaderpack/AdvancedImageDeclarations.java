@@ -208,9 +208,11 @@ final class AdvancedImageDeclarations {
                 return result;
             }
             // The plan reads what PackShadowCompute translates (ServedUniforms.computeSource).
-            String text = ServedUniforms.computeSource(prepared.source(),
+            ServedUniforms.Compute served = ServedUniforms.computeSource(prepared.source(),
                     name -> UniformRegistry.irisSets(name, customDescriptors));
+            String text = served.source();
             List<String> localDeviations = new ArrayList<>(prepared.deviations());
+            localDeviations.addAll(served.deviations());
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(text);
             localDeviations.addAll(usage.deviations());
             if (!usage.successful()) {
