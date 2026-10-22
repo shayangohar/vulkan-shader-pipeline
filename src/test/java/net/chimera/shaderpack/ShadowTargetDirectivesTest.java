@@ -106,8 +106,10 @@ final class ShadowTargetDirectivesTest {
         assertTrue(shadow.executable() && shadow.deviations().contains("SHADOW_DRAWBUFFERS_RESET:3"),
                 shadow.deviations().toString());
         assertTrue(legacy.plan().program("composite").deviations().contains("SAMPLER_UNIT0_COLORTEX0:shadowcolor5"));
+        // Unregistered, shadowcolor2 reads unit 0 in a world program too: the albedo texture.
         PackProgramPlan terrain = legacy.plan().program("gbuffers_terrain");
-        assertTrue(terrain.deviations().contains("SAMPLER_NOT_MAPPED:shadowcolor2") && !terrain.executable());
+        assertTrue(terrain.deviations().contains("SAMPLER_UNIT0_ALBEDO:shadowcolor2") && terrain.executable(),
+                terrain.deviations().toString());
     }
 
     /**

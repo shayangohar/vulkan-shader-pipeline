@@ -223,7 +223,8 @@ public final class PackPlanBuilder {
         /**
          * Iris core-profile names (vaPosition, modelViewMatrix) become the compatibility built-ins
          * every converter serves. A pack's own gbuffers_line vertex keeps Iris's unbound UVs
-         * (prepareLineVertex). In a fullscreen pass an unknown sampler2D reads colortex0, on unit 0.
+         * (prepareLineVertex). An unknown sampler2D reads unit 0: colortex0 in a fullscreen pass, the
+         * albedo texture in a world program (UnitZeroSampler).
          */
         private void prepareIrisCoreProfile() {
             String overlay = stage == UniformRegistry.Stage.POST || isTerrainMaterialFamily(name)
@@ -241,9 +242,9 @@ public final class PackPlanBuilder {
             if (stage.shadowPass()) {
                 fragment = PostTargetPlan.withShadowTargetsWithin(fragment, shadowTargetCount(), deviations);
             }
-            if (stage != UniformRegistry.Stage.POST) return;
-            vertex = FullscreenDefaultSampler.apply(vertex, config, deviations);
-            fragment = FullscreenDefaultSampler.apply(fragment, config, deviations);
+            UnitZeroSampler.Unit unit = UnitZeroSampler.Unit.of(name);
+            vertex = UnitZeroSampler.apply(vertex, config, deviations, unit);
+            fragment = UnitZeroSampler.apply(fragment, config, deviations, unit);
         }
 
         /**

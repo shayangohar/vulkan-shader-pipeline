@@ -81,12 +81,12 @@
       ]
     },
     "unsupported_families": {
-      "reportSha256": "190f7a057bb141efdb1c812dcb4a550a8e97ffcc2723023a1e60a27af0e34948",
+      "reportSha256": "24309e6552c24643a14f3a07022c9d7dec9809254bb8db355a843db917655352",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
         "gbuffers_damagedblock.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
-        "gbuffers_entities.fsh": "e6e07a5b7bce5a08cf0ebabff32a570c6140b64b4e380cf1746d5097668a641a",
+        "gbuffers_entities.fsh": "cc4c855261a30e3a90b1ba17dfddeedbb03c51dabfc5ef5e6fc8889312b4b81e",
         "gbuffers_entities.vsh": "d94063931168556df86a32e569176e9b6740244c5510dcc07c692c967d62ff12",
         "gbuffers_skybasic.fsh": "79f98c983f6d47410f587d4b1de75fdb15bbd2eb7a90c4b5df998a1ad0f2e3bd"
       },

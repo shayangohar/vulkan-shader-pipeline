@@ -46,7 +46,7 @@ final class SweepParityFixesTest {
     @Test
     void anUnknownSampler2DInAFullscreenPassReadsColortex0() {
         List<String> deviations = new ArrayList<>();
-        String renamed = FullscreenDefaultSampler.apply("""
+        String renamed = UnitZeroSampler.apply("""
                 uniform sampler2D tex;
                 uniform sampler2D colortex1;
                 uniform sampler3D volume;
@@ -54,7 +54,7 @@ final class SweepParityFixesTest {
                 vec3 blur(sampler2D tex, vec2 uv) { return texture2D(tex, uv).rgb; }
                 void main() { gl_FragColor = texture2D(tex, uv)
                         + vec4(blur(colortex1, uv), texture3D(volume, vec3(0.0)).r); }
-                """, null, deviations);
+                """, null, deviations, UnitZeroSampler.Unit.FULLSCREEN);
         assertTrue(renamed.contains("uniform sampler2D colortex0;") && !renamed.contains("uniform sampler2D tex;"),
                 renamed);
         assertTrue(renamed.contains("void main() { gl_FragColor = texture2D(colortex0, uv)"), renamed);
@@ -65,13 +65,13 @@ final class SweepParityFixesTest {
         assertEquals(List.of("SAMPLER_UNIT0_COLORTEX0:tex"), deviations);
 
         List<String> second = new ArrayList<>();
-        String declared = FullscreenDefaultSampler.apply("""
+        String declared = UnitZeroSampler.apply("""
                 uniform sampler2D colortex0;
                 uniform sampler2D texture;
                 uniform sampler2D depthtex0;
                 void main() { gl_FragColor = texture2D(texture, uv) * texture(colortex0, uv)
                         + texture2D(depthtex0, uv); }
-                """, null, second);
+                """, null, second, UnitZeroSampler.Unit.FULLSCREEN);
         assertFalse(declared.contains("uniform sampler2D texture;"), declared);
         assertTrue(declared.contains("texture2D(colortex0, uv) * texture(colortex0, uv)"),
                 "a call keeps its function name: " + declared);
@@ -91,6 +91,45 @@ final class SweepParityFixesTest {
         List<String> deviations = analysis.report().program("composite").deviations();
         assertTrue(analysis.plan().shouldAttempt("composite"), deviations.toString());
         assertTrue(deviations.contains("SAMPLER_UNIT0_COLORTEX0:tex"), deviations.toString());
+    }
+
+    /**
+     * A gbuffers or shadow program registers colortex4 and up only (IrisSamplers.addRenderTargetSamplers,
+     * startIndex 4), and depthtex0-2 without gdepthtex. Kappa's gbuffers_particles reads gcolor, which
+     * therefore reads unit 0: the particle's albedo texture.
+     */
+    @Test
+    void anUnregisteredSampler2DInAWorldProgramReadsTheAlbedo(@TempDir Path root) throws IOException {
+        List<String> deviations = new ArrayList<>();
+        String renamed = UnitZeroSampler.apply("""
+                uniform sampler2D gcolor;
+                uniform sampler2D gaux1;
+                uniform sampler2D depthtex1;
+                uniform sampler2D gdepthtex;
+                void main() { gl_FragColor = texture2D(gcolor, uv) + texture2D(gaux1, uv)
+                        + texture2D(depthtex1, uv) + texture2D(gdepthtex, uv); }
+                """, null, deviations, UnitZeroSampler.Unit.WORLD);
+        assertTrue(renamed.contains("uniform sampler2D gtexture;") && !renamed.contains("gcolor")
+                && !renamed.contains("gdepthtex"), renamed);
+        assertTrue(renamed.contains("texture2D(gaux1, uv)") && renamed.contains("texture2D(depthtex1, uv)"), renamed);
+        assertEquals(List.of("SAMPLER_UNIT0_ALBEDO:gcolor", "SAMPLER_UNIT0_ALBEDO:gdepthtex"), deviations);
+
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_particles.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.xy; }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_particles.fsh"), """
+                #version 120
+                uniform sampler2D gcolor;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(gcolor, uv); }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        List<String> particles = analysis.report().program("gbuffers_particles").deviations();
+        assertTrue(analysis.plan().shouldAttempt("gbuffers_particles"), particles.toString());
+        assertTrue(particles.contains("SAMPLER_UNIT0_ALBEDO:gcolor"), particles.toString());
     }
 
     /** Shrimple sizes its light bins with #if arithmetic; JCPP evaluates conditions in C long arithmetic. */
