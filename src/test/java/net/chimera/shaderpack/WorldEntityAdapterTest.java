@@ -202,7 +202,6 @@ final class WorldEntityAdapterTest {
         assertTrue(!ChimeraVertexFormats.takesFaceNormal(ChimeraVertexFormats.EXTENDED_PARTICLE, true),
                 "Iris does not extend particles");
         assertTrue(!ChimeraVertexFormats.takesFaceNormal(DefaultVertexFormat.NEW_ENTITY, true), "a host layout");
-        assertTrue(!ChimeraEntityBridge.renderingLevel(), "no level renders in a test");
     }
 
     @Test

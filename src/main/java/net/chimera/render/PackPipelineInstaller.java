@@ -75,7 +75,7 @@ final class PackPipelineInstaller {
         for (PackProgram program : pipelinePrograms) {
             String name = program.name();
             PackProgramPlan programPlan = plan == null ? null : plan.program(name);
-            if (authoredCloudDrawsNothing(name, programPlan)) {
+            if (authoredCloudDrawsNothing(name)) {
                 pipelines.cloudsDrawNothing = true;
                 markFamilyPipelineInstalled(name, PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT);
                 continue;
@@ -688,12 +688,8 @@ final class PackPipelineInstaller {
     }
 
     /** The pack's own resolved cloud program is active and provably draws nothing. */
-    boolean authoredCloudDrawsNothing(String name, PackProgramPlan programPlan) {
-        return programPlan != null && programPlan.cloudDrawsNothing()
-                && plan != null
-                && !plan.isProgramDisabled(name)
-                && !plan.isProgramAlias(name)
-                && plan.resources().programAllowed(name);
+    boolean authoredCloudDrawsNothing(String name) {
+        return plan != null && plan.cloudRunsEmpty(name);
     }
 
     /**

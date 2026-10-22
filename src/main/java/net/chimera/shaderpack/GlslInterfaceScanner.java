@@ -283,7 +283,7 @@ public final class GlslInterfaceScanner {
         }
         GlslTree.Declaration declaration = (GlslTree.Declaration) external;
         if (declaration.type() != null) return declaration;
-        if (!declaration.declarators().isEmpty()) deviations.add(DECLARATION_UNSUPPORTED);
+        if (!GlslDeclarations.qualifiersOnly(declaration)) deviations.add(DECLARATION_UNSUPPORTED);
         return null;
     }
 

@@ -37,7 +37,7 @@ final class ProgramReportRules {
         String stripped = stripComments(source);
         boolean postName = PostTargetPlan.isPostProgramName(name);
         boolean hasFragment = inventory.stages.contains("fragment");
-        boolean modern = !modernTerrainPlan(name, programPlan) && !validatedConversion(inventory, programPlan)
+        boolean modern = !modernTerrainPlan(name, programPlan) && !validatedConversion(inventory, programPlan, packPlan)
                 && usesUnsupportedModernGlsl(stripped, postName, FamilyAdapterRegistry.isEntityLike(name));
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
         // The report has historically exposed all uniform declarations,
@@ -75,7 +75,8 @@ final class ProgramReportRules {
         return new ConformanceReport.ProgramReport(
                 name, PackProbe.familyOf(name), modern ? "MODERN_GLSL" : "LEGACY_GLSL",
                 PackProbe.sorted(inventory.stages), inventory.sourceHashes, samplers, uniformNames,
-                targets, supportStatus(executableName(name, inventory, postName), hasFragment, planRuns(programPlan),
+                targets, supportStatus(executableName(name, inventory, postName), hasFragment,
+                        planRuns(programPlan, packPlan, name),
                         deviations),
                 ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.copyOf(deviations));
     }
@@ -210,14 +211,11 @@ final class ProgramReportRules {
 
     /**
      * A validated conversion is authoritative for every family, not just post and particles: the
-     * lexical modern-GLSL veto must not reject a program whose converters already accepted it.
+     * lexical modern-GLSL veto must not reject a program whose converters already accepted it. A
+     * cloud program that runs empty (PackPlan.cloudRunsEmpty) has nothing left to convert.
      */
-    /**
-     * Whether the plan leaves nothing unconverted: both stages converted, or a cloud program whose
-     * selected branch draws nothing, which runs no pipeline as Iris's draws no fragment.
-     */
-    static boolean validatedConversion(PackProbe.Inventory inventory, PackProgramPlan programPlan) {
-        if (programPlan != null && programPlan.cloudDrawsNothing()) return true;
+    static boolean validatedConversion(PackProbe.Inventory inventory, PackProgramPlan programPlan, PackPlan packPlan) {
+        if (packPlan != null && packPlan.cloudRunsEmpty(inventory.name)) return true;
         return programPlan != null && programPlan.executable() && programPlan.convertedFragment() != null
                 && (!inventory.stages.contains("vertex") || programPlan.convertedVertex() != null);
     }
@@ -297,10 +295,10 @@ final class ProgramReportRules {
 
     /**
      * Whether the plan lets the program run: no plan judges it, the plan admits it, or it is an
-     * authored-empty cloud program, which the runtime installs as drawing nothing.
+     * authored-empty cloud program, which the runtime installs as drawing nothing (PackPlan.cloudRunsEmpty).
      */
-    static boolean planRuns(PackProgramPlan plan) {
-        return plan == null || plan.executable() || plan.cloudDrawsNothing();
+    static boolean planRuns(PackProgramPlan plan, PackPlan packPlan, String name) {
+        return plan == null || plan.executable() || packPlan != null && packPlan.cloudRunsEmpty(name);
     }
 
     /** A program's status. A plan that refused the program leaves it on the fallback whatever it recorded. */

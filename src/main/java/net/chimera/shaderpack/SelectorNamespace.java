@@ -39,12 +39,14 @@ public final class SelectorNamespace {
     public static final int PACK_EXTENDED_FIRST = SHADOW_TEX1_HW_SLOT + 1;
     public static final int PACK_EXTENDED_COUNT = 32;
     /**
-     * The last slot carries dhDepthTex, dhDepthTex0 and dhDepthTex1, which come with the render targets
-     * (IrisSamplers.addRenderTargetSamplers). Without Distant Horizons all three bind texture 0.
+     * The next two slots carry the Distant Horizons depth textures, which come with the render
+     * targets as two registrations (IrisSamplers.addRenderTargetSamplers): dhDepthTex and its alias
+     * dhDepthTex0, then dhDepthTex1. Without Distant Horizons both bind texture 0.
      */
     public static final int DH_DEPTH_SLOT = PACK_EXTENDED_FIRST + PACK_EXTENDED_COUNT;
-    /** The slot after it carries iris_centerDepthSmooth, which fullscreen passes read (CenterDepthSmooth). */
-    public static final int CENTER_DEPTH_SLOT = DH_DEPTH_SLOT + 1;
+    public static final int DH_DEPTH1_SLOT = DH_DEPTH_SLOT + 1;
+    /** The slot after them carries iris_centerDepthSmooth, which fullscreen passes read (CenterDepthSmooth). */
+    public static final int CENTER_DEPTH_SLOT = DH_DEPTH1_SLOT + 1;
     public static final int LAST_RESERVED = CENTER_DEPTH_SLOT;
     public static final int EXTENDED_CAPACITY = LAST_RESERVED - FIRST_EXTENDED + 1;
     /** Unreserved selector slots available to pack-owned sampled resources, in assignment order. */
@@ -84,6 +86,12 @@ public final class SelectorNamespace {
         if ("shadowtex0HW".equals(name)) return SHADOW_TEX0_HW_SLOT;
         if ("shadowtex1HW".equals(name)) return SHADOW_TEX1_HW_SLOT;
         return shadowColorSlot(PackResourcePlan.shadowColorIndex(name));
+    }
+
+    /** The selector of a DH depth texture's registration; -1 for another name. */
+    public static int dhDepthSlot(String name) {
+        if ("dhDepthTex1".equals(name)) return DH_DEPTH1_SLOT;
+        return "dhDepthTex".equals(name) || "dhDepthTex0".equals(name) ? DH_DEPTH_SLOT : -1;
     }
 
     public static boolean isAddressable(int slot) {

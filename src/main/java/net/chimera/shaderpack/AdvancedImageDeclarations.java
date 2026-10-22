@@ -54,15 +54,19 @@ final class AdvancedImageDeclarations {
         return values.length > 5 && Boolean.parseBoolean(values[5]);
     }
 
-    /** Whether ShaderProperties adds an image of these values: a relative one with its share, or 7 to 9 values. */
-    private static boolean irisAdds(String[] values) {
+    /**
+     * Whether ShaderProperties reads an image of these values: a relative one with both shares, or a
+     * fixed one of 7 to 9 values. On any other entry its parse throws (parts[6] or parts[7] out of
+     * range) and Iris loads no pack at all; Chimera refuses that image alone (ADVANCED_IMAGE_UNSUPPORTED).
+     */
+    private static boolean readable(String[] values) {
         return relative(values) ? values.length >= 8 : values.length >= 7 && values.length <= 9;
     }
 
     /**
      * Iris adds at most 16 images (ShaderProperties: "Only up to 16 images are allowed"): the first in
-     * file order that it adds ({@link #irisAdds}). Every later image entry is dropped from
-     * {@code orderedProperties} before anything reads it.
+     * file order. Every later image entry is dropped from {@code orderedProperties} before anything
+     * reads it. An entry Chimera refuses as unreadable ({@link #readable}) counts toward none.
      */
     static void dropImagesPastIrisLimit(Map<String, String> orderedProperties, List<String> deviations) {
         int added = 0;
@@ -74,7 +78,7 @@ final class AdvancedImageDeclarations {
                 deviations.add("ADVANCED_IMAGE_LIMIT_EXCEEDED:" + entry.getKey().substring("image.".length()));
                 continue;
             }
-            if (irisAdds(values(entry.getValue()))) added++;
+            if (readable(values(entry.getValue()))) added++;
         }
     }
 
@@ -93,7 +97,7 @@ final class AdvancedImageDeclarations {
         List<String> deviations = new ArrayList<>();
         String[] values = values(raw);
         boolean relative = relative(values);
-        if (!irisAdds(values)) {
+        if (!readable(values)) {
             deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
             return image(name, values, new int[3], 0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }

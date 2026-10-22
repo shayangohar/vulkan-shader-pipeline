@@ -30,7 +30,7 @@ public final class PackResourcePlan {
      * every DH depth name (DHCompat.getDepthTex and getDepthTexNoTranslucent return 0).
      */
     public static final String GENERATED_UNBOUND = "generated-unbound";
-    /** The resource dhDepthTex, dhDepthTex0 and dhDepthTex1 read. */
+    /** The resource dhDepthTex and its alias dhDepthTex0 read; dhDepthTex1 is Iris's other registration. */
     static final String DH_DEPTH = "dhDepthTex";
     private static final Pattern DH_DEPTH_NAME = Pattern.compile("dhDepthTex[01]?");
     private static final int DEFAULT_NOISE_RESOLUTION = PackDirectives.DEFAULTS.noiseTextureResolution();
@@ -438,9 +438,9 @@ public final class PackResourcePlan {
             return new PackResourceBinding(program, name, canonical, PackResourceKind.CENTER_DEPTH, "", slot,
                     "nearest", "clamp", PackResourceStatus.HOST_ALIAS, deviations);
         }
-        if (canonical.equals(DH_DEPTH)) {
+        if (isDhDepth(canonical)) {
             deviations.add("DH_DEPTH_UNBOUND:" + name);
-            return new PackResourceBinding(program, name, DH_DEPTH, PackResourceKind.PACK_TEXTURE,
+            return new PackResourceBinding(program, name, canonical, PackResourceKind.PACK_TEXTURE,
                     GENERATED_UNBOUND, slot, "nearest", "clamp", PackResourceStatus.GENERATED, deviations);
         }
         if (materialMapAtSlot(name, slot)) {
@@ -553,7 +553,7 @@ public final class PackResourcePlan {
         }
         // A hardware shadow sampler reads its depth through a comparison sampler (Iris addShadowSamplers).
         if (sampler.matches("shadowtex[0-1]HW")) return sampler.substring(0, "shadowtex0".length());
-        return isDhDepth(sampler) ? DH_DEPTH : sampler;
+        return sampler.equals("dhDepthTex0") ? DH_DEPTH : sampler;
     }
 
     /**

@@ -371,7 +371,7 @@ final class InterfacePlanner {
      * outside the shadow pass the shadow samplers and the further colour targets.
      */
     private static Integer targetSamplerSlot(String name, String lookup, UniformRegistry.Stage stage) {
-        if (PackResourcePlan.isDhDepth(lookup)) return SelectorNamespace.DH_DEPTH_SLOT;
+        if (PackResourcePlan.isDhDepth(lookup)) return SelectorNamespace.dhDepthSlot(lookup);
         if (stage == UniformRegistry.Stage.POST && CenterDepthSmooth.SAMPLER.equals(lookup)) {
             return SelectorNamespace.CENTER_DEPTH_SLOT;
         }

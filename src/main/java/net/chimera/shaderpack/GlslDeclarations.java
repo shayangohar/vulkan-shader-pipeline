@@ -91,7 +91,8 @@ final class GlslDeclarations {
      * default and declares nothing, so its layout is no interface variable's.
      */
     static boolean qualifiersOnly(GlslTree.External external) {
-        return external instanceof GlslTree.Declaration declaration && declaration.type() == null;
+        return external instanceof GlslTree.Declaration declaration && declaration.type() == null
+                && declaration.declarators().isEmpty();
     }
 
     /** Every name declared by a variable declaration at file scope, in source order. */

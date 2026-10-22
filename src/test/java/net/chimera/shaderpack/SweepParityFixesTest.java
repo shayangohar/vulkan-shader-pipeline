@@ -170,8 +170,11 @@ final class SweepParityFixesTest {
         List<PackResourceBinding> bindings = plan.resources().bindings("composite");
         assertEquals(2, bindings.size(), bindings.toString());
         for (PackResourceBinding binding : bindings) {
-            assertEquals(SelectorNamespace.DH_DEPTH_SLOT, binding.slot(), binding.toString());
-            assertEquals("dhDepthTex", binding.resourceKey());
+            // Two registrations: dhDepthTex with its alias dhDepthTex0, and dhDepthTex1 (IrisSamplers).
+            boolean first = binding.sampler().equals("dhDepthTex0");
+            assertEquals(first ? SelectorNamespace.DH_DEPTH_SLOT : SelectorNamespace.DH_DEPTH1_SLOT, binding.slot(),
+                    binding.toString());
+            assertEquals(first ? "dhDepthTex" : "dhDepthTex1", binding.resourceKey());
             assertEquals(PackResourcePlan.GENERATED_UNBOUND, binding.source());
             assertEquals(PackResourceStatus.GENERATED, binding.status());
         }

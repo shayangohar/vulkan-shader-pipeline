@@ -166,7 +166,8 @@ final class AdvancedImagePlanTest {
 
     /**
      * Iris adds the first 16 images in file order and drops the rest (ShaderProperties). An entry it
-     * cannot read, such as a relative image without its height share, adds nothing and counts for none.
+     * cannot read, such as a relative image without its height share, makes Iris load no pack;
+     * Chimera refuses that image alone, and it counts toward no limit.
      */
     @Test
     void irisKeepsTheFirstSixteenImages(@TempDir Path root) throws Exception {

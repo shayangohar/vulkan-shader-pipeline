@@ -156,6 +156,17 @@ public record PackPlan(
     }
 
     /**
+     * Whether {@code name} runs as a cloud program whose selected branch draws nothing: the runtime
+     * builds no pipeline and skips the host cloud draw, as Iris's program draws no fragment. A
+     * disabled, aliased or resource-refused program falls back instead.
+     */
+    public boolean cloudRunsEmpty(String name) {
+        PackProgramPlan program = program(name);
+        return program != null && program.cloudDrawsNothing() && !isProgramDisabled(name)
+                && !isProgramAlias(name) && resources().programAllowed(name);
+    }
+
+    /**
      * Iris's {@code clouds} directive: "off", "fast" or "fancy", or null when
      * the pack leaves the player's setting alone (Iris logs and ignores other values).
      */
