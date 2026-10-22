@@ -635,22 +635,7 @@ final class PackPostChain {
                     && !pass.packTargetGraph.steps().isEmpty();
             // New targets, at load or after a resize: Iris runs its setup computes again.
             if (pass.packPassComputes != null) pass.packPassComputes.requestSetup();
-            if (pass.packPostChainActive) {
-                Map<PackFrameSchedulePlan.PostWindow, List<String>> windows = new EnumMap<>(
-                        PackFrameSchedulePlan.PostWindow.class);
-                for (PackFrameSchedulePlan.PostWindow window : PackFrameSchedulePlan.PostWindow.values()) {
-                    windows.put(window, pass.packFrameSchedule.stages(window).stream()
-                            .map(PackFrameSchedulePlan.PostStage::name).toList());
-                }
-                LOGGER.info("[chimera] pack frame schedule: phases={}, windows={}, depth={}, deviations={}",
-                        pass.packFrameSchedule.phases(), windows, pass.packTargetGraph.depth().names(),
-                        pass.packFrameSchedule.deviations());
-                LOGGER.info("[chimera] pack target graph: targets={}, steps={}, depth={}, "
-                        + "maxAttachments={}, fingerprint={}",
-                        pass.packTargetGraph.targets().size(), pass.packTargetGraph.steps().size(),
-                        pass.packTargetGraph.depth().names(), pass.packTargetGraph.maxAttachments(),
-                        pass.packTargetGraph.fingerprint());
-            }
+            if (pass.packPostChainActive) logSchedule();
         } catch (RuntimeException e) {
             pass.packPostTargets.cleanUp();
             pass.packDepthTargets.cleanUp();
@@ -669,6 +654,24 @@ final class PackPostChain {
             }
             pass.logPackRuntimeFailure("post-resource-allocation", e);
         }
+    }
+
+    /** Logs the frame schedule's windows and the target graph the post chain runs on. */
+    private void logSchedule() {
+        Map<PackFrameSchedulePlan.PostWindow, List<String>> windows = new EnumMap<>(
+                PackFrameSchedulePlan.PostWindow.class);
+        for (PackFrameSchedulePlan.PostWindow window : PackFrameSchedulePlan.PostWindow.values()) {
+            windows.put(window, pass.packFrameSchedule.stages(window).stream()
+                    .map(PackFrameSchedulePlan.PostStage::name).toList());
+        }
+        LOGGER.info("[chimera] pack frame schedule: phases={}, windows={}, depth={}, deviations={}",
+                pass.packFrameSchedule.phases(), windows, pass.packTargetGraph.depth().names(),
+                pass.packFrameSchedule.deviations());
+        LOGGER.info("[chimera] pack target graph: targets={}, steps={}, depth={}, "
+                + "maxAttachments={}, fingerprint={}",
+                pass.packTargetGraph.targets().size(), pass.packTargetGraph.steps().size(),
+                pass.packTargetGraph.depth().names(), pass.packTargetGraph.maxAttachments(),
+                pass.packTargetGraph.fingerprint());
     }
 
     /** The passes the session's loaded computes run before, with the depth snapshots they read. */
