@@ -827,8 +827,7 @@ public final class PackResourcePlan {
         if (propertyValues == null || sampler == null || sampler.isBlank()) return null;
         for (Map.Entry<String, String> entry : new TreeMap<>(propertyValues).entrySet()) {
             if (!entry.getKey().startsWith("image.")) continue;
-            String[] values = entry.getValue() == null
-                    ? new String[0] : entry.getValue().trim().split("\\s+");
+            String[] values = AdvancedImageDeclarations.values(entry.getValue());
             if (values.length > 0 && sampler.equals(values[0])) {
                 return entry.getKey().substring("image.".length());
             }

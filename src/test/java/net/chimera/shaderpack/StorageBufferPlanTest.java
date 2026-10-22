@@ -148,16 +148,14 @@ final class StorageBufferPlanTest {
     /** Invalid storage disables only the program that depends on it. */
     private static void assertInvalidStorageStaysScoped(PackProbe.Analysis unsupported) {
         PackAdvancedResourcePlan unsupportedPlan = unsupported.plan().advancedResources();
-        PackAdvancedResourcePlan.BufferSpec invalidIndex = unsupportedPlan.buffers().get(13);
         // Iris creates no buffer for a size below 1, as for an index above 8 (ShaderProperties).
         assertTrue(unsupportedPlan.buffers().get(0) == null && unsupportedPlan.buffers().get(1) == null
                         && unsupportedPlan.deviations().containsAll(List.of("STORAGE_BUFFER_DISABLED:0",
                         "STORAGE_BUFFER_DISABLED:1")), "a zero or negative size must switch the buffer off");
-        assertTrue(invalidIndex != null && !invalidIndex.supported()
-                        && invalidIndex.deviations().contains("STORAGE_BUFFER_INDEX_UNSUPPORTED:13")
-                        && unsupportedPlan.buffers().get(12).deviations()
-                        .contains("STORAGE_BUFFER_INDEX_UNSUPPORTED:12"),
-                "indices 12 and 13 are reserved");
+        assertTrue(unsupportedPlan.buffers().get(12) == null && unsupportedPlan.buffers().get(13) == null
+                        && unsupportedPlan.deviations().containsAll(List.of("STORAGE_BUFFER_INDEX_RESERVED:12",
+                        "STORAGE_BUFFER_INDEX_RESERVED:13")),
+                "indices 12 and 13 are reserved: Iris skips them");
         PackProgramPlan unsupportedShadow = unsupported.plan().program("shadow");
         assertTrue(unsupportedShadow != null && !unsupportedShadow.executable()
                         && !unsupported.plan().shouldAttempt("shadow"),
@@ -906,8 +904,8 @@ final class StorageBufferPlanTest {
             assertEquals(List.of("STORAGE_BUFFER_DISABLED:3"),
                     StorageBufferDeclarations.parseBuffer(3, off).deviations(), off);
         }
-        assertTrue(StorageBufferDeclarations.parseBuffer(9, "64").deviations()
-                .contains("STORAGE_BUFFER_INDEX_UNSUPPORTED:9"));
+        assertEquals(List.of("STORAGE_BUFFER_INDEX_RESERVED:9"),
+                StorageBufferDeclarations.parseBuffer(9, "64").deviations());
         assertTrue(StorageBufferDeclarations.parseBuffer(1, "64  name").deviations()
                 .contains("STORAGE_BUFFER_PROPERTY_MALFORMED:1"), "a double space makes three values");
         // Any byte count binds: RenderPearl's BUFFER_16_8 declares bufferObject.0=6.

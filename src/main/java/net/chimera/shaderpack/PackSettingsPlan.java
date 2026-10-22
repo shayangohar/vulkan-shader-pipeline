@@ -406,8 +406,7 @@ record PackSettingsPlan(
         if (!entry.getKey().startsWith("image.")) {
             return null;
         }
-        String[] values = entry.getValue() == null
-                ? new String[0] : entry.getValue().trim().split("\\s+");
+        String[] values = AdvancedImageDeclarations.values(entry.getValue());
         if (values.length == 0 || !values[0].matches("[A-Za-z_]\\w*")) {
             return null;
         }

@@ -50,8 +50,8 @@ final class StorageBufferDeclarations {
                         return;
                     }
                     PackAdvancedResourcePlan.BufferSpec spec = parseBuffer(index, entry.getValue());
-                    // A size below 1 is the pack switching the buffer off: Iris creates none.
-                    if (!spec.deviations().contains(DISABLED + index)) result.put(index, spec);
+                    // A size below 1 or an index above 8: Iris creates no buffer.
+                    if (!skipped(spec)) result.put(index, spec);
                     deviations.addAll(spec.deviations());
                 });
         return result;
@@ -59,11 +59,19 @@ final class StorageBufferDeclarations {
 
     /** ShaderProperties skips a buffer whose size is below 1: "the shader dev intended to disable the buffer". */
     static final String DISABLED = "STORAGE_BUFFER_DISABLED:";
+    /** ShaderProperties skips a buffer numbered above 8: "they're reserved". */
+    static final String RESERVED = "STORAGE_BUFFER_INDEX_RESERVED:";
+
+    /** Whether Iris skips the declaration, so that no buffer exists under its index. */
+    private static boolean skipped(PackAdvancedResourcePlan.BufferSpec spec) {
+        int index = spec.logicalIndex();
+        return spec.deviations().contains(DISABLED + index) || spec.deviations().contains(RESERVED + index);
+    }
 
     static PackAdvancedResourcePlan.BufferSpec parseBuffer(int index, String raw) {
         List<String> deviations = new ArrayList<>();
         if (index < 0 || index > PackAdvancedResourcePlan.MAX_BUFFER_INDEX) {
-            deviations.add("STORAGE_BUFFER_INDEX_UNSUPPORTED:" + index);
+            deviations.add((index < 0 ? "STORAGE_BUFFER_INDEX_UNSUPPORTED:" : RESERVED) + index);
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
                     deviations);
         }

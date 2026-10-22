@@ -46,7 +46,7 @@ final class AdvancedImageDeclarations {
     }
 
     /** ShaderProperties's image values: the value split on single spaces. */
-    private static String[] values(String raw) {
+    static String[] values(String raw) {
         return raw == null ? new String[0] : raw.stripLeading().split(" ");
     }
 
@@ -54,10 +54,15 @@ final class AdvancedImageDeclarations {
         return values.length > 5 && Boolean.parseBoolean(values[5]);
     }
 
+    /** Whether ShaderProperties adds an image of these values: a relative one with its share, or 7 to 9 values. */
+    private static boolean irisAdds(String[] values) {
+        return relative(values) ? values.length >= 8 : values.length >= 7 && values.length <= 9;
+    }
+
     /**
      * Iris adds at most 16 images (ShaderProperties: "Only up to 16 images are allowed"): the first in
-     * file order that it adds, a relative one or a fixed one of 7, 8 or 9 values. Every later image
-     * entry is dropped from {@code orderedProperties} before anything reads it.
+     * file order that it adds ({@link #irisAdds}). Every later image entry is dropped from
+     * {@code orderedProperties} before anything reads it.
      */
     static void dropImagesPastIrisLimit(Map<String, String> orderedProperties, List<String> deviations) {
         int added = 0;
@@ -69,8 +74,7 @@ final class AdvancedImageDeclarations {
                 deviations.add("ADVANCED_IMAGE_LIMIT_EXCEEDED:" + entry.getKey().substring("image.".length()));
                 continue;
             }
-            String[] values = values(entry.getValue());
-            if (relative(values) || values.length >= 7 && values.length <= 9) added++;
+            if (irisAdds(values(entry.getValue()))) added++;
         }
     }
 
@@ -89,7 +93,7 @@ final class AdvancedImageDeclarations {
         List<String> deviations = new ArrayList<>();
         String[] values = values(raw);
         boolean relative = relative(values);
-        if (relative ? values.length < 8 : values.length < 7 || values.length > 9) {
+        if (!irisAdds(values)) {
             deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
             return image(name, values, new int[3], 0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }

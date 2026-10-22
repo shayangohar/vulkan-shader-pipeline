@@ -165,15 +165,13 @@ final class AdvancedImagePlanTest {
     }
 
     /**
-     * Iris creates custom images whatever programs the pack has and runs each program on its own.
-     * Chimera served them only alongside a supported shadowcomp, so Pegasus's gbuffers programs,
-     * which read an image its prepare computes write, fell back.
+     * Iris adds the first 16 images in file order and drops the rest (ShaderProperties). An entry it
+     * cannot read, such as a relative image without its height share, adds nothing and counts for none.
      */
-    /** Iris adds the first 16 images in file order and drops the rest (ShaderProperties). */
     @Test
     void irisKeepsTheFirstSixteenImages(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
-        StringBuilder properties = new StringBuilder();
+        StringBuilder properties = new StringBuilder("image.short = none RGBA RGBA8 BYTE false true 0.5\n");
         for (int image = 17; image >= 0; image--) {
             properties.append(String.format("image.n%02d = none RGBA RGBA8 BYTE false false 4 4%n", image));
         }
@@ -181,9 +179,15 @@ final class AdvancedImagePlanTest {
         PackSettingsPlan settings = PackProbe.analyze(root).settings();
         assertTrue(settings.deviations().containsAll(List.of("ADVANCED_IMAGE_LIMIT_EXCEEDED:n01",
                 "ADVANCED_IMAGE_LIMIT_EXCEEDED:n00")) && settings.propertyValues().containsKey("image.n17")
+                && settings.propertyValues().containsKey("image.n02")
                 && !settings.propertyValues().containsKey("image.n00"), settings.deviations().toString());
     }
 
+    /**
+     * Iris creates custom images whatever programs the pack has and runs each program on its own.
+     * Chimera served them only alongside a supported shadowcomp, so Pegasus's gbuffers programs,
+     * which read an image its prepare computes write, fell back.
+     */
     @Test
     void imagesServeEachProgramWithoutAShadowcomp(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
