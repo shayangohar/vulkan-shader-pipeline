@@ -239,6 +239,34 @@ final class ComputePassTest {
     }
 
     /**
+     * A sampler only a local of its name is read through is inactive in GL and binds nothing: Rethinking
+     * Voxels' prepare4 compute declares the specular sampler and computes a local float specular.
+     */
+    @Test
+    void passComputesDropSamplersOnlyLocalsShadow(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                layout(rgba16f) uniform image2D colorimg2;
+                uniform sampler2D specular;
+                float shade(float light) {
+                    float specular = light * 0.5;
+                    return specular / (0.125 * specular + 1.0);
+                }
+                void main() { imageStore(colorimg2, ivec2(0), vec4(shade(1.0))); }
+                """);
+        PassComputePlan.PassCompute compute = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .compute("composite_a");
+        assertTrue(compute.supported(), compute.deviations().toString());
+        assertEquals(List.of("colorimg2"), compute.bindings().stream().map(PassComputePlan.Binding::symbol).toList());
+        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, Map.of());
+        assertTrue(error == null, "the translated pass compute compiles: " + error + "\n" + compute.source());
+    }
+
+    /**
      * A GL image unit reinterprets an image declared in another format of its texel size: Alpha
      * Piscium reads its R32F uimg_r32f as layout(r32i) iimage2D for integer atomics. The compute
      * binds a view in that format, which the session creates; another size is refused.

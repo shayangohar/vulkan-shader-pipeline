@@ -359,8 +359,10 @@ public final class PassComputePlan {
         }
 
         /**
-         * Binds each live 2D sampler of a target, or of the noise texture, that no pack texture
-         * replaces, and each live sampler of a pack image (Iris IrisSamplers.addCustomImages).
+         * Binds each live sampler as the pass's program would read it (samplerBinding). A sampler
+         * the scope-aware usage analysis finds unread is inactive in GL and binds nothing, its
+         * declaration dropped: Rethinking Voxels' prepare4 compute declares the specular sampler
+         * and reads only a local float of that name.
          */
         private String bindSamplers(String body, GlslResourceUsage.Analysis usage, Work work) {
             Matcher sampler = SAMPLER_DECLARATION.matcher(body);
@@ -371,10 +373,7 @@ public final class PassComputePlan {
                 String name = sampler.group(2);
                 String type = sampler.group(1);
                 sampler.appendReplacement(result, "");
-                if (!usage.liveSamplers().contains(name)) {
-                    unused(body, name, work);
-                    continue;
-                }
+                if (!usage.liveSamplers().contains(name)) continue;
                 Binding binding = samplerBinding(name, type, waterShadow, work);
                 if (binding == null) {
                     work.fail("PASS_COMPUTE_SAMPLER_UNSUPPORTED:" + name);
