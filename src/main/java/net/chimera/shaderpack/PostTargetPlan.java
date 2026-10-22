@@ -20,6 +20,8 @@ public final class PostTargetPlan {
     /** Highest logical colortex index: Iris exposes colortex0 through colortex15. */
     public static final int MAX_TARGET = 15;
     public static final int DEFAULT_FORMAT = 97;
+    /** The numbered pass families in Iris's frame order (IrisRenderingPipeline's composite renderers). */
+    private static final List<String> PASS_FAMILIES = List.of("begin", "prepare", "deferred", "composite");
 
     private static final Pattern TARGET_COMMENT = Pattern.compile(
             "(?is)/\\*\\s*(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([^*]*?)\\*/");
@@ -252,25 +254,17 @@ public final class PostTargetPlan {
                 .thenComparing(Comparator.naturalOrder());
     }
 
+    /** Final, and any other name, after them. */
     private static int familyRank(String name) {
-        if (name.startsWith("prepare")) {
-            return -1;
+        for (int rank = 0; rank < PASS_FAMILIES.size(); rank++) {
+            if (name.startsWith(PASS_FAMILIES.get(rank))) return rank;
         }
-        if (name.startsWith("deferred")) {
-            return 0;
-        }
-        if (name.startsWith("composite")) {
-            return 1;
-        }
-        return 2;
+        return PASS_FAMILIES.size();
     }
 
     private static int numericSuffix(String name) {
-        int index = name.startsWith("prepare")
-                ? "prepare".length()
-                : name.startsWith("deferred")
-                ? "deferred".length()
-                : name.startsWith("composite") ? "composite".length() : name.length();
+        int rank = familyRank(name);
+        int index = rank < PASS_FAMILIES.size() ? PASS_FAMILIES.get(rank).length() : name.length();
         if (index == name.length()) {
             return 0;
         }

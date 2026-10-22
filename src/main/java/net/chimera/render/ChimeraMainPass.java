@@ -334,8 +334,9 @@ public final class ChimeraMainPass implements MainPass {
             this.pendingDepthClear = false;
         }
         if (this.packPostChainActive
-                && this.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE)) {
-            postChain.runPrepareWindow(commandBuffer);
+                && (this.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.BEGIN)
+                || this.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE))) {
+            postChain.runOpeningWindows(commandBuffer);
         }
     }
 

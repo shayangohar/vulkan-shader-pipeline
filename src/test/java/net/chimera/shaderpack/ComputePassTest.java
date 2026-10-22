@@ -692,6 +692,44 @@ final class ComputePassTest {
         assertTrue(report.deviations().contains("PASS_COMPUTE_BRIDGE:composite2"), report.deviations().toString());
     }
 
+    /**
+     * Iris runs the begin passes each frame after its clear passes and before the sky
+     * (IrisRenderingPipeline.beginLevelRendering), each one's computes as a composite's: Shrimple's
+     * begin1 is begin1_a.csh and begin1_b.csh alone. They run in the opening window, before prepare.
+     */
+    @Test
+    void beginComputesRunFirst(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        for (String name : List.of("begin1_a", "begin1_b", "prepare_a")) {
+            Files.writeString(shaders.resolve(name + ".csh"), """
+                    #version 430
+                    layout(local_size_x = 8, local_size_y = 8) in;
+                    layout(rgba16f) uniform image2D colorimg2;
+                    void main() { imageStore(colorimg2, ivec2(gl_GlobalInvocationID.xy), vec4(1.0)); }
+                    """);
+        }
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PassComputePlan computes = PassComputePlan.build(analysis.plan(), shaders);
+        assertEquals(List.of("begin1_a", "begin1_b", "prepare_a"),
+                computes.computes().stream().map(PassComputePlan.PassCompute::name).toList());
+        assertTrue(computes.compute("begin1_b").supported() && computes.compute("begin1_b").pass().equals("begin1")
+                && PassComputePlan.runsAlone(analysis.plan(), "begin1"), computes.computes().toString());
+        PackFrameSchedulePlan schedule = PackFrameSchedulePlan.build(analysis.plan().activePrograms(), null,
+                Map.of("begin1", Set.of(), "prepare", Set.of()));
+        assertEquals(List.of("begin1", "prepare", "composite"), schedule.postStages().stream()
+                .map(PackFrameSchedulePlan.PostStage::name).toList(), "pass order");
+        assertEquals(PackFrameSchedulePlan.PostWindow.BEGIN, schedule.postStage("begin1").window());
+        assertEquals(List.of(PackFrameSchedulePlan.Phase.BEGIN, PackFrameSchedulePlan.Phase.SHADOW,
+                PackFrameSchedulePlan.Phase.PREPARE), schedule.phases().subList(0, 3));
+        ConformanceReport.ProgramReport report = analysis.report().program("begin1_a");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION, report.support(),
+                report.deviations().toString());
+        assertTrue(report.deviations().contains("PASS_COMPUTE_BRIDGE:begin1")
+                && !report.deviations().contains("UNSUPPORTED_PACK_STAGE"), report.deviations().toString());
+    }
+
     @Test
     void advancedResourceInventory(@TempDir Path root) throws IOException {
         String harmless = "// uniform image2D ignored; buffer Ignored { float x; };\n"

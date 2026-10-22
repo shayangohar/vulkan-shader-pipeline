@@ -27,6 +27,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -119,13 +120,19 @@ final class PackPostChain {
         }
     }
 
-    /** Runs the PREPARE window over the freshly cleared world target, then reopens it. */
-    void runPrepareWindow(VkCommandBuffer commandBuffer) {
+    /**
+     * Runs the BEGIN window, then the PREPARE window, over the freshly cleared world target, then
+     * reopens it. Iris runs the begin passes after the clear passes, before the sky.
+     */
+    void runOpeningWindows(VkCommandBuffer commandBuffer) {
         Renderer.getInstance().endRenderPass(commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.PREPARE);
+            for (PackFrameSchedulePlan.PostWindow window
+                    : List.of(PackFrameSchedulePlan.PostWindow.BEGIN, PackFrameSchedulePlan.PostWindow.PREPARE)) {
+                if (pass.packFrameSchedule.hasWindow(window)) runPackPostWindow(commandBuffer, hdrColor, window);
+            }
             if (pass.packPostChainActive) {
                 pass.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
             }
@@ -614,18 +621,14 @@ final class PackPostChain {
             pass.packPostChainActive = pass.packTargetResourcesReady
                     && !pass.packTargetGraph.steps().isEmpty();
             if (pass.packPostChainActive) {
-                LOGGER.info("[chimera] pack frame schedule: phases={}, prepare={}, early={}, late={}, final={}, "
-                        + "depth={}, deviations={}",
-                        pass.packFrameSchedule.phases(),
-                        pass.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.PREPARE).stream()
-                                .map(PackFrameSchedulePlan.PostStage::name).toList(),
-                        pass.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.EARLY).stream()
-                                .map(PackFrameSchedulePlan.PostStage::name).toList(),
-                        pass.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.LATE).stream()
-                                .map(PackFrameSchedulePlan.PostStage::name).toList(),
-                        pass.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.FINAL).stream()
-                                .map(PackFrameSchedulePlan.PostStage::name).toList(),
-                        pass.packTargetGraph.depth().names(),
+                Map<PackFrameSchedulePlan.PostWindow, List<String>> windows = new EnumMap<>(
+                        PackFrameSchedulePlan.PostWindow.class);
+                for (PackFrameSchedulePlan.PostWindow window : PackFrameSchedulePlan.PostWindow.values()) {
+                    windows.put(window, pass.packFrameSchedule.stages(window).stream()
+                            .map(PackFrameSchedulePlan.PostStage::name).toList());
+                }
+                LOGGER.info("[chimera] pack frame schedule: phases={}, windows={}, depth={}, deviations={}",
+                        pass.packFrameSchedule.phases(), windows, pass.packTargetGraph.depth().names(),
                         pass.packFrameSchedule.deviations());
                 LOGGER.info("[chimera] pack target graph: targets={}, steps={}, depth={}, "
                         + "maxAttachments={}, fingerprint={}",

@@ -28,7 +28,7 @@ import java.util.stream.Stream;
  */
 public final class PassComputePlan {
     private static final Pattern SOURCE_NAME = Pattern.compile(
-            "((?:prepare|deferred|composite)(?:[1-9]\\d?)?)(?:_[a-z])?\\.csh");
+            "((?:begin|prepare|deferred|composite)(?:[1-9]\\d?)?)(?:_[a-z])?\\.csh");
     private static final Pattern LOCAL_SIZE = Pattern.compile(
             "layout\\s*\\(([^)]*\\blocal_size_[xyz][^)]*)\\)\\s*in\\s*;");
     private static final Pattern LOCAL_SIZE_AXIS = Pattern.compile("local_size_([xyz])\\s*=\\s*(\\d+)");
