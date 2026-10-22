@@ -283,7 +283,7 @@ public final class PassComputePlan {
         }
 
         /**
-         * Binds each used {@code colorimgN} (1 to 15, a float image2D) in its target's format, and
+         * Binds each used {@code colorimgN} (0 to 15, a float image2D) in its target's format, and
          * each used pack image (Iris IrisImages.addCustomImages) in its own. The usage analysis
          * tracks 3D images only; with unreachable functions blanked, any reference left besides the
          * declaration is a use.
@@ -300,7 +300,7 @@ public final class PassComputePlan {
                 Matcher color = COLOR_IMAGE.matcher(name);
                 int target = color.matches() ? Integer.parseInt(color.group(1)) : -1;
                 String format = pack != null ? pack.layoutQualifier()
-                        : target >= 1 && target <= PackTargetGraphPlan.MAX_TARGET
+                        : target >= 0 && target <= PackTargetGraphPlan.MAX_TARGET
                         ? imageFormat(targetFormat(target)) : null;
                 String type = pack != null ? AdvancedImageDeclarations.storageImageType(pack) : "image2D";
                 if (format == null || !image.group(2).equals(type)) {

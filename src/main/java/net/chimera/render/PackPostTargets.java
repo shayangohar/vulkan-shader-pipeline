@@ -410,6 +410,19 @@ public final class PackPostTargets {
     }
 
     /**
+     * The image a pass compute writes as {@code colorimgN}: the one the chain reads now. colortex0
+     * still in the live HDR image moves into its graph image first, as for a mip chain: the HDR
+     * image is a render attachment without storage usage, while a graph image a compute writes has it.
+     */
+    public VulkanImage storageSource(VkCommandBuffer commandBuffer, int target) {
+        VulkanImage image = target >= 0 && target < TARGET_COUNT ? this.sourceImages[target] : null;
+        if (image == null || image != this.hdrIdentitySource) return image;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return adoptIdentitySource(stack, commandBuffer, target, image);
+        }
+    }
+
+    /**
      * The live HDR image stands in for colortex0 but has no mip chain. Move
      * the logical colortex0 into its graph image, as {@link #adoptTarget0}
      * moves it back after an early window.

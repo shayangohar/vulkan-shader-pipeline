@@ -231,7 +231,7 @@ final class PackPostChain {
      * now, then the barrier Iris's renderAll records after them, and nothing drawn or flipped.
      */
     private void runComputeOnlyStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
-        pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(),
+        pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(commandBuffer),
                 hdrColor.width, hdrColor.height);
         if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
     }
@@ -244,7 +244,7 @@ final class PackPostChain {
         try {
             // Iris runs a pass's computes first, over the images the pass then reads.
             if (pass.packPassComputes != null) {
-                pass.packPassComputes.dispatchBefore(post.name(), commandBuffer, computeSources(),
+                pass.packPassComputes.dispatchBefore(post.name(), commandBuffer, computeSources(commandBuffer),
                         hdrColor.width, hdrColor.height);
             }
             pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
@@ -663,9 +663,13 @@ final class PackPostChain {
         return computeDepthReads().keySet();
     }
 
-    /** The images a pass's computes read now: the chain's colour sources, and depth as programs sample it. */
-    private PackPassComputes.ImageSources computeSources() {
-        return new PackPassComputes.ImageSources(pass.packPostTargets.sourceImages(), pass.images::depthTargetImage);
+    /**
+     * The images a pass's computes read now: the chain's colour sources, the images they write
+     * (colortex0 moved out of the HDR image first), and depth as programs sample it.
+     */
+    private PackPassComputes.ImageSources computeSources(VkCommandBuffer commandBuffer) {
+        return new PackPassComputes.ImageSources(pass.packPostTargets.sourceImages(),
+                target -> pass.packPostTargets.storageSource(commandBuffer, target), pass.images::depthTargetImage);
     }
 
     /**

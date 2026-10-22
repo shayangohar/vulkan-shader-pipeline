@@ -24,6 +24,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Function;
+import java.util.function.IntFunction;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -42,8 +43,12 @@ final class PackPassComputes implements AutoCloseable {
     /** One compute that loaded: its plan and its pipeline. */
     private record Loaded(PassComputePlan.PassCompute plan, ComputeKernel kernel) {}
 
-    /** The images a pass reads now: its colour targets, and each depthtexN as its program samples it. */
-    record ImageSources(VulkanImage[] colors, Function<String, VulkanImage> depth) {}
+    /**
+     * The images a pass reads now: its colour targets, the one a compute writes as colorimgN (which
+     * may first move colortex0 out of the HDR image), and each depthtexN as its program samples it.
+     * Image bindings come before sampler bindings, so a sampler of the target reads where it moved.
+     */
+    record ImageSources(VulkanImage[] colors, IntFunction<VulkanImage> storage, Function<String, VulkanImage> depth) {}
 
     private final List<Loaded> loaded;
     private final PackResourceOwner resources;
@@ -225,7 +230,8 @@ final class PackPassComputes implements AutoCloseable {
             VulkanImage image = switch (binding.kind()) {
                 case PACK_IMAGE, PACK_IMAGE_SAMPLER -> packImages == null ? null : packImages.image(binding.resource());
                 case TEXTURE -> resources == null ? null : resources.image(binding.resource());
-                case TARGET_IMAGE, TARGET_SAMPLER -> binding.target() < colors.length ? colors[binding.target()] : null;
+                case TARGET_IMAGE -> sources.storage().apply(binding.target());
+                case TARGET_SAMPLER -> binding.target() < colors.length ? colors[binding.target()] : null;
                 case DEPTH -> sources.depth().apply(binding.resource());
                 case STORAGE_BUFFER -> null;
             };

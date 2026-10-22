@@ -389,6 +389,33 @@ final class ComputePassTest {
     }
 
     /**
+     * colorimg0 is colortex0 as a storage image, in its format, as every other target (Iris
+     * IrisImages.addRenderTargetImages). Alpha Piscium's composite36 and composite42 bind it. The session
+     * moves colortex0 out of the HDR image into its storage graph image before such a compute.
+     */
+    @Test
+    void passComputesWriteColortex0(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 8, local_size_y = 8) in;
+                layout(rgba16f) uniform restrict image2D colorimg0;
+                void main() {
+                    ivec2 texel = ivec2(gl_GlobalInvocationID.xy);
+                    imageStore(colorimg0, texel, imageLoad(colorimg0, texel) * 0.5);
+                }
+                """);
+        PassComputePlan computes = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders);
+        PassComputePlan.PassCompute compute = computes.compute("composite_a");
+        assertEquals(List.of(
+                new PassComputePlan.Binding("colorimg0", 0, PassComputePlan.Kind.TARGET_IMAGE, 0, "rgba16f", null)),
+                compute.bindings(), compute.deviations().toString());
+        assertEquals(Set.of(0), computes.storageTargets());
+    }
+
+    /**
      * Iris registers custom images after customTexture entries, so an image's sampler keeps its name
      * against a customTexture of it; a texture.stage entry overrides both through the sampler
      * interceptor (CompositeRenderer.createComputes and createProgram alike).
