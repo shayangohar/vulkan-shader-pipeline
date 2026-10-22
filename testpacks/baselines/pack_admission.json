@@ -123,7 +123,6 @@
     "gbuffers_textured_lit"
   ],
   "RenderPearl v2.4.0.zip": [
-    "gbuffers_line",
     "gbuffers_terrain_cutout",
     "gbuffers_terrain_solid",
     "gbuffers_textured_lit",

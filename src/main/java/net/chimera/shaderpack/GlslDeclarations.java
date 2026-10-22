@@ -2,11 +2,14 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * The file-scope variable declarations of a {@link GlslTree}, and text edits on them. The
@@ -47,7 +50,12 @@ final class GlslDeclarations {
 
         /** Whether this is the declaration's only name, without array sizes. */
         boolean single() {
-            return declaration.declarators().size() == 1 && declarator.arrays().isEmpty()
+            return declaration.declarators().size() == 1 && unarrayed();
+        }
+
+        /** Whether neither the declarator nor its type has array sizes. */
+        boolean unarrayed() {
+            return declarator.arrays().isEmpty()
                     && (declaration.type() == null || declaration.type().arrays().isEmpty());
         }
     }
@@ -118,6 +126,33 @@ final class GlslDeclarations {
         boolean alone = (lineStart == 0 || isLineBreak(source.charAt(lineStart - 1)))
                 && (lineEnd == source.length() || isLineBreak(source.charAt(lineEnd)));
         return alone ? new TextEdit(lineStart, lineEnd, "") : new TextEdit(from, to, "");
+    }
+
+    /**
+     * Edits that remove these variables, one per declaration: a declaration keeps its other names,
+     * or goes whole when it names no other. {@code in vec3 vaNormal, vaPosition;} declares two
+     * core inputs at once.
+     */
+    static List<TextEdit> removeVariables(GlslTree tree, List<Variable> variables) {
+        Map<GlslTree.Declaration, Set<String>> names = new LinkedHashMap<>();
+        for (Variable variable : variables) {
+            names.computeIfAbsent(variable.declaration(), ignored -> new HashSet<>()).add(variable.name());
+        }
+        List<TextEdit> edits = new ArrayList<>();
+        names.forEach((declaration, removed) -> {
+            List<GlslTree.Declarator> kept = declaration.declarators().stream()
+                    .filter(declarator -> !removed.contains(tree.text(declarator.name()))).toList();
+            if (kept.isEmpty()) {
+                edits.add(remove(tree, declaration));
+                return;
+            }
+            int from = tree.offset(declaration.declarators().getFirst().range().start());
+            int to = tree.offset(declaration.declarators().getLast().range().end());
+            edits.add(new TextEdit(from, to, kept.stream().map(declarator -> tree.source().substring(
+                    tree.offset(declarator.range().start()), tree.offset(declarator.range().end())))
+                    .collect(Collectors.joining(", "))));
+        });
+        return edits;
     }
 
     /**

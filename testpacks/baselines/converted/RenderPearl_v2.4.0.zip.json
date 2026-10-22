@@ -42,6 +42,8 @@
   "gbuffers_hand_water.vsh": "0812e27627d79937 ceb7209077a68ccc",
   "gbuffers_lightning.fsh": "e67fc60013e84746 2cc0ced7df88cadf",
   "gbuffers_lightning.vsh": "dd064c44d2361207 04ce9b9ba208a1ba",
+  "gbuffers_line.fsh": "d6f775d16b3a3ec5 5c433fe47eb2ffd6",
+  "gbuffers_line.vsh": "19d308d51bb97551 15db73fb9cced376",
   "gbuffers_particles.fsh": "92382012ac2abd10 8a5610e73b0932b1",
   "gbuffers_particles.vsh": "6721440523ba642f 9acc5284b05cc0c7",
   "gbuffers_particles_translucent.fsh": "abeff4dea3b495cf 97960824b8f9f9a9",

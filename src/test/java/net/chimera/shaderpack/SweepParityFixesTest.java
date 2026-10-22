@@ -246,6 +246,34 @@ final class SweepParityFixesTest {
         assertFalse(clouds.deviations().contains("MODERN_GLSL_UNSUPPORTED"), clouds.deviations().toString());
     }
 
+    /**
+     * RenderPearl's gbuffers_line declares two core inputs at once: in vec3 vaNormal, vaPosition;.
+     * The core names become compatibility built-ins, so their declarators go, and a name beside them
+     * stays declared.
+     */
+    @Test
+    void coreInputsDeclaredTogetherLeaveTheirDeclaration() {
+        String vertex = """
+                #version 150
+                in vec3 vaNormal, vaPosition;
+                in vec4 vaColor, packColor;
+                uniform mat4 modelViewMatrix, projectionMatrix;
+                out vec4 color;
+                void main() {
+                    color = vaColor * packColor * vec4(vaNormal, 1.0);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(vaPosition, 1.0);
+                }
+                """;
+        String line = IrisCoreProfile.prepareLineVertex(vertex, null, true);
+        GlslTree.parse(line);
+        assertTrue(line.contains("in vec4 packColor;") && !line.contains("vaPosition") && !line.contains("vaNormal")
+                && !line.contains("uniform mat4"), line);
+        String core = IrisCoreProfile.prepareIrisCoreProfile(vertex, null, true, "UV1", true,
+                IrisCoreProfile.Patch.VANILLA);
+        GlslTree.parse(core);
+        assertTrue(core.contains("in vec4 packColor;") && core.contains("gl_Vertex.xyz"), core);
+    }
+
     /** Shrimple sizes its light bins with #if arithmetic; JCPP evaluates conditions in C long arithmetic. */
     @Test
     void conditionsEvaluateAsJcppDoes() {

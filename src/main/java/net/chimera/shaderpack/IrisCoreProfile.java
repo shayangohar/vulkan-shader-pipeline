@@ -181,17 +181,23 @@ final class IrisCoreProfile {
     private static String withoutCoreDeclarations(String source, boolean vertexStage, Set<String> served,
                                                   Map<String, String> declared) {
         GlslTree tree = GlslTree.parse(source);
-        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        List<GlslDeclarations.Variable> removed = new ArrayList<>();
         for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
             boolean input = vertexStage && CORE_INPUTS.contains(variable.name()) && isInput(variable)
-                    && variable.plain();
-            boolean uniform = variable.qualified("uniform") && served.contains(variable.name()) && variable.single();
+                    && plainInput(variable);
+            boolean uniform = variable.qualified("uniform") && served.contains(variable.name())
+                    && variable.unarrayed();
             if (input || uniform) {
                 declared.put(variable.name(), variable.type());
-                removals.add(GlslDeclarations.remove(tree, variable.declaration()));
+                removed.add(variable);
             }
         }
-        return GlslDeclarations.apply(source, removals);
+        return GlslDeclarations.apply(source, GlslDeclarations.removeVariables(tree, removed));
+    }
+
+    /** A core input declared without array sizes or an initializer, alone or beside other names. */
+    private static boolean plainInput(GlslDeclarations.Variable variable) {
+        return variable.unarrayed() && variable.declarator().initializer() == null;
     }
 
     private static boolean isInput(GlslDeclarations.Variable variable) {
@@ -204,19 +210,17 @@ final class IrisCoreProfile {
      */
     private static String withoutLineCoreDeclarations(String source) {
         GlslTree tree = GlslTree.parse(source);
-        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        List<GlslDeclarations.Variable> removed = new ArrayList<>();
         for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
             boolean input = CORE_INPUTS.contains(variable.name()) && isInput(variable);
             String type = variable.type();
             boolean matrix = CORE_MATRICES.contains(variable.name()) && (type.equals("mat3") || type.equals("mat4"));
             boolean offset = variable.name().equals("chunkOffset") && type.equals("vec3");
             // A served uniform's initializer goes with it, as in withoutCoreDeclarations.
-            boolean uniform = variable.qualified("uniform") && (matrix || offset) && variable.single();
-            if (input && variable.plain() || uniform) {
-                removals.add(GlslDeclarations.remove(tree, variable.declaration()));
-            }
+            boolean uniform = variable.qualified("uniform") && (matrix || offset) && variable.unarrayed();
+            if (input && plainInput(variable) || uniform) removed.add(variable);
         }
-        return GlslDeclarations.apply(source, removals);
+        return GlslDeclarations.apply(source, GlslDeclarations.removeVariables(tree, removed));
     }
 
     /** The source with its first main renamed {@code chimeraLineMain}, signature normalized to {@code ()}. */
