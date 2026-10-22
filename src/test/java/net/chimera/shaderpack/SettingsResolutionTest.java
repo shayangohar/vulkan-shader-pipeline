@@ -61,6 +61,10 @@ final class SettingsResolutionTest {
             PackSettingsPlan settings = analysis.settings();
             assertEquals("2", settings.defaults().get("QUALITY"),
                     "property define default for " + dimension);
+            // Iris preprocesses shaders.properties on its own: its defines reach no program source.
+            assertTrue(!settings.preprocessorDefines().containsKey("QUALITY")
+                            && "2".equals(settings.propertyDefines().get("QUALITY")),
+                    "a shaders.properties define stays in that file for " + dimension);
             assertTrue(settings.options().containsKey("BLOOM"),
                     "commented option was not inventoried for " + dimension);
             assertEquals("0", settings.options().get("BLOOM").defaultValue(),

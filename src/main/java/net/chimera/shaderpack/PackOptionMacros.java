@@ -59,9 +59,10 @@ public final class PackOptionMacros {
 
     /**
      * The macros the id maps are preprocessed with: the options the shader files declare, at their
-     * defaults, then the launcher's choices and shaders.properties' own defines ({@code settings}).
-     * A launcher switch turned off ({@code overridden} without a value in {@code settings}) is
-     * undefined.
+     * defaults, then the launcher's choices ({@code settings}). A launcher switch turned off
+     * ({@code overridden} without a value in {@code settings}) is undefined. shaders.properties'
+     * own defines are not among them, as Iris's IdMap preprocesses with options and environment
+     * defines only.
      */
     public static Map<String, String> forIdMaps(Path shadersDir, Map<String, String> settings, Set<String> overridden) {
         Declared declared = declared(shadersDir);

@@ -243,21 +243,32 @@ record PackSettingsPlan(
     }
 
     /**
-     * Active defaults seed the shared shader preprocessor, with Iris's defines for the optional
-     * features the pack lists and Chimera provides.
+     * The launcher's option choices seed the shared shader preprocessor, with Iris's defines for the
+     * optional features the pack lists and Chimera provides. Defines authored in an executable stage
+     * are local to that variant. Those in shaders.properties stay inside that file: Iris preprocesses
+     * it on its own (PropertiesPreprocessor), and nothing it defines reaches a program or an id map.
      */
     Map<String, String> preprocessorDefines() {
         Map<String, String> result = new TreeMap<>();
         defaults.forEach((name, value) -> {
             Option option = options.get(name);
-            // Defines authored in an executable stage are local to that
-            // variant. Only explicit property defines are pack-wide inputs.
-            if (option != null && ("shaders.properties".equals(option.source())
-                    || "chimera.option".equals(option.source()))) {
+            if (option != null && "chimera.option".equals(option.source())) {
                 result.put(name, value);
             }
         });
         result.putAll(PackFeatureFlags.sourceDefines(optionalFeatures));
+        return stageIndependentDefaults(result);
+    }
+
+    /** The defines shaders.properties makes itself, which only its own values read (image sizes). */
+    Map<String, String> propertyDefines() {
+        Map<String, String> result = new TreeMap<>();
+        defaults.forEach((name, value) -> {
+            Option option = options.get(name);
+            if (option != null && "shaders.properties".equals(option.source())) {
+                result.put(name, value);
+            }
+        });
         return stageIndependentDefaults(result);
     }
 
