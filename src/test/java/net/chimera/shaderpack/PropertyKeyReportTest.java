@@ -20,8 +20,13 @@ final class PropertyKeyReportTest {
     void keysAreClassifiedAgainstIris() {
         for (String applied : List.of("clouds", "blend.composite", "screen.MAIN", "screen", "sliders",
                 "profile.HIGH", "vignette", "shadowTranslucent", "particles.ordering", "image.voxels",
-                "size.buffer.colortex1", "colortex3Format", "uniform.float.x", "shadow.culling")) {
+                "size.buffer.colortex1", "uniform.float.x", "shadow.culling")) {
             assertNull(PackPropertyKeys.unread(applied), applied);
+        }
+        // Source const names: Iris reads them only as const directives, so neither reader takes them here.
+        for (String constOnly : List.of("colortex3Format", "colortex1Clear", "shadowMapResolution",
+                "sunPathRotation")) {
+            assertEquals("SETTING_UNKNOWN", PackPropertyKeys.unread(constOnly), constOnly);
         }
         for (String irisOnly : List.of("rain.depth", "backFace.solid", "shadow.enabled", "scale.composite",
                 "separateEntityDraws", "weather")) {

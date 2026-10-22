@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "shadow": {
-      "reportSha256": "ea0921864e281a8a0148f37fe3f956c2be8a1a5e7e22e0f76b1c2ffc55df6d2e",
+      "reportSha256": "292fe35cd30ba31d9cc06c4239ac07159fe96cca1130f94eaa2b828dab7f65bd",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -144,16 +144,16 @@
         ]
       },
       "sourceHashes": {
-        "composite.fsh": "01a89f531aaccdcce644d9cf65987f80c2e3576a3abeea1891532cdaa2fd7fd2",
+        "composite.fsh": "f17051bcbce4a68aa669d27ef55a0246828b0f17f4f9821be350dc8ad2756404",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
         "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32",
-        "shaders.properties": "b4b957cc0678ab61363ab43950dc753fdc72aa82c6d9b66203f98b912a43f51d",
+        "shaders.properties": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "shadow.fsh": "f12ea70e0ea3596960cbc2712de4b04b7386fc2b38c7a92c832f02a3e3b3e1da",
         "shadow.vsh": "66c1e5536605afb88ba0ee23a6f7c8351463f34a5e01f9a6ca928a9a733c78fc"
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "3adffc6758463230d841f4c6142c2d5242b1f86cc582baaec6a33993aa2af794",
+      "reportSha256": "f9882a3734de845973ba592ae0b39a7928fd1fb08f66fce8d5baf94948222c88",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -284,10 +284,10 @@
         ]
       },
       "sourceHashes": {
-        "composite.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
+        "composite.fsh": "f6c8d39f6f30a44023fa3f790eca240178e11eb413d89c7f9723448e2010a696",
         "final.fsh": "5cb9494a788a703d7b8dfd8db593b8387def022fe3b0acd726270d748689b097",
         "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32",
-        "shaders.properties": "3ba90aca5f4fc03da985902598f39d3197681f764ac582d7f7c0c1e26d5d30b4",
+        "shaders.properties": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "shadow.fsh": "4fcd462b621e86950efec2b853274d95c8a5e66d2c7d91997d0eda57267a0b84",
         "shadow.vsh": "71fb2afc0704bac960a21daea8c052ffe7c3c3f45461a91b888c3a677b58479c"
       }

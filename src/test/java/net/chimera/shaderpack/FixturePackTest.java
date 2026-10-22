@@ -761,18 +761,25 @@ final class FixturePackTest {
         verifyFixtureBaseline(report, baselinePath, "unsupported_shadow");
     }
 
-    /** RGB formats are stored in RGBA images; GL reads their alpha as 1, so Chimera samples them so. */
+    /**
+     * RGB formats are stored in RGBA images; GL reads their alpha as 1, so Chimera samples them so.
+     * A later program's const replaces an earlier one's. A format in shaders.properties applies
+     * nothing: Iris reads formats only as const directives (PackRenderTargetDirectives).
+     */
     @Test
     void paddedAlphaTargets(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"), "colortex5Format=RGB8\ncolortex6Format=RGBA16F\n");
+        Files.writeString(shaders.resolve("shaders.properties"), "colortex9Format=RGB8\n");
         PackConfig.PackConfigData config = PackConfig.parse(List.of(new PackProgram("deferred1",
                 "#version 120\nconst int colortex4Format = RGB16F;\nconst int colortex6Format = RGB16F;\n"
                         + "const int gaux4Format = R11F_G11F_B10F;\nconst int colortex8Format = RGBA8;",
-                shaders.resolve("deferred1.fsh"), null, null)), shaders);
+                shaders.resolve("deferred1.fsh"), null, null), new PackProgram("composite",
+                "#version 120\nconst int colortex5Format = RGB8;\nconst int colortex6Format = RGBA16F;",
+                shaders.resolve("composite.fsh"), null, null)), shaders);
         assertEquals(List.of(4, 5, 7), List.copyOf(config.paddedAlphaTargets()),
                 "targets declared without alpha, a later declaration replacing an earlier one");
         assertEquals(97, config.colortexFormats().get(4), "RGB16F is stored as RGBA16F");
+        assertTrue(!config.colortexFormats().containsKey(9), "a shaders.properties format applied");
     }
 
     private static void assertExtendedFormat() {

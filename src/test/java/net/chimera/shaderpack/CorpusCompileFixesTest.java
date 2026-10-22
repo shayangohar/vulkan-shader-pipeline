@@ -197,9 +197,9 @@ final class CorpusCompileFixesTest {
     @Test
     void sixteenBitNormalizedTargetsAllocate(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"), "colortex6Format=RGB16\n");
         PackConfig.PackConfigData config = PackConfig.parse(List.of(new PackProgram("deferred1",
-                "#version 120\nconst int colortex3Format = R16;\nconst int colortex4Format = RG16;",
+                "#version 120\nconst int colortex3Format = R16;\nconst int colortex4Format = RG16;\n"
+                        + "const int colortex6Format = RGB16;",
                 shaders.resolve("deferred1.fsh"), null, null)), shaders);
         assertEquals(Map.of(3, 70, 4, 77, 6, 91), config.colortexFormats(), "R16, RG16 and RGBA16 UNORM");
         assertEquals(Set.of(6), config.paddedAlphaTargets());
@@ -230,8 +230,9 @@ final class CorpusCompileFixesTest {
                 "RGBA16I", "R16UI", "RG16UI", "RGB16UI", "RGBA16UI", "R32I", "RG32I", "RGB32I", "RGBA32I",
                 "R32UI", "RG32UI", "RGB32UI", "RGBA32UI", "RGB10_A2UI");
         for (String token : tokens) {
-            Files.writeString(shaders.resolve("shaders.properties"), "colortex1Format=" + token + "\n");
-            PackConfig.PackConfigData config = PackConfig.parse(List.of(), shaders);
+            PackConfig.PackConfigData config = PackConfig.parse(List.of(new PackProgram("composite",
+                    "#version 120\nconst int colortex1Format = " + token + ";",
+                    shaders.resolve("composite.fsh"), null, null)), shaders);
             Integer format = config.colortexFormats().get(1);
             assertTrue(format != null && PackConfig.formatBytes(format) > 0, token + " has a target: " + format);
             if (expected.containsKey(token)) assertEquals(expected.get(token), format, token);
@@ -246,7 +247,6 @@ final class CorpusCompileFixesTest {
     @Test
     void integerTargetsAreWrittenAndReadAsIntegers(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"), "colortex1Format=RGBA32UI\n");
         Files.writeString(shaders.resolve("gbuffers_terrain.vsh"), """
                 #version 330 compatibility
                 out vec2 uv;
@@ -263,6 +263,9 @@ final class CorpusCompileFixesTest {
                 """);
         Files.writeString(shaders.resolve("composite.fsh"), """
                 #version 330 compatibility
+                /*
+                const int colortex1Format = RGBA32UI;
+                */
                 uniform sampler2D colortex0;
                 uniform usampler2D colortex1;
                 /* RENDERTARGETS: 0 */

@@ -7,3 +7,6 @@ void main() {
     gl_FragData[0] = texture2D(colortex0, texcoord);
     gl_FragData[1] = vec4(1.0);
 }
+/*
+const int colortex1Format = RGBA8;
+*/

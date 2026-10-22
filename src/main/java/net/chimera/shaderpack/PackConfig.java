@@ -51,14 +51,8 @@ public final class PackConfig {
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY_KEY = Pattern.compile("[A-Za-z0-9_.-]+");
-    /** shaders.properties key shape: <target>Format. */
-    private static final Pattern COLORTEX_PROPERTY_KEY = Pattern.compile("^" + TARGET_NAME + "Format$");
     private static final Pattern TARGET_SIZE_PROPERTY_KEY =
             Pattern.compile("^size\\.buffer\\." + TARGET_NAME + "$");
-    private static final Pattern TARGET_CLEAR_PROPERTY_KEY =
-            Pattern.compile("^" + TARGET_NAME + "Clear$");
-    private static final Pattern TARGET_CLEAR_COLOR_PROPERTY_KEY =
-            Pattern.compile("^" + TARGET_NAME + "ClearColor$");
     private static final Pattern TARGET_FLIP_PROPERTY_KEY =
             Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\.colortex(\\d+)$");
 
@@ -307,9 +301,9 @@ public final class PackConfig {
             }
         }
 
-        // shaders.properties overrides (OptiFine packs may declare formats here), as Iris reads
-        // them: inside the #if branches that hold, the last value of a key, and option names in a
-        // value expanded (Complementary sizes colortex1 by REFLECTION_RES).
+        // shaders.properties' target sizes and flips, as Iris reads them: inside the #if branches that
+        // hold, the last value of a key, and option names in a value expanded (Complementary sizes
+        // colortex1 by REFLECTION_RES).
         settings.propertyValues().forEach((key, raw) -> {
             int comment = raw.indexOf('#');
             String value = (comment < 0 ? raw : raw.substring(0, comment)).trim();
@@ -447,51 +441,17 @@ public final class PackConfig {
         }
     }
 
-    /** One shaders.properties entry: a target format or directive, or a shadow setting. */
+    /**
+     * One shaders.properties entry, as Iris's ShaderProperties reads target keys: a
+     * {@code size.buffer.<target>} size or a {@code flip.<pass>.<target>} switch. Formats, clears and
+     * shadow settings are source const directives only (PackRenderTargetDirectives,
+     * PackShadowDirectives, PackDirectives); a properties key with one of their names applies nothing.
+     */
     private static void applyProperty(String key, String value, Collected collected) {
-        Matcher colortexKey = COLORTEX_PROPERTY_KEY.matcher(key);
-        if (colortexKey.find()) {
-            if (!applyFormatProperty(key, value, colortexKey.group(1), collected)) {
-                return;
-            }
-        } else {
-            applyTargetProperty(key, value, collected);
-        }
-        if (SHADOW_PROPERTIES.contains(key)) {
-            collected.shadowValues.put(key, value);
-            LOGGER.info("[chimera] pack properties: {}={}", key, value);
-        }
-    }
-
-    /** A {@code colortexNFormat} property; false when it names no target or no supported format. */
-    private static boolean applyFormatProperty(String key, String value, String index, Collected collected) {
-        int slot = parseTargetIndex(index, collected.deviations);
-        if (slot < 0) {
-            return false;
-        }
-        Integer code = formatCode(slot, value, collected.deviations);
-        if (code == null) {
-            collected.deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:" + key + "=" + value);
-            LOGGER.warn("[chimera] pack properties {}: unhandled format, keeping default", value);
-            return false;
-        }
-        putFormat(slot, value, code, collected);
-        LOGGER.info("[chimera] pack properties: {}={}", key, value);
-        return true;
-    }
-
-    /** A target size, clear, clear color or flip directive. */
-    private static void applyTargetProperty(String key, String value, Collected collected) {
         Matcher sizeKey = TARGET_SIZE_PROPERTY_KEY.matcher(key);
-        Matcher clearKey = TARGET_CLEAR_PROPERTY_KEY.matcher(key);
-        Matcher clearColorKey = TARGET_CLEAR_COLOR_PROPERTY_KEY.matcher(key);
         Matcher flipKey = TARGET_FLIP_PROPERTY_KEY.matcher(key);
         if (sizeKey.matches()) {
             applyTargetSize(sizeKey.group(1), value, collected);
-        } else if (clearKey.matches()) {
-            applyTargetClear(clearKey.group(1), value, collected);
-        } else if (clearColorKey.matches()) {
-            applyTargetClearColor(clearColorKey.group(1), value, collected);
         } else if (flipKey.matches()) {
             applyTargetFlip(key, flipKey, value, collected);
         } else if (key.startsWith("size.buffer.") || key.startsWith("flip.")) {
@@ -507,28 +467,6 @@ public final class PackConfig {
         }
     }
 
-    /** A {@code colortexNClear} switch; a value that is no boolean is ignored. */
-    private static void applyTargetClear(String index, String value, Collected collected) {
-        int slot = parseTargetIndex(index, collected.deviations);
-        Boolean clear = parseBoolean(value);
-        if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && clear != null) {
-            updateTargetSettings(collected.targetSettings, slot, null, clear, null, null);
-        } else if (clear != null) {
-            collected.deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-        }
-    }
-
-    /** A {@code colortexNClearColor} colour. */
-    private static void applyTargetClearColor(String index, String value, Collected collected) {
-        int slot = parseTargetIndex(index, collected.deviations);
-        float[] color = parseColor(value);
-        if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && color != null) {
-            updateTargetSettings(collected.targetSettings, slot, null, null, color, null);
-        } else {
-            collected.deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-        }
-    }
-
     /** A {@code flip.<program>.colortexN} switch; a {@code <program>_pre} key's flips are kept apart. */
     private static void applyTargetFlip(String key, Matcher flipKey, String value, Collected collected) {
         int slot = parseTargetIndex(flipKey.group(2), collected.deviations);
@@ -541,9 +479,6 @@ public final class PackConfig {
         }
     }
 
-    private static final List<String> SHADOW_PROPERTIES = List.of(
-            "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
-            "shadowDistanceRenderMul", "sunPathRotation", "sunPathOffset");
 
     /** Resolves colortexN, a legacy alias, or a bare index; -1 with a deviation when unsupported. */
     private static int parseTargetIndex(String value, List<String> deviations) {

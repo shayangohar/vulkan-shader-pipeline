@@ -7,3 +7,6 @@ void main() {
     gl_FragData[0] = scene;
     gl_FragData[1] = vec4(0.0, 1.0, 1.0, 1.0);
 }
+/*
+const int colortex4Format = RGBA8;
+*/

@@ -32,8 +32,6 @@ public final class PackProbe {
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY = Pattern.compile(
             "^\\s*([A-Za-z0-9_.-]+)\\s*=\\s*([^\\s#]+)");
-    private static final Pattern SHADOW_SETTING = Pattern.compile(
-            "shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul");
 
     private PackProbe() {}
 
@@ -87,7 +85,6 @@ public final class PackProbe {
         private final List<String> globalDeviations = new ArrayList<>();
         private final List<String> settings = new ArrayList<>();
         private final List<String> passInventory = new ArrayList<>();
-        private final Set<String> shadowPropertySettings = new TreeSet<>();
         private final Map<String, Inventory> inventories = new TreeMap<>();
         private boolean passListPresent;
         private PackSettingsPlan settingsPlan;
@@ -153,7 +150,7 @@ public final class PackProbe {
             Path properties = shadersDir.resolve("shaders.properties");
             if (Files.isRegularFile(properties)) {
                 readMetadata(properties, "shaders.properties", metadataHashes, globalDeviations);
-                readProperties(properties, settings, globalDeviations, shadowPropertySettings);
+                readProperties(properties, settings, globalDeviations);
             }
         }
 
@@ -271,8 +268,7 @@ public final class PackProbe {
                     .filter(value -> value.startsWith("SETTING_UNSUPPORTED:"))
                     .map(value -> "SETTING_NOT_APPLIED:" + value.substring("SETTING_UNSUPPORTED:".length()))
                     .forEach(globalDeviations::add);
-            applyShadowPropertyReporting(inventories, shadowPropertySettings,
-                    packConfig.shadowSettings(), globalDeviations);
+            applyShadowSettingReporting(inventories, packConfig.shadowSettings(), globalDeviations);
         }
 
         private void inventoryAliases(PackPlan packPlan) {
@@ -460,34 +456,25 @@ public final class PackProbe {
     }
 
     /**
-     * Lists the keys shaders.properties names and the shadow settings among them. Which keys
-     * Chimera does not apply is PackSettingsPlan's to say (PackPropertyKeys), read through the
-     * pack's conditionals.
+     * Lists the keys shaders.properties names. Which keys Chimera does not apply is
+     * PackSettingsPlan's to say (PackPropertyKeys), read through the pack's conditionals.
      */
-    private static void readProperties(
-            Path properties,
-            List<String> settings,
-            List<String> deviations,
-            Set<String> shadowPropertySettings
-    ) {
+    private static void readProperties(Path properties, List<String> settings, List<String> deviations) {
         try {
             for (String line : Files.readAllLines(properties, StandardCharsets.UTF_8)) {
                 Matcher matcher = PROPERTY.matcher(line);
-                if (!matcher.find()) {
-                    continue;
+                if (matcher.find()) {
+                    settings.add(matcher.group(1));
                 }
-                String key = matcher.group(1);
-                settings.add(key);
-                if (SHADOW_SETTING.matcher(key).matches()) shadowPropertySettings.add(key);
             }
         } catch (IOException e) {
             deviations.add("SHADERS_PROPERTIES_READ_FAILED");
         }
     }
 
-    private static void applyShadowPropertyReporting(
+    /** Reports each shadow setting the sources' const directives declare. */
+    private static void applyShadowSettingReporting(
             Map<String, Inventory> inventories,
-            Set<String> shadowPropertySettings,
             PackConfig.ShadowSettings shadowSettings,
             List<String> deviations
     ) {
@@ -495,7 +482,7 @@ public final class PackProbe {
         boolean executablePair = shadow != null
                 && shadow.stages.contains("vertex") && shadow.stages.contains("fragment");
         if (!executablePair) {
-            for (String key : shadowPropertySettings) {
+            for (String key : shadowSettings.rawValues().keySet()) {
                 deviations.add("SHADOW_SETTING_LOGGED_ONLY:" + key);
             }
             return;

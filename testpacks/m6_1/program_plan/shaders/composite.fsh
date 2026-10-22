@@ -18,3 +18,6 @@ void main() {
     vec4 color = texture2D(colortex0, texcoord);
     gl_FragColor = m61Marker(color + vec4(frameTimeCounter * 0.0));
 }
+/*
+const int shadowMapResolution = 2048;
+*/
