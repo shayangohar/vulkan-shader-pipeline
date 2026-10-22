@@ -798,12 +798,14 @@ final class FixturePackTest {
                             + "block.8 = minecraft:dirt\n"
                             + "block.9 = minecraft:oak_planks:axis=x\n"
                             + "block.13 = minecraft:tall_grass:half=lower tall_grass:half=upper\n"
-                            + "block.14 = leaves:waterlogged=false:distance=1,2\n"
+                            + "block.14 = leaves:waterlogged=false:distance=2\n"
                             + "block.15 = oak_leaves\n"
                             + "block.10 = %minecraft:logs\n"
                             + "block.40000 = bad\n"
                             + "block.11 = minecraft:stone\n"
-                            + "block.12 = minecraft:stone\n");
+                            + "block.12 = minecraft:stone\n"
+                            + "block.16 = minecraft:poppy\n"
+                            + "block.17 = poppy:age=1 birch_leaves:distance=1,2 spruce_leaves:persistent=true:bad\n");
             PackMaterialResolver.ParseResult result = PackMaterialResolver.parse(root);
             assertEquals(-7, result.resolver().resolveName("diorite"), "signed material id");
             assertEquals(8, result.resolver().resolveName("minecraft:dirt"), "duplicate material id");
@@ -817,16 +819,29 @@ final class FixturePackTest {
                     Map.of("half", "lower")::get), "namespaced selector");
             assertEquals(13, resolver.resolveState("tall_grass",
                     Map.of("half", "upper")::get), "unqualified selector");
-            assertEquals(-1, resolver.resolveState("minecraft:tall_grass", Map.<String, String>of()::get),
-                    "selector matched a state without the property");
+            // Iris ignores a predicate on a property the block does not have (null here).
+            assertEquals(13, resolver.resolveState("minecraft:tall_grass", Map.<String, String>of()::get),
+                    "a predicate on a missing property");
+            assertEquals(-1, resolver.resolveState("minecraft:tall_grass", Map.of("half", "middle")::get),
+                    "a state no predicate matches");
             assertEquals(14, resolver.resolveState("minecraft:leaves",
                     Map.of("waterlogged", "false", "distance", "2")::get), "multi-property selector");
             assertEquals(-1, resolver.resolveState("minecraft:leaves",
-                    Map.of("waterlogged", "false", "distance", "3")::get), "selector value list");
+                    Map.of("waterlogged", "false", "distance", "3")::get), "predicate value");
             assertEquals(15, resolver.resolveState("minecraft:oak_leaves",
                     Map.of("waterlogged", "true")::get), "plain mapping under a selector-free name");
             assertEquals(-1, resolver.resolveName("minecraft:oak_planks"),
                     "a selector became a plain mapping");
+            // The first entry in file order wins for each state (Iris putIfAbsent): poppy's plain
+            // mapping precedes its age predicate.
+            assertEquals(16, resolver.resolveState("minecraft:poppy", Map.of("age", "1")::get),
+                    "an earlier plain mapping wins over a later predicate");
+            // Iris compares a value exactly: "1,2" is no list, so it matches no state.
+            assertEquals(-1, resolver.resolveState("minecraft:birch_leaves", Map.of("distance", "1")::get),
+                    "a comma value is one literal value");
+            // A segment that is no key=value is skipped; the rest still applies.
+            assertEquals(17, resolver.resolveState("minecraft:spruce_leaves", Map.of("persistent", "true")::get),
+                    "a malformed predicate is skipped");
             assertTrue(result.deviations().contains("BLOCK_TAG_UNSUPPORTED"),
                     "tag deviation is missing");
             assertTrue(result.deviations().contains("BLOCK_PROPERTIES_INVALID"),

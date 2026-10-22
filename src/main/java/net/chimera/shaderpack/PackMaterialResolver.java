@@ -27,25 +27,32 @@ import java.util.regex.Pattern;
 /**
  * Immutable resolver for block.properties mappings, read through the same
  * continuation and conditional handling as shaders.properties. A token is a
- * block name, optionally followed by state selectors as Iris writes them
- * ({@code minecraft:tall_grass:half=lower}, {@code leaves:waterlogged=false},
- * {@code block:prop=a,b}). Tags are rejected instead of being guessed.
+ * block name, optionally followed by state predicates as Iris writes them
+ * ({@code minecraft:tall_grass:half=lower}, {@code leaves:waterlogged=false}).
+ * Tags are rejected instead of being guessed.
+ *
+ * <p>A state takes the first entry, in file order, that matches it, as Iris's
+ * BlockMaterialMapping puts each id's states with putIfAbsent: a plain name
+ * matches every state, so it wins over a later predicate entry for that block.</p>
  */
 public final class PackMaterialResolver {
     private static final Pattern MAPPING = Pattern.compile(
             "^\\s*block\\.(-?\\d+)\\s*=\\s*(.*?)\\s*$");
     private static final Pattern NAMESPACE = Pattern.compile("[a-z0-9_.-]+");
     private static final Pattern PATH = Pattern.compile("[a-z0-9_./-]+");
-    private static final Pattern PROPERTY = Pattern.compile("[a-z0-9_]+=[a-z0-9_,]+");
     private static final Pattern CONDITION = Pattern.compile(
             "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
 
-    /** One state-selector entry: the id applies when every listed property has a listed value. */
-    record Selector(int id, Map<String, Set<String>> properties) {
+    /**
+     * One block entry: its id applies to a state whose value for each predicate equals the
+     * predicate's, as Iris's checkState compares them. A predicate on a property the block does
+     * not have is ignored, as Iris ignores it; a plain name has none and matches every state.
+     */
+    record Entry(int id, Map<String, String> predicates) {
         boolean matches(Function<String, String> stateValue) {
-            for (Map.Entry<String, Set<String>> property : properties.entrySet()) {
-                String value = stateValue.apply(property.getKey());
-                if (value == null || !property.getValue().contains(value)) {
+            for (Map.Entry<String, String> predicate : predicates.entrySet()) {
+                String value = stateValue.apply(predicate.getKey());
+                if (value != null && !value.equals(predicate.getValue())) {
                     return false;
                 }
             }
@@ -74,7 +81,7 @@ public final class PackMaterialResolver {
     }
 
     private final Map<String, Integer> ids;
-    private final Map<String, List<Selector>> selectors;
+    private final Map<String, List<Entry>> entries;
     private final Map<String, Layer> layers;
     private final List<String> deviations;
     private final Map<BlockState, Integer> stateCache = new ConcurrentHashMap<>();
@@ -82,20 +89,23 @@ public final class PackMaterialResolver {
 
     private PackMaterialResolver(
             Map<String, Integer> ids,
-            Map<String, List<Selector>> selectors,
+            Map<String, List<Entry>> entries,
             Map<String, Layer> layers,
             Collection<String> deviations
     ) {
         this.ids = Collections.unmodifiableMap(new TreeMap<>(ids));
-        Map<String, List<Selector>> copy = new TreeMap<>();
-        selectors.forEach((name, list) -> copy.put(name, List.copyOf(list)));
-        this.selectors = Collections.unmodifiableMap(copy);
+        Map<String, List<Entry>> copy = new TreeMap<>();
+        entries.forEach((name, list) -> copy.put(name, List.copyOf(list)));
+        this.entries = Collections.unmodifiableMap(copy);
         this.layers = Collections.unmodifiableMap(new TreeMap<>(layers));
         this.deviations = List.copyOf(new TreeSet<>(deviations));
     }
 
-    /** What one block.properties read collects: ids, state selectors, each layer key's value, deviations. */
-    private record Collected(Map<String, Integer> ids, Map<String, List<Selector>> selectors,
+    /**
+     * What one block.properties read collects: each name's plain id, every block's entries in file
+     * order, each layer key's value, deviations.
+     */
+    private record Collected(Map<String, Integer> ids, Map<String, List<Entry>> entries,
                              Map<Layer, String> layerLines, Set<String> deviations) {
         Collected() {
             this(new TreeMap<>(), new TreeMap<>(), new EnumMap<>(Layer.class), new TreeSet<>());
@@ -103,7 +113,7 @@ public final class PackMaterialResolver {
 
         void clear() {
             ids.clear();
-            selectors.clear();
+            entries.clear();
             layerLines.clear();
         }
     }
@@ -179,7 +189,7 @@ public final class PackMaterialResolver {
             sourceHash = null;
         }
         Map<String, Layer> layers = layers(collected.layerLines(), collected.deviations());
-        return new ParseResult(new PackMaterialResolver(collected.ids(), collected.selectors(), layers,
+        return new ParseResult(new PackMaterialResolver(collected.ids(), collected.entries(), layers,
                 collected.deviations()), true, sourceHash, List.copyOf(collected.deviations()));
     }
 
@@ -252,27 +262,27 @@ public final class PackMaterialResolver {
         return property.getName(state.getValue(property));
     }
 
-    /** A plain-name lookup: the id of the block's unconditioned mapping. */
+    /** A plain-name lookup: the id of the block's first unconditioned mapping. */
     public int resolveName(String name) {
         String normalized = normalizeName(name);
         return normalized == null ? -1 : ids.getOrDefault(normalized, -1);
     }
 
     /**
-     * The id of one block state. A matching selector is more specific than the
-     * block's plain mapping, so the first one that matches, in file order, wins.
+     * The id of one block state: the first of the block's entries, in file order, that matches it.
+     * {@code stateValue} gives a property's value, or null when the block has no such property.
      */
     public int resolveState(String name, Function<String, String> stateValue) {
         String normalized = normalizeName(name);
         if (normalized == null) {
             return -1;
         }
-        for (Selector selector : selectors.getOrDefault(normalized, List.of())) {
-            if (selector.matches(stateValue)) {
-                return selector.id();
+        for (Entry entry : entries.getOrDefault(normalized, List.of())) {
+            if (entry.matches(stateValue)) {
+                return entry.id();
             }
         }
-        return ids.getOrDefault(normalized, -1);
+        return -1;
     }
 
     public Map<String, Integer> mappings() {
@@ -297,18 +307,13 @@ public final class PackMaterialResolver {
         if (line.isEmpty() || !line.startsWith("block.")) {
             return;
         }
-        Map<String, Integer> ids = collected.ids();
-        Map<String, List<Selector>> selectors = collected.selectors();
         Set<String> deviations = collected.deviations();
-
         Matcher matcher = MAPPING.matcher(line);
         Integer mappedId = matchMappingId(matcher);
         if (mappedId == null) {
             deviations.add("BLOCK_PROPERTIES_INVALID");
             return;
         }
-        int id = mappedId;
-
         for (String token : matcher.group(2).split("\\s+")) {
             if (token.isBlank()) {
                 continue;
@@ -317,20 +322,7 @@ public final class PackMaterialResolver {
                 deviations.add("BLOCK_TAG_UNSUPPORTED");
                 continue;
             }
-            if (token.indexOf('=') >= 0) {
-                addSelector(token, id, selectors, deviations);
-                continue;
-            }
-            String normalized = normalizeName(token);
-            if (normalized == null) {
-                deviations.add("BLOCK_PROPERTIES_INVALID");
-                continue;
-            }
-            // Iris BlockMaterialMapping (putIfAbsent): the first mapping in file order wins.
-            Integer previous = ids.putIfAbsent(normalized, id);
-            if (previous != null && previous != id) {
-                deviations.add("BLOCK_MAPPING_CONFLICT");
-            }
+            addEntry(token, mappedId, collected);
         }
     }
 
@@ -367,45 +359,36 @@ public final class PackMaterialResolver {
     }
 
     /**
-     * {@code [namespace:]block:prop=value[,value...][:prop=value...]}. The name
-     * is every segment before the first property; a second name segment is the
-     * path under the first as namespace.
+     * One {@code [namespace:]block[:prop=value...]} token, split as Iris's BlockEntry.parse splits it
+     * on colons: a second segment without '=' is the path under the first as namespace, and each
+     * later segment is a predicate. A predicate not of the form key=value is skipped, and a key's
+     * last value wins. The first plain mapping of a name is its resolveName id.
      */
-    private static void addSelector(
-            String token,
-            int id,
-            Map<String, List<Selector>> selectors,
-            Set<String> deviations
-    ) {
-        String[] segments = token.split(":", -1);
-        int first = 0;
-        while (first < segments.length && segments[first].indexOf('=') < 0) {
-            first++;
-        }
-        String name = first == 1 ? segments[0]
-                : first == 2 ? segments[0] + ":" + segments[1] : null;
+    private static void addEntry(String token, int id, Collected collected) {
+        String[] segments = token.split(":");
+        int first = segments.length > 1 && segments[1].indexOf('=') >= 0 ? 1 : Math.min(segments.length, 2);
+        String name = first == 1 ? segments[0] : segments[0] + ":" + segments[1];
         String normalized = normalizeName(name);
         if (normalized == null) {
-            deviations.add("BLOCK_PROPERTIES_INVALID");
+            collected.deviations().add("BLOCK_PROPERTIES_INVALID");
             return;
         }
-        Map<String, Set<String>> properties = new TreeMap<>();
+        Map<String, String> predicates = new TreeMap<>();
         for (int index = first; index < segments.length; index++) {
-            String property = segments[index];
-            if (!PROPERTY.matcher(property).matches()) {
-                deviations.add("BLOCK_PROPERTIES_INVALID");
-                return;
+            String[] parts = segments[index].split("=");
+            if (parts.length != 2) {
+                collected.deviations().add("BLOCK_PROPERTIES_INVALID");
+                continue;
             }
-            int equals = property.indexOf('=');
-            Set<String> values = new TreeSet<>();
-            for (String option : property.substring(equals + 1).split(",")) {
-                if (!option.isEmpty()) values.add(option);
-            }
-            properties.merge(property.substring(0, equals), values,
-                    (left, right) -> { left.retainAll(right); return left; });
+            predicates.put(parts[0], parts[1]);
         }
-        selectors.computeIfAbsent(normalized, key -> new ArrayList<>())
-                .add(new Selector(id, Collections.unmodifiableMap(properties)));
+        collected.entries().computeIfAbsent(normalized, key -> new ArrayList<>())
+                .add(new Entry(id, Collections.unmodifiableMap(predicates)));
+        if (first < segments.length) return;
+        Integer previous = collected.ids().putIfAbsent(normalized, id);
+        if (previous != null && previous != id) {
+            collected.deviations().add("BLOCK_MAPPING_CONFLICT");
+        }
     }
 
     private static String normalizeName(String name) {
