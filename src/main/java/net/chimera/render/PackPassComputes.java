@@ -19,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -72,12 +73,8 @@ final class PackPassComputes implements AutoCloseable {
     private final Set<String> failed = new HashSet<>();
     /** Computes that have skipped a frame, each logged once. */
     private final Set<String> skipped = new HashSet<>();
-    /** The setup computes this round has run; a session's first round starts at load. */
-    private final Set<String> setupDone = new HashSet<>();
-    private boolean setupDue;
-    /** Frames the round's next setup compute has skipped, and how many it may before it runs no more. */
-    private int setupTries;
-    private static final int SETUP_TRIES = 8;
+    /** The setup computes' round; a session's first round starts at load. */
+    private final SetupRound setupRound = new SetupRound();
 
     private PackPassComputes(List<Loaded> loaded, PackResourceOwner resources, PackAdvancedImageOwner packImages,
                              PackStorageBufferOwner buffers) {
@@ -192,37 +189,28 @@ final class PackPassComputes implements AutoCloseable {
     }
 
     /**
-     * Runs the setup computes, in order, as Iris does once the pipeline is made and after each
-     * resize: {@code dispatch(1, 1)}, so a relative work-group count is of a one-pixel screen
-     * (IrisRenderingPipeline). One that skips the frame, as before a depth snapshot exists, holds
-     * the rest of the round to a later frame, so they run in order; after SETUP_TRIES frames it
-     * runs no more. Each runs once a round.
+     * Runs the setup computes as their round allows (SetupRound), each with {@code dispatch(1, 1)}
+     * as Iris does, so a relative work-group count is of a one-pixel screen (IrisRenderingPipeline).
      */
     void dispatchSetup(VkCommandBuffer commandBuffer, ImageSources sources) {
-        for (Loaded compute : loaded) {
-            String name = compute.plan().name();
-            if (!PassComputePlan.isSetup(compute.plan().pass()) || setupDone.contains(name)) continue;
-            if (!run(compute, commandBuffer, sources, 1, 1)) {
-                if (++setupTries < SETUP_TRIES) return;
-                failed.add(name);
-                LOGGER.warn("[chimera] pack setup compute {} skipped {} frames; it no longer runs", name, setupTries);
-            }
-            setupDone.add(name);
-            setupTries = 0;
+        Map<String, Loaded> setup = new LinkedHashMap<>();
+        loaded.stream().filter(compute -> PassComputePlan.isSetup(compute.plan().pass()))
+                .forEach(compute -> setup.put(compute.plan().name(), compute));
+        for (String name : setupRound.advance(List.copyOf(setup.keySet()),
+                name -> run(setup.get(name), commandBuffer, sources, 1, 1))) {
+            LOGGER.warn("[chimera] pack setup compute {} skipped {} frames; this setup round goes on without it",
+                    name, SetupRound.TRIES);
         }
-        setupDue = false;
     }
 
     /** Starts a setup round: the targets were made again, after a resize. */
     void requestSetup() {
-        setupTries = 0;
-        setupDone.clear();
-        setupDue = loaded.stream().anyMatch(compute -> PassComputePlan.isSetup(compute.plan().pass()));
+        setupRound.start(loaded.stream().anyMatch(compute -> PassComputePlan.isSetup(compute.plan().pass())));
     }
 
     /** Whether a setup compute of this round has yet to run. */
     boolean setupDue() {
-        return setupDue;
+        return setupRound.due();
     }
 
     /**
