@@ -142,6 +142,11 @@ final class AdvancedImageDeclarations {
     /** The spec of one declaration with this size; its tokens are the declaration's own. */
     private static PackAdvancedResourcePlan.ImageSpec image(String name, String[] values, int[] size, long bytes,
             PackAdvancedResourcePlan.Status status, List<String> deviations) {
+        IrisColorFormats.Format format = IrisColorFormats.of(token(values, 2));
+        if (status == PackAdvancedResourcePlan.Status.SUPPORTED && format != null && !format.exact()) {
+            deviations.add("ADVANCED_IMAGE_FORMAT_APPROXIMATED:" + name + "=" + format.token() + "->"
+                    + IrisColorFormats.stored(format.vkFormat()).token());
+        }
         String sampler = token(values, 0).equals(NO_SAMPLER) ? "" : token(values, 0);
         return new PackAdvancedResourcePlan.ImageSpec(name, sampler, token(values, 1), token(values, 2).toLowerCase(),
                 token(values, 3), Boolean.parseBoolean(token(values, 4)), Boolean.parseBoolean(token(values, 5)),

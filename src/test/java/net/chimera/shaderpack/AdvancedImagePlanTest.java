@@ -108,6 +108,9 @@ final class AdvancedImagePlanTest {
         assertEquals("rgba8", color.layoutQualifier());
         assertEquals("image3D", AdvancedImageDeclarations.storageImageType(color));
         assertEquals("rgba16f", padded.layoutQualifier(), "RGB16F is stored with alpha");
+        assertTrue(padded.deviations().contains("ADVANCED_IMAGE_FORMAT_APPROXIMATED:padded=RGB16F->RGBA16F"),
+                padded.deviations().toString());
+        assertTrue(color.deviations().stream().noneMatch(value -> value.startsWith("ADVANCED_IMAGE_FORMAT_")));
         assertTrue(!unknown.supported() && unknown.deviations().contains("ADVANCED_IMAGE_UNSUPPORTED:unknown"));
     }
 

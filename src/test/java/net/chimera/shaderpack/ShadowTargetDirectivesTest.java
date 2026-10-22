@@ -55,6 +55,8 @@ final class ShadowTargetDirectivesTest {
         assertTrue(directives.depth(0).hardwareFiltering() && !directives.depth(1).hardwareFiltering());
         assertTrue(directives.depth(0).nearest() && directives.depth(1).nearest());
         assertTrue(directives.depth(1).mipmap() && !directives.depth(0).mipmap());
+        // Chimera samples the base level of a shadow depth Iris mipmaps (KNOW-779), and says so.
+        assertEquals(List.of("SHADOW_DEPTH_MIPMAP_UNSUPPORTED:shadowtex1"), directives.deviations());
     }
 
     /** Iris reads each directive by its declared type and ignores a value it cannot read. */

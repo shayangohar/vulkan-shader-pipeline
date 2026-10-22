@@ -424,8 +424,7 @@ public final class PackProbe {
         if (index.matches()) {
             return Integer.parseInt(index.group(1));
         }
-        Matcher format = Pattern.compile("POST_TARGET_FORMAT_(?:UNSUPPORTED|APPROXIMATED):colortex(\\d+)")
-                .matcher(deviation);
+        Matcher format = Pattern.compile("POST_TARGET_[A-Z_]+:colortex(\\d+)").matcher(deviation);
         if (format.find()) {
             return Integer.parseInt(format.group(1));
         }

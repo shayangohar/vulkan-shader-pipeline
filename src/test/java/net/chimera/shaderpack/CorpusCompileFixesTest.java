@@ -280,7 +280,8 @@ final class CorpusCompileFixesTest {
                 uniform sampler2D colortex0;
                 void main() { gl_FragColor = texture2D(colortex0, vec2(0.5)); }
                 """);
-        PackPlan plan = PackProbe.analyze(root).plan();
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackPlan plan = analysis.plan();
         for (String program : List.of("gbuffers_terrain", "composite")) {
             PackProgramPlan planned = plan.program(program);
             assertTrue(planned != null && planned.executable() && planned.deviations().stream()
@@ -289,6 +290,36 @@ final class CorpusCompileFixesTest {
                     program + " must plan over the integer target: "
                             + (planned == null ? "missing" : planned.deviations()));
         }
+        // GL leaves Iris's float clear of colortex1 undefined; Chimera's integer clear is its own choice.
+        assertTrue(analysis.config().deviations().contains("POST_TARGET_INTEGER_CLEAR_CHIMERA:colortex1"),
+                analysis.config().deviations().toString());
+    }
+
+    /**
+     * GL refuses glGenerateMipmap on an integer format, so Iris's colortex1 chain stays at its base
+     * level; Chimera downsamples it nearest. The report names the choice on the program that asks.
+     */
+    @Test
+    void anIntegerMipChainIsReportedAsChimeras(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 330 compatibility
+                /*
+                const int colortex1Format = R32UI;
+                const bool colortex1Clear = false;
+                */
+                const bool colortex1MipmapEnabled = true;
+                uniform sampler2D colortex0;
+                /* RENDERTARGETS: 0,1 */
+                layout(location = 0) out vec4 color;
+                layout(location = 1) out uint id;
+                void main() { color = texture(colortex0, vec2(0.5)); id = 3u; }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        List<String> composite = analysis.report().program("composite").deviations();
+        assertTrue(composite.contains("POST_TARGET_INTEGER_MIPMAP_CHIMERA:colortex1"), composite.toString());
+        assertTrue(analysis.config().deviations().stream().noneMatch(value -> value.contains("INTEGER_CLEAR")),
+                "colortex1 does not clear");
     }
 
     /**

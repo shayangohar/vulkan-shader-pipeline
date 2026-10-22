@@ -52,7 +52,7 @@ final class ProgramReportRules {
         if (resourcePlan != null) {
             deviations.addAll(reportedResourceDeviations(resourcePlan, name));
         }
-        deviations.addAll(relevantTargetDeviations(packConfig.deviations(), targetResult));
+        deviations.addAll(relevantTargetDeviations(packConfig, targetResult));
         UniformRegistry.ProgramInterface interfacePlan =
                 interfacePlan(name, fragment, programPlan, targetResult, relaxed, postName);
         if (programPlan != null) {
@@ -677,22 +677,34 @@ final class ProgramReportRules {
         return GlslTokenRewriter.containsIdentifier(source, MODERN_STAGE_SYNTAX::contains);
     }
 
+    /**
+     * The pack's target deviations that concern a target the program writes, and the integer targets
+     * whose mip chain it asks for: GL refuses glGenerateMipmap on a format it cannot filter, so Iris's
+     * chain stays at its base level while Chimera downsamples it nearest (PackTargetImages).
+     */
     static List<String> relevantTargetDeviations(
-            Collection<String> configDeviations,
+            PackConfig.PackConfigData config,
             PostTargetPlan.ParseResult targetResult
     ) {
         if (targetResult == null) {
             return List.of();
         }
         List<String> result = new ArrayList<>();
-        for (String deviation : configDeviations) {
+        for (String deviation : config.deviations()) {
             if (deviation.startsWith("POST_TARGET_INDEX_UNSUPPORTED:")
                     || deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:")
-                    || deviation.startsWith("POST_TARGET_FORMAT_APPROXIMATED:")) {
+                    || deviation.startsWith("POST_TARGET_FORMAT_APPROXIMATED:")
+                    || deviation.startsWith("POST_TARGET_INTEGER_CLEAR_CHIMERA:")) {
                 Integer target = PackProbe.targetIndex(deviation);
                 if (target != null && targetResult.plan().targetSlots().contains(target)) {
                     result.add(deviation);
                 }
+            }
+        }
+        for (int target : targetResult.plan().mipmappedTargets()) {
+            Integer format = config.colortexFormats().get(target);
+            if (format != null && IrisColorFormats.integer(format)) {
+                result.add("POST_TARGET_INTEGER_MIPMAP_CHIMERA:colortex" + target);
             }
         }
         return result;

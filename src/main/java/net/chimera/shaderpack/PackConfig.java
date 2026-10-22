@@ -321,6 +321,14 @@ public final class PackConfig {
             }
         }
 
+        // GL leaves Iris's float clear of an integer buffer undefined; Chimera clears it with the clear
+        // colour's integer parts (PackTargetImages).
+        collected.colortexFormats.forEach((slot, format) -> {
+            if (IrisColorFormats.integer(format)
+                    && collected.targetSettings.getOrDefault(slot, TargetSettings.defaults()).clear()) {
+                collected.deviations.add("POST_TARGET_INTEGER_CLEAR_CHIMERA:colortex" + slot);
+            }
+        });
         ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues,
                 ShadowTargetDirectives.read(directives), shadowColorTargetCount(directivePrograms, settings));
         return new PackConfigData(collected.colortexFormats, drawBufferCount,
