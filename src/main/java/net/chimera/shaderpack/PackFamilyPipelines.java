@@ -152,7 +152,8 @@ public final class PackFamilyPipelines {
      * Builds a host-layout lane on the host vertex format of its contract: in the main pass
      * lines, glint, lightning, beacon beams and leads (Iris ShaderKey.LINES, GLINT, LIGHTNING,
      * BEACON and LEASH); in the shadow pass the shadow keys Iris draws on those layouts, into the
-     * shadow map's attachments with blending off, as shadow_entities is built.
+     * shadow map's attachments with the shadow blend (PackBlendPlan.shadowAttachments), as
+     * shadow_entities is built.
      */
     public static PackPipelines.PackParticle buildHostLayout(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner

@@ -110,6 +110,21 @@ public record PackBlendPlan(Mode program, Map<Integer, Mode> buffers, List<Strin
                 FACTORS.get("ZERO"), FACTORS.get("ONE")), buffers, next);
     }
 
+    /**
+     * The modes a fullscreen pass draws with, as Iris's renderers apply them: a begin, prepare,
+     * deferred or composite pass takes blend.<program> for every buffer and ignores per-buffer
+     * directives (CompositeRenderer.java:128,300-303); final always draws unblended
+     * (FinalPassRenderer.java:195), as shadowcomp does (ShadowCompositeRenderer.java:186).
+     */
+    PackBlendPlan forFullscreenPass(String pass) {
+        Mode kept = pass.equals("final") || pass.startsWith("shadowcomp") ? null : program;
+        if (kept == program && buffers.isEmpty()) return this;
+        List<String> next = new ArrayList<>(deviations);
+        if (kept == null) next.removeIf(deviation -> deviation.startsWith("BLEND_DIRECTIVE_APPLIED:"));
+        next.add("BLEND_DIRECTIVE_IGNORED_AS_IRIS:" + pass);
+        return new PackBlendPlan(kept, Map.of(), next);
+    }
+
     static Mode parse(String authored) {
         String value = authored == null ? "" : authored.trim();
         if (value.equalsIgnoreCase("off") || value.equalsIgnoreCase("false")) return Mode.OFF;
@@ -140,6 +155,20 @@ public record PackBlendPlan(Mode program, Map<Integer, Mode> buffers, List<Strin
         for (int i = 0; i < result.length; i++) {
             Mode buffer = buffers.get(targets.get(i));
             result[i] = buffer != null ? buffer : program;
+        }
+        return result;
+    }
+
+    /**
+     * One mode per shadow attachment, attachment i drawing shadowcolor i: the pack's directives
+     * over Iris's default for every shadow program, blending off (ProgramId's Shadow entries:
+     * BlendModeOverride.OFF).
+     */
+    public Mode[] shadowAttachments(int count) {
+        Mode[] result = new Mode[count];
+        for (int i = 0; i < count; i++) {
+            Mode buffer = buffers.get(i);
+            result[i] = buffer != null ? buffer : program != null ? program : Mode.OFF;
         }
         return result;
     }

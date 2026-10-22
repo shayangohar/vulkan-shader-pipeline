@@ -843,12 +843,16 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * Blend directives reach the per-attachment state of the world MRT pipelines; other
-         * programs keep the directive as a named gap.
+         * The program's blend directives as Iris applies them: a world program blends each buffer
+         * through its MRT output route, a shadow program each shadow attachment, and a fullscreen
+         * pass as PackBlendPlan.forFullscreenPass says. A world program with no route keeps the
+         * directive as a named gap.
          */
         private PackBlendPlan blendPlan() {
             PackBlendPlan blendPlan = PackBlendPlan.forProgram(directiveProgram, settings()).withIrisDefault(name);
-            if (blendPlan.overridesAnything() && geometryOutputPlan == null) {
+            if (stage == UniformRegistry.Stage.POST) {
+                blendPlan = blendPlan.forFullscreenPass(name);
+            } else if (blendPlan.overridesAnything() && geometryOutputPlan == null && !stage.shadowPass()) {
                 deviations.add("BLEND_DIRECTIVE_UNSUPPORTED:" + name);
                 return PackBlendPlan.empty();
             }

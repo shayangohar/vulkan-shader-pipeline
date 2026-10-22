@@ -186,7 +186,10 @@ public final class PackPipelines {
         LOGGER.warn("[chimera] pack {}: build failed phase={} exception={} reason={}",
                 program, phase, cause.getClass().getName(), reason, cause);
     }
-    /** A successfully built pack post pipeline plus the slots its samplers occupy. */
+    /**
+     * A successfully built pack post pipeline plus the slots its samplers occupy, and the blend
+     * its pass draws with (PackBlendPlan.forFullscreenPass).
+     */
     public record PackPost(
             String name,
             GraphicsPipeline pipeline,
@@ -195,10 +198,12 @@ public final class PackPipelines {
             List<Integer> requiredColorInputs,
             String convertedFragment,
             PostTargetPlan targetPlan,
-            ProgramImageBindingManifest imageBindings
+            ProgramImageBindingManifest imageBindings,
+            PackBlendPlan blendPlan
     ) {
         public PackPost {
             Objects.requireNonNull(imageBindings);
+            blendPlan = blendPlan == null ? PackBlendPlan.empty() : blendPlan;
             samplerNames = samplerNames == null ? List.of() : List.copyOf(samplerNames);
             requiredColorInputs = requiredColorInputs == null
                     ? List.of()
@@ -408,7 +413,7 @@ public final class PackPipelines {
                     : outputPlan != null && outputPlan.requiresDynamicAttachments()
                     ? outputPlan.outputFormatsArray() : null;
             PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
-                    ? shadowAttachmentBlends(attachmentFormats)
+                    ? plan.blendPlan().shadowAttachments(attachmentFormats.length)
                     : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
             GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, fragmentSource,
                     imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
@@ -498,8 +503,8 @@ public final class PackPipelines {
                     fragmentSource, storageOwner);
             GraphicsPipeline pipeline = createNative("pack_" + plan.name(), CustomVertexFormat.NONE, layout,
                     vertexSource, fragmentSource, prepared.imageBindings());
-            return new PackPost(plan.name(), pipeline, slots, samplerNames,
-                    colorInputTargets(samplerNames), fragmentSource, plan.targetPlan(), prepared.imageBindings());
+            return new PackPost(plan.name(), pipeline, slots, samplerNames, colorInputTargets(samplerNames),
+                    fragmentSource, plan.targetPlan(), prepared.imageBindings(), plan.blendPlan());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
             return null;
@@ -613,9 +618,11 @@ public final class PackPipelines {
             PackDescriptorLayout layout = prepareLayout(prepared, plan.name(), advancedResources);
             PackDescriptorContracts.verifyAdvancedLayout(layout, plan.name(), advancedResources, vertexSource,
                     fragmentSource, storageOwner);
+            int[] attachmentFormats = shadowAttachmentFormats(plan);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
                     ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, fragmentSource,
-                    prepared.imageBindings(), shadowAttachmentFormats(plan), null,
+                    prepared.imageBindings(), attachmentFormats,
+                    plan.blendPlan().shadowAttachments(attachmentFormats.length),
                     blendFuncOverride(plan, UniformRegistry.Stage.SHADOW));
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
         } catch (Exception e) {
@@ -632,13 +639,6 @@ public final class PackPipelines {
         List<Integer> formats = plan.shadowAttachmentFormats();
         if (formats.isEmpty()) return new int[] {37, 37};
         return formats.stream().mapToInt(Integer::intValue).toArray();
-    }
-
-    /** Blending off on every shadow attachment, as the shadow pass draws its casters. */
-    private static PackBlendPlan.Mode[] shadowAttachmentBlends(int[] formats) {
-        PackBlendPlan.Mode[] blends = new PackBlendPlan.Mode[formats.length];
-        Arrays.fill(blends, PackBlendPlan.Mode.OFF);
-        return blends;
     }
 
     /**
@@ -712,7 +712,7 @@ public final class PackPipelines {
                     fixedVertexSource, converted, imageBindings);
 
             return new PackPost(program.name(), pipeline, slots, samplerNames,
-                    requiredColorInputs, converted, targetPlan, imageBindings);
+                    requiredColorInputs, converted, targetPlan, imageBindings, PackBlendPlan.empty());
         } catch (Exception e) {
             handleBuildFailure(program.name(), e);
             return null;

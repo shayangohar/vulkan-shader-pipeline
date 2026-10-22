@@ -477,7 +477,9 @@ public final class PackPostTargets {
             renderingInfo.layerCount(1);
             renderingInfo.pColorAttachments(attachments.buffer());
 
-            MrtPipelineContext.begin(plan.outputFormatsArray(), deviceLimit);
+            // The pass draws unblended unless its blend.<program> says otherwise (CompositeRenderer).
+            MrtPipelineContext.begin(plan.outputFormatsArray(), deviceLimit,
+                    post.blendPlan().attachments(plan.targetSlots()));
             Renderer.getInstance().setBoundFramebuffer(this.pipelineFramebuffer);
             Renderer.getInstance().setBoundRenderPass(ChimeraRenderingPass.of(plan.outputFormatsArray(), 0, false));
             Renderer.setViewport(0, 0, renderWidth, renderHeight, stack);
