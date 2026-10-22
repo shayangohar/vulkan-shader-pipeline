@@ -120,10 +120,12 @@ final class PackShadowPass {
                     shadowBindings = bindPackShadowImages(pass.pipelines.shadowPipeline);
                 }
                 beginShadowDraw(frame);
-                drawShadowTerrain(frame);
+                ShadowCasterDirectives casters = packShadow && pass.packPlan != null
+                        ? pass.packPlan.shadowCasters() : ShadowCasterDirectives.DEFAULTS;
+                if (casters.terrain()) drawShadowTerrain(frame);
                 if (packShadow) {
                     renderShadowCasters(cameraX, cameraY, cameraZ);
-                    shadowBindings = drawShadowTranslucent(frame, shadowBindings);
+                    shadowBindings = drawShadowTranslucent(frame, shadowBindings, casters.translucent());
                 }
             } finally {
                 endShadowRecording(frame, shadowBindings);
@@ -149,17 +151,21 @@ final class PackShadowPass {
     }
 
     /**
-     * Draws the translucent terrain layer into the shadow map, untested (Iris SHADOW_TRANS), with
-     * shadow_water where the pack has it, whose images then replace shadow's. shadowtex1 is the
-     * opaque, cutout and entity casters only; this layer reaches shadowtex0 alone, and packs tint
-     * through shadowcolor where the two differ. Returns the bindings open afterwards.
+     * Draws the translucent terrain layer into the shadow map, unless the pack's shadowTranslucent
+     * is off (Iris ShadowRenderer.renderShadows), with shadow_water where the pack has it, whose
+     * images then replace shadow's. Its alpha test is shadow_water's (Iris SHADOW_TRANS tests only
+     * as its alphaTest says). shadowtex1, captured either way, is the opaque, cutout and entity
+     * casters only; this layer reaches shadowtex0 alone, and packs tint through shadowcolor where
+     * the two differ. Returns the bindings open afterwards.
      */
     private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> drawShadowTranslucent(
-            ShadowFrame frame, ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindings) {
+            ShadowFrame frame, ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindings,
+            boolean draw) {
         if (Renderer.getInstance().getBoundRenderPass() != null) {
             Renderer.getInstance().endRenderPass(frame.cmd());
         }
         this.shadowMap.captureOpaqueDepth(frame.cmd());
+        if (!draw) return bindings;
         ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> open = bindings;
         GraphicsPipeline water = pass.pipelines.shadowWaterPipeline;
         if (water != null) {

@@ -36,6 +36,7 @@ final class ShadowPassTest {
                 shadowPlayer=true
                 shadowBlockEntities=0
                 shadowLightBlockEntities=maybe
+                shadowTranslucent=0
                 """);
         var analysis = PackProbe.analyze(root);
         assertEquals("shadow", analysis.resolution().resolution("shadow_entities").selectedProgram(),
@@ -51,7 +52,8 @@ final class ShadowPassTest {
         assertTrue(compiled.failures().isEmpty(), "shadow_entities compilation: " + compiled.failures());
 
         ShadowCasterDirectives directives = analysis.plan().shadowCasters();
-        assertTrue(directives.entities() && directives.player() && !directives.blockEntities()
+        assertTrue(directives.terrain() && !directives.translucent()
+                        && directives.entities() && directives.player() && !directives.blockEntities()
                         && !directives.lightBlockEntities()
                         && directives.deviations().contains("SHADOW_DIRECTIVE_MALFORMED:shadowLightBlockEntities"),
                 "Iris reads true/1 and false/0 and keeps its default otherwise: " + directives);
