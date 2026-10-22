@@ -63,8 +63,9 @@ final class PackConditionals {
             return macros;
         }
 
+        /** Defines {@code name}; one defined with no body expands to nothing, as in JCPP. */
         String define(String name, String value) {
-            return macros.put(name, value == null || value.isBlank() ? "1" : value.trim());
+            return macros.put(name, value == null ? "" : value.trim());
         }
 
         String undefine(String name) {

@@ -337,7 +337,7 @@ public final class ShaderSourcePreprocessor {
             }
             String name = matcher.group(1);
             String value = matcher.group(2);
-            String definition = value == null || value.isBlank() ? "1" : normalize(value);
+            String definition = value == null || value.isBlank() ? "" : normalize(value);
             if (lockedMacros.containsKey(name)) {
                 emitLockedDefinitions();
                 return;

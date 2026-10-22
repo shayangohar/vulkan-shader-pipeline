@@ -170,6 +170,29 @@ final class OptionSweepFixesTest {
     }
 
     /**
+     * A macro defined with no body expands to nothing, so JCPP reads "#if NAME" as false: Bloop's TAA
+     * program defines TAA_USE_YCOCG bare and tests it with #if, and Iris skips the YCoCg path.
+     */
+    @Test
+    void aBareDefineTestedByIfIsFalse(@TempDir Path dir) {
+        String source = """
+                #version 400 compatibility
+                #define TAA_USE_YCOCG
+                #if TAA_USE_YCOCG
+                vec3 ycocg;
+                #endif
+                #ifdef TAA_USE_YCOCG
+                vec3 defined;
+                #endif
+                void main() { gl_FragColor = vec4(1.0); }
+                """;
+        var result = ShaderSourcePreprocessor.prepare(dir, dir.resolve("taa.fsh"), source,
+                PackEngineDefines.forPack(Map.of()), Set.of());
+        assertTrue(result.successful(), result.deviations().toString());
+        assertTrue(!result.source().contains("ycocg") && result.source().contains("defined"), result.source());
+    }
+
+    /**
      * Bliss SAND_STORMS off writes {@code uniform.float.sandStorm = 0.0;}. Iris cannot parse the
      * semicolon, logs it and declares nothing, so programs run reading it as zero; a value Chimera
      * cannot compile for want of a feature (an unknown function) still fails closed.

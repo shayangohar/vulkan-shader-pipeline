@@ -109,7 +109,16 @@ final class SweepParityFixesTest {
         assertTrue(PackConditionals.evaluate("0x10 == 16 && 010 == 8 && -SIZE < ~0", macros));
         assertTrue(PackConditionals.evaluate("SELF", macros), "a macro does not expand inside itself");
         assertThrows(IllegalArgumentException.class, () -> PackConditionals.evaluate("F(1)", macros));
-        assertThrows(IllegalArgumentException.class, () -> PackConditionals.evaluate("SIZE >", macros));
+        // JCPP reads a missing operand as 0 at the expr() call that wanted it, and at the top the
+        // directive is false: a macro defined with no body expands to nothing.
+        Map<String, String> empty = Map.of("EMPTY", "", "SIZE", "64");
+        assertTrue(PackConditionals.evaluate("SIZE >", empty), "SIZE > 0");
+        assertFalse(PackConditionals.evaluate("EMPTY", empty));
+        assertFalse(PackConditionals.evaluate("EMPTY != 1", empty), "the top-level operand is missing");
+        assertTrue(PackConditionals.evaluate("!EMPTY", empty));
+        assertTrue(PackConditionals.evaluate("1 || EMPTY", empty));
+        assertFalse(PackConditionals.evaluate("(EMPTY)", empty));
+        assertTrue(PackConditionals.evaluate("defined EMPTY", empty));
 
         PackConditionals.State state = new PackConditionals.State(macros);
         assertTrue(state.apply("if", "(SIZE*SIZE*BINS) < (8192*8192)"));
