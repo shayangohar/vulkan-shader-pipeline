@@ -163,8 +163,10 @@ public abstract class ChimeraLevelRendererMixin {
     @Inject(method = "renderLevel", at = @At("RETURN"))
     private void chimera$resolveWorld(CallbackInfo ci) {
         if (ChimeraRenderer.segmentsActive()) {
-            // Family batches a mod's render-stage drawing left behind.
+            // Family batches a mod's render-stage drawing left behind, crumbling included.
             chimera$drawFamilyBatches();
+            var crumbling = Minecraft.getInstance().renderBuffers().crumblingBufferSource();
+            if (crumbling instanceof FamilyBufferSource families) families.endFamilyBatches();
             ChimeraMainPass pass = ChimeraRenderer.getMainPass();
             if (pass != null) {
                 ChimeraHandRenderer.drawTranslucent();

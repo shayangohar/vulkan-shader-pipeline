@@ -339,7 +339,7 @@ final class HostFamilyTest {
             PackProbe.Analysis analysis = PackProbe.analyze(root);
             assertHandAliasesKeepHandFamily(analysis);
             assertTranslucentAliasKeepsRequestedFamily(analysis);
-            assertCrumblingKeepsHostBlockLayout(analysis);
+            assertCrumblingWidensTheBlockLayout(analysis);
             Files.writeString(properties, directives + "program.gbuffers_entities.enabled=false\n");
             analysis = PackProbe.analyze(root);
             assertEquals("gbuffers_textured_lit", analysis.resolution()
@@ -403,17 +403,25 @@ final class HostFamilyTest {
                 "disabled post program became a fallback producer");
     }
 
-    private static void assertCrumblingKeepsHostBlockLayout(PackProbe.Analysis analysis) {
+    /**
+     * Iris widens the crumbling overlay's BLOCK buffers to TERRAIN, so gbuffers_damagedblock reads a
+     * per-quad mid-coordinate and tangent: it plans on the entity contract and draws on EXTENDED_BLOCK,
+     * at BLOCK's locations, with its entity ids read as 0.
+     */
+    private static void assertCrumblingWidensTheBlockLayout(PackProbe.Analysis analysis) {
         PackProgramPlan damage = analysis.plan().program("gbuffers_damagedblock");
         assertTrue(analysis.report().shouldAttempt(damage.name()) && damage.executable(),
-                "host BLOCK crumbling adapter not admitted: " + damage.deviations());
-        assertEquals(FamilyAdapterPlan.VertexContract.HOST_BLOCK, damage.familyAdapter().vertexContract(),
-                "crumbling reused entity format");
-        assertTrue(damage.convertedVertex().contains("layout(location = 3) in ivec2 UV2;")
-                        && damage.convertedVertex().contains("layout(location = 4) in vec3 Normal;")
-                        && damage.convertedVertex().contains("TextureMat * vec4(UV0")
-                        && !damage.convertedVertex().contains("in uvec4 EntityIds"),
-                "crumbling host attribute/texture-matrix contract changed");
+                "crumbling adapter not admitted: " + damage.deviations());
+        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY, damage.familyAdapter().vertexContract());
+        String extended = EntityVertexBridge.withoutEntityIds(EntityVertexBridge.layoutVertexForFormat(
+                damage.convertedVertex(), DefaultVertexFormat.BLOCK));
+        var names = ChimeraVertexFormats.EXTENDED_BLOCK.getElementAttributeNames();
+        String mid = "layout(location = " + names.indexOf("MidTexCoord") + ") in vec2 MidTexCoord;";
+        assertTrue(extended.contains("layout(location = " + names.indexOf("UV2") + ") in ivec2 UV2;")
+                        && extended.contains(mid)
+                        && extended.contains("const uvec4 EntityIds = uvec4(0);")
+                        && extended.contains("TextureMat * vec4(UV0"),
+                "crumbling widened layout: " + extended);
     }
 
     /** The named program's plan, asserted present, executable and attempted. */

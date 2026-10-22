@@ -62,9 +62,11 @@ public final class FamilyAdapterRegistry {
             // layout, and its text on the GLYPH layout variant.
             plan("gbuffers_block_translucent", FamilyAdapterPlan.Family.BLOCK_TRANSLUCENT,
                     UniformRegistry.Stage.BLOCK, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
+            // Iris CRUMBLING: the block-breaking overlay, whose BLOCK buffers Iris widens to TERRAIN
+            // (mid-coordinate and tangent per quad), as Chimera widens them to EXTENDED_BLOCK.
             plan("gbuffers_damagedblock",
                     FamilyAdapterPlan.Family.DAMAGED_BLOCK, UniformRegistry.Stage.BLOCK,
-                    FamilyAdapterPlan.VertexContract.HOST_BLOCK),
+                    FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
             plan("gbuffers_hand", FamilyAdapterPlan.Family.HAND,
                     UniformRegistry.Stage.HAND, FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY),
             plan("gbuffers_hand_water",

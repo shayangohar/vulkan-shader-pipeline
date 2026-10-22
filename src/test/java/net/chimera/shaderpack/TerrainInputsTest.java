@@ -49,7 +49,7 @@ final class TerrainInputsTest {
                 """;
         String fragment = "#version 120\nvarying vec2 uv;\nvarying vec2 light1;\n"
                 + "varying vec2 light2;\nvoid main() { gl_FragColor = vec4(uv + light1 + light2, 0, 1); }\n";
-        for (String family : List.of("entity", "block", "crumbling", "hand", "particle")) {
+        for (String family : List.of("entity", "block", "hand", "particle")) {
             assertLegacyMatrices(family, legacyConversion(family, vertex, fragment));
         }
         String overlayFragment = EntityOverlayColor.inject("#version 120\n"
@@ -78,8 +78,6 @@ final class TerrainInputsTest {
                                                                                String fragment) {
         return switch (family) {
             case "block" -> EntityVertexBridge.convertBlockVertexChecked(
-                    vertex, null, fragment, Map.of(), false, List.of());
-            case "crumbling" -> EntityVertexBridge.convertCrumblingVertexChecked(
                     vertex, null, fragment, Map.of(), false, List.of());
             case "hand" -> EntityVertexBridge.convertHandVertexChecked(
                     vertex, null, fragment, Map.of(), false, List.of());

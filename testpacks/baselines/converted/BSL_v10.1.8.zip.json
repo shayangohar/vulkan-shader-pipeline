@@ -31,7 +31,7 @@
   "gbuffers_block_translucent.fsh": "d2f031136cea44bf 050113e0e83d706a",
   "gbuffers_block_translucent.vsh": "69d2d54937291580 cc8a19c09c62026c",
   "gbuffers_damagedblock.fsh": "1e4fd12044aedd60 38d58845fe1a7e99",
-  "gbuffers_damagedblock.vsh": "4ac6dac500b49f40 b46b6f17d0d76d0c",
+  "gbuffers_damagedblock.vsh": "f9b3a2d29b3aaa35 2a1e7903d3bbcc6c",
   "gbuffers_entities.fsh": "0355ec0d117daea5 488671d01e606125",
   "gbuffers_entities.vsh": "db2eab288d283b19 5dcea8cb74f51d5b",
   "gbuffers_entities_translucent [text input variant Position,Color,UV0,UV2].fsh": "a78d3bd3dd4e6fab 281617689213eb01",

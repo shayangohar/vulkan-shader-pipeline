@@ -30,6 +30,8 @@
   "gbuffers_block_translucent [text input variant Position,Color,UV0,UV2].vsh": "b18479bb89366c42 aaa65a64bc1ff4c5",
   "gbuffers_block_translucent.fsh": "fca10957ad299926 e03c021c703228f3",
   "gbuffers_block_translucent.vsh": "da7d0c593e188641 038018757099146c",
+  "gbuffers_damagedblock.fsh": "6d748741feb91830 1fe5728cbf3f6f08",
+  "gbuffers_damagedblock.vsh": "080624e88ca51c7d a89c1455d5ce3ff7",
   "gbuffers_entities.fsh": "dcb7eb3b3c22bda9 6044416301c5b7b4",
   "gbuffers_entities.vsh": "e0f152aad7c24812 87129f5b3bf7791a",
   "gbuffers_entities_translucent [text input variant Position,Color,UV0,UV2].fsh": "fd2932df5d75f6fa eab05f6021afb42f",

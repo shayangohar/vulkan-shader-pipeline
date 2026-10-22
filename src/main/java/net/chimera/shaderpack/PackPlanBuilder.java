@@ -662,10 +662,7 @@ public final class PackPlanBuilder {
                 List<UniformRegistry.UniformDeclaration> fragmentUniforms =
                         interfacePlan.project("fragment", stage).executableUniforms();
                 EntityVertexBridge.VertexSamplerPlan vertexSamplers = vertexSamplerPlan(interfacePlan, stage, vertex);
-                conversion = name.equals("gbuffers_damagedblock")
-                        ? EntityVertexBridge.convertCrumblingVertexChecked(vertex, vertexFile(), fragment,
-                        stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
-                        : FamilyAdapterRegistry.isBlockFamily(name)
+                conversion = FamilyAdapterRegistry.isBlockFamily(name)
                         ? EntityVertexBridge.convertBlockVertexChecked(vertex, vertexFile(), fragment,
                         stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                         : FamilyAdapterRegistry.isHandFamily(name)

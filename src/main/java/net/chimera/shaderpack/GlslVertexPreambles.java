@@ -297,7 +297,8 @@ final class GlslVertexPreambles {
 
             """;
 
-    static final String CRUMBLING_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    /** DefaultVertexFormat.BLOCK as drawn on its host layout: position, colour, texture, light and normal. */
+    private static final String HOST_BLOCK_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
             .replace("layout(location = 3) in ivec2 UV1;\n", "const ivec2 UV1 = ivec2(0);\n")
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "layout(location = 4) in vec3 Normal;")
@@ -435,11 +436,11 @@ final class GlslVertexPreambles {
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
     /**
-     * DefaultVertexFormat.BLOCK beacon beams: position, colour, texture, light and normal, at
-     * the crumbling layout's locations, with the host colour modulator as for any native layout.
+     * DefaultVertexFormat.BLOCK beacon beams on the host block layout, with the host colour
+     * modulator as for any native layout.
      */
     static final String BEACON_VERTEX_PREAMBLE = "// DefaultVertexFormat.BLOCK beacon beam\n"
-            + CRUMBLING_VERTEX_PREAMBLE;
+            + HOST_BLOCK_VERTEX_PREAMBLE;
 
     /**
      * DefaultVertexFormat.POSITION_COLOR_LIGHTMAP leads. Iris supplies UV0 (0.5, 0.5) and +Z;

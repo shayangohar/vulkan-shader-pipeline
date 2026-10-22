@@ -28,16 +28,31 @@ public final class PackFamilyPipelines {
         }
         FamilyAdapterPlan.Family family = plan.familyAdapter().family();
         UniformRegistry.Stage stage = switch (family) {
-            case BLOCK, BLOCK_TRANSLUCENT, DAMAGED_BLOCK -> UniformRegistry.Stage.BLOCK;
+            case BLOCK, BLOCK_TRANSLUCENT -> UniformRegistry.Stage.BLOCK;
             case HAND, HAND_WATER -> UniformRegistry.Stage.HAND;
             default -> UniformRegistry.Stage.ENTITY;
         };
-        VertexFormat format = switch (family) {
-            case DAMAGED_BLOCK -> DefaultVertexFormat.BLOCK;
-            case HAND, HAND_WATER -> ChimeraVertexFormats.EXTENDED_ENTITY;
-            default -> ChimeraVertexFormats.EXTENDED_ENTITY;
-        };
-        return buildEntityLike(plan, stage, "pack_" + plan.name(), format, advancedResources, storageOwner);
+        return buildEntityLike(plan, stage, "pack_" + plan.name(), ChimeraVertexFormats.EXTENDED_ENTITY,
+                advancedResources, storageOwner);
+    }
+
+    /**
+     * gbuffers_damagedblock on the crumbling overlay's BLOCK buffers widened to EXTENDED_BLOCK, as Iris
+     * widens every BLOCK buffer to TERRAIN: the mid-coordinate and tangent come per quad, from the
+     * decal's own coordinates. The overlay's entity ids read 0 (EntityVertexBridge.withoutEntityIds).
+     */
+    public static PackPipelines.PackEntity buildDamagedBlock(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null || !plan.executable()) return null;
+        try {
+            String vertex = EntityVertexBridge.withoutEntityIds(
+                    EntityVertexBridge.layoutVertexForFormat(plan.convertedVertex(), DefaultVertexFormat.BLOCK));
+            return buildEntityLike(plan, UniformRegistry.Stage.BLOCK, "pack_" + plan.name(),
+                    ChimeraVertexFormats.EXTENDED_BLOCK, advancedResources, storageOwner, vertex);
+        } catch (IllegalArgumentException unsupported) {
+            return null;
+        }
     }
 
     /** Builds the block-entity adapter on the same append-only host format. */

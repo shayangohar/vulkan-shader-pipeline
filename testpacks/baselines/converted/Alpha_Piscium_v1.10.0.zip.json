@@ -91,6 +91,8 @@
   "gbuffers_block_translucent.vsh": "d7906f1aec004371 1897c335911e9f34",
   "gbuffers_clouds.fsh": "b4c626f8281e688b 221636c41656d7e3",
   "gbuffers_clouds.vsh": "4e7d9ef949c6d1c7 92714b4b4e68311b",
+  "gbuffers_damagedblock.fsh": "27e4e6bd82877acc a3f9986d51542cf8",
+  "gbuffers_damagedblock.vsh": "9c7fdea553937358 63af3f00bb90c909",
   "gbuffers_entities.fsh": "dfc315825687e416 346e10d075ed606c",
   "gbuffers_entities.vsh": "d7906f1aec004371 1897c335911e9f34",
   "gbuffers_entities_translucent [text input variant Position,Color,UV0,UV2].fsh": "318136d0105882a3 6c5701058d96edb1",

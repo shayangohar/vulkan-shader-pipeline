@@ -118,7 +118,6 @@ public record FamilyAdapterPlan(
         HOST_POSITION_TEX,
         /** DefaultVertexFormat.POSITION_TEX_COLOR world draws. */
         HOST_POSITION_TEX_COLOR,
-        HOST_BLOCK,
         SKY_POSITION,
         SKY_POSITION_COLOR,
         SKY_POSITION_UV,

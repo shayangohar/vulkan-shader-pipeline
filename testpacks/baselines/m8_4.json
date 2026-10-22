@@ -3,7 +3,7 @@
   "fixture": "m8_4",
   "fixtures": {
     "families": {
-      "reportSha256": "4296444c3aea57adce17ad941f60e3c6761ab2123d7c71392d99ad129d56640b",
+      "reportSha256": "c58f0cf4f34462e9686fef4ebabca662833b2c0f7b3a39f63eeebdaaa816d7a2",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_block.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -53,7 +53,7 @@
         "BLOCK_ENTITY_ID_DEFAULTED",
         "BLOCK_TRANSLUCENT_INSTALLED",
         "BLOCK_VERTEX_BRIDGE",
-        "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
+        "DAMAGED_BLOCK_INSTALLED",
         "ENTITY_BATCH_ORIGIN_SPLIT",
         "ENTITY_ID_DEFAULTED",
         "ENTITY_SCREEN_DRAW_FALLBACK",
@@ -81,7 +81,7 @@
       ]
     },
     "unsupported_families": {
-      "reportSha256": "24309e6552c24643a14f3a07022c9d7dec9809254bb8db355a843db917655352",
+      "reportSha256": "2def41578548843313a6281834a35228b0928ebf30b38a0f5f5c71630bc6173b",
       "sourceHashes": {
         "final.fsh": "b0f83ea952bfdf0ff9f38b1e61ae325ec9482b3f9679dc225eaa208a6e24883a",
         "gbuffers_damagedblock.fsh": "89c1fef42390ca7ffc3782cddff53f0b2e2adce07f81ecae445c2d646dd02016",
@@ -105,10 +105,11 @@
       ],
       "expectedDeviations": [
         "BLOCK_VERTEX_BRIDGE",
-        "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED",
+        "DAMAGED_BLOCK_INSTALLED",
         "ENTITY_ID_DEFAULTED",
         "ENTITY_SAMPLER_UNSUPPORTED:unsupportedSampler",
         "ENTITY_VERTEX_BRIDGE_NOT_REACHED",
+        "ENTITY_VERTEX_FORMAT_EXTENDED",
         "IRIS_DEFAULT_VERTEX_UNSUPPORTED",
         "LIGHTNING_VERTEX_BRIDGE_NOT_REACHED",
         "LIVE_UNIFORM_BRIDGE",

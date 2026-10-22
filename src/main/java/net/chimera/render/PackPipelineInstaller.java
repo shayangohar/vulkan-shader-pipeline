@@ -576,9 +576,9 @@ final class PackPipelineInstaller {
         markFamilyPipelineInstalled(name, "BLOCK_TRANSLUCENT_INSTALLED");
     }
 
-    /** gbuffers_damagedblock on the host block format. */
+    /** gbuffers_damagedblock on the crumbling overlay's widened block layout. */
     void installDamagedBlock(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity damaged = PackFamilyPipelines.buildEntityFamily(programPlan,
+        PackPipelines.PackEntity damaged = PackFamilyPipelines.buildDamagedBlock(programPlan,
                 advancedResources(), storage);
         if (damaged == null) {
             markFamilyPipelineFallback(name, "DAMAGED_BLOCK_PIPELINE_BUILD_FAILED");
@@ -589,7 +589,7 @@ final class PackPipelineInstaller {
             return;
         }
         pipelines.damagedBlock = damaged;
-        markFamilyPipelineInstalled(name, "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED");
+        markFamilyPipelineInstalled(name, "DAMAGED_BLOCK_INSTALLED");
     }
 
     /** gbuffers_hand or gbuffers_hand_water, one pipeline per native hand mesh shape. */

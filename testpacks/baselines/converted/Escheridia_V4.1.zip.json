@@ -70,6 +70,8 @@
   "gbuffers_block_translucent.vsh": "6748166bf9b8eb4c a5a4149bd3f99094",
   "gbuffers_clouds.fsh": "6455116d5cf32512 6a1281541d305726",
   "gbuffers_clouds.vsh": "9dfd8a055eab0509 210084aef5b46a61",
+  "gbuffers_damagedblock.fsh": "d764254f2dddb852 3a99a5e19cbb8fe2",
+  "gbuffers_damagedblock.vsh": "5aec4e83dad8e5f6 6644bd0ff54ae0d8",
   "gbuffers_entities.fsh": "c7144c350e2e4036 f7cdae2f64ac500a",
   "gbuffers_entities.vsh": "6748166bf9b8eb4c a5a4149bd3f99094",
   "gbuffers_entities_translucent [text input variant Position,Color,UV0,UV2].fsh": "d4d971d93daa93c7 82adb1d32299e776",

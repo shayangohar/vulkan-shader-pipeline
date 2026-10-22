@@ -127,8 +127,8 @@ final class WorldFamilyAdapterTest {
 
         ConformanceReport.ProgramReport damaged = first.report().program("gbuffers_damagedblock");
         assertTrue(damaged != null, "damaged-block program was not inventoried");
-        assertTrue(damaged.deviations().contains("DAMAGED_BLOCK_HOST_FORMAT_INSTALLED"),
-                "damaged-block host adapter was not named");
+        assertTrue(damaged.deviations().contains("DAMAGED_BLOCK_INSTALLED"),
+                "damaged-block adapter was not named");
         assertTrue(first.report().shouldAttempt("gbuffers_damagedblock"),
                 "damaged-block BLOCK adapter was not eligible");
 

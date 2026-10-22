@@ -271,34 +271,6 @@ public final class EntityVertexBridge {
                 GlslVertexPreambles.HAND_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
-    /** Host damage meshes keep BLOCK, including its lightmap and normal offsets. */
-    public static LegacyGlslConverter.TerrainVertexConversion convertCrumblingVertexChecked(
-            String source, Path sourceFile, String fragmentSource,
-            Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
-            List<UniformRegistry.UniformDeclaration> fragmentUniforms
-    ) {
-        return convertCrumblingVertexChecked(source, sourceFile, fragmentSource, sharedLocations,
-                allowStorageBuffers, fragmentUniforms, null);
-    }
-
-    /** Crumbling vertex conversion whose referenced samplers take the program's shared bindings. */
-    public static LegacyGlslConverter.TerrainVertexConversion convertCrumblingVertexChecked(
-            String source, Path sourceFile, String fragmentSource,
-            Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
-            List<UniformRegistry.UniformDeclaration> fragmentUniforms,
-            VertexSamplerPlan samplerPlan
-    ) {
-        String liveInputs = stripComments(EntityDeclarations.removeEntityAttributes(
-                LegacyGlslConverter.pruneUnreachableFunctions(
-                        LegacyGlslConverter.prepareSource(source, sourceFile, true))));
-        if (LegacyGlslConverter.containsIdentifier(liveInputs, "mc_midTexCoord")
-                || LegacyGlslConverter.containsIdentifier(liveInputs, "at_tangent")) {
-            throw new IllegalArgumentException("crumbling BLOCK has no material mid-coordinate or tangent attribute");
-        }
-        return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
-                GlslVertexPreambles.CRUMBLING_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
-    }
-
     static LegacyGlslConverter.TerrainVertexConversion convertEntityVertex(
             String source,
             Path sourceFile,
@@ -884,6 +856,15 @@ public final class EntityVertexBridge {
             case "vec3" -> "vec3(-1.0, -1.0, 0.0)";
             default -> "vec4(-1.0, -1.0, 0.0, 1.0)";
         });
+    }
+
+    /**
+     * The crumbling overlay's entity ids: it is written before a block entity draws and drawn after,
+     * so the block entity id its widened layout would carry is none of the overlay's. It reads 0.
+     */
+    public static String withoutEntityIds(String source) {
+        return source.replaceFirst("layout\\(location = \\d+\\) in uvec4 EntityIds;",
+                "const uvec4 EntityIds = uvec4(0);");
     }
 
     /**

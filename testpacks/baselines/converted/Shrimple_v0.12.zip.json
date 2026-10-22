@@ -80,6 +80,8 @@
   "gbuffers_block_translucent.vsh": "0622668a6cd4ecff c31b49dc2e4a7b43",
   "gbuffers_clouds.fsh": "0df5c15eed816a8d 2dad31e14f2e42f8",
   "gbuffers_clouds.vsh": "b5033508bb2788ac e5b0a2f87eebbf6f",
+  "gbuffers_damagedblock.fsh": "2a208b810160fbea c9a9d7989f086e9d",
+  "gbuffers_damagedblock.vsh": "43bb193b30302223 5f89cd10c1145286",
   "gbuffers_entities.fsh": "530d399d4f3f3fb0 38328d89f300cc0b",
   "gbuffers_entities.vsh": "5d628ca6af6638da b45281fd77fd6b51",
   "gbuffers_entities_translucent [text input variant Position,Color,UV0,UV2].fsh": "d77f90468bb290b7 c7bfa4a26d9732a5",

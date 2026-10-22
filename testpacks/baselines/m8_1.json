@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "682d64c3a69e3f5efdfcde8b10c7f3d7ea4d9c764ae78a8dee21599f0404989d",
+      "reportSha256": "2663822af479aed04d3a1670a37620b8a18b4b269fb70a5f2dd76f060e5e63c7",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
@@ -13,12 +13,11 @@
       "expectedExecutablePrograms": [
         "gbuffers_block",
         "gbuffers_block_translucent",
+        "gbuffers_damagedblock",
         "gbuffers_terrain",
         "gbuffers_water"
       ],
-      "expectedFallbackPrograms": [
-        "gbuffers_damagedblock"
-      ],
+      "expectedFallbackPrograms": [],
       "expectedUnsupportedPrograms": [],
       "expectedDeviations": [
         "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
@@ -26,8 +25,7 @@
         "BLOCK_ENTITY_ID_DEFAULTED",
         "BLOCK_TRANSLUCENT_INSTALLED",
         "BLOCK_VERTEX_BRIDGE",
-        "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
-        "BLOCK_VERTEX_CONVERSION_FAILED:crumbling BLOCK has no material mid-coordinate or tangent attribute",
+        "DAMAGED_BLOCK_INSTALLED",
         "ENTITY_STATE_FIXED_TO_HOST",
         "ENTITY_VERTEX_FORMAT_EXTENDED",
         "FAMILY_ADAPTER_INSTALLED",

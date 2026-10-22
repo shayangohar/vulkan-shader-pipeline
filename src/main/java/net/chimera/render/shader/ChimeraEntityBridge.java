@@ -28,13 +28,13 @@ import java.util.function.Supplier;
 /**
  * Render-thread state of the pack geometry families: which pack program draws which host draw.
  *
- * <p>Two kinds of lane exist. A family lane (entities, block entities, their text and moving blocks,
- * the hand and shadow casters) widens the host vertex format with Iris's attributes, so its
- * geometry is batched apart from the host's in a {@link FamilyRenderType} the moment it is written:
- * the lane is chosen from the render type and the context drawing it (EntityRenderDispatcher,
- * BlockEntityRenderDispatcher, the hand, the shadow casters). A host-layout lane (particles,
- * crumbling, and the {@link HostLayoutLane}s) keeps the host mesh and is chosen when it draws, by
- * shader name.</p>
+ * <p>Two kinds of lane exist. A family lane (entities, block entities, their text, moving blocks,
+ * the crumbling overlay, the hand and shadow casters) widens the host vertex format with Iris's
+ * attributes, so its geometry is batched apart from the host's in a {@link FamilyRenderType} the
+ * moment it is written: the lane is chosen from the render type and the context drawing it
+ * (EntityRenderDispatcher, BlockEntityRenderDispatcher, the hand, the shadow casters). A host-layout
+ * lane (particles and the {@link HostLayoutLane}s) keeps the host mesh and is chosen when it draws,
+ * by shader name.</p>
  *
  * <p>Either way the draw is open here while it runs, and the ShaderInstance pipeline seam
  * (ChimeraShaderPipelineMixin) hands Reforged the open draw's pack pipeline.</p>
@@ -137,6 +137,8 @@ public final class ChimeraEntityBridge {
             Map.entry("rendertype_entity_translucent_emissive", EntityShader.EMISSIVE),
             Map.entry("rendertype_entity_alpha", EntityShader.ALPHA));
     /** The chunk shaders Iris draws as MOVING_BLOCK when an entity or block entity draws with them. */
+    /** The block-breaking overlay's shader (RenderType.CRUMBLING, ModelBakery.DESTROY_TYPES). */
+    private static final String CRUMBLING_SHADER = "rendertype_crumbling";
     private static final Set<String> MOVING_BLOCK_SHADERS = Set.of("rendertype_solid", "rendertype_cutout_mipped",
             "rendertype_cutout", "rendertype_translucent", "rendertype_translucent_moving_block",
             "rendertype_tripwire");
@@ -504,8 +506,7 @@ public final class ChimeraEntityBridge {
         } else if (ChimeraHandRenderer.active()) {
             family = ChimeraHandRenderer.translucentPhase() ? Family.HAND_WATER : Family.HAND;
         } else {
-            Family context = worldWindow ? context() : null;
-            family = context == null ? null : worldFamily(shaderOf(type), format, context);
+            family = worldWindow ? worldTypeFamily(shaderOf(type), format) : null;
         }
         if (family != null && pipelineFor(family, widenedFormat(family, format)) == null) {
             family = fallback(family, format);
@@ -535,6 +536,17 @@ public final class ChimeraEntityBridge {
         if (shader == null) return null;
         // VulkanMod Reforged loads breeze wind's shader as a second instance named rendertype_energy_swirl.
         return shader == GameRenderer.getRendertypeBreezeWindShader() ? "rendertype_breeze_wind" : shader.getName();
+    }
+
+    /**
+     * The family a render type written in the world window batches with: the crumbling overlay
+     * wherever it is written, as Iris widens every BLOCK buffer to TERRAIN, and otherwise the
+     * entity or block entity drawing it (worldFamily).
+     */
+    private static Family worldTypeFamily(String shader, VertexFormat format) {
+        if (format == DefaultVertexFormat.BLOCK && CRUMBLING_SHADER.equals(shader)) return Family.DAMAGED_BLOCK;
+        Family context = context();
+        return context == null ? null : worldFamily(shader, format, context);
     }
 
     /**
@@ -587,7 +599,7 @@ public final class ChimeraEntityBridge {
     static VertexFormat widenedFormat(Family family, VertexFormat format) {
         return switch (family) {
             case HAND, HAND_WATER, ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, BLOCK_TRANSLUCENT, MOVING_BLOCK,
-                 SHADOW_ENTITIES, SHADOW_BLOCK -> Objects.requireNonNullElse(
+                 DAMAGED_BLOCK, SHADOW_ENTITIES, SHADOW_BLOCK -> Objects.requireNonNullElse(
                          ChimeraVertexFormats.extendedLayout(format), format);
             default -> format;
         };
@@ -595,7 +607,7 @@ public final class ChimeraEntityBridge {
 
     /**
      * The host-layout lane that draws a host mesh now, by its shader, or null when the host draws
-     * it: a {@link HostLayoutLane} of the current pass, a particle, or the crumbling overlay.
+     * it: a {@link HostLayoutLane} of the current pass, or a particle.
      */
     public static Family hostLaneFor(String shader, VertexFormat format) {
         if (!enabled || drawActive || shader == null) return null;
@@ -617,16 +629,16 @@ public final class ChimeraEntityBridge {
         return weatherWindow ? HostLayoutLane.Pass.WEATHER : HostLayoutLane.Pass.WORLD;
     }
 
-    /** A world draw's particle or crumbling lane: the families outside the host-layout table. */
+    /**
+     * A world draw's particle lane, the family outside the host-layout table drawn on its host mesh.
+     * The crumbling overlay is a family batch on the widened block layout (familyFor).
+     */
     private static Family worldHostLane(String shader, VertexFormat format) {
-        if (particleWindow && shader.equals("particle") && format == DefaultVertexFormat.PARTICLE) {
-            // An opaque pack shader never draws translucent particles, nor the other way round:
-            // the host state and ordering are part of each lane's contract.
-            if (particleTranslucent) return translucentParticlePipeline != null ? Family.PARTICLE_TRANSLUCENT : null;
-            return particlePipeline != null ? Family.PARTICLE : null;
-        }
-        return shader.equals("rendertype_crumbling") && format == DefaultVertexFormat.BLOCK
-                && damagedBlockPipeline != null ? Family.DAMAGED_BLOCK : null;
+        if (!particleWindow || !shader.equals("particle") || format != DefaultVertexFormat.PARTICLE) return null;
+        // An opaque pack shader never draws translucent particles, nor the other way round:
+        // the host state and ordering are part of each lane's contract.
+        if (particleTranslucent) return translucentParticlePipeline != null ? Family.PARTICLE_TRANSLUCENT : null;
+        return particlePipeline != null ? Family.PARTICLE : null;
     }
 
     /**
@@ -723,7 +735,7 @@ public final class ChimeraEntityBridge {
             case BLOCK_TRANSLUCENT -> format == ChimeraVertexFormats.EXTENDED_GLYPH
                     ? blockTranslucentTextPipeline : blockTranslucentPipeline;
             case MOVING_BLOCK -> movingBlockPipeline;
-            case DAMAGED_BLOCK -> damagedBlockPipeline;
+            case DAMAGED_BLOCK -> format == ChimeraVertexFormats.EXTENDED_BLOCK ? damagedBlockPipeline : null;
             case HAND, HAND_WATER -> handPipeline(family, format);
             case PARTICLE -> particlePipeline;
             case PARTICLE_TRANSLUCENT -> translucentParticlePipeline;
@@ -748,10 +760,12 @@ public final class ChimeraEntityBridge {
     /**
      * The Iris rendering phase a family batch written now draws in: BLOCK_ENTITIES for whatever a
      * block entity draws, as Iris wraps a block entity's render types in BlockEntityRenderStateShard
-     * in either pass, and otherwise the family's own.
+     * in either pass, and otherwise the family's own. A block entity's crumbling overlay is written
+     * from the crumbling source, outside that wrapper.
      */
     public static PackRenderingPhase writePhase(Family family) {
-        return context() == Family.BLOCK ? PackRenderingPhase.BLOCK_ENTITIES : phase(family);
+        return family != Family.DAMAGED_BLOCK && context() == Family.BLOCK
+                ? PackRenderingPhase.BLOCK_ENTITIES : phase(family);
     }
 
     /** The Iris rendering phase a family outside the host-layout lanes draws in. */
