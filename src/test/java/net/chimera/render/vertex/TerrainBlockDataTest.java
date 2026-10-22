@@ -30,8 +30,9 @@ final class TerrainBlockDataTest {
 
     /**
      * Iris's voxelizeLightBlocks quad (MixinChunkMeshBuildTask.iris$setLightBlock): four vertices at
-     * the light block's corner + 0.25, colour and UV 0, the emission as both lightmap coordinates,
-     * the block's id with render type 0, and an at_midBlock of the emission alone. The next block's
+     * the light block's corner + 0.25, colour 0, UV 0 as XHFPTerrainVertex encodes it (wrapped to
+     * the top word) with a mid-coordinate of 0, the emission as both lightmap coordinates, the
+     * block's id with render type 0, and an at_midBlock of the emission alone. The next block's
      * quads take their mid-block offsets again.
      */
     @Test
@@ -49,7 +50,9 @@ final class TerrainBlockDataTest {
                 assertEquals((short) (5.25F * 2048.0F - 4.0F * 2048.0F), MemoryUtil.memGetShort(ptr + 4));
                 assertEquals((short) (240 << 8 | 240), MemoryUtil.memGetShort(ptr + 6), "block and sky light 15");
                 assertEquals(0, MemoryUtil.memGetInt(ptr + 8), "colour");
-                assertEquals(0, MemoryUtil.memGetInt(ptr + 12), "texture coordinates");
+                assertEquals(32767, MemoryUtil.memGetShort(ptr + 12), "u as Iris's wrapped word reads");
+                assertEquals(32767, MemoryUtil.memGetShort(ptr + 14), "v as Iris's wrapped word reads");
+                assertEquals(0, MemoryUtil.memGetInt(ptr + 24), "mc_midTexCoord is the raw centroid, 0");
                 assertEquals(42, MemoryUtil.memGetInt(ptr + 16), "the block's id");
                 assertEquals(ChimeraExtVertexBuilder.BLOCK_RENDER_TYPE, MemoryUtil.memGetInt(ptr + 20));
                 assertEquals(15 << 24, MemoryUtil.memGetInt(ptr + 28), "at_midBlock is the emission alone");

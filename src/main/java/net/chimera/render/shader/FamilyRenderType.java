@@ -36,6 +36,11 @@ public final class FamilyRenderType extends RenderType {
         this.transparency = IrisTransparency.of(host);
     }
 
+    /** The host type's transparency, which orders the batch's draw as Iris orders its batches. */
+    IrisTransparency transparency() {
+        return transparency;
+    }
+
     /** Whether a pack with separateEntityDraws draws this batch before its deferred passes. */
     boolean drawsBeforeDeferred() {
         return transparency.drawsBeforeDeferred();

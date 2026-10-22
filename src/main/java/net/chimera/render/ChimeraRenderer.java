@@ -240,6 +240,11 @@ public final class ChimeraRenderer {
         return packProjectionActive() ? chimeraPass.packPlan.particleDirectives().ordering() : null;
     }
 
+    /** The installed pack's separateEntityDraws, as Iris's batched entity rendering reads it; false with no pack. */
+    public static boolean packSeparatesEntityDraws() {
+        return packProjectionActive() && chimeraPass.packPlan.particleDirectives().separateEntityDraws();
+    }
+
     /**
      * Opens Chimera's level segment only on a recording main command buffer.
      * A nested Minecraft.runTick (the respawn loading screen) makes VulkanMod

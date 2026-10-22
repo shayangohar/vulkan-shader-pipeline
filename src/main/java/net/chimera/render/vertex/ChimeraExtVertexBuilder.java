@@ -19,6 +19,12 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
      * XHFPTerrainVertex's octahedral encoding stores as (0, 0) and the shader decodes as +Z.
      */
     static final int LIGHT_BLOCK_NORMAL = ChimeraEntityVertexData.pack(0.0F, 0.0F, 1.0F, 0.0F);
+    /**
+     * The voxel quad's texture coordinates as the shader reads them. Iris writes 0 at a centroid of
+     * 0, and XHFPTerrainVertex.encodeTexture biases a coordinate that equals its centroid down a
+     * step, which wraps the 15-bit word to its top: 32767/32768.
+     */
+    static final float LIGHT_BLOCK_UV = 32767.0F / 32768.0F;
 
     private final TerrainMaterialPlan materialPlan;
     private final int vertexSize;
@@ -28,8 +34,11 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
     private int blockX;
     private int blockY;
     private int blockZ;
-    /** True while the light-block voxel quad is written: its at_midBlock keeps only the emission. */
-    private boolean ignoreMidBlock;
+    /**
+     * True while the light-block voxel quad is written: its at_midBlock keeps only the emission and
+     * its mc_midTexCoord is the centroid of Iris's raw coordinates, 0.
+     */
+    private boolean writingLightBlockQuad;
     private final long[] polygonPointers = new long[4];
     private final float[] polygonValues = new float[20];
     private final int[] polygonNormals = new int[4];
@@ -67,20 +76,21 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
     /**
      * Writes Iris's voxelizeLightBlocks quad for a light block, which has no model, from ptr
      * (MixinChunkMeshBuildTask.iris$setLightBlock): four vertices at one point a quarter block
-     * into it, so it covers no pixel, with its id and render type 0. Colour and texture
-     * coordinates are 0, both lightmap coordinates are the emission, and at_midBlock keeps only
-     * the emission, as Iris ignores the mid-block offset for it.
+     * into it, so it covers no pixel, with its id and render type 0. Colour is 0, the texture
+     * coordinates read as Iris's encoding leaves them ({@link #LIGHT_BLOCK_UV}), both lightmap
+     * coordinates are the emission, and at_midBlock keeps only the emission, as Iris ignores the
+     * mid-block offset for it.
      */
     public void lightBlockQuad(long ptr, int materialId, int emission, int localX, int localY, int localZ) {
         setBlockData(materialId, BLOCK_RENDER_TYPE, emission);
         setBlockPosition(localX, localY, localZ);
-        ignoreMidBlock = true;
+        writingLightBlockQuad = true;
         int light = emission << 4 | emission << 20;
         for (int corner = 0; corner < 4; corner++) {
             vertex(ptr + (long) corner * vertexSize, localX + LIGHT_BLOCK_INSET, localY + LIGHT_BLOCK_INSET,
-                    localZ + LIGHT_BLOCK_INSET, 0, 0.0F, 0.0F, light, LIGHT_BLOCK_NORMAL);
+                    localZ + LIGHT_BLOCK_INSET, 0, LIGHT_BLOCK_UV, LIGHT_BLOCK_UV, light, LIGHT_BLOCK_NORMAL);
         }
-        ignoreMidBlock = false;
+        writingLightBlockQuad = false;
     }
 
     @Override
@@ -139,8 +149,8 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
             midU += polygonValues[into + 3];
             midV += polygonValues[into + 4];
         }
-        midU = clamp01(midU * 0.25F);
-        midV = clamp01(midV * 0.25F);
+        midU = writingLightBlockQuad ? 0.0F : clamp01(midU * 0.25F);
+        midV = writingLightBlockQuad ? 0.0F : clamp01(midV * 0.25F);
         // Iris derives a terrain quad's normal from its diagonals. VulkanMod
         // passes the quad's facing axis instead (unit bytes, not scaled to
         // 127), and none at all for fluids, so derive it here. A degenerate
@@ -190,7 +200,7 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
      */
     private int encodeMidBlock(float x, float y, float z) {
         int emission = (blockEmission & 0xFF) << 24;
-        if (ignoreMidBlock) return emission;
+        if (writingLightBlockQuad) return emission;
         return midBlockOffset(blockX + 0.5F - x)
                 | (midBlockOffset(blockY + 0.5F - y) << 8)
                 | (midBlockOffset(blockZ + 0.5F - z) << 16)

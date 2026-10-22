@@ -29,7 +29,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  *   (ShadowSectionQueue), never the camera's culled queues. consumeShadowPending() clears the
  *   flag first, so the layer calls the shadow pass makes do not recurse.</li>
  *   <li>Depth is captured before translucent terrain, ahead of the pack window, whose guarded
- *   attachments must not intercept that fullscreen pass.</li>
+ *   attachments must not intercept that fullscreen pass. The level's entity batches draw around it,
+ *   as at Iris's translucent boundary (FamilyBufferSource).</li>
  *   <li>The pack coverage window spans the layer's draws.</li>
  *   <li>Every layer opens on the main target (ChimeraMainPass.rebindMainTarget), which opens the
  *   shadow pass or a pending pack geometry window. Upstream VulkanMod's renderSectionLayer did this
@@ -60,8 +61,10 @@ public abstract class WorldRendererMixin {
                 pass.renderShadowSegment(camX, camY, camZ);
             }
             if (type == TerrainRenderType.TRANSLUCENT) {
+                // Iris's translucent boundary: the entity batches, then deferred, then those held for it.
+                FamilyBufferSource.endLevelBatchesBeforeDeferred(pass);
                 pass.captureOpaqueDepthBeforeTranslucent();
-                FamilyBufferSource.endHeldWorldBatches(pass);
+                FamilyBufferSource.endLevelBatchesAfterDeferred(pass);
             }
             pass.beginPackCoverageWindow(type);
             try {

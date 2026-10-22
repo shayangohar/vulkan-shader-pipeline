@@ -47,9 +47,9 @@ final class ShadowMapMatrixTest {
         ChimeraShadowMap.createPerspectiveProjection(projection, 90.0F);
         assertNear(1.0F, projection.m00(), "x scale at 90 degrees");
         assertNear(1.0F, projection.m11(), "y scale at 90 degrees");
-        assertNear((156.0F - 100.05F) / (-100.05F - 156.0F), projection.m22(), "depth scale");
+        assertNear(-0.21851202F, projection.m22(), "depth scale for NEAR -100.05, FAR 156");
         assertNear(-1.0F, projection.m23(), "w from -z");
-        assertNear(2.0F * 156.0F * -100.05F / (-100.05F - 156.0F), projection.m32(), "depth offset");
+        assertNear(121.91213F, projection.m32(), "depth offset for NEAR -100.05, FAR 156");
         assertNear(1.0F, projection.m33(), "Iris's w term");
         var settings = new PackConfig.ShadowSettings(1024, 128.0F, Map.of("shadowMapFov", "70.0"), List.of());
         assertTrue(settings.fieldOfView() != null && settings.fieldOfView() == 70.0F);

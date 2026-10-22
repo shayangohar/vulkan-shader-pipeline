@@ -617,7 +617,7 @@ public final class PackConfig {
         return new ShadowSettings(resolution, distance, rawValues, deviations, targets, colorTargetCount);
     }
 
-    /** Whether Chimera applies the shadow setting {@code key}; shadowMapFov's perspective map it does not. */
+    /** Whether Chimera applies the shadow setting {@code key}: resolution, distance and the finite settings. */
     static boolean isSupportedShadowSetting(String key) {
         return key.equals("shadowMapResolution") || key.equals("shadowDistance")
                 || FINITE_SHADOW_SETTINGS.contains(key);

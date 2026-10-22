@@ -18,7 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * the host's (FamilyBufferSource). The outline source wraps the same family source, so a glowing
  * entity keeps its pack program and its outline. The crumbling source gets a family source of its
  * own: vanilla ends its batch on its own (LevelRenderer.renderLevel), which must not flush the
- * level's.
+ * level's. Both are level sources, which keep their batches for Iris's translucent boundary.
  */
 @Mixin(RenderBuffers.class)
 public abstract class ChimeraRenderBuffersMixin {
@@ -32,7 +32,7 @@ public abstract class ChimeraRenderBuffersMixin {
     @Inject(method = "crumblingBufferSource", at = @At("HEAD"), cancellable = true, require = 1)
     private void chimera$familyCrumbling(CallbackInfoReturnable<MultiBufferSource.BufferSource> callback) {
         if (!ChimeraEntityBridge.routesWorldBuffers()) return;
-        if (chimera$crumbling == null) chimera$crumbling = new FamilyBufferSource(crumblingBufferSource);
+        if (chimera$crumbling == null) chimera$crumbling = new FamilyBufferSource(crumblingBufferSource, true);
         callback.setReturnValue(chimera$crumbling);
     }
 
@@ -52,7 +52,7 @@ public abstract class ChimeraRenderBuffersMixin {
     @Unique
     private FamilyBufferSource chimera$families() {
         if (chimera$families == null) {
-            chimera$families = new FamilyBufferSource(bufferSource);
+            chimera$families = new FamilyBufferSource(bufferSource, true);
             chimera$outlines = new OutlineBufferSource(chimera$families);
         }
         return chimera$families;

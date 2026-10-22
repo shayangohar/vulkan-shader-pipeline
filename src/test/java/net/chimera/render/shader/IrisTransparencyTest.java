@@ -3,6 +3,11 @@ package net.chimera.render.shader;
 import net.minecraft.client.renderer.RenderStateShard;
 import org.junit.jupiter.api.Test;
 
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Set;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -31,14 +36,34 @@ final class IrisTransparencyTest {
                 RenderStateShard.TRANSLUCENT_TRANSPARENCY, RenderStateShard.LEQUAL_DEPTH_TEST));
     }
 
+    /** Iris's MixinLevelRenderer ends exactly these three kinds at the translucent boundary. */
     @Test
     void separateEntityDrawsDrawsTheOpaqueKindsBeforeDeferred() {
+        Set<IrisTransparency> before = EnumSet.noneOf(IrisTransparency.class);
         for (IrisTransparency kind : IrisTransparency.values()) {
-            boolean before = kind == IrisTransparency.OPAQUE || kind == IrisTransparency.OPAQUE_DECAL
-                    || kind == IrisTransparency.WATER_MASK;
-            assertEquals(before, kind.drawsBeforeDeferred(), kind.name());
+            if (kind.drawsBeforeDeferred()) before.add(kind);
         }
-        assertTrue(IrisTransparency.OPAQUE.drawsBeforeDeferred());
-        assertFalse(IrisTransparency.GENERAL_TRANSPARENT.drawsBeforeDeferred());
+        assertEquals(EnumSet.of(IrisTransparency.OPAQUE, IrisTransparency.OPAQUE_DECAL, IrisTransparency.WATER_MASK),
+                before);
+    }
+
+    /** Iris draws its batches in TransparencyType order, which the family batches sort by. */
+    @Test
+    void batchesSortInIrisOrder() {
+        assertEquals(List.of(IrisTransparency.OPAQUE, IrisTransparency.OPAQUE_DECAL,
+                        IrisTransparency.GENERAL_TRANSPARENT, IrisTransparency.DECAL, IrisTransparency.WATER_MASK,
+                        IrisTransparency.LINES),
+                Arrays.stream(IrisTransparency.values()).sorted().toList());
+    }
+
+    /**
+     * A level source may hold a batch across many flushes for its deferred passes; trimming idle
+     * types must never free one that holds a started batch, however long ago it was drawn.
+     */
+    @Test
+    void aHeldBatchIsNeverIdle() {
+        assertFalse(FamilyBufferSource.idle(true, 1000, 0), "a started, held batch keeps its buffer");
+        assertTrue(FamilyBufferSource.idle(false, 1000, 0), "an empty type unseen for long is freed");
+        assertFalse(FamilyBufferSource.idle(false, 64, 0), "an empty type drawn recently stays");
     }
 }

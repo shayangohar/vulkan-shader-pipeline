@@ -35,7 +35,8 @@ import java.util.function.Predicate;
  * - HEAD captures the frame the pack uniforms read and opens the family lanes' world window.
  * - The world clear opens the internal RGBA16F world target instead, cleared as the pack asks,
  *   with the fog colour FogRenderer has just set.
- * - The entity and block-entity family batches draw where vanilla finishes each of those loops.
+ * - The entity and block-entity family batches draw where vanilla finishes each of those loops;
+ *   what is still held draws at the translucent terrain layer (WorldRendererMixin).
  * - Particles and weather draw in their lanes' windows; particles move between NeoForge's early
  *   and late calls as the pack's particle ordering asks.
  * - The translucent phase first draws the solid hand, as Iris does.
@@ -53,6 +54,7 @@ public abstract class ChimeraLevelRendererMixin {
                                     GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f modelView,
                                     Matrix4f projection, CallbackInfo ci) {
         ChimeraHandRenderer.beginFrame();
+        FamilyBufferSource.beginLevel();
         if (ChimeraRenderer.beginLevelSegments()) {
             ChimeraEntityBridge.beginWorldWindow();
             PackUniformProvider.beginFrame(camera, deltaTracker.getGameTimeDeltaPartialTick(false),
@@ -182,7 +184,7 @@ public abstract class ChimeraLevelRendererMixin {
         }
     }
 
-    /** The entity batches drawn before translucent terrain: with separateEntityDraws, the opaque kinds. */
+    /** The entity batches due before the deferred passes: with separateEntityDraws, the opaque kinds. */
     private static void chimera$drawWorldFamilyBatches() {
         if (Minecraft.getInstance().renderBuffers().bufferSource() instanceof FamilyBufferSource families) {
             families.endWorldFamilyBatches();

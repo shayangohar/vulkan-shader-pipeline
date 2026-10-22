@@ -5,7 +5,6 @@ import net.chimera.config.ShaderpackDirectory;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
-import net.chimera.render.shader.FamilyBufferSource;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.shader.RenderedItemIds;
 import net.chimera.shaderpack.ConformanceReport;
@@ -227,7 +226,6 @@ final class PackSessionLifecycle {
         pass.packAdvancedImageOwner = null;
         if (pass.packCenterDepth != null) pass.packCenterDepth.close();
         pass.packCenterDepth = null;
-        FamilyBufferSource.setSeparateEntityDraws(false);
         pass.pipelines.clear();
         pass.postChain.packPostExecution.clear();
         pass.postChain.packPostBoundaryLogged.clear();
@@ -526,7 +524,6 @@ final class PackSessionLifecycle {
         ParticleDirectives particles = pass.packPlan.particleDirectives();
         LOGGER.info("[chimera] pack particle ordering: {}, separateEntityDraws={}{}", particles.ordering(),
                 particles.separateEntityDraws(), particles.deviations().isEmpty() ? "" : " " + particles.deviations());
-        FamilyBufferSource.setSeparateEntityDraws(particles.separateEntityDraws());
         installRuntimeSettings();
         pass.packNeedsHdrDepth = pass.conformanceReport.programs().stream()
                 .filter(program -> PostTargetPlan.isPostProgramName(program.name()))
