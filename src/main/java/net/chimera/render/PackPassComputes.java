@@ -416,7 +416,7 @@ final class PackPassComputes implements AutoCloseable {
     private static String refusal(PassComputePlan.PassCompute compute, PackResourceOwner resources,
                                   PackAdvancedImageOwner packImages, PackStorageBufferOwner buffers) {
         for (PackResourceBinding texture : compute.textures()) {
-            if (resources == null || resources.image(texture) == null) {
+            if (resources == null || !resources.available(texture)) {
                 return "pack texture " + texture.resourceKey() + " could not be loaded"
                         + (resources == null ? "" : ": " + resources.failure(texture.resourceKey()));
             }

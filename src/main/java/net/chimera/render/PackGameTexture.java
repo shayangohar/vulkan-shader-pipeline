@@ -3,6 +3,7 @@ package net.chimera.render;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.client.renderer.texture.MissingTextureAtlasSprite;
+import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.resources.ResourceLocation;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
@@ -41,12 +42,18 @@ final class PackGameTexture {
         }
     }
 
-    /** The image {@code source} names now, or null when no image or flat map can stand for it. */
+    /**
+     * The image {@code source} names now, or null when no image or flat map can stand for it yet: a
+     * pack loads with the renderer, before Minecraft has a TextureManager, and Iris's TextureWrapper
+     * looks only at bind time.
+     */
     static VulkanImage image(Source source, MaterialMapOwner materials) {
+        Minecraft client = Minecraft.getInstance();
+        TextureManager textures = client == null ? null : client.getTextureManager();
+        if (textures == null) return null;
         AbstractTexture texture = ResourceLocation.isValidNamespace(source.namespace())
                 && ResourceLocation.isValidPath(source.path())
-                ? Minecraft.getInstance().getTextureManager()
-                        .getTexture(ResourceLocation.fromNamespaceAndPath(source.namespace(), source.path()))
+                ? textures.getTexture(ResourceLocation.fromNamespaceAndPath(source.namespace(), source.path()))
                 : null;
         VulkanImage base = ChimeraTextures.image(texture);
         if (base == null) base = ChimeraTextures.image(MissingTextureAtlasSprite.getTexture());

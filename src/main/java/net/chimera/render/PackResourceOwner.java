@@ -99,6 +99,16 @@ public final class PackResourceOwner implements AutoCloseable {
         return image(binding.resourceKey());
     }
 
+    /**
+     * Whether the binding has an image to bind: a loaded pack image, or a game texture, which is only
+     * looked up at bind time (Iris's TextureWrapper), so a pack loaded before the game's textures
+     * exist still counts it. Loads the binding as {@link #image(PackResourceBinding)} does.
+     */
+    public boolean available(PackResourceBinding binding) {
+        loadOnce(binding);
+        return gameTextures.containsKey(binding.resourceKey()) || image(binding.resourceKey()) != null;
+    }
+
     private static LoadedTexture loadPackFile(PackResourceBinding binding, Path shadersDir)
             throws IOException {
         String name = "chimera_pack_" + binding.resourceKey();
