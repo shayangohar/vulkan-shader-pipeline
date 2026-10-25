@@ -1,6 +1,11 @@
 package net.chimera.shaderpack;
 
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * A pack program's geometry stage (.gsh), which Iris runs between the vertex and fragment stages.
@@ -8,22 +13,45 @@ import java.util.Map;
  * stage's inputs, each pair by name at one shared location (GlslInterfaceScanner.Stage.GEOMETRY).
  * The stage reads the program's uniforms through the shadow block the other stages declare, binds
  * its samplers as they do, and converts GL's clip depth for each vertex it emits, as the vertex
- * stage does when nothing follows it (ShadowStageBuiltins).
+ * stage does when nothing follows it (ShadowStageBuiltins). On the shadow entity lane it also
+ * passes on the entity identities the vertex stage reads from EntityIds, each from the
+ * primitive's first vertex, as Iris's EntityPatcher passes iris_entityInfo through.
  */
 final class GeometryStageBridge {
     private GeometryStageBridge() {}
+
+    /** The suffix of a passed-on identity's output; its input keeps the vertex stage's name. */
+    private static final String PASSED_ON_SUFFIX = "GS";
+    /**
+     * The legacy matrices of the shadow entity lane: the draw's own, which the host serves to the
+     * vertex stage alone (EntityVertexBridge.entityShadowMatrixBuiltinReplacements).
+     */
+    private static final Set<String> DRAW_MATRICES = EntityVertexBridge.entityShadowMatrixBuiltinReplacements()
+            .keySet();
+    private static final Pattern DRAW_TEXTURE_MATRIX = Pattern.compile("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]");
 
     /** The converted stage, and the locations of its outputs, which the fragment stage's inputs take. */
     record Conversion(String source, LegacyGlslConverter.TerrainVaryingLayout outputLayout) {}
 
     /**
      * The stage as the vertex stage's consumer: each per-vertex input declared as the one vertex's
-     * value it reads, the rest unchanged, so the vertex bridge pairs with it as with a fragment stage.
+     * value it reads, the rest unchanged, so the vertex bridge pairs with it as with a fragment
+     * stage. It also names each entity identity that only {@code fragment} reads, which the stage
+     * passes on.
      */
-    static String consumerView(String geometry) {
-        return GlslInterfaceScanner.rewrite(geometry, GlslInterfaceScanner.Stage.GEOMETRY, declaration ->
+    static String consumerView(String geometry, String fragment) {
+        String view = GlslInterfaceScanner.rewrite(geometry, GlslInterfaceScanner.Stage.GEOMETRY, declaration ->
                 declaration.perVertex() ? qualified(declaration.qualifier()) + "in " + declaration.type() + " "
                         + declaration.name() + arraySuffix(declaration) + ";\n" : null);
+        String stripped = GlslLexer.stripComments(view);
+        StringBuilder passedOn = new StringBuilder();
+        for (String name : EntityVertexBridge.ENTITY_ID_NAMES) {
+            String type = EntityVertexBridge.entityIdentifierType(name, "", fragment);
+            if (type != null && EntityVertexBridge.entityIdentifierType(name, stripped, null) == null) {
+                passedOn.append("uniform ").append(type).append(' ').append(name).append(";\n");
+            }
+        }
+        return view + passedOn;
     }
 
     /** The stage as the fragment stage's producer: its outputs alone. */
@@ -34,34 +62,43 @@ final class GeometryStageBridge {
 
     /**
      * Converts a shadow program's geometry stage. {@code inputLayout} holds the vertex stage's
-     * output locations; the fragment stage's inputs decide the output layout.
+     * output locations; the fragment stage's inputs decide the output layout. On the entity layout
+     * ({@code entityLayout}) the entity identities in {@code inputLayout} pass on to the fragment
+     * stage, and the stage reads them as the first vertex's.
      *
      * @throws IllegalArgumentException when the stage reads an input no vertex output feeds, an
-     *         output the layout cannot place, a storage buffer the plan did not admit, or an
-     *         unplanned value uniform
+     *         output the layout cannot place, a storage buffer the plan did not admit, an
+     *         unplanned value uniform, or a draw matrix only the vertex stage is served
      */
     static Conversion convertShadow(String geometry, LegacyGlslConverter.TerrainVaryingLayout inputLayout,
                                     String fragment, UniformRegistry.ProgramInterface interfacePlan,
-                                    boolean allowStorageBuffers) {
+                                    boolean allowStorageBuffers, boolean entityLayout) {
         String source = LegacyGlslConverter.expandModernVaryingLists(TerrainVertexBridge.normalizeShadowTerrain(
                 geometry));
+        Map<String, String> identities = passedOnIdentities(inputLayout);
         LegacyGlslConverter.TerrainVaryingLayout outputLayout = TerrainVertexBridge.modernVaryingLayout(
                 producerView(source), LegacyGlslConverter.expandModernVaryingLists(
-                        TerrainVertexBridge.normalizedFragment(fragment, true)), Map.of());
+                        TerrainVertexBridge.normalizedFragment(fragment, true)), identities);
         String converted = TerrainVertexBridge.withoutUnreachableFunctions(
                 LegacyGlslConverter.withoutVersionLines(source));
         converted = interfacePlan == null ? TerrainVertexBridge.stripShadowUniformDeclarations(converted)
                 : UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
+        if (entityLayout) converted = EntityDeclarations.removeEntityIdDeclarations(converted, interfacePlan);
         requireSupported(converted, allowStorageBuffers);
+        if (entityLayout) requireServedMatrices(converted);
         converted = located(converted, inputLayout, outputLayout);
-        converted = GlslTokenRewriter.replaceIdentifiers(converted, ShadowStageBuiltins.matrixReplacements());
+        converted = GlslScopedReferences.replace(converted, firstVertexIdentities(identities.keySet(), inputLayout));
+        if (!entityLayout) {
+            converted = GlslTokenRewriter.replaceIdentifiers(converted, ShadowStageBuiltins.matrixReplacements());
+        }
         converted = ShadowStageBuiltins.legacyBuiltins(converted);
         converted = TerrainVertexBridge.rewriteModernTerrainSamplers(converted, interfacePlan, true);
         converted = LegacyGlslConverter.convertTextureCalls(converted);
         converted = TerrainVertexBridge.qualifyPlannedShadowUniforms(converted, interfacePlan);
-        converted = ShadowStageBuiltins.emitClipRange(converted);
+        converted = ShadowStageBuiltins.emitClipRange(converted, passOnStatements(identities.keySet()));
         return new Conversion("#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
-                + TerrainVertexBridge.modernUniformBlock(interfacePlan, true) + converted, outputLayout);
+                + TerrainVertexBridge.modernUniformBlock(interfacePlan, true)
+                + identityDeclarations(identities.keySet(), inputLayout, outputLayout) + converted, outputLayout);
     }
 
     /** A main, no storage buffer the plan did not admit, and no value uniform the plan left out. */
@@ -78,6 +115,56 @@ final class GeometryStageBridge {
         if (uniform != null) {
             throw new IllegalArgumentException("geometry stage value uniform is unplanned: " + uniform);
         }
+    }
+
+    /** No legacy matrix of the draw, which on the entity layout the host serves to the vertex stage alone. */
+    private static void requireServedMatrices(String source) {
+        String stripped = GlslLexer.stripComments(source);
+        String matrix = GlslTokenRewriter.firstIdentifier(stripped, DRAW_MATRICES::contains);
+        if (matrix == null && DRAW_TEXTURE_MATRIX.matcher(stripped).find()) matrix = "gl_TextureMatrix[0]";
+        if (matrix != null) {
+            throw new IllegalArgumentException("geometry stage reads a draw matrix only the vertex stage is served: "
+                    + matrix);
+        }
+    }
+
+    /** The entity identities the vertex stage passes on, each with the type the stages read it as. */
+    private static Map<String, String> passedOnIdentities(LegacyGlslConverter.TerrainVaryingLayout inputs) {
+        Map<String, String> identities = new LinkedHashMap<>();
+        for (String name : EntityVertexBridge.ENTITY_ID_NAMES) {
+            String varying = EntityVertexBridge.entityIdVarying(name);
+            if (inputs.locations().containsKey(varying)) identities.put(name, inputs.types().get(varying));
+        }
+        return identities;
+    }
+
+    /** Each identity the stage reads, as the first vertex's value: Iris's iris_entityInfo[0]. */
+    private static Map<String, String> firstVertexIdentities(Collection<String> names,
+                                                             LegacyGlslConverter.TerrainVaryingLayout inputs) {
+        Map<String, String> reads = new LinkedHashMap<>();
+        for (String name : names) reads.put(name, EntityVertexBridge.entityIdExpression(inputs, name, "[0]"));
+        return reads;
+    }
+
+    /** Each identity's output written from the first vertex's input. */
+    private static List<String> passOnStatements(Collection<String> names) {
+        return names.stream().map(EntityVertexBridge::entityIdVarying)
+                .map(varying -> varying + PASSED_ON_SUFFIX + " = " + varying + "[0];").toList();
+    }
+
+    /** Each identity's flat input at the vertex stage's location, and its output at the fragment stage's. */
+    private static String identityDeclarations(Collection<String> names,
+                                               LegacyGlslConverter.TerrainVaryingLayout inputs,
+                                               LegacyGlslConverter.TerrainVaryingLayout outputs) {
+        StringBuilder declarations = new StringBuilder();
+        for (String name : names) {
+            String varying = EntityVertexBridge.entityIdVarying(name);
+            declarations.append("layout(location = ").append(inputs.location(varying)).append(") flat in uint ")
+                    .append(varying).append("[];\n")
+                    .append("layout(location = ").append(outputs.location(varying)).append(") flat out uint ")
+                    .append(varying).append(PASSED_ON_SUFFIX).append(";\n");
+        }
+        return declarations.toString();
     }
 
     /**

@@ -85,17 +85,21 @@ public final class EntityVertexBridge {
      * matrix built-ins name the draw's host blocks, as Iris's iris_ModelViewMat and iris_ProjMat
      * do, and the pass loads the light view and projection into them. entityId and
      * blockEntityId are per-vertex, as Iris's EntityPatcher makes them on the entity layout.
-     * Reports the first concrete failure.
+     * {@code consumerSource} is the stage after the vertex stage: the fragment stage, or a geometry
+     * stage ({@code geometryNext}) as GeometryStageBridge.consumerView declares it. Reports the
+     * first concrete failure.
      */
     public static LegacyGlslConverter.TerrainVertexConversion convertShadowEntityVertexChecked(
             String source,
             Path sourceFile,
-            String fragmentSource,
+            String consumerSource,
             UniformRegistry.ProgramInterface interfacePlan,
-            boolean allowStorageBuffers
+            boolean allowStorageBuffers,
+            boolean geometryNext
     ) {
-        return TerrainVertexBridge.convertModernTerrainVertexOrThrow(source, sourceFile, fragmentSource,
-                GlslVertexPreambles.ENTITY_SHADOW_VERTEX_PREAMBLE, interfacePlan, true, true, allowStorageBuffers);
+        return TerrainVertexBridge.convertModernTerrainVertexOrThrow(source, sourceFile, consumerSource,
+                GlslVertexPreambles.ENTITY_SHADOW_VERTEX_PREAMBLE, interfacePlan, true, true, allowStorageBuffers,
+                geometryNext);
     }
 
     /**
@@ -683,11 +687,16 @@ public final class EntityVertexBridge {
     }
 
     static String entityIdExpression(LegacyGlslConverter.TerrainVaryingLayout layout, String name) {
+        return entityIdExpression(layout, name, "");
+    }
+
+    /** The identity read through its varying's {@code element}: "[0]" for a geometry stage's first vertex. */
+    static String entityIdExpression(LegacyGlslConverter.TerrainVaryingLayout layout, String name, String element) {
         String varying = entityIdVarying(name);
         if (layout != null && layout.locations().containsKey(varying)) {
             return "float".equals(layout.types().get(varying))
-                    ? "float(" + varying + ")"
-                    : "int(" + varying + ")";
+                    ? "float(" + varying + element + ")"
+                    : "int(" + varying + element + ")";
         }
         return "float(EntityIds." + entityIdComponent(name) + ")";
     }

@@ -65,7 +65,7 @@ final class GeometryStageBridgeTest {
     /** The consumer view declares each input as the vertex stage's consumer reads it, and leaves the body. */
     @Test
     void theConsumerViewReadsLikeAFragmentStage() {
-        String view = GeometryStageBridge.consumerView(GEOMETRY);
+        String view = GeometryStageBridge.consumerView(GEOMETRY, null);
         assertTrue(view.contains("in vec2 vert_texcoord;\n") && view.contains("in uint vert_survived;\n"), view);
         assertTrue(view.contains("frag_texcoord = vert_texcoord[i];"), view);
         GlslInterfaceScanner.StageInterface consumer = GlslInterfaceScanner.scan(view, false);
@@ -88,7 +88,7 @@ final class GeometryStageBridgeTest {
                 in vec2 frag_texcoord;
                 flat in uint frag_material;
                 void main() { gl_FragData[0] = vec4(frag_texcoord, float(frag_material), 1.0); }
-                """, null, false);
+                """, null, false, false);
         String source = conversion.source();
         assertTrue(source.startsWith("#version 460\n") && !source.contains("compatibility"), source);
         assertTrue(source.contains("layout(location = 1) in vec2 vert_texcoord[];")
@@ -102,6 +102,81 @@ final class GeometryStageBridgeTest {
         assertEquals(1, conversion.outputLayout().location("frag_texcoord"));
     }
 
+    /** The consumer view names each entity identity only the fragment stage reads: the stage passes it on. */
+    @Test
+    void theConsumerViewNamesTheIdentitiesItPassesOn() {
+        String view = GeometryStageBridge.consumerView(GEOMETRY, """
+                uniform int blockEntityId;
+                void main() { gl_FragData[0] = vec4(float(blockEntityId)); }
+                """);
+        assertTrue(view.endsWith("uniform int blockEntityId;\n") && !view.contains(" entityId;"), view);
+    }
+
+    /**
+     * On the shadow entity lane the identities the vertex stage reads from EntityIds pass on to
+     * the fragment stage, written before each emit, and the stage reads them as the first
+     * vertex's, as Iris's EntityPatcher reads iris_entityInfo[0].
+     */
+    @Test
+    void anEntityShadowGeometryStagePassesTheIdentitiesOn() {
+        LegacyGlslConverter.TerrainVaryingLayout vertex = new LegacyGlslConverter.TerrainVaryingLayout(
+                Map.of("vert_texcoord", "vec2", "chimeraEntityId", "int", "chimeraBlockEntityId", "int"),
+                Map.of("vert_texcoord", 0, "chimeraEntityId", 1, "chimeraBlockEntityId", 2));
+        GeometryStageBridge.Conversion conversion = GeometryStageBridge.convertShadow("""
+                #version 460 compatibility
+                layout(triangles) in;
+                layout(triangle_strip, max_vertices = 3) out;
+                uniform int entityId;
+                in vec2 vert_texcoord[];
+                out vec2 frag_texcoord;
+                out float frag_entity;
+                void main() {
+                    for (int i = 0; i < 3; i++) {
+                        gl_Position = gl_in[i].gl_Position;
+                        frag_texcoord = vert_texcoord[i];
+                        frag_entity = float(entityId);
+                        EmitVertex();
+                    }
+                    EndPrimitive();
+                }
+                """, vertex, """
+                #version 460
+                uniform int blockEntityId;
+                in vec2 frag_texcoord;
+                in float frag_entity;
+                void main() { gl_FragData[0] = vec4(frag_texcoord, frag_entity, float(blockEntityId)); }
+                """, null, false, true);
+        String source = conversion.source();
+        assertTrue(source.contains("layout(location = 1) flat in uint chimeraEntityId[];\n"
+                + "layout(location = 2) flat out uint chimeraEntityIdGS;\n")
+                && source.contains("layout(location = 2) flat in uint chimeraBlockEntityId[];\n"
+                + "layout(location = 3) flat out uint chimeraBlockEntityIdGS;\n"), source);
+        assertTrue(source.contains("frag_entity = float(int(chimeraEntityId[0]));"), source);
+        assertTrue(source.contains("    chimeraEntityIdGS = chimeraEntityId[0];\n"
+                + "    chimeraBlockEntityIdGS = chimeraBlockEntityId[0];\n"
+                + "    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n    EmitVertex();"), source);
+        assertEquals(3, conversion.outputLayout().location("chimeraBlockEntityId"));
+    }
+
+    /** The entity lane's draw matrices are served to the vertex stage alone; a geometry stage's read is refused. */
+    @Test
+    void aDrawMatrixOnTheEntityLaneIsRefused() {
+        LegacyGlslConverter.TerrainVaryingLayout vertex = new LegacyGlslConverter.TerrainVaryingLayout(
+                Map.of("vert_survived", "uint", "vert_texcoord", "vec2"),
+                Map.of("vert_survived", 0, "vert_texcoord", 1));
+        String fragment = """
+                #version 460
+                in vec2 frag_texcoord;
+                flat in uint frag_material;
+                void main() { gl_FragData[0] = vec4(frag_texcoord, float(frag_material), 1.0); }
+                """;
+        String geometry = GEOMETRY.replace("gl_Position = gl_in[i].gl_Position;",
+                "gl_Position = gl_ProjectionMatrix * gl_in[i].gl_Position;");
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> GeometryStageBridge.convertShadow(geometry, vertex, fragment, null, false, true));
+        assertTrue(failure.getMessage().contains("gl_ProjectionMatrix"), failure.getMessage());
+    }
+
     /** A read input the vertex stage does not feed is refused, as GL's link refuses it. */
     @Test
     void anUnfedInputIsRefused() {
@@ -113,7 +188,7 @@ final class GeometryStageBridgeTest {
                 void main() { gl_FragData[0] = vec4(frag_texcoord, 0.0, 1.0); }
                 """;
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
-                () -> GeometryStageBridge.convertShadow(GEOMETRY, vertex, fragment, null, false));
+                () -> GeometryStageBridge.convertShadow(GEOMETRY, vertex, fragment, null, false, false));
         assertTrue(failure.getMessage().contains("vert_survived"), failure.getMessage());
     }
 }

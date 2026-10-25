@@ -125,8 +125,8 @@ final class CrossStageRepairTest {
     /**
      * Spring's shadow writes v_glColor in its vertex stage and glColor in its geometry stage, and
      * its fragment reads glColor. Iris pairs the vertex with the geometry stage and the geometry
-     * stage with the fragment. The shadow terrain lane runs the three; an entity lane resolved to
-     * the program does not run a geometry stage yet and stays refused (TASK-648).
+     * stage with the fragment. The shadow terrain lane runs the three, and so does the entity lane
+     * resolved to the program (Iris ProgramId.ShadowEntities falls back to Shadow).
      */
     @Test
     void aShadowProgramRunsItsGeometryStage(@TempDir Path root) throws IOException {
@@ -171,9 +171,10 @@ final class CrossStageRepairTest {
         assertEquals(ShadowCullingPlan.State.DISTANCE, plan.shadowCulling().state(),
                 "Iris assumes voxelization and culls an unset shadow.culling by distance");
         PackProgramPlan entities = plan.program("shadow_entities");
-        assertTrue(!entities.executable() && entities.deviations().contains("UNSUPPORTED_PACK_STAGE")
-                && entities.stages().get("geometry").source().contains("EmitVertex"),
-                entities.deviations().toString());
+        assertTrue(entities.executable(), entities.deviations().toString());
+        assertTrue(entities.convertedGeometry().contains("layout(location = 0) in vec4 v_glColor[];")
+                && entities.convertedFragment().contains("layout(location = 0) in vec4 glColor;"),
+                entities.convertedGeometry());
     }
 
     /**

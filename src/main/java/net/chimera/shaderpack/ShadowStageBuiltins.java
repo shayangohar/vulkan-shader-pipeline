@@ -1,5 +1,6 @@
 package net.chimera.shaderpack;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -30,14 +31,17 @@ final class ShadowStageBuiltins {
 
     /**
      * Converts the clip depth of every vertex a geometry stage emits, just before the emit, once
-     * the stage has written its final position.
+     * the stage has written its final position. The {@code passOn} statements, which write the
+     * outputs the stage passes on for the vertex stage, run there too: GL leaves every output
+     * undefined after EmitVertex.
      */
-    static String emitClipRange(String source) {
+    static String emitClipRange(String source, List<String> passOn) {
         String renamed = GlslTokenRewriter.replaceIdentifiers(source, Map.of("EmitVertex", SHADOW_EMIT));
-        String helper = "void " + SHADOW_EMIT + "() {\n"
-                + "    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n"
-                + "    EmitVertex();\n"
-                + "}\n";
+        StringBuilder helper = new StringBuilder("void " + SHADOW_EMIT + "() {\n");
+        passOn.forEach(statement -> helper.append("    ").append(statement).append('\n'));
+        helper.append("    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n")
+                .append("    EmitVertex();\n")
+                .append("}\n");
         GlslTree tree = GlslTree.parse(renamed);
         for (GlslTree.External external : tree.externals()) {
             if (external instanceof GlslTree.Function) {

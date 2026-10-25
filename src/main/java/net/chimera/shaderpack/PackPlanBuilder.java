@@ -468,7 +468,7 @@ public final class PackPlanBuilder {
             // Every check runs, so the report names every reason a program is refused.
             boolean admitted = geometryStages.isEmpty() || geometryStageRuns();
             if (!admitted) {
-                // A lane resolved to such a program (shadow_entities to Spring's shadow) too.
+                // A lane resolved to such a program (shadow_lines to Spring's shadow) too.
                 deviations.add("UNSUPPORTED_PACK_STAGE");
             }
             admitted &= interfaceAdmitted();
@@ -479,13 +479,17 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * Whether the program's stages between vertex and fragment run: a geometry stage alone, on
-         * the shadow terrain lane. Tessellation and the geometry stages of the other lanes stay
-         * refused (TASK-648).
+         * Whether the program's stages between vertex and fragment run: a geometry stage alone, on the
+         * shadow terrain and entity lanes. Tessellation and other lanes' geometry stages stay refused (TASK-648).
          */
         private boolean geometryStageRuns() {
             return geometry != null && geometryStages.equals(List.of("geometry"))
-                    && FamilyAdapterRegistry.isShadowTerrain(name);
+                    && FamilyAdapterRegistry.isFixedLayoutShadowFamily(name);
+        }
+
+        /** What the vertex stage feeds: a running geometry stage, which converts the clip depth, or the fragment. */
+        private String vertexConsumer() {
+            return geometryStageRuns() ? GeometryStageBridge.consumerView(geometry, fragment) : fragment;
         }
 
         /** Converts the geometry stage that runs between the converted vertex stage and the fragment stage. */
@@ -493,7 +497,8 @@ public final class PackPlanBuilder {
             if (!executable || !geometryStageRuns()) return;
             try {
                 GeometryStageBridge.Conversion conversion = GeometryStageBridge.convertShadow(geometry, vertexLayout,
-                        fragment, interfacePlan.project("geometry", stage), allowStorageBuffers);
+                        fragment, interfacePlan.project("geometry", stage), allowStorageBuffers,
+                        FamilyAdapterRegistry.isShadowEntityFamily(name));
                 convertedGeometry = conversion.source();
                 geometryLayout = conversion.outputLayout();
             } catch (RuntimeException failure) {
@@ -681,8 +686,8 @@ public final class PackPlanBuilder {
                         hostLayoutLane + "_VERTEX_BRIDGE", hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
                 acceptVertex(() -> EntityVertexBridge.convertShadowEntityVertexChecked(
-                                vertex, vertexFile(), fragment, interfacePlan.project("vertex", stage),
-                                allowStorageBuffers),
+                                vertex, vertexFile(), vertexConsumer(), interfacePlan.project("vertex", stage),
+                                allowStorageBuffers, geometryStageRuns()),
                         "SHADOW_ENTITY_VERTEX_BRIDGE", VertexBridgeDeviations.unsupported(name));
             } else if (isTerrainLike(name)) {
                 acceptVertex(this::terrainVertexOrThrow, null, VertexBridgeDeviations.unsupported(name));
@@ -693,12 +698,9 @@ public final class PackPlanBuilder {
         private LegacyGlslConverter.TerrainVertexConversion terrainVertexOrThrow() {
             UniformRegistry.ProgramInterface vertexInterface = interfacePlan.project("vertex", stage);
             if (FamilyAdapterRegistry.isShadowTerrain(name)) {
-                // A geometry stage is the vertex stage's consumer, and converts the clip depth it emits.
-                boolean geometryNext = geometryStageRuns();
-                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, vertexFile(),
-                        geometryNext ? GeometryStageBridge.consumerView(geometry) : fragment,
+                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, vertexFile(), vertexConsumer(),
                         GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, vertexInterface, true, false,
-                        allowStorageBuffers, geometryNext);
+                        allowStorageBuffers, geometryStageRuns());
             }
             if (terrainMaterial.modern()) {
                 return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, fragment,

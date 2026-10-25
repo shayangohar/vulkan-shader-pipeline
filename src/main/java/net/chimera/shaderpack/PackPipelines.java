@@ -405,6 +405,9 @@ public final class PackPipelines {
             String vertexSource = PackDescriptorContracts.bindPackShader(
                     convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
+            String geometrySource = plan.convertedGeometry() == null ? null : PackDescriptorContracts.bindPackShader(
+                    plan.convertedGeometry(), plan.name(), advancedResources, layout, interfacePlan, stage,
+                    VK_SHADER_STAGE_GEOMETRY_BIT);
             String fragmentSource = PackDescriptorContracts.bindPackShader(
                     EntityVertexBridge.fragmentForFormat(plan.convertedFragment(), format), plan.name(),
                     advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -414,7 +417,7 @@ public final class PackPipelines {
             PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
                     plan.name(), advancedResources);
             PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertexSource,
-                    fragmentSource, storageOwner);
+                    geometrySource, fragmentSource, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             GeometryOutputPlan outputPlan = stage.shadowPass() ? null : plan.geometryOutputPlan();
             int[] attachmentFormats = stage.shadowPass() ? shadowAttachmentFormats(plan)
@@ -423,7 +426,7 @@ public final class PackPipelines {
             PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
                     ? plan.blendPlan().shadowAttachments(attachmentFormats.length)
                     : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
-            GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, null,
+            GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, geometrySource,
                     fragmentSource, imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {

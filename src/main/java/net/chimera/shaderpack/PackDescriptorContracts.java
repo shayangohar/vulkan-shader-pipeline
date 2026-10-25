@@ -17,6 +17,7 @@ import java.util.stream.Collectors;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_ALL_GRAPHICS;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_GEOMETRY_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
 
 /**
@@ -120,21 +121,24 @@ final class PackDescriptorContracts {
                         VK_SHADER_STAGE_VERTEX_BIT, 0, List.of(new PackDescriptorLayout.Field("mat4", "ProjMat")))));
         boolean sky = stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD;
         if (!iface.executableUniforms().isEmpty()) {
-            // Entity-family vertex shaders may declare the same pack
-            // uniform block the fragment uses (live cameraPosition; a
-            // shadow vertex reads its shadow matrices). The buffer is
-            // shared, so the binding must be visible to both stages
-            // whenever the converted vertex actually declares it.
-            boolean vertexUniforms = plan.convertedVertex() != null && plan.convertedVertex()
-                    .contains("layout(binding = 2) uniform ");
-            blocks.addAll(packUniformBlock(iface, 2, vertexUniforms
-                    ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-                    : VK_SHADER_STAGE_FRAGMENT_BIT));
+            // Entity-family vertex and geometry stages may declare the
+            // same pack uniform block the fragment uses (live
+            // cameraPosition; a shadow stage reads its shadow matrices).
+            // The buffer is shared, so the binding must be visible to
+            // every stage whose converted source actually declares it.
+            blocks.addAll(packUniformBlock(iface, 2, VK_SHADER_STAGE_FRAGMENT_BIT
+                    | declaringStage(plan.convertedVertex(), VK_SHADER_STAGE_VERTEX_BIT)
+                    | declaringStage(plan.convertedGeometry(), VK_SHADER_STAGE_GEOMETRY_BIT)));
         } else if (sky) {
             blocks.add(new PackDescriptorLayout.UniformBlock(2, VK_SHADER_STAGE_FRAGMENT_BIT, 16, List.of()));
         }
         int base = sky || !iface.executableUniforms().isEmpty() ? 3 : 2;
         return new PackDescriptorLayout(blocks, samplerImages(base, slots), null);
+    }
+
+    /** {@code stage} when the converted {@code source} declares the family's pack uniform block; none otherwise. */
+    private static int declaringStage(String source, int stage) {
+        return source != null && source.contains("layout(binding = 2) uniform ") ? stage : 0;
     }
 
     static ProgramImageBindingManifest legacyImageBindings(PackDescriptorLayout layout,
