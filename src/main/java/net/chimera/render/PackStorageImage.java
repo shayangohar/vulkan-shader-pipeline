@@ -190,25 +190,9 @@ final class PackStorageImage extends VulkanImage {
                 : dimensions == 2 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_3D;
     }
 
-    /**
-     * Why the device cannot create {@code spec} at {@code extent} (maxImageDimension1D/2D/3D), or
-     * null when it can. Iris leaves the limit to the driver; Vulkan has no defined result past it.
-     */
+    /** Why the device cannot create {@code spec} at {@code extent} (PackImageLimits), or null when it can. */
     static String extentLimitFailure(PackAdvancedResourcePlan.ImageSpec spec, int[] extent) {
-        if (DeviceManager.deviceProperties == null) return null;
-        var limits = DeviceManager.deviceProperties.limits();
-        int limit = switch (spec.dimensions()) {
-            case 1 -> limits.maxImageDimension1D();
-            case 2 -> limits.maxImageDimension2D();
-            default -> limits.maxImageDimension3D();
-        };
-        for (int axis = 0; axis < spec.dimensions(); axis++) {
-            if (Integer.compareUnsigned(extent[axis], limit) > 0) {
-                return "advanced image " + spec.name() + " at " + extent[0] + "x" + extent[1] + "x" + extent[2]
-                        + " exceeds the device's " + spec.dimensionSuffix() + " limit " + limit;
-            }
-        }
-        return null;
+        return PackImageLimits.deviceFailure("advanced image " + spec.name(), spec.dimensions(), extent);
     }
 
     /** A view format must store: a program writes the image through it. */

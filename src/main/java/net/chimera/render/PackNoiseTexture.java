@@ -5,7 +5,6 @@ import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -14,10 +13,6 @@ import java.util.Random;
 
 /** One pack-owned sampled image: a pack PNG or game texture, or a texture Iris generates or leaves unbound. */
 public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
-    private static final int MAX_ENCODED_BYTES = 8 * 1024 * 1024;
-    private static final int MAX_DIMENSION = 4096;
-    private static final long MAX_PIXELS = 16L * 1024L * 1024L;
-
     private final DynamicTexture texture;
     private final VulkanImage image;
 
@@ -37,24 +32,24 @@ public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
         }
     }
 
+    /**
+     * Reads the whole PNG, as Iris's CustomTextureManager does, and refuses it only past the device's
+     * 2D image limit (PackImageLimits).
+     */
     public static PackNoiseTexture load(InputStream input, String name, String filter, String wrap)
             throws IOException {
         if (input == null) {
             throw new IOException("texture input is missing");
         }
-        byte[] encoded = input.readNBytes(MAX_ENCODED_BYTES + 1);
-        if (encoded.length > MAX_ENCODED_BYTES) {
-            throw new IOException("texture exceeds encoded size limit");
-        }
-        NativeImage pixels = NativeImage.read(new ByteArrayInputStream(encoded));
+        NativeImage pixels = NativeImage.read(input);
         if (pixels.getWidth() < 1 || pixels.getHeight() < 1) {
             pixels.close();
             throw new IOException("noise image has no pixels");
         }
-        if (pixels.getWidth() > MAX_DIMENSION || pixels.getHeight() > MAX_DIMENSION
-                || (long) pixels.getWidth() * pixels.getHeight() > MAX_PIXELS) {
+        String limit = PackImageLimits.deviceFailure("texture", 2, pixels.getWidth(), pixels.getHeight());
+        if (limit != null) {
             pixels.close();
-            throw new IOException("texture dimensions exceed limit");
+            throw new IOException(limit);
         }
 
         return upload(pixels, name, filter, wrap);
