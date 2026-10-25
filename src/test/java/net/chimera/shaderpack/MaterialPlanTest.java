@@ -213,7 +213,7 @@ final class MaterialPlanTest {
     }
 
     private static void verifyOwnerIgnoresMaterial(PackProbe.Analysis analysis) {
-        PackResourceOwner owner = PackResourceOwner.load(analysis.plan().resources(), null);
+        PackResourceOwner owner = PackResourceOwner.load(analysis.plan().resources(), null, () -> null);
         try {
             assertTrue(owner.programAvailable("gbuffers_terrain"),
                     "material entries blocked program availability");

@@ -631,8 +631,9 @@ final class PackSessionLifecycle {
      * storage buffers and shadowcomp.
      */
     private void loadResourceOwners(Path shadersDir) {
-        pass.packResourceOwner = PackResourceOwner.load(pass.packPlan.resources(), shadersDir);
         pass.materials.ensureMaterialMapOwner();
+        pass.packResourceOwner = PackResourceOwner.load(pass.packPlan.resources(), shadersDir,
+                () -> pass.materials.materialMapOwner);
         // Relative images and buffers start at the window's size; the main pass refits them to the main target.
         var window = Minecraft.getInstance().getWindow();
         int width = Math.max(window.getWidth(), 1);
