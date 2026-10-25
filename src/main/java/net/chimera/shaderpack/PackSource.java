@@ -641,11 +641,31 @@ public final class PackSource {
                         "vertex", relativePath(shadersRoot, candidate.vertexPath()),
                         vertex.source(), vertex.dependencies(), vertex.deviations()));
             }
+            prepareGeometryStages(candidate, shadersRoot, initialMacros, lockedMacros, preparedSources);
             result.add(new PackProgram(candidate.name(), candidate.fragmentSource(), candidate.fragmentPath(),
                     candidate.vertexSource(), candidate.vertexPath(), shadersRoot,
                     fragment.source(), vertex.source(), prepDeviations, variantFolder, preparedSources));
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Preprocesses each geometry and tessellation stage file beside the program's fragment stage,
+     * with the macros of its other stages. They need no legacy normalization: GL gives these
+     * stages no compatibility varyings. Whether one runs is the planner's to decide
+     * (PackProgram.runsBetweenStages), so its deviations stay with its own prepared source.
+     */
+    private static void prepareGeometryStages(PackProgram candidate, Path shadersRoot,
+                                              Map<String, String> initialMacros, Set<String> lockedMacros,
+                                              Map<String, PreparedShaderSource> preparedSources) {
+        candidate.geometryStageFiles().forEach((stage, path) -> {
+            String source = readOptionalSource(path);
+            if (source == null) return;
+            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
+                    shadersRoot, path, source, initialMacros, lockedMacros);
+            preparedSources.put(stage, new PreparedShaderSource(stage, relativePath(shadersRoot, path),
+                    prepared.source(), prepared.dependencies(), prepared.deviations()));
+        });
     }
 
     private static ShaderSourcePreprocessor.Result normalizePreparedSource(

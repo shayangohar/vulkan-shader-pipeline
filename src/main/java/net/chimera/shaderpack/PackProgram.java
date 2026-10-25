@@ -52,19 +52,40 @@ public record PackProgram(
 
     /**
      * The geometry and tessellation stages whose files sit beside the fragment stage and that Iris
-     * runs between the vertex and fragment stages; Chimera runs neither (TASK-648). A program
-     * another resolves to takes them along.
+     * runs between the vertex and fragment stages. A program another resolves to takes them along.
      */
     public List<String> geometryStages(boolean tessellation) {
-        if (fragmentPath == null || fragmentPath.getFileName() == null) return List.of();
+        return geometryStageFiles().keySet().stream()
+                .filter(stage -> runsBetweenStages(stage, tessellation))
+                .toList();
+    }
+
+    /** Every geometry and tessellation stage file beside the fragment stage, by stage name, run or not. */
+    public Map<String, Path> geometryStageFiles() {
+        if (fragmentPath == null || fragmentPath.getFileName() == null) return Map.of();
         String file = fragmentPath.getFileName().toString();
         int dot = file.lastIndexOf('.');
         String base = dot < 0 ? file : file.substring(0, dot);
-        return GEOMETRY_STAGE_FILES.entrySet().stream()
-                .filter(stage -> runsBetweenStages(stage.getValue(), tessellation)
-                        && Files.isRegularFile(fragmentPath.resolveSibling(base + stage.getKey())))
-                .map(Map.Entry::getValue)
-                .toList();
+        Map<String, Path> files = new TreeMap<>();
+        GEOMETRY_STAGE_FILES.forEach((extension, stage) -> {
+            Path path = fragmentPath.resolveSibling(base + extension);
+            if (Files.isRegularFile(path)) files.put(stage, path);
+        });
+        return files;
+    }
+
+    /**
+     * The prepared sources of the stages Iris runs between the vertex and fragment stages, by stage
+     * name: the geometry stage, and the tessellation stages when {@code tessellation}.
+     */
+    public Map<String, String> preparedGeometryStages(boolean tessellation) {
+        Map<String, String> sources = new TreeMap<>();
+        preparedSources.forEach((stage, prepared) -> {
+            if (runsBetweenStages(stage, tessellation) && prepared.source() != null) {
+                sources.put(stage, prepared.source());
+            }
+        });
+        return sources;
     }
 
     /**

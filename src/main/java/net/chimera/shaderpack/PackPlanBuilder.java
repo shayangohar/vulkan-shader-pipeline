@@ -136,7 +136,8 @@ public final class PackPlanBuilder {
             this.config = config;
             this.resolution = resolution;
             this.advancedResources = advancedResources;
-            this.stages = ProgramStageSources.prepare(program, name, isTerrainMaterialFamily(name));
+            this.stages = ProgramStageSources.prepare(program, name, isTerrainMaterialFamily(name),
+                    settings().readsTessellation());
             this.fragment = ProgramStageSources.source(stages, "fragment", program.executableFragmentSource());
             this.vertex = ProgramStageSources.source(stages, "vertex", program.executableVertexSource());
             this.familyAdapter = FamilyAdapterRegistry.forProgram(name);

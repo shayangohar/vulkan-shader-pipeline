@@ -351,6 +351,9 @@ public final class PackProbe {
             addSource(inventory, "vertex", program.vertexPath(), program.vertexSource(),
                     program.preparedVertexSource(), shadersDir);
         }
+        program.preparedSources().forEach((stage, prepared) -> {
+            if (prepared.source() != null) inventory.preparedSources.putIfAbsent(stage, prepared.source());
+        });
         inventory.deviations.addAll(program.preparationDeviations());
     }
 
@@ -404,6 +407,12 @@ public final class PackProbe {
                 if (program.preparedVertexSource() != null) {
                     GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(
                             program.preparedVertexSource());
+                    live.addAll(usage.liveSamplers());
+                    live.addAll(usage.liveImages());
+                }
+                // Iris binds every stage's samplers; Rethinking Voxels' shadow.gsh writes voxelCols.
+                for (String source : program.preparedGeometryStages(settings.readsTessellation()).values()) {
+                    GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source);
                     live.addAll(usage.liveSamplers());
                     live.addAll(usage.liveImages());
                 }

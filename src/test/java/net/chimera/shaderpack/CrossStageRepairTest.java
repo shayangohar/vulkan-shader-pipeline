@@ -161,6 +161,8 @@ final class CrossStageRepairTest {
             assertTrue(!program.executable() && program.deviations().contains("UNSUPPORTED_PACK_STAGE")
                     && program.deviations().stream().noneMatch(value -> value.startsWith("VARYING_")),
                     name + ": " + program.deviations());
+            assertTrue(program.stages().get("geometry").source().contains("EmitVertex"),
+                    name + " plans the prepared geometry stage it resolves to");
         }
     }
 
@@ -183,11 +185,15 @@ final class CrossStageRepairTest {
                 """);
         Files.writeString(shaders.resolve("shadow.tcs"), "#version 400\nlayout(vertices = 3) out;\nvoid main() {}\n");
         Files.writeString(shaders.resolve("shadow.tes"), "#version 400\nlayout(triangles) in;\nvoid main() {}\n");
-        assertTrue(PackProbe.analyze(root).plan().program("shadow").executable(), "without the feature");
+        PackProgramPlan plain = PackProbe.analyze(root).plan().program("shadow");
+        assertTrue(plain.executable(), "without the feature");
+        assertEquals(List.of("fragment", "vertex"), List.copyOf(plain.stages().keySet()));
         Files.writeString(shaders.resolve("shaders.properties"), "iris.features.optional=TESSELATION_SHADERS\n");
         PackProgramPlan tessellated = PackProbe.analyze(root).plan().program("shadow");
         assertTrue(!tessellated.executable() && tessellated.deviations().contains("UNSUPPORTED_PACK_STAGE"),
                 tessellated.deviations().toString());
+        assertEquals(List.of("fragment", "tess_control", "tess_evaluation", "vertex"),
+                List.copyOf(tessellated.stages().keySet()));
     }
 
     /** A vertex whose version line the post normalizer dropped keeps the storage of its own outputs. */

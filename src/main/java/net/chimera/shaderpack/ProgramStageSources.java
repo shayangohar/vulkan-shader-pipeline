@@ -15,10 +15,17 @@ import java.util.regex.Matcher;
 final class ProgramStageSources {
     private ProgramStageSources() {}
 
-    /** The stages of a program planned under {@code name}; post and terrain-material stages normalized. */
-    static Map<String, PreparedShaderSource> prepare(PackProgram program, String name, boolean terrainMaterial) {
-        Map<String, PreparedShaderSource> prepared =
-                withoutInactiveImages(flattenInterfaceBlocks(preparedStages(program)));
+    /**
+     * The stages of a program planned under {@code name}, without a tessellation stage the pack does
+     * not enable ({@code tessellation}, PackProgram.runsBetweenStages); post and terrain-material
+     * stages normalized.
+     */
+    static Map<String, PreparedShaderSource> prepare(PackProgram program, String name, boolean terrainMaterial,
+                                                     boolean tessellation) {
+        Map<String, PreparedShaderSource> stages = preparedStages(program);
+        stages.keySet().removeIf(stage -> !stage.equals("vertex") && !stage.equals("fragment")
+                && !PackProgram.runsBetweenStages(stage, tessellation));
+        Map<String, PreparedShaderSource> prepared = withoutInactiveImages(flattenInterfaceBlocks(stages));
         if (FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.POST) {
             return normalizeModernPostStages(prepared);
         }
