@@ -6,7 +6,6 @@
     "gbuffers_terrain_cutout",
     "gbuffers_terrain_solid",
     "gbuffers_textured_lit",
-    "shadow",
     "shadow_basic",
     "shadow_block",
     "shadow_cutout",
@@ -18,8 +17,7 @@
     "shadow_tex",
     "shadow_tex_color",
     "shadow_text",
-    "shadow_text_bg",
-    "shadow_water"
+    "shadow_text_bg"
   ],
   "BSL_v10.1.8.zip": [
     "dh_terrain",
@@ -179,7 +177,6 @@
     "gbuffers_hand",
     "gbuffers_terrain",
     "gbuffers_textured_lit",
-    "shadow",
     "shadow_basic",
     "shadow_block",
     "shadow_entities",
@@ -190,8 +187,7 @@
     "shadow_tex",
     "shadow_tex_color",
     "shadow_text",
-    "shadow_text_bg",
-    "shadow_water"
+    "shadow_text_bg"
   ],
   "miniature-shader-2.19.zip": [
     "clrwl_gbuffers",
@@ -213,7 +209,6 @@
     "prepare",
     "prepare1",
     "prepare2",
-    "shadow",
     "shadow_basic",
     "shadow_block",
     "shadow_entities",
@@ -224,8 +219,7 @@
     "shadow_tex",
     "shadow_tex_color",
     "shadow_text",
-    "shadow_text_bg",
-    "shadow_water"
+    "shadow_text_bg"
   ],
   "superDuperVanilla.zip": [
     "dh_generic",

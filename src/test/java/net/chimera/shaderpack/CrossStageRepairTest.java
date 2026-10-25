@@ -124,11 +124,12 @@ final class CrossStageRepairTest {
 
     /**
      * Spring's shadow writes v_glColor in its vertex stage and glColor in its geometry stage, and
-     * its fragment reads glColor. Iris pairs the fragment with the geometry stage, which Chimera
-     * does not run, so the program is refused unrepaired, and so is every lane resolved to it.
+     * its fragment reads glColor. Iris pairs the vertex with the geometry stage and the geometry
+     * stage with the fragment. The shadow terrain lane runs the three; an entity lane resolved to
+     * the program does not run a geometry stage yet and stays refused (TASK-648).
      */
     @Test
-    void aProgramWithAGeometryStageIsRefusedWithItsLanes(@TempDir Path root) throws IOException {
+    void aShadowProgramRunsItsGeometryStage(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shadow.vsh"), """
                 #version 150 compatibility
@@ -156,14 +157,23 @@ final class CrossStageRepairTest {
                 void main() { gl_FragData[0] = glColor; }
                 """);
         PackPlan plan = PackProbe.analyze(root).plan();
-        for (String name : List.of("shadow", "shadow_entities")) {
-            PackProgramPlan program = plan.program(name);
-            assertTrue(!program.executable() && program.deviations().contains("UNSUPPORTED_PACK_STAGE")
-                    && program.deviations().stream().noneMatch(value -> value.startsWith("VARYING_")),
-                    name + ": " + program.deviations());
-            assertTrue(program.stages().get("geometry").source().contains("EmitVertex"),
-                    name + " plans the prepared geometry stage it resolves to");
-        }
+        PackProgramPlan shadow = plan.program("shadow");
+        assertTrue(shadow.executable(), shadow.deviations().toString());
+        assertTrue(shadow.convertedVertex().contains("layout(location = 0) out vec4 v_glColor;")
+                && !shadow.convertedVertex().contains(ShadowStageBuiltins.AUTHORED_SHADOW_ENTRY),
+                "the vertex feeds the geometry stage, which converts the clip depth: " + shadow.convertedVertex());
+        assertTrue(shadow.convertedGeometry().contains("layout(location = 0) in vec4 v_glColor[];")
+                && shadow.convertedGeometry().contains("layout(location = 0) out vec4 glColor;")
+                && shadow.convertedGeometry().contains(ShadowStageBuiltins.SHADOW_EMIT + "();"),
+                shadow.convertedGeometry());
+        assertTrue(shadow.convertedFragment().contains("layout(location = 0) in vec4 glColor;"),
+                shadow.convertedFragment());
+        assertEquals(ShadowCullingPlan.State.DISTANCE, plan.shadowCulling().state(),
+                "Iris assumes voxelization and culls an unset shadow.culling by distance");
+        PackProgramPlan entities = plan.program("shadow_entities");
+        assertTrue(!entities.executable() && entities.deviations().contains("UNSUPPORTED_PACK_STAGE")
+                && entities.stages().get("geometry").source().contains("EmitVertex"),
+                entities.deviations().toString());
     }
 
     /**

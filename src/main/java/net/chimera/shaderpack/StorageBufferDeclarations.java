@@ -180,7 +180,7 @@ final class StorageBufferDeclarations {
         return result;
     }
 
-    /** The blocks a program's vertex and fragment stages declare; a stage that fails to parse adds a marker. */
+    /** The blocks each stage of a program declares; a stage that fails to parse adds a marker. */
     private static List<StorageBlock> programBlocks(PackProgramPlan program, List<String> deviations) {
         List<StorageBlock> blocks = new ArrayList<>();
         for (Map.Entry<String, PreparedShaderSource> stage : program.stages().entrySet()) {
@@ -381,9 +381,13 @@ final class StorageBufferDeclarations {
             int stageMask
     ) {}
 
+    /** The Vulkan stage bit of a program stage, by the stage names PackProbe gives them; 0 for another. */
     static int stageMask(String stage) {
         return switch (stage == null ? "" : stage) {
             case "vertex" -> VK10.VK_SHADER_STAGE_VERTEX_BIT;
+            case "tess_control" -> VK10.VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+            case "tess_evaluation" -> VK10.VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+            case "geometry" -> VK10.VK_SHADER_STAGE_GEOMETRY_BIT;
             case "fragment" -> VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
             default -> 0;
         };

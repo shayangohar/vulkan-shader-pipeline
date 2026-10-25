@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -290,27 +291,17 @@ public final class UniformRegistry {
             PostTargetPlan targetPlan,
             boolean prepared
     ) {
-        return planProgram(fragmentSource, vertexSource, stage, targetPlan, prepared,
-                Map.of(), Map.of());
+        return planProgram(fragmentSource, vertexSource, null, stage, targetPlan, prepared, Map.of(), Map.of());
     }
 
-    /** Builds a program interface with the valid custom scalar descriptors for one pack session. */
+    /**
+     * A program interface over every stage the program runs, with pack-owned sampler slots: a
+     * geometry stage's uniforms and samplers join the program's, and project("geometry") answers.
+     */
     public static ProgramInterfacePlan planProgram(
             String fragmentSource,
             String vertexSource,
-            Stage stage,
-            PostTargetPlan targetPlan,
-            boolean prepared,
-            Map<String, UniformDescriptor> customDescriptors
-    ) {
-        return planProgram(fragmentSource, vertexSource, stage, targetPlan, prepared,
-                customDescriptors, Map.of());
-    }
-
-    /** Builds a program interface with pack-owned sampler slots. */
-    public static ProgramInterfacePlan planProgram(
-            String fragmentSource,
-            String vertexSource,
+            String geometrySource,
             Stage stage,
             PostTargetPlan targetPlan,
             boolean prepared,
@@ -328,14 +319,17 @@ public final class UniformRegistry {
         List<UniformDeclaration> uniforms = new ArrayList<>(fragment.uniforms());
         List<SamplerBinding> samplers = new ArrayList<>(fragment.samplers());
         List<String> deviations = new ArrayList<>(fragment.deviations());
-        if (vertexSource != null) {
-            ProgramInterface vertex = InterfacePlanner.planInternal(vertexSource, effectiveStage, false, prepared,
+        Map<String, String> otherStages = new LinkedHashMap<>();
+        if (vertexSource != null) otherStages.put("vertex", vertexSource);
+        if (geometrySource != null) otherStages.put("geometry", geometrySource);
+        otherStages.forEach((name, source) -> {
+            ProgramInterface plan = InterfacePlanner.planInternal(source, effectiveStage, false, prepared,
                     customDescriptors, customSamplerSlots);
-            stagePlans.put("vertex", vertex);
-            uniforms.addAll(vertex.uniforms());
-            samplers.addAll(vertex.samplers());
-            deviations.addAll(vertex.deviations());
-        }
+            stagePlans.put(name, plan);
+            uniforms.addAll(plan.uniforms());
+            samplers.addAll(plan.samplers());
+            deviations.addAll(plan.deviations());
+        });
         return new ProgramInterfacePlan(stagePlans, uniforms, samplers, deviations);
     }
 

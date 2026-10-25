@@ -208,12 +208,17 @@ public record PackPlan(
         return settings.particleDirectives();
     }
 
-    /** How the shadow pass culls its casters (Iris shadow.culling and the shadow distances). */
+    /**
+     * How the shadow pass culls its casters: Iris's shadow.culling, the shadow distances, and
+     * whether the shadow program has a geometry stage.
+     */
     public ShadowCullingPlan shadowCulling() {
         PackConfig.ShadowSettings shadow = config != null ? config.shadowSettings()
                 : new PackConfig.ShadowSettings(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
                         PackConfig.DEFAULT_SHADOW_DISTANCE, Map.of(), List.of());
-        return ShadowCullingPlan.of(settings.propertyValues(), shadow);
+        PackProgramPlan program = program("shadow");
+        return ShadowCullingPlan.of(settings.propertyValues(), shadow,
+                program != null && program.stages().containsKey("geometry"));
     }
 
     /**

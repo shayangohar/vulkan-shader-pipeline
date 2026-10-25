@@ -439,10 +439,17 @@ final class PackDescriptorContracts {
     static void verifyAdvancedLayout(PackDescriptorLayout layout, String program,
             PackAdvancedResourcePlan resources, String vertex, String fragment,
             PackStorageBufferOwner owner) {
+        verifyAdvancedLayout(layout, program, resources, vertex, null, fragment, owner);
+    }
+
+    /** The same over every stage the program runs; {@code geometry} is null without a geometry stage. */
+    static void verifyAdvancedLayout(PackDescriptorLayout layout, String program,
+            PackAdvancedResourcePlan resources, String vertex, String geometry, String fragment,
+            PackStorageBufferOwner owner) {
         List<PackAdvancedResourcePlan.DescriptorBinding> descriptors = layout.descriptorBindings();
         String mismatch = owner == null ? PackAdvancedResourcePlan.layoutMismatch(
-                resources.bindingLayout(program), vertex, fragment, descriptors)
-                : owner.verifyLayout(program, vertex, fragment, descriptors);
+                resources.bindingLayout(program), vertex, geometry, fragment, descriptors)
+                : owner.verifyLayout(program, vertex, geometry, fragment, descriptors);
         if (mismatch != null) throw new PackPipelines.PreparationFailure("descriptor-contract", mismatch);
     }
 

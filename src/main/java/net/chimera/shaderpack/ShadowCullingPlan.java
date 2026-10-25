@@ -11,9 +11,8 @@ import java.util.Map;
  *
  * <p>{@code shadow.culling} in shaders.properties: {@code false} culls by distance only,
  * {@code true} uses the advanced frustum, {@code reversed} or {@code safe_zone} the safe-zone
- * frustum. Unset means advanced: Iris falls back to distance culling for an unset value only
- * when the shadow program has a geometry stage (voxelization), and Chimera never runs such a
- * program (UNSUPPORTED_PACK_STAGE).</p>
+ * frustum. Unset means advanced, or distance only when the shadow program has a geometry stage
+ * (Iris assumes voxelization).</p>
  *
  * <p>Distances are half-sizes in blocks of Iris's camera-centred BoxCuller.
  * {@code shadowDistanceRenderMul} defaults to -1, and a negative multiplier means the player's
@@ -61,8 +60,18 @@ public record ShadowCullingPlan(
     }
 
     public static ShadowCullingPlan of(Map<String, String> properties, PackConfig.ShadowSettings settings) {
+        return of(properties, settings, false);
+    }
+
+    /**
+     * The culling for a pack whose shadow program has a geometry stage when {@code voxelization}:
+     * Iris then culls an unset {@code shadow.culling} by distance only (ShadowRenderer's
+     * packHasVoxelization).
+     */
+    public static ShadowCullingPlan of(Map<String, String> properties, PackConfig.ShadowSettings settings,
+                                       boolean voxelization) {
         List<String> deviations = new ArrayList<>();
-        State state = State.DEFAULT;
+        State state = voxelization ? State.DISTANCE : State.DEFAULT;
         String value = properties == null ? null : properties.get("shadow.culling");
         if (value != null) {
             switch (value.trim()) {

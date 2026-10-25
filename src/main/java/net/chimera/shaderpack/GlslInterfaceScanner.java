@@ -29,8 +29,16 @@ public final class GlslInterfaceScanner {
     private GlslInterfaceScanner() {}
 
     /**
+     * The stage whose interface a source declares. A geometry stage's inputs are arrays with one
+     * element per vertex of its primitive ({@code in vec2 texcoord[]}); the scan reads each as the
+     * value one vertex passes, so it pairs with the vertex stage's output of that type.
+     */
+    public enum Stage { VERTEX, GEOMETRY, FRAGMENT }
+
+    /**
      * One declared name. {@code arraySize} is 0 for a non-array; {@code slots} is the number of
-     * locations the whole variable occupies.
+     * locations the whole variable occupies. A geometry stage's input is {@code perVertex}: its
+     * outer array dimension, one element per vertex, is not part of its type or size.
      */
     public record Declaration(
             String name,
@@ -40,7 +48,8 @@ public final class GlslInterfaceScanner {
             boolean output,
             boolean referenced,
             int arraySize,
-            int slots
+            int slots,
+            boolean perVertex
     ) {
         /** The type as a declaration spells it after the name, such as {@code vec3[9]}. */
         public String typeWithArray() {
@@ -53,9 +62,9 @@ public final class GlslInterfaceScanner {
                     || type.startsWith("ivec") || type.startsWith("uvec");
         }
 
-        /** {@code name} or {@code name[N]}, as the declarator is written. */
+        /** {@code name} or {@code name[N]}, as the declarator is written; a per-vertex input keeps its {@code []}. */
         public String declarator() {
-            return arraySize == 0 ? name : name + "[" + arraySize + "]";
+            return (perVertex ? name + "[]" : name) + (arraySize == 0 ? "" : "[" + arraySize + "]");
         }
     }
 
@@ -108,7 +117,11 @@ public final class GlslInterfaceScanner {
     private record Parse(List<GlslLexer.Token> tokens, List<Statement> statements, List<String> deviations) {}
 
     public static StageInterface scan(String source, boolean vertexStage) {
-        Parse parse = parse(source, vertexStage);
+        return scan(source, vertexStage ? Stage.VERTEX : Stage.FRAGMENT);
+    }
+
+    public static StageInterface scan(String source, Stage stage) {
+        Parse parse = parse(source, stage);
         List<Declaration> inputs = new ArrayList<>();
         List<Declaration> outputs = new ArrayList<>();
         List<String> deviations = new ArrayList<>(parse.deviations());
@@ -165,6 +178,19 @@ public final class GlslInterfaceScanner {
     }
 
     /**
+     * Pairs a vertex stage with a geometry stage's per-vertex inputs, and the geometry stage's
+     * outputs with a fragment stage, as Iris links three stages. The locations are the fragment
+     * stage's inputs'.
+     */
+    public static ProgramMatch match(StageInterface vertex, StageInterface geometry, StageInterface fragment) {
+        ProgramMatch toGeometry = match(vertex, geometry);
+        ProgramMatch toFragment = match(geometry, fragment);
+        List<String> deviations = new ArrayList<>(toGeometry.deviations());
+        deviations.addAll(toFragment.deviations());
+        return new ProgramMatch(toFragment.locations(), deviations);
+    }
+
+    /**
      * Re-emits every interface statement of {@code source}: each declared name is replaced by
      * what {@code emit} returns for it (an empty string drops it), and the rest of the source is
      * untouched. A statement that declares several names becomes one declaration per name. When
@@ -173,7 +199,12 @@ public final class GlslInterfaceScanner {
      * @throws IllegalArgumentException when the interface itself cannot be parsed
      */
     public static String rewrite(String source, boolean vertexStage, Function<Declaration, String> emit) {
-        Parse parse = parse(source, vertexStage);
+        return rewrite(source, vertexStage ? Stage.VERTEX : Stage.FRAGMENT, emit);
+    }
+
+    /** {@link #rewrite(String, boolean, Function)} for a source of any {@link Stage}. */
+    public static String rewrite(String source, Stage stage, Function<Declaration, String> emit) {
+        Parse parse = parse(source, stage);
         if (!parse.deviations().isEmpty()) {
             throw new IllegalArgumentException("interface declarations unsupported: " + parse.deviations());
         }
@@ -219,7 +250,7 @@ public final class GlslInterfaceScanner {
      * The interface statements of the tree's file-scope declarations, in source order. A source
      * the tree cannot parse has an interface this cannot read.
      */
-    private static Parse parse(String source, boolean vertexStage) {
+    private static Parse parse(String source, Stage stage) {
         GlslTree tree;
         try {
             tree = GlslTree.parse(source);
@@ -235,7 +266,7 @@ public final class GlslInterfaceScanner {
                     : external instanceof GlslTree.InterfaceBlock block ? block.qualifiers() : List.of();
             int[] storage = storageQualifier(tree, qualifiers);
             if (storage == null) continue;
-            Statement statement = statement(tree, external, qualifiers, storage, vertexStage, structSlots, deviations);
+            Statement statement = statement(tree, external, qualifiers, storage, stage, structSlots, deviations);
             if (statement != null) statements.add(statement);
         }
         return new Parse(tree.tokens(), statements, deviations);
@@ -289,7 +320,7 @@ public final class GlslInterfaceScanner {
 
     /** The interface statement a declaration makes, or null when it declares none this can read. */
     private static Statement statement(GlslTree tree, GlslTree.External external, List<GlslTree.Qualifier> qualifiers,
-                                       int[] storage, boolean vertexStage, Map<String, Integer> structSlots,
+                                       int[] storage, Stage stage, Map<String, Integer> structSlots,
                                        List<String> deviations) {
         GlslTree.Declaration declaration = variableDeclaration(tree, external, qualifiers, storage, deviations);
         if (declaration == null) return null;
@@ -301,10 +332,17 @@ public final class GlslInterfaceScanner {
         }
         String direction = keyword(tree, qualifiers, storage[1]);
         boolean varying = direction.equals("varying");
+        if (varying && stage == Stage.GEOMETRY) {
+            // GL has no varying in a geometry stage.
+            deviations.add(DECLARATION_UNSUPPORTED);
+            return null;
+        }
         String interpolation = storage[1] > storage[0] && isInterpolation(keyword(tree, qualifiers, storage[1] - 1))
                 ? keyword(tree, qualifiers, storage[1] - 1) : null;
-        InterfaceType kind = new InterfaceType(type, interpolation, direction.equals("in") || varying && !vertexStage,
-                direction.equals("out") || varying && vertexStage, typeSlots);
+        boolean input = direction.equals("in") || varying && stage == Stage.FRAGMENT;
+        InterfaceType kind = new InterfaceType(type, interpolation, input,
+                direction.equals("out") || varying && stage == Stage.VERTEX, typeSlots,
+                input && stage == Stage.GEOMETRY);
         int start = qualifiers.get(storage[0]).range().start();
         int end = declaration.range().end();
         List<Declaration> declared = declarators(tree, declaration, start, end, kind);
@@ -320,13 +358,19 @@ public final class GlslInterfaceScanner {
         return type.name() >= 0 ? tree.text(type.name()) : "struct";
     }
 
-    /** What one interface statement's declarators share: type, interpolation, direction and size. */
-    private record InterfaceType(String type, String interpolation, boolean input, boolean output, int slots) {}
+    /**
+     * What one interface statement's declarators share: type, interpolation, direction, size, and
+     * whether each is a geometry stage's per-vertex input.
+     */
+    private record InterfaceType(String type, String interpolation, boolean input, boolean output, int slots,
+                                 boolean perVertex) {}
 
     /**
      * The variables one interface statement declares, each with any array size, or null when a
      * declarator has an initializer, a size this cannot read, or a size besides the type's. The
      * size may sit on the type, as in Noble's {@code flat in vec3[9] skyIlluminanceCoefficients}.
+     * A per-vertex input's declarator starts with its per-vertex dimension, sized or not
+     * ({@code texcoord[]}, Rethinking Voxels' {@code texCoordV[3]}); the size is what follows it.
      */
     private static List<Declaration> declarators(GlslTree tree, GlslTree.Declaration declaration, int start, int end,
                                                  InterfaceType kind) {
@@ -334,14 +378,19 @@ public final class GlslInterfaceScanner {
         if (typeLength < 0) return null;
         List<Declaration> declared = new ArrayList<>();
         for (GlslTree.Declarator declarator : declaration.declarators()) {
-            int length = arrayLength(tree, declarator.arrays());
+            List<GlslTree.Range> arrays = declarator.arrays();
+            if (kind.perVertex()) {
+                if (arrays.isEmpty()) return null;
+                arrays = arrays.subList(1, arrays.size());
+            }
+            int length = arrayLength(tree, arrays);
             if (typeLength > 0 && length != 0) return null;
             length = Math.max(length, typeLength);
             if (length < 0 || declarator.initializer() != null) return null;
             String name = tree.text(declarator.name());
             boolean referenced = referencedOutsideDeclaration(tree.tokens(), name, start, end);
             declared.add(new Declaration(name, kind.type(), kind.interpolation(), kind.input(), kind.output(),
-                    referenced, length, kind.slots() * Math.max(length, 1)));
+                    referenced, length, kind.slots() * Math.max(length, 1), kind.perVertex()));
         }
         return List.copyOf(declared);
     }

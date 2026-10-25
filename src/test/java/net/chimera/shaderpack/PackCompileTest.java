@@ -141,8 +141,13 @@ final class PackCompileTest {
 
         /** Compiles one prepared stage and records it under {@code key}; returns the error, or null. */
         private String check(String key, String source, boolean vertex) {
-            Outcome outcome = vertex ? outcome(source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh")
-                    : outcome(source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
+            return vertex ? check(key, source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh")
+                    : check(key, source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
+        }
+
+        /** Compiles one prepared stage of shaderc {@code kind} and records it under {@code key}. */
+        private String check(String key, String source, int kind, String file) {
+            Outcome outcome = outcome(source, kind, file);
             if (snapshot != null) snapshot.record(key, source, outcome.spirvHash());
             return outcome.error();
         }
@@ -161,17 +166,22 @@ final class PackCompileTest {
             vertexError = program.convertedVertex() == null ? null
                     : check(program.name() + ".vsh", prepared.vertex(), true);
             String fragmentError = check(program.name() + ".fsh", prepared.fragment(), false);
+            String geometryError = prepared.geometry() == null ? null : check(program.name() + ".gsh",
+                    prepared.geometry(), Shaderc.shaderc_glsl_geometry_shader, "pack.gsh");
             compileInputVariants(program, stage);
             // -Pchimera.packCompile.dumpProgram=<name> writes that program's prepared stages for review.
             if (program.name().equals(System.getProperty("chimera.packCompile.dumpProgram"))) {
                 dump(pack, program.name() + ".vsh", prepared.vertex());
+                if (prepared.geometry() != null) dump(pack, program.name() + ".gsh", prepared.geometry());
                 dump(pack, program.name() + ".fsh", prepared.fragment());
             }
             if (vertexError != null) failures.add(program.name() + " vertex: " + vertexError
                     + " [" + dump(pack, program.name() + ".vsh", prepared.vertex()) + "]");
+            if (geometryError != null) failures.add(program.name() + " geometry: " + geometryError
+                    + " [" + dump(pack, program.name() + ".gsh", prepared.geometry()) + "]");
             if (fragmentError != null) failures.add(program.name() + " fragment: " + fragmentError
                     + " [" + dump(pack, program.name() + ".fsh", prepared.fragment()) + "]");
-            return vertexError == null && fragmentError == null;
+            return vertexError == null && geometryError == null && fragmentError == null;
         }
 
         /** The runtime pairs a pack fragment with Chimera's fixed vertex where the pack has none. */

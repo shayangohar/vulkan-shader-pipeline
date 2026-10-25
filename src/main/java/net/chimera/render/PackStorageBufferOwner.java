@@ -293,8 +293,14 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     /** Records shader/layout agreement before native pipeline creation. */
     public String verifyLayout(String program, String vertex, String fragment,
             List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
+        return verifyLayout(program, vertex, null, fragment, descriptors);
+    }
+
+    /** The same over every stage the program runs; {@code geometry} is null without a geometry stage. */
+    public String verifyLayout(String program, String vertex, String geometry, String fragment,
+            List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
         String mismatch = PackAdvancedResourcePlan.layoutMismatch(
-                plan.bindingLayout(program), vertex, fragment, descriptors);
+                plan.bindingLayout(program), vertex, geometry, fragment, descriptors);
         if (mismatch == null) {
             verifiedLayouts.add(program);
             programFailures.remove(program);

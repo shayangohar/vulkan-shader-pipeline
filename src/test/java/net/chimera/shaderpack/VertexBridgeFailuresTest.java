@@ -6,7 +6,6 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -142,7 +141,7 @@ final class VertexBridgeFailuresTest {
                 void main() { uv = vec2(float(gl_VertexID & 3)); gl_Position = vec4(vaPosition, 1.0); }
                 """;
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planProgram(fragment, vertex,
-                        UniformRegistry.Stage.GEOMETRY, null, false, Map.of(), Map.of())
+                        UniformRegistry.Stage.GEOMETRY, null, false)
                 .project("vertex", UniformRegistry.Stage.GEOMETRY);
         String converted = TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, fragment,
                 GlslVertexPreambles.MODERN_TERRAIN_VERTEX_PREAMBLE, interfacePlan, false, false, false).source();
@@ -152,7 +151,7 @@ final class VertexBridgeFailuresTest {
     /** The modern terrain bridge's first failure for a pair, or an empty string when it converts. */
     private static String failure(String vertex, String fragment) {
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planProgram(fragment, vertex,
-                        UniformRegistry.Stage.GEOMETRY, null, false, Map.of(), Map.of())
+                        UniformRegistry.Stage.GEOMETRY, null, false)
                 .project("vertex", UniformRegistry.Stage.GEOMETRY);
         try {
             TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, fragment,

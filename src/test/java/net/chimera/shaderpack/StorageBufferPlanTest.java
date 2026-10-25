@@ -307,7 +307,7 @@ final class StorageBufferPlanTest {
         var layout = new PackAdvancedResourcePlan.ProgramBindingLayout(1, 1, 1,
                 List.of(), List.of(), List.of(), List.of(descriptor), List.of(descriptor));
         try {
-            PackPipelines.prepareLayout(new PackPipelines.PreparedPipeline(null, "", "", layout,
+            PackPipelines.prepareLayout(new PackPipelines.PreparedPipeline(null, "", null, "", layout,
                     new ProgramImageBindingManifest(List.of())), "future", PackAdvancedResourcePlan.empty());
             throw new AssertionError("Future selector reached builder creation");
         } catch (PackPipelines.PreparationFailure failure) {

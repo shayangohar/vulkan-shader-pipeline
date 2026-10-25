@@ -152,6 +152,27 @@ final class TerrainVertexBridge {
             boolean entityInputs,
             boolean allowStorageBuffers
     ) {
+        return convertModernTerrainVertexOrThrow(source, sourceFile, fragmentSource, vertexPreamble, interfacePlan,
+                shadowStage, entityInputs, allowStorageBuffers, false);
+    }
+
+    /**
+     * The modern bridge, paired with the stage after the vertex stage: the fragment stage, or a
+     * geometry stage ({@code geometryNext}, whose GeometryStageBridge.consumerView stands in
+     * {@code fragmentSource}). A shadow vertex converts its clip depth only as the last stage
+     * before the rasterizer; before a geometry stage, that stage converts what it emits.
+     */
+    static LegacyGlslConverter.TerrainVertexConversion convertModernTerrainVertexOrThrow(
+            String source,
+            Path sourceFile,
+            String fragmentSource,
+            String vertexPreamble,
+            UniformRegistry.ProgramInterface interfacePlan,
+            boolean shadowStage,
+            boolean entityInputs,
+            boolean allowStorageBuffers,
+            boolean geometryNext
+    ) {
         boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
         String prepared = EntityDeclarations.defaultUnboundIdentityAttributes(
                 LegacyGlslConverter.prepareSource(source, sourceFile, true));
@@ -191,7 +212,7 @@ final class TerrainVertexBridge {
         converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
                 "chimeraFtransform()");
         if (shadowStage) {
-            converted = normalizeShadowLegacyBuiltins(converted);
+            converted = ShadowStageBuiltins.legacyBuiltins(converted);
         }
         converted = rewriteModernTerrainSamplers(converted, interfacePlan, shadowStage);
         converted = LegacyGlslConverter.convertTextureCalls(converted);
@@ -207,14 +228,14 @@ final class TerrainVertexBridge {
         String chimeraVaryings = EntityVertexBridge.entityIdOutputDeclarations(entityIdTypes.keySet(), layout);
         String effectivePreamble = shadowStage && !extendedShadow && !entityInputs
                 ? GlslVertexPreambles.SHADOW_VERTEX_PREAMBLE : vertexPreamble;
-        String body = shadowStage ? shadowClipRangeWrapper(converted) : converted;
+        String body = shadowStage ? ShadowStageBuiltins.vertexClipRange(converted, geometryNext) : converted;
         return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n"
                 + effectivePreamble + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
                 + chimeraVaryings + uniformBlock + body, layout);
     }
 
     /** The fragment source normalized as its vertex stage is, when it declares a supported version. */
-    private static String normalizedFragment(String fragmentSource, boolean shadowStage) {
+    static String normalizedFragment(String fragmentSource, boolean shadowStage) {
         String fragment = fragmentSource == null ? "" : fragmentSource;
         if (shadowStage && hasShadowTerrainVersion(fragment)) {
             return normalizeShadowTerrain(fragment);
@@ -223,7 +244,7 @@ final class TerrainVertexBridge {
     }
 
     /** Drops the functions main never reaches; a source the resource analysis refuses fails with its reasons. */
-    private static String withoutUnreachableFunctions(String vertex) {
+    static String withoutUnreachableFunctions(String vertex) {
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(vertex);
         if (!usage.successful()) {
             throw new IllegalArgumentException(usage.deviations().toString());
@@ -239,12 +260,12 @@ final class TerrainVertexBridge {
         Map<String, String> replacements = shadowAttributeInputReplacements(vertex);
         replacements.putAll(entityInputs
                 ? EntityVertexBridge.entityShadowMatrixBuiltinReplacements()
-                : shadowMatrixBuiltinReplacements());
+                : ShadowStageBuiltins.matrixReplacements());
         return replacements;
     }
 
     /** Reads the shadow stage's planned uniforms through the generated shadow block's instance. */
-    private static String qualifyPlannedShadowUniforms(String source, UniformRegistry.ProgramInterface interfacePlan) {
+    static String qualifyPlannedShadowUniforms(String source, UniformRegistry.ProgramInterface interfacePlan) {
         if (interfacePlan == null || interfacePlan.executableUniforms().isEmpty()) {
             return source;
         }
@@ -275,7 +296,7 @@ final class TerrainVertexBridge {
      * name; null when there is none. A memory or precision qualifier between {@code uniform} and
      * the type (Reverie's {@code uniform restrict image2D image0}) leaves it opaque.
      */
-    private static String valueUniform(GlslTree tree) {
+    static String valueUniform(GlslTree tree) {
         for (GlslTree.External external : tree.externals()) {
             boolean uniform = declarationQualifiers(external).stream()
                     .anyMatch(qualifier -> tree.text(qualifier.keyword()).equals("uniform"));
@@ -315,7 +336,7 @@ final class TerrainVertexBridge {
      * scanner keeps integral, matrix and array varyings (Photon: flat uint material_mask, flat mat3
      * tbn) and their location widths; a fragment input of another type is refused.
      */
-    private static LegacyGlslConverter.TerrainVaryingLayout modernVaryingLayout(
+    static LegacyGlslConverter.TerrainVaryingLayout modernVaryingLayout(
             String vertex, String fragment, Map<String, String> entityIdTypes) {
         EntityVertexBridge.EntityVaryingDeclarations vertexVaryings =
                 EntityVertexBridge.parseEntityVaryingDeclarations(vertex, true);
@@ -344,7 +365,7 @@ final class TerrainVertexBridge {
     }
 
     /** The generated uniform block: the shadow pipeline's own binding, or the geometry block. */
-    private static String modernUniformBlock(UniformRegistry.ProgramInterface interfacePlan, boolean shadowStage) {
+    static String modernUniformBlock(UniformRegistry.ProgramInterface interfacePlan, boolean shadowStage) {
         if (interfacePlan == null || interfacePlan.executableUniforms().isEmpty()) return "";
         return shadowStage
                 ? FragmentConverter.generatedShadowUniformBlock(interfacePlan.executableUniforms(),
@@ -362,30 +383,6 @@ final class TerrainVertexBridge {
                 GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, null, true, false);
     }
 
-    /** Name the pack-authored shadow entry point keeps after the wrapper claims {@code main}. */
-    static final String AUTHORED_SHADOW_ENTRY = "chimeraAuthoredShadowMain";
-
-    /** Converts the final legacy OpenGL clip range after the pack's authored vertex code runs. */
-    static String shadowClipRangeWrapper(String source) {
-        return GlslTokenRewriter.replaceIdentifiers(source, Map.of("main", AUTHORED_SHADOW_ENTRY))
-                + "\nvoid main() {\n"
-                + "    " + AUTHORED_SHADOW_ENTRY + "();\n"
-                + "    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n"
-                + "}\n";
-    }
-
-    /**
-     * The shadow adapter's legacy built-ins describe the matrices used by the
-     * current shadow draw. Camera gbuffer matrices remain separately exposed
-     * through their Iris names.
-     */
-    static Map<String, String> shadowMatrixBuiltinReplacements() {
-        return Map.of(
-                "gl_ModelViewMatrix", "shadowModelView",
-                "gl_NormalMatrix", "mat3(transpose(shadowModelViewInverse))",
-                "gl_ProjectionMatrix", "shadowProjection",
-                "gl_ModelViewProjectionMatrix", "MVP");
-    }
 
     /** Converts legacy and simple compatibility shadow vertices with one plan. */
     public static LegacyGlslConverter.TerrainVertexConversion convertShadowVertex(
@@ -499,7 +496,7 @@ final class TerrainVertexBridge {
         }
         if (!hasModernTerrainVersion(source)) return false;
         UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planProgram(
-                fragmentSource, source, UniformRegistry.Stage.GEOMETRY, null, false, Map.of(), Map.of())
+                fragmentSource, source, UniformRegistry.Stage.GEOMETRY, null, false)
                 .project("vertex", UniformRegistry.Stage.GEOMETRY);
         return convertModernTerrainVertex(source, null, fragmentSource, interfacePlan) != null;
     }
@@ -966,17 +963,5 @@ final class TerrainVertexBridge {
             case "ivec2", "ivec3", "ivec4", "uvec2", "uvec3", "uvec4" -> type + "(" + value + ")";
             default -> "";
         };
-    }
-
-    /** Maps legacy matrix built-ins to the fixed terrain inputs used by the shadow adapter. */
-    static String normalizeShadowLegacyBuiltins(String source) {
-        String result = LegacyGlslConverter.replaceLightmapTextureMatrices(source).replaceAll(
-                "\\bgl_TextureMatrix\\s*\\[\\s*\\d+\\s*\\]", "mat4(1.0)");
-        return GlslTokenRewriter.replaceIdentifiers(result,
-                Map.of(
-                        // Vulkan GLSL exposes the vertex invocation index as
-                        // gl_VertexIndex.  Iris legacy shadow code commonly
-                        // uses gl_VertexID for quad/voxel producer gating.
-                        "gl_VertexID", "gl_VertexIndex"));
     }
 }

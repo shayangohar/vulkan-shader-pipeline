@@ -102,7 +102,7 @@ final class InterfacePlanner {
             declareImplicit("gbufferModelView", "mat4", declared, deviations);
         }
         // The shadow bridge serves them from the shadow matrices
-        // (TerrainVertexBridge.shadowMatrixBuiltinReplacements): RenderPearl's shadow vertex
+        // (ShadowStageBuiltins.matrixReplacements): RenderPearl's shadow vertex
         // reads modelViewMatrix, which Iris's core profile makes gl_ModelViewMatrix.
         for (String name : shadowMatrixValues(stripped, stage)) {
             if (declared.uniforms().containsKey(name) || UniformRegistry.isLocallyDeclared(stripped, name)) continue;

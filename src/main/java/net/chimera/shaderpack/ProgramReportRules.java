@@ -151,16 +151,28 @@ final class ProgramReportRules {
         }
     }
 
+    /**
+     * Whether Iris would run a stage of the program that Chimera does not: a tessellation stage
+     * the pack enables (TASK-648), a geometry stage the plan did not convert, or a compute stage
+     * that is not a pass compute (Noble's composite99.csh is one, planned and run apart from
+     * composite99's draw).
+     */
+    private static boolean runsUnsupportedStage(PackProbe.Inventory inventory, PackPlan packPlan,
+                                                PackProgramPlan programPlan) {
+        boolean passCompute = PassComputePlan.isPassComputeProgram(inventory.name);
+        boolean tessellation = packPlan != null && packPlan.settings() != null
+                && packPlan.settings().readsTessellation();
+        boolean geometryRuns = programPlan != null && programPlan.convertedGeometry() != null;
+        return inventory.stages.stream().anyMatch(stage -> PackProgram.runsBetweenStages(stage, tessellation)
+                && !(stage.equals("geometry") && geometryRuns)
+                || stage.equals("compute") && !passCompute);
+    }
+
     /** Stages, GLSL dialect, advanced resources and samplers the program's sources use. */
     static void addSourceDeviations(PackProbe.Inventory inventory, PackPlan packPlan, PackProgramPlan programPlan,
                                             String source, List<String> samplers, boolean relaxed, boolean modern,
                                             Set<String> deviations) {
-        // Noble's composite99.csh is a pass compute, planned and run apart from composite99's draw.
-        boolean passCompute = PassComputePlan.isPassComputeProgram(inventory.name);
-        boolean tessellation = packPlan != null && packPlan.settings() != null
-                && packPlan.settings().readsTessellation();
-        if (inventory.stages.stream().anyMatch(stage -> PackProgram.runsBetweenStages(stage, tessellation)
-                || stage.equals("compute") && !passCompute)) {
+        if (runsUnsupportedStage(inventory, packPlan, programPlan)) {
             deviations.add("UNSUPPORTED_PACK_STAGE");
         }
         if (modern) {
@@ -217,7 +229,8 @@ final class ProgramReportRules {
     static boolean validatedConversion(PackProbe.Inventory inventory, PackProgramPlan programPlan, PackPlan packPlan) {
         if (packPlan != null && packPlan.cloudRunsEmpty(inventory.name)) return true;
         return programPlan != null && programPlan.executable() && programPlan.convertedFragment() != null
-                && (!inventory.stages.contains("vertex") || programPlan.convertedVertex() != null);
+                && (!inventory.stages.contains("vertex") || programPlan.convertedVertex() != null)
+                && (!inventory.stages.contains("geometry") || programPlan.convertedGeometry() != null);
     }
 
     static PostTargetPlan.ParseResult targetResult(
