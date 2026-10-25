@@ -276,11 +276,11 @@ public final class PackPlanBuilder {
                         ? IrisCoreProfile.prepareLineVertex(vertex, vertexFile(),
                         directiveProgram.equals("gbuffers_line"))
                         : IrisCoreProfile.prepareHostLayoutSource(vertex, vertexFile());
-                boolean perVertexIds = FamilyAdapterRegistry.readsEntityIdsPerVertex(name);
-                if (!perVertexIds) vertex = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
-                if (fragment != null) {
-                    fragment = IrisCoreProfile.prepareHostLayoutSource(fragment, fragmentFile());
-                    if (!perVertexIds) fragment = IrisCoreProfile.prepareHostLayoutIdentity(fragment);
+                fragment = IrisCoreProfile.prepareHostLayoutSource(fragment, fragmentFile());
+                if (!FamilyAdapterRegistry.readsEntityIdsPerVertex(name)) {
+                    vertex = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
+                    geometry = IrisCoreProfile.prepareHostLayoutIdentity(geometry);
+                    fragment = IrisCoreProfile.prepareHostLayoutIdentity(fragment);
                 }
             } catch (RuntimeException failure) {
                 hostLayoutFailure = VertexBridgeDeviations.safeReason(failure);
@@ -479,12 +479,12 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * Whether the program's stages between vertex and fragment run: a geometry stage alone, on the
-         * shadow terrain and entity lanes. Tessellation and other lanes' geometry stages stay refused (TASK-648).
+         * Whether the program's stages between vertex and fragment run: a geometry stage alone, on
+         * every shadow lane. Tessellation and the main pass's geometry stages stay refused (TASK-648).
          */
         private boolean geometryStageRuns() {
             return geometry != null && geometryStages.equals(List.of("geometry"))
-                    && FamilyAdapterRegistry.isFixedLayoutShadowFamily(name);
+                    && FamilyAdapterRegistry.isShadowFamily(name);
         }
 
         /** What the vertex stage feeds: a running geometry stage, which converts the clip depth, or the fragment. */
@@ -498,7 +498,7 @@ public final class PackPlanBuilder {
             try {
                 GeometryStageBridge.Conversion conversion = GeometryStageBridge.convertShadow(geometry, vertexLayout,
                         fragment, interfacePlan.project("geometry", stage), allowStorageBuffers,
-                        FamilyAdapterRegistry.isShadowEntityFamily(name));
+                        !FamilyAdapterRegistry.isShadowTerrain(name));
                 convertedGeometry = conversion.source();
                 geometryLayout = conversion.outputLayout();
             } catch (RuntimeException failure) {
@@ -681,8 +681,8 @@ public final class PackPlanBuilder {
             } else if (FamilyAdapterRegistry.isShadowLaneFamily(name) && hostLayoutFailure == null) {
                 // The host-layout preparation already expanded the includes.
                 acceptVertex(() -> HostLayoutVertexBridge.convertShadowLaneVertexChecked(
-                                familyAdapter.vertexContract(), vertex, fragment,
-                                interfacePlan.project("vertex", stage), allowStorageBuffers),
+                                familyAdapter.vertexContract(), vertex, vertexConsumer(),
+                                interfacePlan.project("vertex", stage), allowStorageBuffers, geometryStageRuns()),
                         hostLayoutLane + "_VERTEX_BRIDGE", hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
                 acceptVertex(() -> EntityVertexBridge.convertShadowEntityVertexChecked(

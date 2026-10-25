@@ -204,11 +204,6 @@ public final class FamilyAdapterRegistry {
         return family == FamilyAdapterPlan.Family.SHADOW_ENTITIES || family == FamilyAdapterPlan.Family.SHADOW_BLOCK;
     }
 
-    /** A shadow program on a layout Chimera fixes: shadow terrain, or the entity and block entity casters. */
-    public static boolean isFixedLayoutShadowFamily(String name) {
-        return isShadowTerrain(name) || isShadowEntityFamily(name);
-    }
-
     /** A shadow-pass key drawn on the host's own layout (lines, leads, lightning, glint, text, water mask). */
     public static boolean isShadowLaneFamily(String name) {
         FamilyAdapterPlan plan = forProgram(name);

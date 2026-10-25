@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -13,9 +14,10 @@ import java.util.regex.Pattern;
  * stage's inputs, each pair by name at one shared location (GlslInterfaceScanner.Stage.GEOMETRY).
  * The stage reads the program's uniforms through the shadow block the other stages declare, binds
  * its samplers as they do, and converts GL's clip depth for each vertex it emits, as the vertex
- * stage does when nothing follows it (ShadowStageBuiltins). On the shadow entity lane it also
- * passes on the entity identities the vertex stage reads from EntityIds, each from the
- * primitive's first vertex, as Iris's EntityPatcher passes iris_entityInfo through.
+ * stage does when nothing follows it (ShadowStageBuiltins). On a lane drawn with the draw's own
+ * matrices (the entity casters and the host-layout keys) it also passes on the entity identities
+ * the vertex stage reads from EntityIds, each from the primitive's first vertex, as Iris's
+ * EntityPatcher passes iris_entityInfo through.
  */
 final class GeometryStageBridge {
     private GeometryStageBridge() {}
@@ -23,12 +25,14 @@ final class GeometryStageBridge {
     /** The suffix of a passed-on identity's output; its input keeps the vertex stage's name. */
     private static final String PASSED_ON_SUFFIX = "GS";
     /**
-     * The legacy matrices of the shadow entity lane: the draw's own, which the host serves to the
-     * vertex stage alone (EntityVertexBridge.entityShadowMatrixBuiltinReplacements).
+     * The legacy matrices of the entity and host-layout shadow lanes: the draw's own, which the
+     * host serves to the vertex stage alone (EntityVertexBridge.entityShadowMatrixBuiltinReplacements).
      */
     private static final Set<String> DRAW_MATRICES = EntityVertexBridge.entityShadowMatrixBuiltinReplacements()
             .keySet();
     private static final Pattern DRAW_TEXTURE_MATRIX = Pattern.compile("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]");
+    /** The stage's input primitive declaration, {@code layout(triangles) in;}. */
+    private static final Pattern INPUT_PRIMITIVE = Pattern.compile("\\blayout\\s*\\(([^)]*)\\)\\s*in\\s*;");
 
     /** The converted stage, and the locations of its outputs, which the fragment stage's inputs take. */
     record Conversion(String source, LegacyGlslConverter.TerrainVaryingLayout outputLayout) {}
@@ -62,9 +66,9 @@ final class GeometryStageBridge {
 
     /**
      * Converts a shadow program's geometry stage. {@code inputLayout} holds the vertex stage's
-     * output locations; the fragment stage's inputs decide the output layout. On the entity layout
-     * ({@code entityLayout}) the entity identities in {@code inputLayout} pass on to the fragment
-     * stage, and the stage reads them as the first vertex's.
+     * output locations; the fragment stage's inputs decide the output layout. On a lane drawn with
+     * the draw's own matrices ({@code drawMatrices}) the entity identities in {@code inputLayout}
+     * pass on to the fragment stage, and the stage reads them as the first vertex's.
      *
      * @throws IllegalArgumentException when the stage reads an input no vertex output feeds, an
      *         output the layout cannot place, a storage buffer the plan did not admit, an
@@ -72,7 +76,7 @@ final class GeometryStageBridge {
      */
     static Conversion convertShadow(String geometry, LegacyGlslConverter.TerrainVaryingLayout inputLayout,
                                     String fragment, UniformRegistry.ProgramInterface interfacePlan,
-                                    boolean allowStorageBuffers, boolean entityLayout) {
+                                    boolean allowStorageBuffers, boolean drawMatrices) {
         String source = LegacyGlslConverter.expandModernVaryingLists(TerrainVertexBridge.normalizeShadowTerrain(
                 geometry));
         Map<String, String> identities = passedOnIdentities(inputLayout);
@@ -83,12 +87,12 @@ final class GeometryStageBridge {
                 LegacyGlslConverter.withoutVersionLines(source));
         converted = interfacePlan == null ? TerrainVertexBridge.stripShadowUniformDeclarations(converted)
                 : UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
-        if (entityLayout) converted = EntityDeclarations.removeEntityIdDeclarations(converted, interfacePlan);
+        if (drawMatrices) converted = EntityDeclarations.removeEntityIdDeclarations(converted, interfacePlan);
         requireSupported(converted, allowStorageBuffers);
-        if (entityLayout) requireServedMatrices(converted);
+        if (drawMatrices) requireServedMatrices(converted);
         converted = located(converted, inputLayout, outputLayout);
         converted = GlslScopedReferences.replace(converted, firstVertexIdentities(identities.keySet(), inputLayout));
-        if (!entityLayout) {
+        if (!drawMatrices) {
             converted = GlslTokenRewriter.replaceIdentifiers(converted, ShadowStageBuiltins.matrixReplacements());
         }
         converted = ShadowStageBuiltins.legacyBuiltins(converted);
@@ -101,12 +105,22 @@ final class GeometryStageBridge {
                 + identityDeclarations(identities.keySet(), inputLayout, outputLayout) + converted, outputLayout);
     }
 
-    /** A main, no storage buffer the plan did not admit, and no value uniform the plan left out. */
+    /**
+     * A main, triangles in, no storage buffer the plan did not admit, and no value uniform the
+     * plan left out. Every shadow lane draws triangles (VulkanMod draws LINES, quads and strips as
+     * triangle lists); GL fails the draw of a stage that takes another primitive, Vulkan leaves it
+     * undefined.
+     */
     private static void requireSupported(String source, boolean allowStorageBuffers) {
         String stripped = GlslLexer.stripComments(source);
         GlslTree tree = GlslTree.parse(stripped);
         if (GlslDeclarations.main(tree) == null) {
             throw new IllegalArgumentException("geometry stage main is missing");
+        }
+        Matcher primitive = INPUT_PRIMITIVE.matcher(stripped);
+        if (primitive.find() && !List.of(primitive.group(1).split("\\s*,\\s*")).contains("triangles")) {
+            throw new IllegalArgumentException("geometry stage input primitive is not triangles: "
+                    + primitive.group(1).trim());
         }
         if (!allowStorageBuffers && GlslTokenRewriter.containsIdentifier(stripped, "buffer")) {
             throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
@@ -117,7 +131,7 @@ final class GeometryStageBridge {
         }
     }
 
-    /** No legacy matrix of the draw, which on the entity layout the host serves to the vertex stage alone. */
+    /** No legacy matrix of the draw, which the host serves to the vertex stage alone. */
     private static void requireServedMatrices(String source) {
         String stripped = GlslLexer.stripComments(source);
         String matrix = GlslTokenRewriter.firstIdentifier(stripped, DRAW_MATRICES::contains);

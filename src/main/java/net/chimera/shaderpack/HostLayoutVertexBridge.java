@@ -25,17 +25,21 @@ final class HostLayoutVertexBridge {
      * legacy matrix built-ins name the draw's
      * host blocks, which the pass loads with the light view and projection, and an input the
      * layout lacks reads Iris's value for it. The host-layout preparation has already expanded
-     * the includes. Reports the first concrete failure.
+     * the includes. {@code consumerSource} is the stage after the vertex stage: the fragment
+     * stage, or a geometry stage ({@code geometryNext}) as GeometryStageBridge.consumerView
+     * declares it. Reports the first concrete failure.
      */
     public static LegacyGlslConverter.TerrainVertexConversion convertShadowLaneVertexChecked(
             FamilyAdapterPlan.VertexContract contract,
             String source,
-            String fragmentSource,
+            String consumerSource,
             UniformRegistry.ProgramInterface interfacePlan,
-            boolean allowStorageBuffers
+            boolean allowStorageBuffers,
+            boolean geometryNext
     ) {
-        return TerrainVertexBridge.convertModernTerrainVertexOrThrow(source, null, fragmentSource,
-                GlslVertexPreambles.shadowLanePreamble(contract), interfacePlan, true, true, allowStorageBuffers);
+        return TerrainVertexBridge.convertModernTerrainVertexOrThrow(source, null, consumerSource,
+                GlslVertexPreambles.shadowLanePreamble(contract), interfacePlan, true, true, allowStorageBuffers,
+                geometryNext);
     }
 
     /** Selects the one host sky format that can provide the authored legacy inputs. */

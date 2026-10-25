@@ -177,6 +177,24 @@ final class GeometryStageBridgeTest {
         assertTrue(failure.getMessage().contains("gl_ProjectionMatrix"), failure.getMessage());
     }
 
+    /** Every shadow lane draws triangles; a stage that takes another primitive is refused. */
+    @Test
+    void aStageTakingLinesIsRefused() {
+        LegacyGlslConverter.TerrainVaryingLayout vertex = new LegacyGlslConverter.TerrainVaryingLayout(
+                Map.of("vert_survived", "uint", "vert_texcoord", "vec2"),
+                Map.of("vert_survived", 0, "vert_texcoord", 1));
+        String fragment = """
+                #version 460
+                in vec2 frag_texcoord;
+                flat in uint frag_material;
+                void main() { gl_FragData[0] = vec4(frag_texcoord, float(frag_material), 1.0); }
+                """;
+        String geometry = GEOMETRY.replace("layout(triangles) in;", "layout(lines) in;");
+        IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
+                () -> GeometryStageBridge.convertShadow(geometry, vertex, fragment, null, false, false));
+        assertTrue(failure.getMessage().contains("not triangles: lines"), failure.getMessage());
+    }
+
     /** A read input the vertex stage does not feed is refused, as GL's link refuses it. */
     @Test
     void anUnfedInputIsRefused() {

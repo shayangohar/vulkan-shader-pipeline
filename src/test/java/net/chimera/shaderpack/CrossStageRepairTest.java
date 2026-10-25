@@ -175,6 +175,44 @@ final class CrossStageRepairTest {
         assertTrue(entities.convertedGeometry().contains("layout(location = 0) in vec4 v_glColor[];")
                 && entities.convertedFragment().contains("layout(location = 0) in vec4 glColor;"),
                 entities.convertedGeometry());
+        PackProgramPlan lines = plan.program("shadow_lines");
+        assertTrue(lines.executable() && lines.convertedGeometry() != null, lines.deviations().toString());
+    }
+
+    /** A host-layout shadow lane reads the per-draw entityId in every stage, its geometry stage too. */
+    @Test
+    void aHostShadowLaneServesItsIdentitiesToTheGeometryStage(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 150 compatibility
+                out vec4 v_glColor;
+                void main() { v_glColor = gl_Color; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.gsh"), """
+                #version 150 compatibility
+                layout(triangles) in;
+                layout(triangle_strip, max_vertices = 3) out;
+                uniform int entityId;
+                in vec4 v_glColor[];
+                out vec4 glColor;
+                void main() {
+                    for (int i = 0; i < 3; i++) {
+                        glColor = v_glColor[i] * float(entityId);
+                        gl_Position = gl_in[i].gl_Position;
+                        EmitVertex();
+                    }
+                    EndPrimitive();
+                }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 150 compatibility
+                in vec4 glColor;
+                void main() { gl_FragData[0] = glColor; }
+                """);
+        PackProgramPlan lightning = PackProbe.analyze(root).plan().program("shadow_lightning");
+        assertTrue(lightning.executable(), lightning.deviations().toString());
+        assertTrue(lightning.convertedGeometry().contains(UniformRegistry.HOST_ENTITY_ID)
+                && !lightning.convertedGeometry().contains("uniform int entityId"), lightning.convertedGeometry());
     }
 
     /**
