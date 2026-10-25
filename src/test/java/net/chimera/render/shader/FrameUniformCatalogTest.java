@@ -89,6 +89,22 @@ final class FrameUniformCatalogTest {
         assertEquals(1.0f, inverse.m33(), "singular matrix identity fallback");
     }
 
+    /**
+     * Alpha Piscium's shadow vertex stage reconstructs each vertex's scene position with
+     * shadowProjectionInverse * ftransform(). Its 512-block shadow projection has a determinant
+     * near 3e-8; served as identity, every caster shrank to a speck of the shadow map.
+     */
+    @Test
+    void aFarShadowProjectionInvertsExactly() {
+        Matrix4f projection = new Matrix4f().setOrtho(-512.0f, 512.0f, -512.0f, 512.0f, 0.05f, 256.0f);
+        assertTrue(Math.abs(projection.determinant()) < 1.0e-7f, "the projection is small in scale");
+        Matrix4f inverse = new Matrix4f();
+        PackFrameState.invertOrIdentityForTest(projection, inverse);
+        assertEquals(512.0f, inverse.m00(), 1.0e-3f, "the inverse undoes the projection's scale");
+        assertTrue(new Matrix4f(projection).mul(inverse).equals(new Matrix4f(), 1.0e-5f),
+                "projection times inverse is identity");
+    }
+
     @Test
     void frameClock() {
         PackFrameState state = new PackFrameState();

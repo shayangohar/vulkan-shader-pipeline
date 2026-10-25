@@ -957,13 +957,15 @@ final class PackFrameState {
         clearWorldState();
     }
 
+    /**
+     * The inverse Iris serves (MatrixUniforms.Inverted: a plain invert), or identity for a
+     * singular matrix, whose inverse is not finite. A small determinant is not singular: a shadow
+     * projection over 512 blocks has one near 3e-8, and its true inverse is what a pack's shadow
+     * vertex stage undoes ftransform() with.
+     */
     private static void invertOrIdentity(Matrix4f source, Matrix4f destination) {
-        float determinant = source.determinant();
-        if (!Float.isFinite(determinant) || Math.abs(determinant) < 1.0e-7f) {
-            destination.identity();
-            return;
-        }
         source.invert(destination);
+        if (!destination.isFinite()) destination.identity();
     }
 
     private static float clamp(float value, float min, float max) {
