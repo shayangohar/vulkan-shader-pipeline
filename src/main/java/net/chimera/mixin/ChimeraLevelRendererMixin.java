@@ -4,6 +4,7 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.PoseStack;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
@@ -18,7 +19,9 @@ import net.minecraft.client.particle.ParticleRenderType;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.culling.Frustum;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
@@ -47,6 +50,9 @@ public abstract class ChimeraLevelRendererMixin {
     private static final String PARTICLES = "Lnet/minecraft/client/particle/ParticleEngine;render("
             + "Lnet/minecraft/client/renderer/LightTexture;Lnet/minecraft/client/Camera;F"
             + "Lnet/minecraft/client/renderer/culling/Frustum;Ljava/util/function/Predicate;)V";
+    private static final String RENDER_ENTITY = "Lnet/minecraft/client/renderer/LevelRenderer;renderEntity("
+            + "Lnet/minecraft/world/entity/Entity;DDDFLcom/mojang/blaze3d/vertex/PoseStack;"
+            + "Lnet/minecraft/client/renderer/MultiBufferSource;)V";
 
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void chimera$beginFrame(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
@@ -73,6 +79,22 @@ public abstract class ChimeraLevelRendererMixin {
         float[] fog = RenderSystem.getShaderFogColor();
         Vec3 position = camera.getPosition();
         pass.openLevelSegment(position.x, position.y, position.z, new float[] {fog[0], fog[1], fog[2]});
+    }
+
+    /**
+     * One entity's render is one of Iris's batch groups (batchedentityrendering MixinLevelRenderer):
+     * the order its render types are written in orders the level's held batches (IrisBatchOrder).
+     */
+    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = RENDER_ENTITY), require = 1)
+    private void chimera$entityGroup(LevelRenderer renderer, Entity entity, double cameraX, double cameraY,
+                                     double cameraZ, float partialTick, PoseStack poses, MultiBufferSource buffers,
+                                     Operation<Void> original) {
+        boolean opened = FamilyBufferSource.startLevelGroup();
+        try {
+            original.call(renderer, entity, cameraX, cameraY, cameraZ, partialTick, poses, buffers);
+        } finally {
+            if (opened) FamilyBufferSource.endLevelGroup();
+        }
     }
 
     /**

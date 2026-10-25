@@ -5,7 +5,6 @@ import net.chimera.mixin.ChimeraRendererAccessor;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraPostPipelines;
 import net.chimera.render.shader.ChimeraSkyBridge;
-import net.chimera.render.shader.FamilyRenderType;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.GeometryOutputPlan;
@@ -446,7 +445,7 @@ public final class ChimeraMainPass implements MainPass {
     }
 
     /** Draws buffered family batches inside their lanes' pack windows (FamilyBufferSource). */
-    public void drawFamilyBatches(List<FamilyRenderType> batches, Consumer<RenderType> draw,
+    public void drawFamilyBatches(List<RenderType> batches, Consumer<RenderType> draw,
                                   Consumer<RenderType> discard) {
         windows.drawFamilyBatches(batches, draw, discard);
     }

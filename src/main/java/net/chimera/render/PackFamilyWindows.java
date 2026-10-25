@@ -30,20 +30,19 @@ final class PackFamilyWindows {
     }
 
     /**
-     * Draws family batches in order inside the pack windows their lanes write, one window per run
-     * of consecutive batches with the same outputs. A run whose window cannot open is discarded:
-     * its widened meshes have no host program to fall back to. Every batch of one flush reads the
-     * depthtex0 its first reader captured, the world drawn before the flush.
+     * Draws held batches in order inside the pack windows their family lanes write, one window per
+     * run of consecutive batches with the same outputs. A host type's batch opens no window here:
+     * its host-layout lane opens its own when it draws. A run whose window cannot open is
+     * discarded: its widened meshes have no host program to fall back to. Every batch of one flush
+     * reads the depthtex0 its first reader captured, the world drawn before the flush.
      */
-    void drawFamilyBatches(List<FamilyRenderType> batches, Consumer<RenderType> draw,
-                           Consumer<RenderType> discard) {
+    void drawFamilyBatches(List<RenderType> batches, Consumer<RenderType> draw, Consumer<RenderType> discard) {
         int start = 0;
         try {
             while (start < batches.size()) {
-                GeometryOutputPlan outputs = pass.laneWindowOutputs(batches.get(start).family());
+                GeometryOutputPlan outputs = windowOutputs(batches.get(start));
                 int end = start + 1;
-                while (end < batches.size()
-                        && Objects.equals(pass.laneWindowOutputs(batches.get(end).family()), outputs)) end++;
+                while (end < batches.size() && Objects.equals(windowOutputs(batches.get(end)), outputs)) end++;
                 drawRun(batches.subList(start, end), outputs, draw, discard);
                 start = end;
             }
@@ -52,10 +51,17 @@ final class PackFamilyWindows {
         }
     }
 
-    private void drawRun(List<FamilyRenderType> run, GeometryOutputPlan outputs, Consumer<RenderType> draw,
+    /** The outputs a held batch's family window binds; none for a host type's. */
+    private GeometryOutputPlan windowOutputs(RenderType batch) {
+        return batch instanceof FamilyRenderType family ? pass.laneWindowOutputs(family.family()) : null;
+    }
+
+    private void drawRun(List<RenderType> run, GeometryOutputPlan outputs, Consumer<RenderType> draw,
                          Consumer<RenderType> discard) {
-        for (FamilyRenderType batch : run) {
-            pass.prepareProgramImages(ChimeraEntityBridge.lanePipeline(batch.family(), batch.format()));
+        for (RenderType batch : run) {
+            if (batch instanceof FamilyRenderType family) {
+                pass.prepareProgramImages(ChimeraEntityBridge.lanePipeline(family.family(), family.format()));
+            }
         }
         if (outputs != null && !beginPackFamilyWindow(outputs)) {
             run.forEach(discard);

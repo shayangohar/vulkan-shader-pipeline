@@ -629,6 +629,14 @@ public final class ChimeraEntityBridge {
     }
 
     /**
+     * Whether a world host-layout lane draws {@code type}: the level's buffer source holds such a
+     * batch with the entities' (FamilyBufferSource), as Iris's batched source holds every batch.
+     */
+    public static boolean worldLaneDraws(RenderType type) {
+        return currentPass() == HostLayoutLane.Pass.WORLD && hostLaneFor(shaderOf(type), type.format()) != null;
+    }
+
+    /**
      * The pass a host draw belongs to now, or null outside every lane window. The sky has no lane:
      * Iris draws its host shaders with the sky keys, which ChimeraSkyBridge serves.
      */

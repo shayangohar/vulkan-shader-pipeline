@@ -51,6 +51,7 @@
     "ChimeraDescriptorSetsMixin",
     "ChimeraEntityRenderDispatcherMixin",
     "ChimeraBlockEntityRenderDispatcherMixin",
+    "ChimeraBannerRendererMixin",
     "ChimeraItemInHandRendererMixin",
     "ChimeraEndPortalRendererMixin",
     "ChimeraItemRendererMixin",
