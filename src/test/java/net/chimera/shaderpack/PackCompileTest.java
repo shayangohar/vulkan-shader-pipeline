@@ -159,6 +159,11 @@ final class PackCompileTest {
             PackPipelines.PreparedPipeline prepared;
             try {
                 prepared = PackPipelines.prepare(program, resources, stage, vertex);
+                // The runtime checks a post or shadow program's whole descriptor set before creating it
+                // (PackPipelines.buildPost, buildShadow); a mismatch there stops the game.
+                if (stage == UniformRegistry.Stage.POST || FamilyAdapterRegistry.isShadowTerrain(program.name())) {
+                    PackPipelines.prepareLayout(prepared, program.name(), resources);
+                }
             } catch (RuntimeException failure) {
                 failures.add(program.name() + " preparation: " + failure);
                 return false;

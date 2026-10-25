@@ -395,8 +395,9 @@ final class PackDescriptorContracts {
             PackAdvancedResourcePlan.DescriptorBinding descriptor = layout.ordinaryDescriptors().stream()
                     .filter(value -> value.identity().equals("resource:" + sampler.slot() + ":1"))
                     .findFirst().orElse(null);
-            if (descriptor == null || !hasSamplerDeclaration(rewritten, sourceName)) continue;
-            rewritten = rewriteSamplerDeclaration(rewritten, sourceName, descriptor.binding());
+            // The converters' own matcher: every bindable sampler type, 1D and integer ones included.
+            if (descriptor == null || !FragmentConverter.hasSamplerDeclaration(rewritten, sourceName)) continue;
+            rewritten = FragmentConverter.rewriteSamplerDeclaration(rewritten, sourceName, descriptor.binding());
         }
         return rewritten;
     }
@@ -404,25 +405,6 @@ final class PackDescriptorContracts {
     static String sourceSamplerName(UniformRegistry.Stage stage, String name) {
         return stage != UniformRegistry.Stage.POST && "texture".equals(name)
                 ? "chimeraTexture" : name;
-    }
-
-    static boolean hasSamplerDeclaration(String source, String name) {
-        Matcher matcher = PackPipelines.SAMPLER_DECLARATION.matcher(source == null ? "" : source);
-        while (matcher.find()) {
-            if (matcher.group(2).equals(name)) return true;
-        }
-        return false;
-    }
-
-    static String rewriteSamplerDeclaration(String source, String name, int binding) {
-        Matcher matcher = PackPipelines.SAMPLER_DECLARATION.matcher(source == null ? "" : source);
-        while (matcher.find()) {
-            if (!matcher.group(2).equals(name)) continue;
-            String replacement = "layout(binding = " + binding + ") uniform "
-                    + matcher.group(1) + " " + name + ";";
-            return source.substring(0, matcher.start()) + replacement + source.substring(matcher.end());
-        }
-        return source;
     }
 
     static Set<String> advancedSamplerNames(
