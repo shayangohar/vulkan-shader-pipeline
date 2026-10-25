@@ -1,5 +1,7 @@
 package net.chimera.render.shader;
 
+import net.chimera.render.ChimeraDevice;
+import net.chimera.shaderpack.GlslVendorExtensions;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.shaderc.Shaderc;
@@ -23,15 +25,16 @@ public final class GlslCompiler {
 
     /**
      * Compiles {@code source}, a {@code kind} shader (a {@code shaderc_glsl_*_shader} constant)
-     * named {@code name}, with the options {@code configure} sets. Returns the module in memory the
-     * caller frees with {@link MemoryUtil#memFree}.
+     * named {@code name}, with the options {@code configure} sets. A GL vendor extension the device
+     * serves compiles as its Vulkan equivalent (GlslVendorExtensions). Returns the module in memory
+     * the caller frees with {@link MemoryUtil#memFree}.
      *
      * @throws IllegalStateException with shaderc's report when the source does not compile
      */
     public static ByteBuffer compile(String name, String source, int kind, LongConsumer configure) {
         long compiler = Shaderc.shaderc_compiler_initialize();
         long options = Shaderc.shaderc_compile_options_initialize();
-        ByteBuffer text = MemoryUtil.memUTF8(source, false);
+        ByteBuffer text = MemoryUtil.memUTF8(GlslVendorExtensions.forVulkan(source, ChimeraDevice.sizedTypes()), false);
         long result = 0L;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             Shaderc.shaderc_compile_options_set_target_env(options,

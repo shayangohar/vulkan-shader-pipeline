@@ -1,6 +1,7 @@
 package net.chimera.mixin;
 
 import net.chimera.render.ChimeraDevice;
+import net.chimera.shaderpack.GlslVendorExtensions;
 import net.vulkanmod.vulkan.device.Device;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import org.lwjgl.PointerBuffer;
@@ -8,6 +9,8 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkDeviceCreateInfo;
 import org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR;
 import org.lwjgl.vulkan.VkPhysicalDeviceFeatures;
+import org.lwjgl.vulkan.VkPhysicalDeviceFeatures2;
+import org.lwjgl.vulkan.VkPhysicalDeviceShaderFloat16Int8Features;
 import org.lwjgl.vulkan.VkPhysicalDeviceVulkan11Features;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,11 +20,12 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME;
+import static org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2;
 
 /**
  * Enables what Chimera needs on VulkanMod's logical device: the supported core features of the
  * pack image path, independentBlend for per-attachment blend and write masks, geometryShader for
- * a pack program's .gsh stage, and
+ * a pack program's .gsh stage, the sized arithmetic types a pack's GL vendor extensions provide, and
  * VK_KHR_dynamic_rendering with its feature, which Chimera's windows render with (ChimeraDevice).
  */
 @Mixin(value = DeviceManager.class, remap = false)
@@ -76,10 +80,32 @@ public abstract class ChimeraDeviceFeaturesMixin {
         // A pack program's .gsh stage; Iris's Vulkan path refuses one without the feature too.
         enabled.geometryShader(available.geometryShader());
         ChimeraDevice.setGeometryShader(available.geometryShader());
+        // The sized arithmetic types a pack's GL vendor extensions provide (GlslVendorExtensions).
+        enabled.shaderInt16(available.shaderInt16());
+        enabled.shaderInt64(available.shaderInt64());
+        ChimeraDevice.setSizedTypes(availableSizedTypes(available));
         return enabled;
     }
 
-    /** Chains the dynamic rendering feature after VulkanMod's own feature structs, when the device offers it. */
+    /**
+     * The sized arithmetic types the device offers. shaderFloat16 is in a Vulkan 1.2 feature struct
+     * VulkanMod does not query.
+     */
+    private static GlslVendorExtensions.SizedTypes availableSizedTypes(VkPhysicalDeviceFeatures available) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPhysicalDeviceShaderFloat16Int8Features float16 =
+                    VkPhysicalDeviceShaderFloat16Int8Features.calloc(stack).sType$Default();
+            vkGetPhysicalDeviceFeatures2(DeviceManager.physicalDevice,
+                    VkPhysicalDeviceFeatures2.calloc(stack).sType$Default().pNext(float16.address()));
+            return new GlslVendorExtensions.SizedTypes(float16.shaderFloat16(), available.shaderInt16(),
+                    available.shaderInt64());
+        }
+    }
+
+    /**
+     * Chains the dynamic rendering feature, when the device offers it, and half floats, when it
+     * offers them, after VulkanMod's own feature structs.
+     */
     @Redirect(
             method = "createLogicalDevice",
             at = @At(value = "INVOKE", target =
@@ -92,6 +118,11 @@ public abstract class ChimeraDeviceFeaturesMixin {
             VkDeviceCreateInfo info, VkPhysicalDeviceVulkan11Features vulkan11
     ) {
         info.pNext(vulkan11);
+        if (ChimeraDevice.sizedTypes().float16()) {
+            // Like the dynamic rendering struct below, it lives on the caller's stack frame.
+            info.pNext(VkPhysicalDeviceShaderFloat16Int8Features.calloc(MemoryStack.stackGet()).sType$Default()
+                    .shaderFloat16(true));
+        }
         boolean supported = ChimeraDevice.supportsExtension(DeviceManager.physicalDevice,
                 VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
         ChimeraDevice.setDynamicRendering(supported);

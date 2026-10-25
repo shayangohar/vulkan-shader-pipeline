@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.GlslVendorExtensions;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkExtensionProperties;
 import org.lwjgl.vulkan.VkPhysicalDevice;
@@ -12,12 +13,14 @@ import static org.lwjgl.vulkan.VK10.vkEnumerateDeviceExtensionProperties;
  * What Chimera enables on VulkanMod's logical device (ChimeraDeviceFeaturesMixin). Chimera's
  * windows render with VK_KHR_dynamic_rendering, which VulkanMod leaves off; without it no shader
  * pack can run, and Chimera keeps VulkanMod's own rendering. The independentBlend feature lets a
- * window's attachments blend and mask writes differently.
+ * window's attachments blend and mask writes differently. The sized arithmetic types serve a pack's
+ * GL vendor extensions (GlslVendorExtensions).
  */
 public final class ChimeraDevice {
     private static volatile boolean dynamicRendering;
     private static volatile boolean independentBlend;
     private static volatile boolean geometryShader;
+    private static volatile GlslVendorExtensions.SizedTypes sizedTypes = GlslVendorExtensions.SizedTypes.NONE;
 
     private ChimeraDevice() {}
 
@@ -46,6 +49,15 @@ public final class ChimeraDevice {
 
     public static void setGeometryShader(boolean enabled) {
         geometryShader = enabled;
+    }
+
+    /** The sized arithmetic types the device was created with, which vendor extensions map onto. */
+    public static GlslVendorExtensions.SizedTypes sizedTypes() {
+        return sizedTypes;
+    }
+
+    public static void setSizedTypes(GlslVendorExtensions.SizedTypes types) {
+        sizedTypes = types;
     }
 
     /** Whether {@code device} offers the device extension {@code name}. */

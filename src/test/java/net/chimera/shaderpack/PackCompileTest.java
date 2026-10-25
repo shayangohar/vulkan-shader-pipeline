@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import net.chimera.render.ChimeraDevice;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -349,12 +350,14 @@ final class PackCompileTest {
 
     /**
      * Each distinct source compiles once per run: the option sweep prepares the same program
-     * source under most of its variants.
+     * source under most of its variants. The device's sized types are part of the key, since a
+     * vendor extension compiles as its equivalent only with them (GlslVendorExtensions).
      */
     private static final Map<String, Outcome> COMPILED = new ConcurrentHashMap<>();
 
     private static Outcome outcome(String source, int kind, String fileName) {
-        String key = kind + ":" + ConformanceReport.sha256(source.getBytes(StandardCharsets.UTF_8));
+        String key = kind + ":" + ChimeraDevice.sizedTypes() + ":"
+                + ConformanceReport.sha256(source.getBytes(StandardCharsets.UTF_8));
         return COMPILED.computeIfAbsent(key, ignored -> {
             Compiled compiled = spirv(source, kind, fileName);
             return new Outcome(compiled.error(), compiled.words() == null ? null : spirvHash(compiled.words()));

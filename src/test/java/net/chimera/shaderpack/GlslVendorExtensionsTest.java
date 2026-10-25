@@ -1,0 +1,82 @@
+package net.chimera.shaderpack;
+
+import org.junit.jupiter.api.Test;
+import org.lwjgl.util.shaderc.Shaderc;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Alpha Piscium's "Assume NVIDIA GPU" enables GL_NV_gpu_shader5 for half floats and 16-bit
+ * integers; shaderc refused it ("syntax error, unexpected IDENTIFIER" at float16_t), and the whole
+ * screen went black.
+ */
+final class GlslVendorExtensionsTest {
+    private static final GlslVendorExtensions.SizedTypes ALL = new GlslVendorExtensions.SizedTypes(true, true, true);
+    private static final String COMPUTE = """
+            #version 450
+            #extension GL_NV_gpu_shader5 : enable
+            layout(local_size_x = 1) in;
+            layout(std430, binding = 0) buffer Data { vec4 value; };
+            void main() {
+                f16vec4 half4 = f16vec4(value);
+                float16_t edgeWeight = half4.x * float16_t(2.0);
+                u16vec2 count = u16vec2(1, 2);
+                int64_t wide = int64_t(count.y);
+                uint packed = packFloat2x16(half4.xy);
+                float weight = float(smoothstep(0.0, 1.0, edgeWeight)) + float(clamp(edgeWeight, 0.0, 1.0));
+                value = vec4(half4) + weight + float(count.y) + float(wide) + float(packed);
+            }
+            """;
+
+    /**
+     * The NVIDIA extension compiles as the Vulkan extensions for its types, and a built-in call that
+     * mixes float16_t with float literals resolves as NVIDIA's compiler resolves it.
+     */
+    @Test
+    void theNvidiaExtensionCompilesAsItsVulkanTypes() {
+        String translated = GlslVendorExtensions.forVulkan(COMPUTE, ALL);
+        assertTrue(translated.contains("#extension GL_AMD_gpu_shader_half_float : enable\n"
+                + "#extension GL_AMD_gpu_shader_int16 : enable\n"
+                + "#extension GL_ARB_gpu_shader_int64 : enable\n"), translated);
+        assertEquals("", compile(translated, Shaderc.shaderc_glsl_compute_shader));
+    }
+
+    /** A converted stage keeps the pack's directive below Chimera's declarations; it still compiles. */
+    @Test
+    void aDirectiveAfterDeclarationsCompiles() {
+        String fragment = """
+                #version 460
+                layout(location = 0) out vec4 color;
+                #extension GL_NV_gpu_shader5 : enable
+                void main() { f16vec4 half4 = f16vec4(0.5); color = vec4(max(half4, f16vec4(0.25))); }
+                """;
+        assertEquals("", compile(GlslVendorExtensions.forVulkan(fragment, ALL), Shaderc.shaderc_glsl_fragment_shader));
+    }
+
+    /** Without every type the extension provides, the directive stays, as on a GL driver without it. */
+    @Test
+    void aDeviceWithoutTheTypesKeepsTheDirective() {
+        GlslVendorExtensions.SizedTypes halfOnly = new GlslVendorExtensions.SizedTypes(true, false, false);
+        assertEquals(COMPUTE, GlslVendorExtensions.forVulkan(COMPUTE, halfOnly));
+        assertEquals(COMPUTE, GlslVendorExtensions.forVulkan(COMPUTE, GlslVendorExtensions.SizedTypes.NONE));
+    }
+
+    /** shaderc's report, or empty when the source compiles for Vulkan 1.2. */
+    private static String compile(String source, int kind) {
+        long compiler = Shaderc.shaderc_compiler_initialize();
+        long options = Shaderc.shaderc_compile_options_initialize();
+        Shaderc.shaderc_compile_options_set_target_env(options,
+                Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2);
+        long result = Shaderc.shaderc_compile_into_spv(compiler, source, kind, "vendor.glsl", "main", options);
+        try {
+            if (result == 0) return "no shader result";
+            return Shaderc.shaderc_result_get_compilation_status(result) == Shaderc.shaderc_compilation_status_success
+                    ? "" : Shaderc.shaderc_result_get_error_message(result);
+        } finally {
+            if (result != 0) Shaderc.shaderc_result_release(result);
+            Shaderc.shaderc_compile_options_release(options);
+            Shaderc.shaderc_compiler_release(compiler);
+        }
+    }
+}
