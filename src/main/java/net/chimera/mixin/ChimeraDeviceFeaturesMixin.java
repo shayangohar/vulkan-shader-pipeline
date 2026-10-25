@@ -20,7 +20,8 @@ import static org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTE
 
 /**
  * Enables what Chimera needs on VulkanMod's logical device: the supported core features of the
- * pack image path, independentBlend for per-attachment blend and write masks, and
+ * pack image path, independentBlend for per-attachment blend and write masks, geometryShader for
+ * a pack program's .gsh stage, and
  * VK_KHR_dynamic_rendering with its feature, which Chimera's windows render with (ChimeraDevice).
  */
 @Mixin(value = DeviceManager.class, remap = false)
@@ -72,6 +73,9 @@ public abstract class ChimeraDeviceFeaturesMixin {
             LOGGER.warn("[chimera] no independentBlend: a pass whose attachments resolve to different "
                     + "blends draws unblended, and every attachment takes color writes");
         }
+        // A pack program's .gsh stage; Iris's Vulkan path refuses one without the feature too.
+        enabled.geometryShader(available.geometryShader());
+        ChimeraDevice.setGeometryShader(available.geometryShader());
         return enabled;
     }
 

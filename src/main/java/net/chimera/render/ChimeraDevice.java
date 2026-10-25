@@ -17,6 +17,7 @@ import static org.lwjgl.vulkan.VK10.vkEnumerateDeviceExtensionProperties;
 public final class ChimeraDevice {
     private static volatile boolean dynamicRendering;
     private static volatile boolean independentBlend;
+    private static volatile boolean geometryShader;
 
     private ChimeraDevice() {}
 
@@ -36,6 +37,15 @@ public final class ChimeraDevice {
 
     public static void setIndependentBlend(boolean enabled) {
         independentBlend = enabled;
+    }
+
+    /** True once the device was created with geometryShader, which a pack's .gsh stage runs on. */
+    public static boolean geometryShader() {
+        return geometryShader;
+    }
+
+    public static void setGeometryShader(boolean enabled) {
+        geometryShader = enabled;
     }
 
     /** Whether {@code device} offers the device extension {@code name}. */

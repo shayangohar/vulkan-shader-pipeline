@@ -36,6 +36,7 @@
     "ChimeraScreenEffectWaterMixin",
     "QuadSorterMixin",
     "GraphicsPipelineMrtMixin",
+    "GraphicsPipelineGeometryStageMixin",
     "ChimeraBufferBuilderMixin",
     "ChimeraByteBufferBuilderAccessor",
     "ChimeraPipelineBuilderAccessor",

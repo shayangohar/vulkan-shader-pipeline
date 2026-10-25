@@ -3,6 +3,7 @@ package net.chimera.render.shader;
 import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.mixin.ChimeraPipelineBuilderAccessor;
+import net.chimera.render.ChimeraDevice;
 import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageViewDescriptor;
 import net.chimera.shaderpack.PackDescriptorLayout;
@@ -80,21 +81,37 @@ public final class HostPipelineLayout {
     public static GraphicsPipeline create(String name, VertexFormat format, PackDescriptorLayout layout,
                                           String vertexSource, String fragmentSource, UniformSource uniforms,
                                           boolean packModules) {
+        return create(name, format, layout, vertexSource, null, fragmentSource, uniforms, packModules);
+    }
+
+    /**
+     * As {@link #create(String, VertexFormat, PackDescriptorLayout, String, String, UniformSource, boolean)},
+     * with a geometry stage between the vertex and fragment stages when {@code geometrySource} is not
+     * null (GeometryStageModules).
+     *
+     * @throws LayoutFailure when the host cannot bind the layout, or the device has no geometryShader
+     * @throws ShaderCompilationFailure when a stage does not compile
+     */
+    public static GraphicsPipeline create(String name, VertexFormat format, PackDescriptorLayout layout,
+                                          String vertexSource, String geometrySource, String fragmentSource,
+                                          UniformSource uniforms, boolean packModules) {
+        if (geometrySource != null && !ChimeraDevice.geometryShader()) {
+            throw new LayoutFailure("the device has no geometryShader for " + name + ".gsh");
+        }
         Pipeline.Builder builder = new Pipeline.Builder(format, name);
         builder.setUniforms(uniformBuffers(layout, uniforms), images(layout));
         ((ChimeraPipelineBuilderAccessor) builder).chimera$setPushConstants(pushConstants(layout, uniforms));
-        SPIRVUtils.SPIRV vertex = compile(name + ".vsh", vertexSource, Shaderc.shaderc_glsl_vertex_shader,
-                packModules);
-        SPIRVUtils.SPIRV fragment;
+        List<SPIRVUtils.SPIRV> compiled = new ArrayList<>(3);
         try {
-            fragment = compile(name + ".fsh", fragmentSource, Shaderc.shaderc_glsl_fragment_shader, packModules);
-        } catch (RuntimeException failure) {
-            vertex.free();
-            throw failure;
-        }
-        try {
+            SPIRVUtils.SPIRV vertex = compileInto(compiled, name + ".vsh", vertexSource,
+                    Shaderc.shaderc_glsl_vertex_shader, packModules);
+            SPIRVUtils.SPIRV geometry = geometrySource == null ? null : compileInto(compiled, name + ".gsh",
+                    geometrySource, Shaderc.shaderc_glsl_geometry_shader, packModules);
+            SPIRVUtils.SPIRV fragment = compileInto(compiled, name + ".fsh", fragmentSource,
+                    Shaderc.shaderc_glsl_fragment_shader, packModules);
             builder.setSPIRVs(vertex, fragment);
-            GraphicsPipeline pipeline = builder.createGraphicsPipeline();
+            GraphicsPipeline pipeline = geometry == null ? builder.createGraphicsPipeline()
+                    : GeometryStageModules.construct(geometry.bytecode(), builder::createGraphicsPipeline);
             if (packModules) {
                 MrtPipelineContext.recordWrittenOutputs(pipeline,
                         SpirvOutputWrites.writtenLocations(fragment.bytecode()));
@@ -102,9 +119,16 @@ public final class HostPipelineLayout {
             return pipeline;
         } finally {
             // The pipeline holds its shader modules; the bytes are no longer needed.
-            vertex.free();
-            fragment.free();
+            compiled.forEach(SPIRVUtils.SPIRV::free);
         }
+    }
+
+    /** Compiles one stage and keeps it in {@code compiled}, so every stage made so far is freed together. */
+    private static SPIRVUtils.SPIRV compileInto(List<SPIRVUtils.SPIRV> compiled, String name, String source, int kind,
+                                                boolean packModule) {
+        SPIRVUtils.SPIRV stage = compile(name, source, kind, packModule);
+        compiled.add(stage);
+        return stage;
     }
 
     /**
