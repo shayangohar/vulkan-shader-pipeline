@@ -5,8 +5,7 @@
     "dh_water",
     "gbuffers_terrain_cutout",
     "gbuffers_terrain_solid",
-    "gbuffers_textured_lit",
-    "shadow_cutout"
+    "gbuffers_textured_lit"
   ],
   "BSL_v10.1.8.zip": [
     "dh_terrain",
@@ -113,7 +112,6 @@
     "gbuffers_terrain_cutout",
     "gbuffers_terrain_solid",
     "gbuffers_textured_lit",
-    "shadow_cutout",
     "shadow_solid"
   ],
   "Reverie v1.0.zip": [
@@ -136,6 +134,7 @@
     "shadow",
     "shadow_basic",
     "shadow_block",
+    "shadow_cutout",
     "shadow_entities",
     "shadow_glint",
     "shadow_leash",
@@ -176,7 +175,6 @@
     "dh_water",
     "gbuffers_clouds",
     "gbuffers_terrain_solid",
-    "shadow_cutout",
     "shadow_solid"
   ],
   "rethinking-voxels_r0.1-beta9.zip": [
@@ -195,7 +193,6 @@
     "gbuffers_clouds",
     "physics_ocean",
     "physics_ocean_shadow",
-    "shadow_cutout",
     "shadow_solid"
   ]
 }

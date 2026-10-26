@@ -217,33 +217,37 @@ final class CoreFamilyAdapterTest {
     }
 
     /**
-     * Iris draws the shadow pass's translucent terrain with shadow_water (SodiumPrograms SHADOW_TRANS),
-     * a layer VulkanMod draws apart, so a pack's own shadow_water runs on the shadow terrain lane.
-     * shadow_cutout's layer holds solid blocks too in VulkanMod, so it stays unlaned and says so.
+     * Iris draws the shadow pass's translucent terrain with shadow_water (SodiumPrograms SHADOW_TRANS)
+     * and its cutout terrain with shadow_cutout (SHADOW_CUTOUT), so a pack's own programs run on the
+     * shadow terrain lane. VulkanMod's cutout_mipped holds solid blocks too, which shadow_cutout
+     * draws; shadow_solid has no layer of its own and says so.
      */
     @Test
-    void shadowWaterRunsOnTheShadowLane(@TempDir Path root) throws IOException {
+    void shadowLayerProgramsRunOnTheShadowLane(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         String vertex = "#version 120\nvarying vec2 uv;\n"
                 + "void main() {\n gl_Position = ftransform();\n uv = gl_MultiTexCoord0.xy;\n}\n";
         String fragment = "#version 120\nuniform sampler2D tex;\nvarying vec2 uv;\n"
                 + "void main() {\n gl_FragData[0] = texture2D(tex, uv);\n}\n";
-        for (String name : List.of("shadow", "shadow_water", "shadow_cutout")) {
+        for (String name : List.of("shadow", "shadow_water", "shadow_cutout", "shadow_solid")) {
             Files.writeString(shaders.resolve(name + ".vsh"), vertex);
             Files.writeString(shaders.resolve(name + ".fsh"), fragment);
         }
         PackProbe.Analysis analysis = PackProbe.analyze(root);
-        PackProgramPlan water = analysis.plan().program("shadow_water");
-        assertTrue(water.executable() && water.convertedVertex() != null
-                && !analysis.plan().isProgramAlias("shadow_water"), water.deviations().toString());
-        assertTrue(analysis.report().program("shadow_cutout").deviations()
-                .contains("TERRAIN_LAYER_MERGED_BY_HOST:shadow_cutout"), "shadow_cutout reason");
+        for (String name : List.of("shadow_water", "shadow_cutout")) {
+            PackProgramPlan layer = analysis.plan().program(name);
+            assertTrue(layer.executable() && layer.convertedVertex() != null
+                    && !analysis.plan().isProgramAlias(name), name + ": " + layer.deviations());
+        }
+        assertTrue(analysis.report().program("shadow_solid").deviations()
+                .contains("TERRAIN_LAYER_MERGED_BY_HOST:shadow_solid"), "shadow_solid reason");
         // The registry, not a name, puts a program on the shadow terrain lane.
         assertTrue(FamilyAdapterRegistry.isShadowTerrain("shadow")
                         && FamilyAdapterRegistry.isShadowTerrain("shadow_water")
-                        && !FamilyAdapterRegistry.isShadowTerrain("shadow_cutout")
+                        && FamilyAdapterRegistry.isShadowTerrain("shadow_cutout")
+                        && !FamilyAdapterRegistry.isShadowTerrain("shadow_solid")
                         && !FamilyAdapterRegistry.isShadowTerrain("shadow_entities")
-                        && FamilyAdapterRegistry.laneProgram("shadow_water").equals("shadow")
+                        && FamilyAdapterRegistry.laneProgram("shadow_cutout").equals("shadow")
                         && FamilyAdapterRegistry.laneProgram("shadow_entities").equals("shadow_entities"),
                 "shadow terrain lane");
     }

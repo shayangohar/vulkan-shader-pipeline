@@ -19,6 +19,10 @@ public final class FamilyAdapterRegistry {
             // Iris SodiumPrograms SHADOW_TRANS: the shadow pass's translucent terrain layer.
             plan("shadow_water", FamilyAdapterPlan.Family.SHADOW,
                     UniformRegistry.Stage.SHADOW, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN),
+            // Iris SHADOW_CUTOUT: the shadow pass's cutout and cutout_mipped layers, which hold
+            // VulkanMod's solid blocks too; the pass tests them all at 0.1, and opaque texels pass.
+            plan("shadow_cutout", FamilyAdapterPlan.Family.SHADOW,
+                    UniformRegistry.Stage.SHADOW, FamilyAdapterPlan.VertexContract.FIXED_TERRAIN),
             // Iris SHADOW_ENTITIES_CUTOUT: the shadow pass's entity casters on the entity layout (the
             // end portal and gateway too, after the entitySolid swap), and moving blocks on the
             // block layout.
@@ -146,8 +150,8 @@ public final class FamilyAdapterRegistry {
     }
 
     /**
-     * A shadow terrain program, the shadow family on the terrain layout: shadow, and shadow_water
-     * (Iris's ShadowWater for the shadow pass's translucent layer).
+     * A shadow terrain program, the shadow family on the terrain layout: shadow, shadow_cutout for
+     * the shadow pass's cutout layers, and shadow_water (Iris's ShadowWater) for its translucent one.
      */
     public static boolean isShadowTerrain(String name) {
         FamilyAdapterPlan plan = forProgram(name);
@@ -161,13 +165,13 @@ public final class FamilyAdapterRegistry {
     }
 
     /**
-     * Iris's per-layer terrain programs (SodiumPrograms TERRAIN, TERRAIN_CUTOUT, SHADOW,
-     * SHADOW_CUTOUT) for layers VulkanMod does not draw apart: its chunk builds put solid blocks
-     * into cutout_mipped (TerrainRenderType.COMPACT_RENDER_TYPES and SEMI_COMPACT_RENDER_TYPES), so
-     * gbuffers_terrain and shadow draw both kinds of block.
+     * Iris's per-layer terrain programs (SodiumPrograms TERRAIN, TERRAIN_CUTOUT, SHADOW) for layers
+     * VulkanMod does not draw apart: its chunk builds put solid blocks into cutout_mipped
+     * (TerrainRenderType.COMPACT_RENDER_TYPES and SEMI_COMPACT_RENDER_TYPES), so gbuffers_terrain
+     * draws both kinds of block, and shadow_cutout, or shadow, both kinds of shadow caster.
      */
     private static final Set<String> MERGED_LAYER_PROGRAMS = Set.of(
-            "gbuffers_terrain_solid", "gbuffers_terrain_cutout", "shadow_solid", "shadow_cutout");
+            "gbuffers_terrain_solid", "gbuffers_terrain_cutout", "shadow_solid");
 
     public static boolean isMergedLayerProgram(String name) {
         return MERGED_LAYER_PROGRAMS.contains(name);

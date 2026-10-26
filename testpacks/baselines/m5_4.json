@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "shadow": {
-      "reportSha256": "4ff071a9faeeadda1be7b72dfb3cf33653d670912c5dbbcdc28045a55b4f6aeb",
+      "reportSha256": "d674f3f23e39745d64621cd3695bbb0334201d5f60b02968a3a55039eeb7eda0",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -23,6 +23,10 @@
           "vertex"
         ],
         "shadow_block": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_cutout": [
           "fragment",
           "vertex"
         ],
@@ -94,6 +98,11 @@
           "PROGRAM_ALIAS_RECORDED:shadow_block->shadow",
           "SHADOW_ENTITY_STATE_FIXED_TO_HOST",
           "SHADOW_ENTITY_VERTEX_BRIDGE"
+        ],
+        "shadow_cutout": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_cutout->shadow",
+          "SHADOW_VERTEX_BRIDGE"
         ],
         "shadow_entities": [
           "ENTITY_VERTEX_FORMAT_EXTENDED",
@@ -175,7 +184,7 @@
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "d57236e35bacebd0f680b9261c510e54c87060fd50686fc2de0b58a7fdbd8549",
+      "reportSha256": "1191c6fd9cad525dfef139c3fa32577214df449c4b950cfe1cac9181cbaec84a",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -196,6 +205,10 @@
           "vertex"
         ],
         "shadow_block": [
+          "fragment",
+          "vertex"
+        ],
+        "shadow_cutout": [
           "fragment",
           "vertex"
         ],
@@ -263,6 +276,12 @@
           "PROGRAM_ALIAS_RECORDED:shadow_block->shadow",
           "SHADOW_ENTITY_VERTEX_BRIDGE",
           "SHADOW_SAMPLER_UNSUPPORTED:volume"
+        ],
+        "shadow_cutout": [
+          "LIVE_UNIFORM_BRIDGE",
+          "PROGRAM_ALIAS_RECORDED:shadow_cutout->shadow",
+          "SHADOW_SAMPLER_UNSUPPORTED:volume",
+          "SHADOW_VERTEX_BRIDGE"
         ],
         "shadow_entities": [
           "LIVE_UNIFORM_BRIDGE",

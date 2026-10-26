@@ -48,6 +48,8 @@ final class PackPipelineSet {
     int[] shadowSlots;
     /** shadow_water for the shadow pass's translucent terrain (Iris SHADOW_TRANS); null draws it with shadow. */
     GraphicsPipeline shadowWaterPipeline;
+    /** shadow_cutout for the shadow pass's cutout terrain layers (Iris SHADOW_CUTOUT); null draws them with shadow. */
+    GraphicsPipeline shadowCutoutPipeline;
 
     /** shadow_entities on the shadow pass's entity lane; null leaves entities out of the shadow map. */
     PackPipelines.PackEntity shadowEntities;
@@ -114,12 +116,10 @@ final class PackPipelineSet {
         if (compositePipeline != null) postPipelines.add(compositePipeline);
         if (finalPipeline != null) postPipelines.add(finalPipeline);
         postPipelines.forEach(GraphicsPipeline::cleanUp);
-        if (terrainPipeline != null) terrainPipeline.cleanUp();
-        if (waterPipeline != null) waterPipeline.cleanUp();
+        Stream.of(terrainPipeline, waterPipeline, shadowPipeline, shadowWaterPipeline, shadowCutoutPipeline)
+                .filter(Objects::nonNull).forEach(GraphicsPipeline::cleanUp);
         terrainRoute = null;
         waterRoute = null;
-        if (shadowPipeline != null) shadowPipeline.cleanUp();
-        if (shadowWaterPipeline != null) shadowWaterPipeline.cleanUp();
         Stream.of(shadowEntities, shadowMovingBlock, shadowBlock, entity, translucentEntity, spiderEyes, block,
                         blockTranslucent, movingBlock, damagedBlock, translucentEntityText, blockTranslucentText)
                 .filter(Objects::nonNull).forEach(value -> value.pipeline().cleanUp());
@@ -152,6 +152,7 @@ final class PackPipelineSet {
         shadowPipeline = null;
         shadowSlots = null;
         shadowWaterPipeline = null;
+        shadowCutoutPipeline = null;
         shadowEntities = null;
         shadowMovingBlock = null;
         shadowBlock = null;

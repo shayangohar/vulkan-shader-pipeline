@@ -111,6 +111,8 @@
   "shadow_basic.vsh": "59b0587abac84997 a55597d02a6ae077",
   "shadow_block.fsh": "00e9d58d12a0a8ae 637ab9ac7aa0c6c8",
   "shadow_block.vsh": "6f911074023c51d4 9d468e7670baf36e",
+  "shadow_cutout.fsh": "f4cab5a03f92c8ed 2d3ea5c10d71c78a",
+  "shadow_cutout.vsh": "24207a069a4bb426 87f6fea827963479",
   "shadow_entities [moving-block input variant Position,Color,UV0,UV2,Normal].vsh": "3fd8bf63d47def4a 35f785f9b15a1c40",
   "shadow_entities.fsh": "0148e2c83d661da5 e77d6fb3b1cfc9b2",
   "shadow_entities.vsh": "bfc19cb6719e446a a0ac9292967e42be",

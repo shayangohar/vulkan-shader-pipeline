@@ -62,7 +62,10 @@ final class PackShadowPass {
      */
     boolean shadowPassActive;
 
-    /** The pack shadow program the open terrain draws run: shadow, or shadow_water for the translucent layer. */
+    /**
+     * The pack shadow program the open terrain draws run: shadow_cutout for the cutout layers and
+     * shadow_water for the translucent one where the pack has them, shadow otherwise.
+     */
     private String shadowTerrainProgram = "shadow";
 
     /**
@@ -120,7 +123,7 @@ final class PackShadowPass {
 
             try {
                 if (packShadow) {
-                    shadowBindings = bindPackShadowImages(pass.pipelines.shadowPipeline);
+                    shadowBindings = bindPackShadowImages(layerPipeline(TerrainLayers.OPAQUE));
                 }
                 beginShadowDraw(frame);
                 ShadowCasterDirectives casters = packShadow && pass.packPlan != null
@@ -155,11 +158,12 @@ final class PackShadowPass {
 
     /**
      * Draws the translucent terrain layer into the shadow map, unless the pack's shadowTranslucent
-     * is off (Iris ShadowRenderer.renderShadows), with shadow_water where the pack has it, whose
-     * images then replace shadow's. Its alpha test is shadow_water's (Iris SHADOW_TRANS tests only
-     * as its alphaTest says). shadowtex1, captured either way, is the opaque, cutout and entity
-     * casters only; this layer reaches shadowtex0 alone, and packs tint through shadowcolor where
-     * the two differ. Returns the bindings open afterwards.
+     * is off (Iris ShadowRenderer.renderShadows), with shadow_water where the pack has it, else
+     * shadow; its program's images replace the cutout layers' where the programs differ. Its alpha
+     * test is shadow_water's (Iris SHADOW_TRANS tests only as its alphaTest says). shadowtex1,
+     * captured either way, is the opaque, cutout and entity casters only; this layer reaches
+     * shadowtex0 alone, and packs tint through shadowcolor where the two differ. Returns the
+     * bindings open afterwards.
      */
     private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> drawShadowTranslucent(
             ShadowFrame frame, ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindings,
@@ -170,12 +174,12 @@ final class PackShadowPass {
         this.shadowMap.captureOpaqueDepth(frame.cmd());
         if (!draw) return bindings;
         ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> open = bindings;
-        GraphicsPipeline water = pass.pipelines.shadowWaterPipeline;
-        if (water != null) {
+        GraphicsPipeline translucent = layerPipeline(TerrainRenderType.TRANSLUCENT);
+        if (translucent != layerPipeline(TerrainLayers.OPAQUE)) {
             if (open != null) open.close();
-            open = bindPackShadowImages(water);
-            this.shadowTerrainProgram = "shadow_water";
+            open = bindPackShadowImages(translucent);
         }
+        this.shadowTerrainProgram = layerProgram(TerrainRenderType.TRANSLUCENT);
         PackUniformProvider.updateDrawAlphaReference(0.0F);
         WorldRenderer.getInstance().renderSectionLayer(RenderType.translucent(), frame.cameraX(), frame.cameraY(),
                 frame.cameraZ(), this.shadowMap.getLightView(), frame.projection());
@@ -196,11 +200,11 @@ final class PackShadowPass {
             ChimeraRasterOrientation.markGlOriented(this.shadowMap.getShadowRenderPass());
         }
         this.shadowPassActive = true;
-        this.shadowTerrainProgram = "shadow";
+        this.shadowTerrainProgram = layerProgram(TerrainLayers.OPAQUE);
         PipelineManager.setShaderGetter(rt -> {
             if (packShadow) {
                 VRenderSystem.disableBlend();
-                return shadowTerrainProgram(rt, pass.pipelines.shadowPipeline, pass.pipelines.shadowWaterPipeline);
+                return layerPipeline(rt);
             }
             return this.shadowMap.getShadowPipeline();
         });
@@ -222,12 +226,31 @@ final class PackShadowPass {
     }
 
     /**
-     * The program a pack shadow terrain draw of {@code type} runs, as Iris's SodiumPrograms pick it:
-     * shadow_water's for the translucent layer where the pack has it (SHADOW_TRANS), shadow's
-     * otherwise.
+     * The program a pack shadow terrain draw of {@code type} runs, as Iris's SodiumPrograms pick it,
+     * where the pack has it: shadow_cutout's for the cutout and cutout_mipped layers (SHADOW_CUTOUT),
+     * shadow_water's for the translucent one (SHADOW_TRANS); shadow's otherwise.
      */
-    static <P> P shadowTerrainProgram(TerrainRenderType type, P shadow, P water) {
-        return type == TerrainRenderType.TRANSLUCENT && water != null ? water : shadow;
+    static <P> P shadowTerrainProgram(TerrainRenderType type, P shadow, P cutout, P water) {
+        P layer = switch (type) {
+            case CUTOUT, CUTOUT_MIPPED -> cutout;
+            case TRANSLUCENT -> water;
+            default -> null;
+        };
+        return layer != null ? layer : shadow;
+    }
+
+    /** The pack shadow pipeline a terrain layer draws with. */
+    private GraphicsPipeline layerPipeline(TerrainRenderType type) {
+        PackPipelineSet pipelines = pass.pipelines;
+        return shadowTerrainProgram(type, pipelines.shadowPipeline, pipelines.shadowCutoutPipeline,
+                pipelines.shadowWaterPipeline);
+    }
+
+    /** The name of the pack shadow program a terrain layer draws with. */
+    private String layerProgram(TerrainRenderType type) {
+        PackPipelineSet pipelines = pass.pipelines;
+        return shadowTerrainProgram(type, "shadow", pipelines.shadowCutoutPipeline == null ? null : "shadow_cutout",
+                pipelines.shadowWaterPipeline == null ? null : "shadow_water");
     }
 
     /** Draws the opaque terrain layer, then the cutout layer unless the host merged it into opaque. */

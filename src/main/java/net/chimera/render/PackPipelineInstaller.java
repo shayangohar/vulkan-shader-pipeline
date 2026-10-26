@@ -198,7 +198,10 @@ final class PackPipelineInstaller {
         }
     }
 
-    /** The shadow terrain program, or shadow_water for its translucent layer, on the pack-wide terrain format. */
+    /**
+     * The shadow terrain program, shadow_cutout for its cutout layers or shadow_water for its
+     * translucent layer, on the pack-wide terrain format.
+     */
     void installShadow(String name, PackProgramPlan programPlan) {
         PackPipelines.PackShadow shadow = PackPipelines.buildShadow(programPlan,
                 terrainMaterial(),
@@ -218,6 +221,8 @@ final class PackPipelineInstaller {
         }
         if (name.equals("shadow_water")) {
             pipelines.shadowWaterPipeline = shadow.pipeline();
+        } else if (name.equals("shadow_cutout")) {
+            pipelines.shadowCutoutPipeline = shadow.pipeline();
         } else {
             pipelines.shadowPipeline = shadow.pipeline();
             pipelines.shadowSlots = shadow.samplerSlots();
