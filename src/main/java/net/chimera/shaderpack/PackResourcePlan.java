@@ -517,6 +517,22 @@ public final class PackResourcePlan {
                 .findFirst().orElse(null);
     }
 
+    /**
+     * What a program's sampler reads from the frame: its colour target, depth or shadow texture by
+     * canonical name (gaux3 is colortex6), or null when the pack serves the name with a texture,
+     * image or noise of its own, as Bloop's texture.prepare.depthtex1 replaces depthtex1 in
+     * prepare (Iris CustomTextureSamplerInterceptor). A sampler with no binding reads its
+     * canonical name.
+     */
+    public String frameResource(String program, String sampler) {
+        PackResourceBinding binding = binding(program, sampler);
+        if (binding == null) return canonicalResource(sampler);
+        return switch (binding.kind()) {
+            case TARGET, DEPTH, SHADOW_DEPTH, SHADOW_COLOR -> binding.resourceKey();
+            default -> null;
+        };
+    }
+
     public boolean programAllowed(String program) {
         return bindings(program).stream().allMatch(PackResourceBinding::available);
     }

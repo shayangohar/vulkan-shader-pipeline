@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -393,18 +394,19 @@ public final class PackTargetGraphPlan {
 
     /**
      * The depth snapshots executable programs read. A world program that reads depth needs the
-     * same snapshot a post pass would: gbuffers_water reads opaque depth as depthtex1.
+     * same snapshot a post pass would: gbuffers_water reads opaque depth as depthtex1. A depth name
+     * a stage texture serves reads no snapshot.
      */
     private static DepthGraphPlan depthGraph(GraphInputs inputs, List<PackProgramPlan> postPrograms) {
         Set<String> depthReads = new TreeSet<>(inputs.computes().depthReads());
         for (PackProgramPlan program : postPrograms) {
             if (program.executable() && program.targetPlan().executable()) {
-                depthReads.addAll(samplerNames(program));
+                depthReads.addAll(frameReads(program, samplerNames(program), inputs.resources()));
             }
         }
         for (PackProgramPlan program : inputs.programs()) {
             if (program.geometryOutputPlan() != null && program.executable()) {
-                depthReads.addAll(geometrySamplerNames(program));
+                depthReads.addAll(frameReads(program, geometrySamplerNames(program), inputs.resources()));
             }
         }
         return DepthGraphPlan.of(depthReads);
@@ -462,11 +464,13 @@ public final class PackTargetGraphPlan {
             String sampler,
             PackResourcePlan resources
     ) {
-        PackResourceBinding binding = resources.binding(program.name(), sampler);
-        if (binding != null && binding.kind() != PackResourceKind.TARGET) {
-            return null;
-        }
-        return PackResourcePlan.targetIndex(sampler);
+        return PackResourcePlan.targetIndex(resources.frameResource(program.name(), sampler));
+    }
+
+    /** The frame resources {@code samplers} read in {@code program}; a name the pack serves reads none. */
+    private static List<String> frameReads(PackProgramPlan program, List<String> samplers, PackResourcePlan resources) {
+        return samplers.stream().map(sampler -> resources.frameResource(program.name(), sampler))
+                .filter(Objects::nonNull).toList();
     }
 
     private static List<Integer> outputTargets(PostTargetPlan plan) {

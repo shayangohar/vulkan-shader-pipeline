@@ -14,6 +14,7 @@ import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.TerrainMaterialPlan;
@@ -268,7 +269,7 @@ final class PackPipelineInstaller {
     /** A post program; composite and final are also kept for the resolve and present seams. */
     void installPost(String name, PackProgramPlan programPlan, String fixedVertex) {
         PackPipelines.PackPost post = PackPipelines.buildPost(programPlan, fixedVertex,
-                advancedResources(), storage);
+                plan == null ? PackResourcePlan.empty() : plan.resources(), advancedResources(), storage);
         if (post == null) {
             if (report != null) {
                 report.markRuntime(name,

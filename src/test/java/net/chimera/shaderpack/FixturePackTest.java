@@ -104,6 +104,9 @@ final class FixturePackTest {
     void postColorInputOrder() {
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                 List.of("colortex3", "depthtex0", "colortex0", "colortex2")), "post color input ordering");
+        // Bloop's prepare2 reads gaux3: colortex6 must be an input, or the pass binds a missing target.
+        assertEquals(List.of(1, 6), PackPipelines.colorInputTargets(List.of("gaux3", "gdepth", "noisetex")),
+                "legacy aliases name their targets");
     }
 
     private static void verifySimplex(Path pack, Path baselinePath) throws IOException {

@@ -295,6 +295,34 @@ final class PassComputeSamplerTest {
     }
 
     /**
+     * Bloop's prepare reads depthtex1 with texture.prepare.depthtex1 = the vanilla clouds: there the
+     * name is the pack's texture, so the pass reads no depth snapshot from the frame and the graph
+     * copies none for it. Chimera refused the pass for a depthtex1 not yet captured. prepare2's
+     * gaux3 reads colortex6 from the frame; counted only as gaux3, the runtime never saw the input
+     * missing, and binding it failed the whole post chain.
+     */
+    @Test
+    void aStageTextureOnADepthNameIsNoFrameInput(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                texture.prepare.depthtex1 = minecraft:textures/environment/clouds.png
+                """);
+        Files.writeString(shaders.resolve("prepare.fsh"), "#version 120\nuniform sampler2D depthtex1;\n"
+                + "void main() {\n/* RENDERTARGETS: 6 */\n gl_FragData[0] = texture2D(depthtex1, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("prepare2.fsh"), "#version 120\nuniform sampler2D gaux3;\n"
+                + "void main() {\n/* RENDERTARGETS: 7 */\n gl_FragData[0] = texture2D(gaux3, vec2(0.5));\n}\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackResourcePlan resources = analysis.plan().resources();
+        assertTrue(resources.frameResource("prepare", "depthtex1") == null,
+                resources.bindings("prepare").toString());
+        assertEquals("colortex6", resources.frameResource("prepare2", "gaux3"));
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(analysis.plan().programs(), analysis.config(),
+                resources, 1920, 1080, 8, 16384);
+        assertTrue(!graph.depth().depthtex1(), "a stage texture's depth name is no snapshot");
+        assertEquals(List.of(6), graph.step("prepare2").readTargets());
+    }
+
+    /**
      * Iris reads texture.<stage>.<sampler> for its seven texture stages only (TextureStage.parse)
      * and ignores any other scope with a warning: a program name, shadow (Rethinking Voxels' texture.shadow
      * entries; shadow programs read the gbuffers stage), or *. A known stage replaces noisetex, which

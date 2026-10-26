@@ -238,7 +238,7 @@ final class PackPostChain {
             return false;
         }
         if (!pass.packPostTargets.areInputsAvailable(post.requiredColorInputs())
-                || !packDepthInputsAvailable(post.samplerNames())) {
+                || !packDepthInputsAvailable(post.frameInputs())) {
             markPostStageIdentityBoundary(stage,
                     unavailablePostInputs(post));
             return false;
@@ -344,7 +344,7 @@ final class PackPostChain {
         boolean finalGraphExecutable = finalGraphStep != null && finalGraphStep.executable();
         boolean finalInputsAvailable = finalGraphExecutable
                 && pass.packPostTargets.areInputsAvailable(pass.pipelines.finalPost.requiredColorInputs())
-                && packDepthInputsAvailable(pass.pipelines.finalPost.samplerNames());
+                && packDepthInputsAvailable(pass.pipelines.finalPost.frameInputs());
         if (finalInputsAvailable) {
             return true;
         }
@@ -562,19 +562,20 @@ final class PackPostChain {
     }
 
     /**
-     * Whether this frame holds every depth snapshot and shadow image a post pass reads. depthtex0
-     * also counts while the world depth can still be captured: the pass's prepare captures it.
+     * Whether this frame holds every depth snapshot and shadow image a post pass reads from the
+     * frame ({@code frameInputs}: a depth name a stage texture serves is none). depthtex0 also
+     * counts while the world depth can still be captured: the pass's prepare captures it.
      */
-    boolean packDepthInputsAvailable(List<String> samplerNames) {
-        if (samplerNames == null) return true;
-        for (String sampler : samplerNames) {
+    boolean packDepthInputsAvailable(List<String> frameInputs) {
+        if (frameInputs == null) return true;
+        for (String sampler : frameInputs) {
             if (sampler != null && sampler.startsWith("depthtex")
                     && pass.packDepthTargets.image(sampler) == null
                     && !(sampler.equals("depthtex0") && pass.depth.drawnDepthCapturable())) {
                 return false;
             }
         }
-        for (String sampler : samplerNames) {
+        for (String sampler : frameInputs) {
             int shadowColor = PackResourcePlan.shadowColorIndex(sampler);
             if (shadowColor >= 0 && (!pass.shadowPass.shadowFrameReady
                     || pass.shadowPass.shadowMap.shadowColor(shadowColor) == null)) return false;
@@ -587,7 +588,7 @@ final class PackPostChain {
         for (int target : post.requiredColorInputs()) {
             if (!pass.packPostTargets.currentTargetAvailable(target)) missing.add("colortex" + target);
         }
-        for (String sampler : post.samplerNames()) {
+        for (String sampler : post.frameInputs()) {
             if (!packDepthInputsAvailable(List.of(sampler))) missing.add(sampler);
         }
         return "unavailable inputs " + missing;

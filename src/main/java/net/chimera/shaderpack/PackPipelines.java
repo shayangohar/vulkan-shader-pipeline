@@ -195,15 +195,16 @@ public final class PackPipelines {
                 program, phase, cause.getClass().getName(), reason, cause);
     }
     /**
-     * A successfully built pack post pipeline plus the slots its samplers occupy, and the blend
-     * its pass draws with (PackBlendPlan.forFullscreenPass).
+     * A successfully built pack post pipeline plus the slots its samplers occupy, the frame
+     * resources they read (PackResourcePlan.frameResource), and the blend its pass draws with
+     * (PackBlendPlan.forFullscreenPass).
      */
     public record PackPost(
             String name,
             GraphicsPipeline pipeline,
             int[] samplerSlots,
             List<String> samplerNames,
-            List<Integer> requiredColorInputs,
+            List<String> frameInputs,
             String convertedFragment,
             PostTargetPlan targetPlan,
             ProgramImageBindingManifest imageBindings,
@@ -213,9 +214,12 @@ public final class PackPipelines {
             Objects.requireNonNull(imageBindings);
             blendPlan = blendPlan == null ? PackBlendPlan.empty() : blendPlan;
             samplerNames = samplerNames == null ? List.of() : List.copyOf(samplerNames);
-            requiredColorInputs = requiredColorInputs == null
-                    ? List.of()
-                    : requiredColorInputs.stream().distinct().sorted().toList();
+            frameInputs = frameInputs == null ? List.of() : frameInputs.stream().distinct().sorted().toList();
+        }
+
+        /** The colour targets the pass reads from the frame, ascending. */
+        public List<Integer> requiredColorInputs() {
+            return colorInputTargets(frameInputs);
         }
     }
 
@@ -483,13 +487,14 @@ public final class PackPipelines {
 
     /** Builds a post pipeline from the already prepared and translated plan. */
     public static PackPost buildPost(PackProgramPlan plan, String fixedVertexSource) {
-        return buildPost(plan, fixedVertexSource, PackAdvancedResourcePlan.empty(), null);
+        return buildPost(plan, fixedVertexSource, PackResourcePlan.empty(), PackAdvancedResourcePlan.empty(), null);
     }
 
-    /** Builds a post pipeline with the session's advanced-resource contract. */
+    /** Builds a post pipeline with the session's resource and advanced-resource contracts. */
     public static PackPost buildPost(
             PackProgramPlan plan,
             String fixedVertexSource,
+            PackResourcePlan resources,
             PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
         if (plan == null || !plan.executable() || plan.targetPlan() == null
@@ -506,6 +511,9 @@ public final class PackPipelines {
                     .toArray();
             List<String> samplerNames = interfacePlan.samplers().stream()
                     .map(UniformRegistry.SamplerBinding::name).toList();
+            PackResourcePlan frame = resources == null ? PackResourcePlan.empty() : resources;
+            List<String> frameInputs = samplerNames.stream().map(name -> frame.frameResource(plan.name(), name))
+                    .filter(Objects::nonNull).toList();
             PreparedPipeline prepared = preparePost(plan, fixedVertexSource, advancedResources);
             String vertexSource = prepared.vertex();
             String fragmentSource = prepared.fragment();
@@ -514,7 +522,7 @@ public final class PackPipelines {
                     fragmentSource, storageOwner);
             GraphicsPipeline pipeline = createNative("pack_" + plan.name(), CustomVertexFormat.NONE, layout,
                     vertexSource, fragmentSource, prepared.imageBindings());
-            return new PackPost(plan.name(), pipeline, slots, samplerNames, colorInputTargets(samplerNames),
+            return new PackPost(plan.name(), pipeline, slots, samplerNames, frameInputs,
                     fragmentSource, plan.targetPlan(), prepared.imageBindings(), plan.blendPlan());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -711,7 +719,7 @@ public final class PackPipelines {
             List<String> samplerNames = interfacePlan.samplers().stream()
                     .map(UniformRegistry.SamplerBinding::name)
                     .toList();
-            List<Integer> requiredColorInputs = colorInputTargets(samplerNames);
+            List<String> frameInputs = samplerNames.stream().map(PackResourcePlan::canonicalResource).toList();
             // One fragment block for the pack's uniforms at binding 0, its samplers after it.
             var blocks = PackDescriptorContracts.packUniformBlock(interfacePlan, 0, VK_SHADER_STAGE_FRAGMENT_BIT);
             PackDescriptorLayout layout = new PackDescriptorLayout(blocks,
@@ -723,7 +731,7 @@ public final class PackPipelines {
                     fixedVertexSource, converted, imageBindings);
 
             return new PackPost(program.name(), pipeline, slots, samplerNames,
-                    requiredColorInputs, converted, targetPlan, imageBindings, PackBlendPlan.empty());
+                    frameInputs, converted, targetPlan, imageBindings, PackBlendPlan.empty());
         } catch (Exception e) {
             handleBuildFailure(program.name(), e);
             return null;
@@ -890,23 +898,10 @@ public final class PackPipelines {
         return PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson("chimera_shadow.json"));
     }
 
-    /** Derives the logical post color inputs once from the shared interface plan. */
-    static List<Integer> colorInputTargets(List<String> samplerNames) {
-        TreeSet<Integer> targets = new TreeSet<>();
-        for (String sampler : samplerNames) {
-            if (!sampler.startsWith("colortex")) {
-                continue;
-            }
-            try {
-                int target = Integer.parseInt(sampler.substring("colortex".length()));
-                if (target >= 0 && target <= PostTargetPlan.MAX_TARGET) {
-                    targets.add(target);
-                }
-            } catch (NumberFormatException ignored) {
-                // The interface plan rejects malformed sampler names.
-            }
-        }
-        return List.copyOf(targets);
+    /** The colour targets a post pass's frame inputs name, legacy aliases included (gaux3 is 6), ascending. */
+    static List<Integer> colorInputTargets(List<String> frameInputs) {
+        return frameInputs.stream().map(PackResourcePlan::targetIndex).filter(Objects::nonNull)
+                .filter(target -> target <= PostTargetPlan.MAX_TARGET).distinct().sorted().toList();
     }
 
     private static int[] prepend(int value, int[] values) {
