@@ -652,7 +652,9 @@ final class WorldStateUniformTest {
                 "entity shader lost the pack projection uniform");
         assertTrue(converted.source().contains("mat4 gbufferProjectionInverse;"),
                 "entity shader lost the pack inverse projection uniform");
-        assertTrue(converted.source().contains("ProjMat * chimeraEntityVertexValue()"),
+        // The stage reads the pack projection, so it runs in GL's clip range (WorldClipRange):
+        // gl_ProjectionMatrix is the raster projection taken into that range.
+        assertTrue(converted.source().contains("chimeraGlClip(ProjMat) * chimeraEntityVertexValue()"),
                 "host gl_ProjectionMatrix no longer uses the raster projection");
         assertTrue(converted.source().contains("gbufferProjection * chimeraEntityVertexValue()"),
                 "pack gbufferProjection was incorrectly aliased to host ProjMat");

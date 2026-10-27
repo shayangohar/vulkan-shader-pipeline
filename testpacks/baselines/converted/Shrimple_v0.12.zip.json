@@ -69,7 +69,7 @@
   "gbuffers_armor_glint.fsh": "f53604c67a99f52f f70f6dc0905dc59f",
   "gbuffers_armor_glint.vsh": "e728097fb8a7fd8a 354c8066f7d13e64",
   "gbuffers_basic.fsh": "419411044ec2a147 d9eb56cd801c8892",
-  "gbuffers_basic.vsh": "35709438787f53c3 7d5ee89e72288726",
+  "gbuffers_basic.vsh": "da2d9228c516d53a 3f1ab61ae33e69ac",
   "gbuffers_beaconbeam.fsh": "6c4f939f83949336 c704f3c3a3b50fcf",
   "gbuffers_beaconbeam.vsh": "0c7dfe5cdfc3c14c 868909925237b682",
   "gbuffers_block [moving-block input variant Position,Color,UV0,UV2,Normal].vsh": "ca0c7bb888585906 d1a9c502014488b0",

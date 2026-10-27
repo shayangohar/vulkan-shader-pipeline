@@ -173,7 +173,6 @@ final class TerrainVertexBridge {
             boolean allowStorageBuffers,
             boolean geometryNext
     ) {
-        boolean extendedShadow = shadowStage && usesExtendedShadowInputs(source);
         String prepared = EntityDeclarations.defaultUnboundIdentityAttributes(
                 LegacyGlslConverter.prepareSource(source, sourceFile, true));
         String vertex = shadowStage ? normalizeShadowTerrain(prepared) : normalizeModernTerrain(prepared);
@@ -181,6 +180,8 @@ final class TerrainVertexBridge {
         vertex = LegacyGlslConverter.expandModernVaryingLists(vertex);
         fragment = LegacyGlslConverter.expandModernVaryingLists(fragment);
         vertex = withoutUnreachableFunctions(vertex);
+        // A shadow stage converts its own clip depth (ShadowStageBuiltins).
+        WorldClipRange clip = shadowStage ? WorldClipRange.HOST : WorldClipRange.of(stripComments(vertex));
         // On the entity layout both stages read the entity identities from EntityIds.
         Map<String, String> entityIdTypes = entityInputs
                 ? EntityVertexBridge.entityIdTypes(stripComments(vertex), fragment) : Map.of();
@@ -199,7 +200,7 @@ final class TerrainVertexBridge {
         // executable vertex shader.
         String converted = LegacyGlslConverter.withoutVersionLines(removeShadowAttributes(
                         removeTerrainAttributes(removeModernTerrainInputs(vertex, layout), shadowStage), shadowStage));
-        Map<String, String> inputReplacements = modernTerrainInputReplacements(vertex);
+        Map<String, String> inputReplacements = clip.builtins(modernTerrainInputReplacements(vertex));
         if (shadowStage) {
             inputReplacements.putAll(shadowInputReplacements(vertex, entityInputs));
         }
@@ -210,7 +211,7 @@ final class TerrainVertexBridge {
                 "\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", entityInputs ? "TextureMat" : "mat4(1.0)");
         converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted);
         converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
-                "chimeraFtransform()");
+                clip.ftransform("chimeraFtransform()"));
         if (shadowStage) {
             converted = ShadowStageBuiltins.legacyBuiltins(converted);
         }
@@ -226,12 +227,21 @@ final class TerrainVertexBridge {
         }
         converted = EntityVertexBridge.injectEntityIdPrologues(converted, entityIdTypes.keySet());
         String chimeraVaryings = EntityVertexBridge.entityIdOutputDeclarations(entityIdTypes.keySet(), layout);
-        String effectivePreamble = shadowStage && !extendedShadow && !entityInputs
-                ? GlslVertexPreambles.SHADOW_VERTEX_PREAMBLE : vertexPreamble;
-        String body = shadowStage ? ShadowStageBuiltins.vertexClipRange(converted, geometryNext) : converted;
+        String body = shadowStage ? ShadowStageBuiltins.vertexClipRange(converted, geometryNext)
+                : clip.convert(converted);
         return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n"
-                + effectivePreamble + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
+                + stagePreamble(vertexPreamble, source, shadowStage, entityInputs)
+                + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
                 + chimeraVaryings + uniformBlock + body, layout);
+    }
+
+    /**
+     * The preamble a stage compiles against: a shadow stage that reads neither the extended terrain
+     * inputs nor the entity layout takes the plain shadow terrain inputs, any other stage the lane's.
+     */
+    private static String stagePreamble(String preamble, String source, boolean shadowStage, boolean entityInputs) {
+        boolean plainShadow = shadowStage && !entityInputs && !usesExtendedShadowInputs(source);
+        return plainShadow ? GlslVertexPreambles.SHADOW_VERTEX_PREAMBLE : preamble;
     }
 
     /** The fragment source normalized as its vertex stage is, when it declares a supported version. */

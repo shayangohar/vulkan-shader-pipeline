@@ -340,16 +340,17 @@ public final class EntityVertexBridge {
         if (samplerPlan != null) {
             converted = bindVertexSamplers(converted, samplerPlan);
         }
+        WorldClipRange clip = projectsInGlRange(vertexPreamble) ? WorldClipRange.HOST : WorldClipRange.of(stripped);
         // The plan renamed the pack's own identifiers of the preamble's names in both stages.
         converted = GlslTokenRewriter.replaceIdentifiers(converted,
-                entityInputReplacements(vertexPreamble, stripped, layout));
+                clip.builtins(entityInputReplacements(vertexPreamble, stripped, layout)));
         converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]",
                 "TextureMat");
         // Iris VanillaTransformer/VanillaCoreTransformer: raw UV2 for both
         // light-coordinate aliases, normalized once by the legacy matrix.
         converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted);
         converted = converted.replaceAll("\\bftransform\\s*\\(\\s*\\)",
-                "chimeraEntityFtransform()");
+                clip.ftransform("chimeraEntityFtransform()"));
         converted = injectEntityIdPrologues(converted, entityIdTypes.keySet());
         for (ForwardedVarying varying : forwarded) {
             converted = LegacyGlslConverter.injectMainPrologue(converted,
@@ -361,7 +362,7 @@ public final class EntityVertexBridge {
             chimeraVaryings += varying.declaration(layout, "out");
         }
         String cameraBlock = GlslVertexPreambles.entityCameraUniformBlock(converted, fragmentUniforms);
-        converted = wrapProjectedMain(converted, vertexPreamble);
+        converted = clip.convert(wrapProjectedMain(converted, vertexPreamble));
         return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n" + vertexPreamble
                 + chimeraVaryings + cameraBlock + converted,
                 layout);
@@ -518,6 +519,12 @@ public final class EntityVertexBridge {
                         + line.substring(0, Math.min(80, line.length())));
             }
         }
+    }
+
+    /** Whether the draw's whole stage already runs in GL's clip range: the hand and sky draws (wrapProjectedMain). */
+    private static boolean projectsInGlRange(String vertexPreamble) {
+        return vertexPreamble == GlslVertexPreambles.HAND_VERTEX_PREAMBLE
+                || GlslVertexPreambles.isSkyPreamble(vertexPreamble);
     }
 
     /**
@@ -902,15 +909,22 @@ public final class EntityVertexBridge {
      * The converted glint program for first-person glint. Iris draws held glint with the
      * same ShaderKey.GLINT program under the hand projection; here it takes the hand
      * family's legacy projection and clip-depth remap, so its depth is computed exactly
-     * as the held item's and the EQUAL depth test meets it.
+     * as the held item's and the EQUAL depth test meets it. A glint already in GL's range
+     * (WorldClipRange) keeps its remap and reads the draw's ProjMat, the hand's here; only
+     * its ftransform() becomes the hand preamble's legacy one.
      */
     public static String handGlintVertex(String converted) {
         int start = converted == null ? -1 : converted.indexOf(GlslVertexPreambles.GLINT_VERTEX_PREAMBLE);
         if (start < 0) throw new IllegalArgumentException("not a converted glint vertex");
         String body = converted.substring(start + GlslVertexPreambles.GLINT_VERTEX_PREAMBLE.length());
+        String hand = converted.substring(0, start) + GlslVertexPreambles.GLINT_HAND_VERTEX_PREAMBLE;
+        if (WorldClipRange.converts(body)) {
+            return hand + body.replace(WorldClipRange.GL.ftransform("chimeraEntityFtransform()"),
+                    "chimeraEntityFtransform()");
+        }
         body = GlslTokenRewriter.replaceIdentifiers(body, Map.of("ProjMat", "chimeraHandProjection()"));
         body = renamedMain(body, "chimeraHandMain");
-        return converted.substring(0, start) + GlslVertexPreambles.GLINT_HAND_VERTEX_PREAMBLE + body
+        return hand + body
                 + "\nvoid main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
     }
 }
