@@ -80,7 +80,9 @@
     "ChimeraPipelineFrontFaceMixin",
     "ChimeraPipelineStateAccessor",
     "ChimeraProjectionFarMixin",
-    "ChimeraModelViewBobbingMixin"
+    "ChimeraModelViewBobbingMixin",
+    "ChimeraRenderTargetBlitMixin",
+    "ChimeraModelCubeColorMixin"
   ],
   "injectors": {
     "defaultRequire": 1
