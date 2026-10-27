@@ -357,9 +357,10 @@ public final class PackResourcePlan {
 
     /**
      * A raw texture (RawTextureSpec): the file's bytes uploaded as a 1D, 2D or 3D image and
-     * sampled as its .mcmeta says (Iris GlTexture: nearest and repeat without it). A format
-     * Chimera cannot upload unchanged stays unsupported, so the program never samples something
-     * else in its place.
+     * sampled as its .mcmeta says. Without it a raw texture is linear and clamped: Iris's
+     * ShaderPack starts blur and clamp at true for a raw definition, and false only for a PNG.
+     * A format Chimera cannot upload unchanged stays unsupported, so the program never samples
+     * something else in its place.
      */
     private static PackResourceBinding rawBinding(String program, String name, int slot,
                                                   PackResourceDeclaration declaration, Path shadersDir,
@@ -382,9 +383,9 @@ public final class PackResourcePlan {
         deviations.add(status + key);
         boolean applied = status.equals("PACK_RAW_TEXTURE_APPLIED:");
         // Vulkan filters an integer image with nearest only.
-        String filter = spec.storage().integer() ? "nearest" : mcmetaFilter(file, "nearest");
+        String filter = spec.storage().integer() ? "nearest" : mcmetaFilter(file, "linear");
         return new PackResourceBinding(program, name, key, PackResourceKind.RAW_TEXTURE, declaration.source(),
-                slot, filter, mcmetaWrap(file, "repeat"),
+                slot, filter, mcmetaWrap(file, "clamp"),
                 applied ? PackResourceStatus.PACK_FILE : PackResourceStatus.UNAVAILABLE, deviations);
     }
 

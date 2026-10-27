@@ -176,21 +176,33 @@ final class PackFrontEndTest {
         }
     }
 
-    /** A volume a deferred pass samples binds as a pack file, sampled as its .mcmeta says. */
+    /**
+     * A volume a deferred pass samples binds as a pack file, sampled as its .mcmeta says. Without
+     * one a raw texture is linear and clamped (Iris ShaderPack starts blur and clamp at true for a
+     * raw definition; Ebin's atmosphere LUT relies on it), and an integer one is nearest.
+     */
     @Test
     void rawTextureBinding(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Path lut = Files.createDirectories(shaders.resolve("image")).resolve("lut.dat");
-        Files.writeString(shaders.resolve("deferred.fsh"), "#version 120\nuniform sampler3D depthtex0;\n"
-                + "varying vec2 texcoord;\n"
-                + "void main() { gl_FragData[0] = texture3D(depthtex0, vec3(texcoord, 0.5)); }\n");
+        Files.writeString(shaders.resolve("deferred.fsh"), "#version 130\nuniform sampler3D depthtex0;\n"
+                + "uniform usampler2D colortex6;\nin vec2 texcoord;\n"
+                + "void main() { gl_FragData[0] = texture(depthtex0, vec3(texcoord, 0.5))"
+                + " + vec4(texture(colortex6, texcoord)); }\n");
         Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler3D colortex5;\n"
                 + "varying vec2 texcoord;\n"
                 + "void main() { gl_FragData[0] = texture3D(colortex5, vec3(texcoord, 0.5)); }\n");
         Files.writeString(shaders.resolve("shaders.properties"),
-                "texture.deferred.depthtex0 = image/lut.dat TEXTURE_3D RGB16F 2 2 2 RGB HALF_FLOAT\n");
-        Files.writeString(shaders.resolve("image/lut.dat.mcmeta"), "{\"texture\": {\"blur\": true, \"clamp\": true}}");
+                "texture.deferred.depthtex0 = image/lut.dat TEXTURE_3D RGB16F 2 2 2 RGB HALF_FLOAT\n"
+                        + "texture.deferred.colortex6 = image/ids.dat TEXTURE_2D R32UI 2 2 RED_INTEGER UNSIGNED_INT\n");
         Files.write(lut, new byte[48]);
+        Files.write(shaders.resolve("image/ids.dat"), new byte[16]);
+        assertSampling(root, "depthtex0", "linear", "clamp");
+        assertSampling(root, "colortex6", "nearest", "clamp");
+        Path meta = shaders.resolve("image/lut.dat.mcmeta");
+        Files.writeString(meta, "{\"texture\": {\"blur\": false, \"clamp\": false}}");
+        assertSampling(root, "depthtex0", "nearest", "repeat");
+        Files.writeString(meta, "{\"texture\": {\"blur\": true, \"clamp\": true}}");
         PackPlan plan = PackProbe.analyze(root).plan();
         PackResourceBinding volume = plan.resources().binding("deferred", "depthtex0");
         assertTrue(volume != null && volume.kind() == PackResourceKind.RAW_TEXTURE
@@ -207,6 +219,13 @@ final class PackFrontEndTest {
         assertTrue(truncated != null && truncated.status() == PackResourceStatus.UNAVAILABLE
                         && truncated.deviations().contains("PACK_RAW_TEXTURE_SIZE_MISMATCH:texture.deferred.depthtex0"),
                 "a short file must not upload: " + truncated);
+    }
+
+    private static void assertSampling(Path root, String sampler, String filter, String wrap) {
+        PackResourceBinding binding = PackProbe.analyze(root).plan().resources().binding("deferred", sampler);
+        assertTrue(binding != null && binding.status() == PackResourceStatus.PACK_FILE
+                        && binding.filter().equals(filter) && binding.wrap().equals(wrap),
+                sampler + " must sample " + filter + "/" + wrap + ": " + binding);
     }
 
     /** program.<folder>/<name>.enabled with a declared-but-off toggle disables, as in Iris. */
