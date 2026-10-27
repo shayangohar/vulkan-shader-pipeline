@@ -445,8 +445,9 @@ final class MaterialPlanTest {
         String source = vertex.source();
         assertTrue(source.contains("out flat vec3 tangentFrame"),
                 "flat qualifier lost: " + source);
-        assertTrue(source.contains("mat4 chimeraEntityInverseModelView()"),
-                "inverse model view is not mat4");
+        // The pack's world matrices stay its uniforms, as the glint lane over this entity reads them.
+        assertTrue(source.contains("gbufferModelViewInverse * vec4(1.0)") && !source.contains("inverse(ModelViewMat)"),
+                "entity lane must read the pack's gbufferModelViewInverse: " + source);
         assertTrue(!source.contains("chimeraEntityCameraPosition"),
                 "zero camera placeholder survived");
         assertTrue(source.contains("uniform ChimeraEntityUniforms"),

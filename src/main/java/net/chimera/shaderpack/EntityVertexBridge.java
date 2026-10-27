@@ -442,7 +442,13 @@ public final class EntityVertexBridge {
         return LegacyGlslConverter.stripUnreferencedSamplerDeclarations(converted);
     }
 
-    /** The token replacements for the legacy inputs and matrices, as the hand, glint and sky draws adjust them. */
+    /**
+     * The token replacements for the legacy inputs and matrices, as the hand and sky draws adjust
+     * them. gbufferModelView and its inverse stay the pack's uniforms in every lane, as in Iris: an
+     * item and its glint (depth test EQUAL) must place the same vertex bit for bit, and a GPU
+     * inverse of ModelViewMat rounds differently from the uniform the glint lane reads. Clouds'
+     * ModelViewMat also carries vanilla's cloud scale and offset, which gbufferModelView never does.
+     */
     private static Map<String, String> entityInputReplacements(
             String vertexPreamble,
             String stripped,
@@ -462,8 +468,6 @@ public final class EntityVertexBridge {
                 Map.entry("gl_ModelViewMatrix", "ModelViewMat"),
                 Map.entry("gl_ModelViewProjectionMatrix", "(ProjMat * ModelViewMat)"),
                 Map.entry("gl_ProjectionMatrix", "ProjMat"),
-                Map.entry("gbufferModelView", "ModelViewMat"),
-                Map.entry("gbufferModelViewInverse", "chimeraEntityInverseModelView()"),
                 Map.entry("mc_midTexCoord", EntityDeclarations.midTexCoordValue(stripped)),
                 Map.entry("at_tangent", "chimeraEntityTangentValue()"),
                 // Vulkan's index counts from the draw's first vertex, as GL's does.
@@ -478,24 +482,11 @@ public final class EntityVertexBridge {
             inputs = new HashMap<>(inputs);
             inputs.put("gl_ProjectionMatrix", "chimeraHandProjection()");
             inputs.put("gl_ModelViewProjectionMatrix", "(chimeraHandProjection() * ModelViewMat)");
-            inputs.remove("gbufferModelView");
-            inputs.remove("gbufferModelViewInverse");
-        }
-        if (vertexPreamble == GlslVertexPreambles.GLINT_VERTEX_PREAMBLE) {
-            // Glint also draws in the hand, where ModelViewMat is the hand pose: the
-            // world matrices stay the pack's own uniforms, as in Iris.
-            inputs = new HashMap<>(inputs);
-            inputs.remove("gbufferModelView");
-            inputs.remove("gbufferModelViewInverse");
         }
         if (GlslVertexPreambles.isSkyPreamble(vertexPreamble)) {
             inputs = new HashMap<>(inputs);
             inputs.put("gl_ProjectionMatrix", "chimeraSkyProjection()");
             inputs.put("gl_ModelViewProjectionMatrix", "(chimeraSkyProjection() * ModelViewMat)");
-            // Celestial host transforms rotate the sun/moon mesh. Pack world
-            // matrices must remain the frame's world matrices, as in Iris.
-            inputs.remove("gbufferModelView");
-            inputs.remove("gbufferModelViewInverse");
         }
         return inputs;
     }

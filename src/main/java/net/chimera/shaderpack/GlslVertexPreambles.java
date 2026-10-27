@@ -208,10 +208,6 @@ final class GlslVertexPreambles {
                 return ProjMat * ModelViewMat * chimeraEntityVertexValue();
             }
 
-            mat4 chimeraEntityInverseModelView() {
-                return inverse(ModelViewMat);
-            }
-
             vec3 chimeraEntityNormalValue() {
                 float lengthSquared = dot(Normal, Normal);
                 return lengthSquared > 1.0e-8
