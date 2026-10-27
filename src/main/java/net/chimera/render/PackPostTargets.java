@@ -179,6 +179,7 @@ public final class PackPostTargets {
                 + " target1=" + imageId(this.images[1][0])
                 + " activeSide=" + this.activeSide[0]
                 + " sides=" + this.sideCounts[0]);
+        Set<Integer> unwrittenFlips = this.graph.unwrittenFlips();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (TargetSpec target : this.graph.targets()) {
                 int index = target.index();
@@ -205,8 +206,22 @@ public final class PackPostTargets {
                     this.temporal.seedCurrent(index);
                     trace("seedPersistent target=" + index + " image=" + imageId(image));
                 }
+                if (this.valid[index] && unwrittenFlips.contains(index)) matchOtherSide(stack, commandBuffer, index);
             }
         }
+    }
+
+    /**
+     * Copies a target's current side over the side a step that leaves it unwritten will make current.
+     * Iris's FinalPassRenderer copies each flipped buffer back at frame end, and clears both sides of
+     * a cleared one, so that flip hands back what the frame started with, never an older frame's.
+     */
+    private void matchOtherSide(MemoryStack stack, VkCommandBuffer commandBuffer, int target) {
+        if (this.sideCounts[target] < 2) return;
+        int other = nextWriteSide(target);
+        PackTargetImages.copyImage(stack, commandBuffer, imageFor(target, this.activeSide[target]),
+                imageFor(target, other));
+        this.previousSide[target] = other;
     }
 
     public void requireFrameStarted() {
@@ -499,22 +514,32 @@ public final class PackPostTargets {
         }
     }
 
-    /** Picks each output's write side and, when the step also reads it, copies its source in first. */
+    /**
+     * Picks each output's write side and, when the step also reads it, copies its source in first.
+     * A target the step leaves unwritten takes its other side as that side stands, as Iris's flip does.
+     */
     private void claimOutputSides(MemoryStack stack, VkCommandBuffer commandBuffer, TargetStep step) {
         for (int target : step.outputTargets()) {
             if (target < 0 || target >= TARGET_COUNT || !this.used[target]) {
                 throw new IllegalStateException("missing output target " + target);
             }
-            int side = this.doubled[target]
-                    ? nextWriteSide(target) : this.activeSide[target];
+            boolean unwritten = step.unwrittenTargets().contains(target);
+            int side = writeSide(unwritten, this.doubled[target], this.activeSide[target],
+                    this.previousSide[target], this.sideCounts[target]);
             this.pendingWriteSide[target] = side;
             VulkanImage destination = imageFor(target, side);
             this.pendingImages[target] = destination;
-            if (step.reads(target) && this.sourceImages[target] != null
+            if (!unwritten && step.reads(target) && this.sourceImages[target] != null
                     && this.sourceImages[target] != destination) {
                 PackTargetImages.copyImage(stack, commandBuffer, this.sourceImages[target], destination);
             }
         }
+    }
+
+    /** The side a step writes a target to: the other side of one it leaves unwritten, else the next or current. */
+    static int writeSide(boolean unwritten, boolean doubled, int activeSide, int previousSide, int sideCount) {
+        if (unwritten) return previousSide;
+        return doubled ? nextSide(activeSide, sideCount) : activeSide;
     }
 
     /** One post draw's color attachments and its render extent, the first attachment's size. */

@@ -276,14 +276,35 @@ public final class PackTargetGraphPlan {
                 doubleTargets.put(target, true);
             }
         }
+        List<Integer> unwritten = unwrittenTargets(post, writes, doubleTargets, stepDeviations);
+        List<Integer> stepWrites = new ArrayList<>(writes);
+        stepWrites.addAll(unwritten);
         StepFlips flips = applyFlips(inputs.config(), post, preliminary, doubleTargets, stepDeviations);
         Map<Integer, Integer> readSides = new TreeMap<>();
         Map<Integer, Integer> writeSides = new TreeMap<>();
         for (int target : reads) readSides.put(target, 0);
-        for (int target : writes) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
-        return new TargetStep(post.programName(), reads, writes, post.outputFormats(), readSides, writeSides,
+        for (int target : stepWrites) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
+        return new TargetStep(post.programName(), reads, stepWrites, post.outputFormats(), readSides, writeSides,
                 mipmapTargets, extent.width(), extent.height(), post.isFinal(), executable, stepDeviations,
-                flips.before(), flips.after());
+                flips.before(), flips.after(), unwritten);
+    }
+
+    /**
+     * The targets a post program's directive names but its shader never writes, each double-buffered.
+     * Iris flips every draw buffer of a composite pass (CompositeRenderer), written or not, so the
+     * pass leaves such a target with its other side's content. Bloop's composite names colortex13
+     * and writes it only with Distant Horizons; the flip is what drops the frame's water refraction.
+     */
+    private static List<Integer> unwrittenTargets(PostTargetPlan post, List<Integer> writes,
+                                                  Map<Integer, Boolean> doubleTargets, List<String> stepDeviations) {
+        if (post.isFinal()) return List.of();
+        List<Integer> unwritten = post.targetSlots().stream().distinct()
+                .filter(target -> !writes.contains(target)).toList();
+        for (int target : unwritten) {
+            doubleTargets.put(target, true);
+            stepDeviations.add("POST_TARGET_UNWRITTEN_FLIPPED:" + post.programName() + ":" + target);
+        }
+        return unwritten;
     }
 
     /** The color targets a post program samples, ascending. */
@@ -570,13 +591,28 @@ public final class PackTargetGraphPlan {
      * A persistent target needs a defined first frame when a post program reads
      * it before any writes it, or when one of {@code unorderedReads} names it: the
      * world draws before every post step (MakeUp's terrain reads last frame's
-     * fog from gaux4).
+     * fog from gaux4). A target a step leaves unwritten needs one too, since the
+     * step hands back its other side's content.
      */
     public static boolean requiresInitialSeed(TargetSpec spec, List<TargetStep> steps, Set<Integer> unorderedReads) {
         if (spec == null || !spec.persistent()) {
             return false;
         }
-        return unorderedReads.contains(spec.index()) || hasReadBeforeWrite(spec.index(), steps, Set.of());
+        return unorderedReads.contains(spec.index()) || hasReadBeforeWrite(spec.index(), steps, Set.of())
+                || unwrittenFlips(steps).contains(spec.index());
+    }
+
+    /** The targets an executable step's directive names and its shader leaves unwritten. */
+    public Set<Integer> unwrittenFlips() {
+        return unwrittenFlips(steps);
+    }
+
+    private static Set<Integer> unwrittenFlips(List<TargetStep> steps) {
+        Set<Integer> result = new TreeSet<>();
+        for (TargetStep step : steps == null ? List.<TargetStep>of() : steps) {
+            if (step != null && step.executable()) result.addAll(step.unwrittenTargets());
+        }
+        return result;
     }
 
     /**
@@ -638,6 +674,7 @@ public final class PackTargetGraphPlan {
                     .append(step.outputTargets()).append(':').append(step.width()).append('x')
                     .append(step.height()).append(':').append(step.executable());
             if (!step.mipmapTargets().isEmpty()) result.append(":mipmap=").append(step.mipmapTargets());
+            if (!step.unwrittenTargets().isEmpty()) result.append(":unwritten=").append(step.unwrittenTargets());
             result.append(';');
         }
         if (!geometryReads.isEmpty()) result.append("geometryReads=").append(new TreeSet<>(geometryReads)).append(';');

@@ -10,6 +10,8 @@ import java.util.TreeMap;
  * CompositeRenderer.setupMipmapping does for the program's directives.
  * {@code flipsBefore} and {@code flipsAfter} are the targets a {@code flip.<program>_pre} or
  * {@code flip.<program>} directive flips before or after the step, as Iris's BufferFlipper does.
+ * {@code unwrittenTargets} are the output targets the program's directive names and its shader
+ * never writes: the step flips them all the same, so their other side becomes current.
  */
 public record TargetStep(
         String programName,
@@ -25,7 +27,8 @@ public record TargetStep(
         boolean executable,
         List<String> deviations,
         List<Integer> flipsBefore,
-        List<Integer> flipsAfter
+        List<Integer> flipsAfter,
+        List<Integer> unwrittenTargets
 ) {
     /** A step no flip directive names. */
     public TargetStep(String programName, List<Integer> readTargets, List<Integer> outputTargets,
@@ -33,7 +36,7 @@ public record TargetStep(
                       List<Integer> mipmapTargets, int width, int height, boolean finalStage, boolean executable,
                       List<String> deviations) {
         this(programName, readTargets, outputTargets, outputFormats, readSides, writeSides, mipmapTargets,
-                width, height, finalStage, executable, deviations, List.of(), List.of());
+                width, height, finalStage, executable, deviations, List.of(), List.of(), List.of());
     }
 
     public TargetStep {
@@ -47,6 +50,7 @@ public record TargetStep(
         deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
         flipsBefore = flipsBefore == null ? List.of() : List.copyOf(flipsBefore);
         flipsAfter = flipsAfter == null ? List.of() : List.copyOf(flipsAfter);
+        unwrittenTargets = unwrittenTargets == null ? List.of() : List.copyOf(unwrittenTargets);
     }
 
     private static Map<Integer, Integer> immutableMap(Map<Integer, Integer> values) {

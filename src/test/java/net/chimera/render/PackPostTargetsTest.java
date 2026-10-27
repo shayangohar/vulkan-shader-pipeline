@@ -186,6 +186,53 @@ final class PackPostTargetsTest {
         }
     }
 
+    /**
+     * Iris flips every draw buffer of a composite pass, written or not. Bloop's composite names
+     * colortex13 and writes it only with Distant Horizons, so the water's refraction offsets there
+     * never outlive their frame: the flip hands back what the frame started with.
+     */
+    @Test
+    void unwrittenTargetFlipsBackToFrameStart(@TempDir Path root) throws Exception {
+        writeUnwrittenFixture(root);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        TargetStep composite = graph.step("composite");
+        assertEquals(List.of(2), composite.unwrittenTargets(), "the unwritten draw buffer was not found");
+        assertTrue(composite.writes(2), "the unwritten draw buffer must still flip");
+        assertTrue(graph.target(2).doubled(), "the unwritten draw buffer needs another side");
+        assertTrue(graph.requiresInitialSeed(2), "the flip must not hand back undefined memory");
+
+        int sides = graph.target(2).requiresHistory() ? 3 : 2;
+        int[] active = new int[3];
+        int[] previous = new int[3];
+        int[] waterFrames = new int[sides];
+        for (int frame = 0; frame < 5; frame++) {
+            // Frame open (matchOtherSide), then the water draw, then composite.
+            int other = PackPostTargets.nextSide(active[2], sides);
+            waterFrames[other] = waterFrames[active[2]];
+            previous[2] = other;
+            waterFrames[active[2]]++;
+            int side = PackPostTargets.writeSide(true, true, active[2], previous[2], sides);
+            previous[2] = active[2];
+            active[2] = side;
+            assertEquals(0, waterFrames[active[2]], "frame " + frame + ": the water outlived its frame");
+        }
+    }
+
+    private static void writeUnwrittenFixture(Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst bool colortex2Clear = false;\n"
+                + "uniform sampler2D colortex0;\nuniform sampler2D colortex2;\nvarying vec2 texcoord;\n"
+                + "/* RENDERTARGETS: 0,2 */\nvoid main() {\n"
+                + "    gl_FragData[0] = texture2D(colortex0, texcoord + texture2D(colortex2, texcoord).xy);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"composite\",\"fragment\":\"composite.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+    }
+
     private static void writeFlipFixture(Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         String header = "#version 120\nuniform sampler2D colortex2;\nvarying vec2 texcoord;\n";
