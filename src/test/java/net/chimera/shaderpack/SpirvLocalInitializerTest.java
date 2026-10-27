@@ -1,5 +1,6 @@
 package net.chimera.shaderpack;
 
+import net.chimera.render.shader.GlslCompiler;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.util.shaderc.Shaderc;
 
@@ -53,6 +54,62 @@ final class SpirvLocalInitializerTest {
                 + "void main() { color = vec4(0.5); }\n";
         int[] clean = words(compile(noLocals));
         assertTrue(SpirvLocalInitializer.apply(clean) == clean, "a module without function variables changed");
+    }
+
+    /**
+     * Ebin's held light: {@code falloff} is written only inside the light's radius, and the
+     * optimizer that compiles pack modules (GlslCompiler.optimize) turns the other path's read
+     * into an OpUndef. Each plain undef must come back as a null constant with its id and type,
+     * declared ahead of every function.
+     */
+    @Test
+    void optimizedUndefs() {
+        String source = """
+                #version 460
+                layout(location = 0) in vec3 lightPos;
+                layout(location = 1) in float torch;
+                layout(location = 2) flat in float held;
+                layout(location = 0) out vec4 color;
+                float heldLight(vec3 p, float light) {
+                    float falloff;
+                    if (length(p) < light) falloff = mix(clamp(light, 0.0, 1.0), 0.0, length(p) / light);
+                    return falloff;
+                }
+                void main() {
+                    color = vec4(2.0 * pow(max(torch, heldLight(lightPos, held)), 5.06));
+                }
+                """;
+        int[] original = words(compile(source, true));
+        Map<Integer, Integer> undefs = undefTypes(original);
+        assertTrue(!undefs.isEmpty(), "the optimizer kept falloff in memory; the fixture no longer reaches OpUndef");
+        int[] initialized = SpirvLocalInitializer.apply(original);
+        assertTrue(undefTypes(initialized).isEmpty(), "plain undefs survived");
+        assertTrue(initialized[3] == original[3], "undefs become null constants under their own ids");
+        Map<Integer, Integer> nulls = new HashMap<>();
+        boolean inFunction = false;
+        int at = 5;
+        for (; at < initialized.length; at += initialized[at] >>> 16) {
+            int opcode = initialized[at] & 0xFFFF;
+            assertTrue(initialized[at] >>> 16 > 0, "malformed instruction at word " + at);
+            if (opcode == 54) inFunction = true;
+            if (opcode == 46) {
+                assertTrue(!inFunction, "null constant %" + initialized[at + 2] + " declared inside a function");
+                nulls.put(initialized[at + 2], initialized[at + 1]);
+            }
+        }
+        assertTrue(at == initialized.length, "instruction stream does not end at the module end");
+        undefs.forEach((id, type) -> assertTrue(type.equals(nulls.get(id)),
+                "undef %" + id + " is not a null constant of its type"));
+        assertTrue(SpirvLocalInitializer.apply(initialized) == initialized, "initializer is not idempotent");
+    }
+
+    /** Each OpUndef's result id and type. */
+    private static Map<Integer, Integer> undefTypes(int[] words) {
+        Map<Integer, Integer> undefs = new HashMap<>();
+        for (int at = 5; at < words.length; at += words[at] >>> 16) {
+            if ((words[at] & 0xFFFF) == 1) undefs.put(words[at + 2], words[at + 1]);
+        }
+        return undefs;
     }
 
     /**
@@ -150,10 +207,16 @@ final class SpirvLocalInitializerTest {
     }
 
     private static ByteBuffer compile(String source) {
+        return compile(source, false);
+    }
+
+    /** Compiles {@code source}, optimized as pack modules are when {@code optimize} is set. */
+    private static ByteBuffer compile(String source, boolean optimize) {
         long compiler = Shaderc.shaderc_compiler_initialize();
         long options = Shaderc.shaderc_compile_options_initialize();
         Shaderc.shaderc_compile_options_set_target_env(options,
                 Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2);
+        if (optimize) GlslCompiler.optimize(options);
         long result = Shaderc.shaderc_compile_into_spv(compiler, source,
                 Shaderc.shaderc_glsl_fragment_shader, "locals.fsh", "main", options);
         try {

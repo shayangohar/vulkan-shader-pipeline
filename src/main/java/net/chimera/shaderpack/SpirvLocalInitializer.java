@@ -10,7 +10,8 @@ import java.util.Map;
 
 /**
  * Gives every uninitialized function-scope variable of a plain data type an
- * {@code OpConstantNull} initializer.
+ * {@code OpConstantNull} initializer, and turns every plain-data
+ * {@code OpUndef} into an {@code OpConstantNull}.
  *
  * <p>GLSL leaves such locals undefined. The GL drivers packs are authored
  * against start them at zero, and packs read them before writing them
@@ -19,10 +20,19 @@ import java.util.Map;
  * changes with unrelated GPU state. Zero is the value those packs were
  * authored and tested with. Opaque types (images, samplers) are left alone;
  * they cannot be null-initialized and are never read uninitialized.</p>
+ *
+ * <p>Pack modules reach this pass already optimized, and the optimizer's SSA
+ * rewrite has replaced a read of a local nothing wrote with {@code OpUndef}.
+ * The driver may then pick any value: Ebin's held-light {@code falloff}, unset
+ * outside the light's radius, became {@code max(torch, undef)}, NVIDIA folded
+ * that to the slightly negative torch level, and {@code pow} of it turned the
+ * water NaN, then black. The null constant is the zero the variable would have
+ * started at.</p>
  */
 public final class SpirvLocalInitializer {
     private static final int MAGIC = 0x07230203;
     private static final int HEADER_WORDS = 5;
+    private static final int OP_UNDEF = 1;
     private static final int OP_TYPE_BOOL = 20;
     private static final int OP_TYPE_INT = 21;
     private static final int OP_TYPE_FLOAT = 22;
@@ -57,7 +67,7 @@ public final class SpirvLocalInitializer {
         return result;
     }
 
-    /** The types, function-storage pointers and null constants of one module, and the rewrite they allow. */
+    /** The types, function-storage pointers, null constants and undefs of one module, and the rewrite they allow. */
     private static final class Module {
         private final int[] words;
         private final Map<Integer, int[]> types = new HashMap<>();
@@ -96,37 +106,56 @@ public final class SpirvLocalInitializer {
                     if (count == 4 && words[at + 3] == STORAGE_FUNCTION
                             && plainData(types, functionPointee.get(words[at + 1]))) needed = true;
                 }
+                case OP_UNDEF -> { if (plainData(types, words[at + 1])) needed = true; }
                 default -> { }
             }
         }
 
         /**
          * Every word after the header, with each plain function-scope variable given a null
-         * initializer and any null constant that needed placed before the first function.
+         * initializer, each plain undef made a null constant, and any null constant that
+         * needed placed before the first function.
          */
         private List<Integer> initializedBody() {
             List<Integer> inserted = new ArrayList<>();
             List<Integer> body = new ArrayList<>(words.length + 16);
             for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
-                int opcode = words[at] & 0xFFFF;
-                int count = words[at] >>> 16;
-                Integer pointee = opcode == OP_VARIABLE && count == 4 && words[at + 3] == STORAGE_FUNCTION
-                        ? functionPointee.get(words[at + 1]) : null;
-                if (plainData(types, pointee)) {
-                    body.add((5 << 16) | OP_VARIABLE);
-                    body.add(words[at + 1]);
-                    body.add(words[at + 2]);
-                    body.add(STORAGE_FUNCTION);
-                    body.add(nullConstant(pointee, inserted));
-                    continue;
-                }
-                for (int i = 0; i < count; i++) body.add(words[at + i]);
+                if (initializeVariable(at, body, inserted) || nullUndef(at, body, inserted)) continue;
+                for (int i = 0; i < words[at] >>> 16; i++) body.add(words[at + i]);
             }
             // Null constants are module-level: place them before the first function.
-            // Function-storage variables only occur inside functions, so every
-            // word before it is unchanged.
+            // Every word before it keeps its length: an undef there becomes a null
+            // constant in place, and function variables only occur inside functions.
             body.addAll(firstFunction - HEADER_WORDS, inserted);
             return body;
+        }
+
+        /** Writes the instruction at {@code at} with a null initializer when it is a plain function variable. */
+        private boolean initializeVariable(int at, List<Integer> body, List<Integer> inserted) {
+            boolean variable = (words[at] & 0xFFFF) == OP_VARIABLE && words[at] >>> 16 == 4
+                    && words[at + 3] == STORAGE_FUNCTION;
+            Integer pointee = variable ? functionPointee.get(words[at + 1]) : null;
+            if (!plainData(types, pointee)) return false;
+            body.add((5 << 16) | OP_VARIABLE);
+            body.add(words[at + 1]);
+            body.add(words[at + 2]);
+            body.add(STORAGE_FUNCTION);
+            body.add(nullConstant(pointee, inserted));
+            return true;
+        }
+
+        /**
+         * Declares the plain undef at {@code at} as a null constant with the same id: in place
+         * among the module-level declarations, or before the first function when a function
+         * holds it.
+         */
+        private boolean nullUndef(int at, List<Integer> body, List<Integer> inserted) {
+            if ((words[at] & 0xFFFF) != OP_UNDEF || !plainData(types, words[at + 1])) return false;
+            List<Integer> into = at < firstFunction ? body : inserted;
+            into.add((3 << 16) | OP_CONSTANT_NULL);
+            into.add(words[at + 1]);
+            into.add(words[at + 2]);
+            return true;
         }
 
         /** The null constant of {@code type}, declaring a new one into {@code inserted} when the module has none. */
