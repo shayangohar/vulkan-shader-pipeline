@@ -671,7 +671,8 @@ final class PackFrameState {
         var biome = biomeHolder.value();
         biomeCategory = BiomeIds.category(biomeHolder).ordinal();
         biomeTemperature = biome.getBaseTemperature();
-        rainfall = biome.hasPrecipitation() ? 1.0f : 0.0f;
+        // Iris BiomeUniforms: the biome's downfall, 0.4 in plains (Ebin's cloud coverage reads it).
+        rainfall = biome.getModifiedClimateSettings().downfall();
         eyeAltitude = cameraOrigin.y;
         biomeId = BiomeIds.id(biomeKey(level, biomePos));
         biomePrecipitation = precipitation(biome, biomePos);
