@@ -142,4 +142,33 @@ final class TargetGraphTest {
             }
         }
     }
+
+    /**
+     * A target the pack declares no format for is RGBA8, colortex0 included: Iris starts every
+     * render target at InternalTextureFormat.RGBA, which GL allocates as RGBA8. A declared format
+     * stands.
+     */
+    @Test
+    void undeclaredTargetsAreRgba8(@TempDir Path fixture) throws Exception {
+        Path shaders = Files.createDirectories(fixture.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.vsh"),
+                "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                const int colortex3Format = RGBA16F;
+                uniform sampler2D colortex0;
+                /* DRAWBUFFERS:023 */
+                void main() {
+                    vec4 color = texture2D(colortex0, vec2(0.5));
+                    gl_FragData[0] = color;
+                    gl_FragData[1] = color;
+                    gl_FragData[2] = color;
+                }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(fixture);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        assertEquals(List.of(37, 37, 97), List.of(graph.target(0).format(), graph.target(2).format(),
+                graph.target(3).format()), "undeclared colortex0 and colortex2 are RGBA8; colortex3 is RGBA16F");
+    }
 }

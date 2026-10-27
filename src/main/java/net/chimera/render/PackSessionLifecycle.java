@@ -531,7 +531,7 @@ final class PackSessionLifecycle {
                         || program.samplers().contains("depthtex1")
                         || program.samplers().contains("depthtex2"));
         installIdMaps(result.shadersDir());
-        pass.packHdrFormat = pass.packConfig.colortexFormats().getOrDefault(0, 97);
+        pass.packHdrFormat = pass.packConfig.colortexFormats().getOrDefault(0, PostTargetPlan.DEFAULT_FORMAT);
         loadResourceOwners(result.shadersDir());
         logResourcePlans();
         logPackPrograms(dir);

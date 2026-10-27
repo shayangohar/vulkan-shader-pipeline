@@ -37,6 +37,6 @@ final class PostTargetBridgeTest {
         Map<Integer, Integer> formats = Map.of(4, 37, 7, 109);
         PostTargetPlan formatted = PostTargetPlan.parse(
                 "composite", "/* RENDERTARGETS: 0,4,7 */", formats).plan();
-        assert formatted.outputFormats().equals(List.of(97, 37, 109));
+        assert formatted.outputFormats().equals(List.of(37, 37, 109)); // colortex0 undeclared: RGBA8, as Iris
     }
 }

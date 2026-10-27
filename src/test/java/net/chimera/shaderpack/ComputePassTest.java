@@ -216,7 +216,8 @@ final class ComputePassTest {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), "program.deferred1_b.enabled = false\n");
         for (String pass : List.of("deferred", "deferred1")) {
-            Files.writeString(shaders.resolve(pass + ".fsh"), "#version 120\nuniform sampler2D colortex4;\n"
+            Files.writeString(shaders.resolve(pass + ".fsh"), "#version 120\nconst int colortex4Format = RGBA16F;\n"
+                    + "uniform sampler2D colortex4;\n"
                     + "void main() {\n/* RENDERTARGETS: 4 */\n gl_FragData[0] = texture2D(colortex4, vec2(0.5));\n}\n");
         }
         Files.writeString(shaders.resolve("deferred1_a.csh"), """
@@ -277,7 +278,8 @@ final class ComputePassTest {
     @Test
     void passComputesWriteIntegerTargets(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst int colortex2Format = RGBA16F;\n"
+                + "uniform sampler2D colortex0;\n"
                 + "/*\nconst int colortex11Format = RGBA16I;\nconst int colortex9Format = R32UI;\n*/\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         Files.writeString(shaders.resolve("composite_a.csh"), """
@@ -435,7 +437,8 @@ final class ComputePassTest {
     void passComputesBindStorageBuffers(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.0 = 64\nbufferObject.3 = 16\n");
-        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst int colortex2Format = RGBA16F;\n"
+                + "uniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         Files.writeString(shaders.resolve("composite_a.csh"), """
                 #version 430
@@ -491,7 +494,8 @@ final class ComputePassTest {
     @Test
     void passComputesReadLegacyFog(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst int colortex2Format = RGBA16F;\n"
+                + "uniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         Files.writeString(shaders.resolve("composite_a.csh"), """
                 #version 430 compatibility
@@ -536,7 +540,8 @@ final class ComputePassTest {
     @Test
     void passComputesWriteColortex0(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst int colortex0Format = RGBA16F;\n"
+                + "uniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         // GLSL 4.20 takes qualifiers in any order: RenderPearl writes uniform before layout.
         Files.writeString(shaders.resolve("composite_a.csh"), """
@@ -575,7 +580,8 @@ final class ComputePassTest {
                 indirect.composite2_a = 2 6
                 indirect.composite3_a = 2 sixteen
                 """);
-        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst int colortex2Format = RGBA16F;\n"
+                + "uniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         String compute = """
                 #version 430
@@ -710,7 +716,8 @@ final class ComputePassTest {
     @Test
     void computeOnlyPasses(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst int colortex2Format = RGBA16F;\n"
+                + "uniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         String compute = """
                 #version 430
@@ -750,7 +757,8 @@ final class ComputePassTest {
     @Test
     void setupComputesRunApart(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst int colortex2Format = RGBA16F;\n"
+                + "uniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         Files.writeString(shaders.resolve("shaders.properties"), "uniform.float.myScale = 2.0\n");
         for (String name : List.of("setup", "setup2", "setup10", "setup2_a")) {
@@ -836,7 +844,8 @@ final class ComputePassTest {
     @Test
     void beginComputesRunFirst(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst int colortex2Format = RGBA16F;\n"
+                + "uniform sampler2D colortex0;\n"
                 + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
         for (String name : List.of("begin1_a", "begin1_b", "prepare_a")) {
             Files.writeString(shaders.resolve(name + ".csh"), """

@@ -184,7 +184,10 @@ public final class ChimeraMainPass implements MainPass {
     ConformanceReport conformanceReport;
     /** Pack pipelines are retained until the renderer session is torn down. */
     boolean packPipelinesLoaded;
-    /** HDR buffer format from the pack's colortex0Format; 97 (RGBA16F) when the pack says nothing. */
+    /**
+     * HDR buffer format: a loaded pack's colortex0 format (PostTargetPlan.DEFAULT_FORMAT, RGBA8 as
+     * under Iris, when it declares none); 97 (RGBA16F) for Chimera's own frame without a pack.
+     */
     int packHdrFormat = 97;
     /** True when a loaded post source may sample the HDR depth attachment. */
     boolean packNeedsHdrDepth;

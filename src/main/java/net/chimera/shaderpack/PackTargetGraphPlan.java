@@ -19,6 +19,8 @@ public final class PackTargetGraphPlan {
     /** Keep the graph range identical to the post target parser. */
     public static final int MAX_TARGET = PostTargetPlan.MAX_TARGET;
     public static final int LOGICAL_ATTACHMENT_LIMIT = 8;
+    /** A declared format the device cannot render keeps its range as RGBA16F, not the 8-bit default. */
+    private static final int DEVICE_FALLBACK_FORMAT = 97;
 
     private final List<TargetSpec> targets;
     private final List<TargetStep> steps;
@@ -217,7 +219,7 @@ public final class PackTargetGraphPlan {
             int format = inputs.formats().getOrDefault(target, PostTargetPlan.DEFAULT_FORMAT);
             if (!isSupportedFormat(format)) {
                 deviations.add("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:" + target);
-                format = PostTargetPlan.DEFAULT_FORMAT;
+                format = DEVICE_FALLBACK_FORMAT;
             }
             // Target 0 is the HDR image, cleared each frame to its fog-colour default (ChimeraMainPass).
             float[] clearColor = target == 0 ? setting.clearColorCopy() : setting.irisClearColor(target, null);

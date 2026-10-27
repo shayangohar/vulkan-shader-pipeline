@@ -19,7 +19,12 @@ import java.util.regex.Pattern;
 public final class PostTargetPlan {
     /** Highest logical colortex index: Iris exposes colortex0 through colortex15. */
     public static final int MAX_TARGET = 15;
-    public static final int DEFAULT_FORMAT = 97;
+    /**
+     * A colortex target the pack declares no format for: Iris's RenderTargetSettings starts at
+     * InternalTextureFormat.RGBA, which GL allocates as RGBA8 (VK_FORMAT_R8G8B8A8_UNORM), so it
+     * clamps to [0, 1] as under Iris.
+     */
+    public static final int DEFAULT_FORMAT = 37;
     /**
      * The numbered pass families in the order Iris runs them: the setup computes, then its composite
      * renderers (IrisRenderingPipeline), shadowcomp running after the shadow pass, before prepare.
