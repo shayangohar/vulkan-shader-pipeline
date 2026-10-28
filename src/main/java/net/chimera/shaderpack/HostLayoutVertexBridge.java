@@ -11,17 +11,16 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
 
 /**
  * Converts programs drawn on the host's own vertex layouts, as Iris draws them natively: lines,
- * glint, lightning, beacon beams, leads, text and the water mask in both passes, and the sky and
- * cloud layouts.
+ * lightning, leads, text and the water mask in both passes, glint and beacon beams in the world,
+ * and the sky and cloud layouts.
  */
 final class HostLayoutVertexBridge {
     private HostLayoutVertexBridge() {}
 
     /**
      * Converts the shadow program for a shadow-pass key Iris draws on the host's own layout
-     * (IrisPipelines.assignToShadow: SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_TEXT,
-     * SHADOW_TEXT_BG, SHADOW_BASIC, SHADOW_TEX and SHADOW_TEX_COLOR, and GLINT's
-     * SHADOW_ENTITIES_CUTOUT). It is the shadow_entities bridge on that layout's inputs: the
+     * (SHADOW_LINES, SHADOW_LEASH, SHADOW_LIGHTNING, SHADOW_TEXT, SHADOW_TEXT_BG, SHADOW_BASIC,
+     * SHADOW_TEX and SHADOW_TEX_COLOR). It is the shadow_entities bridge on that layout's inputs: the
      * legacy matrix built-ins name the draw's
      * host blocks, which the pass loads with the light view and projection, and an input the
      * layout lacks reads Iris's value for it. The host-layout preparation has already expanded

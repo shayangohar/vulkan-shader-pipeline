@@ -31,11 +31,6 @@ public record FamilyAdapterPlan(
         SHADOW_LEASH,
         /** shadow_lightning: lightning bolts in the shadow pass (Iris ProgramId.ShadowLightning). */
         SHADOW_LIGHTNING,
-        /**
-         * shadow_glint: glint layers in the shadow pass. Iris draws them with SHADOW_ENTITIES_CUTOUT,
-         * the entity-layout program, on the glint's own POSITION_TEX mesh.
-         */
-        SHADOW_GLINT,
         /** shadow_text: world text and name tags in the shadow pass (Iris SHADOW_TEXT, ProgramId.ShadowEntities). */
         SHADOW_TEXT,
         /** shadow_text_bg: text backgrounds in the shadow pass (Iris SHADOW_TEXT_BG, ProgramId.ShadowEntities). */

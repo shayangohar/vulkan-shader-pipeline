@@ -40,8 +40,6 @@ public final class FamilyAdapterRegistry {
                     UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_LEASH),
             plan("shadow_lightning", FamilyAdapterPlan.Family.SHADOW_LIGHTNING,
                     UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_LIGHTNING),
-            plan("shadow_glint", FamilyAdapterPlan.Family.SHADOW_GLINT,
-                    UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_GLINT),
             plan("shadow_text", FamilyAdapterPlan.Family.SHADOW_TEXT,
                     UniformRegistry.Stage.SHADOW_ENTITY, FamilyAdapterPlan.VertexContract.HOST_TEXT),
             plan("shadow_text_bg", FamilyAdapterPlan.Family.SHADOW_TEXT_BG,
@@ -208,21 +206,20 @@ public final class FamilyAdapterRegistry {
         return family == FamilyAdapterPlan.Family.SHADOW_ENTITIES || family == FamilyAdapterPlan.Family.SHADOW_BLOCK;
     }
 
-    /** A shadow-pass key drawn on the host's own layout (lines, leads, lightning, glint, text, water mask). */
+    /** A shadow-pass key drawn on the host's own layout (lines, leads, lightning, text, water mask). */
     public static boolean isShadowLaneFamily(String name) {
         FamilyAdapterPlan plan = forProgram(name);
         return plan.stage().shadowPass() && plan.vertexContract().hostLayout();
     }
 
     /**
-     * True when Iris's EntityPatcher applies to the lane's ShaderKey format (ENTITY for shadow
-     * glint, GLYPH for shadow text): entityId and blockEntityId are per-vertex attributes there,
-     * which the host mesh lacks, so they read the unbound value 0. Every other host-layout lane
-     * reads them as Iris's CommonUniforms fallback: the draw's entity id and blockEntityId -1.
+     * True when Iris's EntityPatcher applies to the lane's ShaderKey format (GLYPH for shadow
+     * text): entityId and blockEntityId are per-vertex attributes there, which the host mesh
+     * lacks, so they read the unbound value 0. Every other host-layout lane reads them as Iris's
+     * CommonUniforms fallback: the draw's entity id and blockEntityId -1.
      */
     public static boolean readsEntityIdsPerVertex(String name) {
-        FamilyAdapterPlan.Family family = forProgram(name).family();
-        return family == FamilyAdapterPlan.Family.SHADOW_GLINT || family == FamilyAdapterPlan.Family.SHADOW_TEXT;
+        return forProgram(name).family() == FamilyAdapterPlan.Family.SHADOW_TEXT;
     }
 
     public static boolean isParticleLike(String name) {
@@ -241,8 +238,8 @@ public final class FamilyAdapterRegistry {
 
     /**
      * Lanes whose pack program runs on a host vertex layout Iris also draws natively: lines,
-     * glint, lightning, beacon beams and leads, and in the shadow pass also text and the
-     * water mask.
+     * glint, lightning, beacon beams and leads, and in the shadow pass lines, leads, lightning,
+     * text and the water mask.
      */
     public static boolean isHostLayoutFamily(String name) {
         return forProgram(name).vertexContract().hostLayout();

@@ -594,7 +594,7 @@ final class HostFamilyTest {
         }
         for (String program : List.of("gbuffers_line", "gbuffers_armor_glint", "gbuffers_lightning",
                 "gbuffers_beaconbeam", "gbuffers_basic", "shadow_lines", "shadow_leash", "shadow_lightning",
-                "shadow_glint", "shadow_text", "shadow_text_bg", "shadow_basic", "text_bg", "gbuffers_textured",
+                "shadow_text", "shadow_text_bg", "shadow_basic", "text_bg", "gbuffers_textured",
                 "textured_color", "shadow_tex", "shadow_tex_color")) {
             assertTrue(servedPrograms.contains(program), program + " has no host-layout lane");
         }

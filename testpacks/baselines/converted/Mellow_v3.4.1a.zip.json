@@ -91,8 +91,6 @@
   "shadow_entities [moving-block input variant Position,Color,UV0,UV2,Normal].vsh": "f6f7241382e0c372 dc878888fa8c8ca9",
   "shadow_entities.fsh": "3c73acae252a9dd4 e79090e5d2340bc4",
   "shadow_entities.vsh": "27d8eafe587ee196 a33a61d73358d6db",
-  "shadow_glint.fsh": "3c73acae252a9dd4 e79090e5d2340bc4",
-  "shadow_glint.vsh": "22f4f5e987ecb1b6 b4e45da1725054b4",
   "shadow_leash.fsh": "3c73acae252a9dd4 e79090e5d2340bc4",
   "shadow_leash.vsh": "6a41e89a39e46718 2560ba7dd11ed1ad",
   "shadow_lightning.fsh": "3c73acae252a9dd4 e79090e5d2340bc4",

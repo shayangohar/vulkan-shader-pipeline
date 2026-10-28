@@ -199,7 +199,6 @@ record PackResolutionPlan(
         addKeyChain(result, "shadow_lines", "shadow");
         addKeyChain(result, "shadow_leash", "shadow");
         addKeyChain(result, "shadow_basic", "shadow");
-        addKeyChain(result, "shadow_glint", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text_bg", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_tex", "shadow");

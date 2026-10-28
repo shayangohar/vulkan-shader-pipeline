@@ -59,7 +59,9 @@ public enum HostLayoutLane {
      * The shadow pass. Shadow lanes report ENTITIES, the phase Iris ShadowRenderer holds for
      * entities; Iris reports BLOCK_ENTITIES for a block entity's own draws (sign text here), which
      * only the family lanes follow (ChimeraEntityBridge.writePhase). Iris cancels beacon beams,
-     * which stay out of the shadow map.
+     * which stay out of the shadow map. Glint has no shadow lane either: Iris 1.21.1 keys glint to
+     * GLINT in every pass, so in the shadow pass its main program draws into the gbuffers, not the
+     * shadow map, and Chimera drops those draws (ChimeraEntityBridge.dropsHostDraw).
      */
     /** Iris SHADOW_LINES: fishing lines and hitboxes, the shadow program widened like gbuffers_basic. */
     SHADOW_LINES(ChimeraEntityBridge.Family.SHADOW_LINES, "shadow_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL,
@@ -71,9 +73,6 @@ public enum HostLayoutLane {
     SHADOW_LIGHTNING(ChimeraEntityBridge.Family.SHADOW_LIGHTNING, "shadow_lightning",
             DefaultVertexFormat.POSITION_COLOR, PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.OFF,
             "rendertype_lightning"),
-    /** Iris GLINT -> SHADOW_ENTITIES_CUTOUT: glint layers on items already in the map. */
-    SHADOW_GLINT(ChimeraEntityBridge.Family.SHADOW_GLINT, "shadow_glint", DefaultVertexFormat.POSITION_TEX,
-            PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.ONE_TENTH, Shaders.GLINT),
     /** Iris SHADOW_TEXT and SHADOW_TEXT_INTENSITY: sign text, text displays and name tags. */
     SHADOW_TEXT(ChimeraEntityBridge.Family.SHADOW_TEXT, "shadow_text", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
             PackRenderingPhase.ENTITIES, Pass.SHADOW, AlphaTest.NON_ZERO, "rendertype_text",

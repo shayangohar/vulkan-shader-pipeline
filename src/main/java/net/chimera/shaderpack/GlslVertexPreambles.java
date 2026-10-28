@@ -502,22 +502,6 @@ final class GlslVertexPreambles {
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
     /**
-     * The POSITION_TEX glint mesh under Iris's shadow program for it, SHADOW_ENTITIES_CUTOUT on
-     * the ENTITY layout: the mesh supplies position and texture coordinates, and every other
-     * ENTITY input reads GL's unbound-attribute default (0, 0, 0, 1).
-     */
-    static final String SHADOW_GLINT_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("layout(location = 1) in vec4 Color;", "const vec4 Color = vec4(0.0, 0.0, 0.0, 1.0);")
-            .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
-            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
-            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(0);")
-            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0);")
-            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "const vec2 MidTexCoord = vec2(0.0);")
-            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
-
-    /**
      * The shadow bridge's input preamble for a host-layout shadow lane: the layout's inputs, then
      * the chimera*Value helpers the shadow converter reads. As under Iris's VanillaTransformer,
      * gl_Color is the vertex colour times the host colour modulator, mc_Entity, mc_midTexCoord,
@@ -529,7 +513,6 @@ final class GlslVertexPreambles {
             case HOST_LINE -> LINE_VERTEX_PREAMBLE;
             case HOST_LIGHTNING -> LIGHTNING_VERTEX_PREAMBLE;
             case HOST_LEASH, HOST_TEXT_BACKGROUND -> LEASH_VERTEX_PREAMBLE;
-            case HOST_GLINT -> SHADOW_GLINT_VERTEX_PREAMBLE;
             case HOST_TEXT -> TEXT_VERTEX_PREAMBLE;
             case HOST_WATER_MASK -> WATER_MASK_VERTEX_PREAMBLE;
             case HOST_POSITION_TEX -> TEXTURED_VERTEX_PREAMBLE;

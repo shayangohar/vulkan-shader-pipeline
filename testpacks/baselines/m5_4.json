@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "shadow": {
-      "reportSha256": "d674f3f23e39745d64621cd3695bbb0334201d5f60b02968a3a55039eeb7eda0",
+      "reportSha256": "a69e25d063e0067f95f532d2cc938ee0aa8425d4d83c92ceb6089103e23b4bbc",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -31,10 +31,6 @@
           "vertex"
         ],
         "shadow_entities": [
-          "fragment",
-          "vertex"
-        ],
-        "shadow_glint": [
           "fragment",
           "vertex"
         ],
@@ -112,13 +108,6 @@
           "SHADOW_ENTITY_STATE_FIXED_TO_HOST",
           "SHADOW_ENTITY_VERTEX_BRIDGE"
         ],
-        "shadow_glint": [
-          "FAMILY_ADAPTER_INSTALLED",
-          "LIVE_UNIFORM_BRIDGE",
-          "PROGRAM_ALIAS_RECORDED:shadow_glint->shadow",
-          "SHADOW_GLINT_STATE_FIXED_TO_HOST",
-          "SHADOW_GLINT_VERTEX_BRIDGE"
-        ],
         "shadow_leash": [
           "FAMILY_ADAPTER_INSTALLED",
           "LIVE_UNIFORM_BRIDGE",
@@ -184,7 +173,7 @@
       }
     },
     "unsupported_shadow": {
-      "reportSha256": "1191c6fd9cad525dfef139c3fa32577214df449c4b950cfe1cac9181cbaec84a",
+      "reportSha256": "762327dac79c7c1e05d663e44210c125b7f2b188ccec9345fd613b6a0c251b4c",
       "expectedPassInventory": [
         "composite",
         "final"
@@ -213,10 +202,6 @@
           "vertex"
         ],
         "shadow_entities": [
-          "fragment",
-          "vertex"
-        ],
-        "shadow_glint": [
           "fragment",
           "vertex"
         ],
@@ -287,12 +272,6 @@
           "LIVE_UNIFORM_BRIDGE",
           "PROGRAM_ALIAS_RECORDED:shadow_entities->shadow",
           "SHADOW_ENTITY_VERTEX_BRIDGE",
-          "SHADOW_SAMPLER_UNSUPPORTED:volume"
-        ],
-        "shadow_glint": [
-          "LIVE_UNIFORM_BRIDGE",
-          "PROGRAM_ALIAS_RECORDED:shadow_glint->shadow",
-          "SHADOW_GLINT_VERTEX_BRIDGE",
           "SHADOW_SAMPLER_UNSUPPORTED:volume"
         ],
         "shadow_leash": [

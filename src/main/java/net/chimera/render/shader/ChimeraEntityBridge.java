@@ -85,7 +85,6 @@ public final class ChimeraEntityBridge {
         SHADOW_LINES,
         SHADOW_LEASH,
         SHADOW_LIGHTNING,
-        SHADOW_GLINT,
         SHADOW_TEXT,
         SHADOW_TEXT_BG,
         SHADOW_BASIC,

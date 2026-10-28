@@ -122,11 +122,11 @@ final class ShadowPassTest {
     }
 
     /**
-     * The shadow pass's host-layout lanes (Iris IrisPipelines.assignToShadow): each key runs the
-     * Iris program it names through the fallback chain, never a pack file of its own name, on its
-     * host layout with Iris's inputs. Leads, lines, lightning, text backgrounds and the water mask
-     * read entityId per draw and blockEntityId -1; glint and text read the unbound per-vertex 0.
-     * Lines are widened. Every lane tests alpha per draw and compiles.
+     * The shadow pass's host-layout lanes: each key runs the Iris program it names through the
+     * fallback chain, never a pack file of its own name, on its host layout with Iris's inputs.
+     * Leads, lines, lightning, text backgrounds and the water mask read entityId per draw and
+     * blockEntityId -1; text reads the unbound per-vertex 0. Lines are widened. Every lane tests
+     * alpha per draw and compiles.
      */
     @Test
     void shadowLaneRoutes() {
@@ -136,7 +136,6 @@ final class ShadowPassTest {
                 new Draw("rendertype_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL), HostLayoutLane.SHADOW_LINES,
                 new Draw("rendertype_leash", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP), HostLayoutLane.SHADOW_LEASH,
                 new Draw("rendertype_lightning", DefaultVertexFormat.POSITION_COLOR), HostLayoutLane.SHADOW_LIGHTNING,
-                new Draw("rendertype_glint", DefaultVertexFormat.POSITION_TEX), HostLayoutLane.SHADOW_GLINT,
                 new Draw("rendertype_text", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP),
                 HostLayoutLane.SHADOW_TEXT,
                 new Draw("rendertype_text_see_through", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP),
@@ -152,12 +151,16 @@ final class ShadowPassTest {
         // Iris cancels beacon beams in the shadow pass: they stay out of the map.
         assertTrue(HostLayoutLane.forDraw("rendertype_beacon_beam", DefaultVertexFormat.BLOCK, shadowPass) == null,
                 "beacon beams have no shadow lane");
+        // Iris 1.21.1 keys glint to GLINT in every pass, so its main program draws there and no
+        // glint reaches the shadow map: glint has no shadow lane and its draws are dropped.
+        for (String glint : HostLayoutLane.GLINT.shaders()) {
+            assertTrue(HostLayoutLane.forDraw(glint, DefaultVertexFormat.POSITION_TEX, shadowPass) == null,
+                    glint + " has no shadow lane");
+        }
         assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT.alphaReference(),
                 "Iris SHADOW_TEXT: NON_ZERO_ALPHA");
         assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT_BG.alphaReference(),
                 "Iris SHADOW_TEXT_BG: NON_ZERO_ALPHA");
-        assertEquals(0.1F, HostLayoutLane.SHADOW_GLINT.alphaReference(),
-                "Iris GLINT in the shadow pass: SHADOW_ENTITIES_CUTOUT, ONE_TENTH_ALPHA");
         for (var lane : List.of(HostLayoutLane.SHADOW_LINES,
                 HostLayoutLane.SHADOW_LEASH,
                 HostLayoutLane.SHADOW_LIGHTNING,
@@ -181,9 +184,7 @@ final class ShadowPassTest {
                 "shadow_lightning", List.of("layout(location = 1) in vec4 Color;", "const ivec2 UV2 = ivec2(240);"),
                 "shadow_text_bg", List.of("layout(location = 2) in ivec2 UV2;", "const vec2 UV0 = vec2(0.5);"),
                 "shadow_basic", List.of("const vec4 Color = vec4(1.0);", "const ivec2 UV2 = ivec2(240);"),
-                "shadow_text", List.of("layout(location = 2) in vec2 UV0;", "layout(location = 3) in ivec2 UV2;"),
-                "shadow_glint", List.of("layout(location = 1) in vec2 UV0;",
-                        "const vec4 Color = vec4(0.0, 0.0, 0.0, 1.0);"));
+                "shadow_text", List.of("layout(location = 2) in vec2 UV0;", "layout(location = 3) in ivec2 UV2;"));
         for (var entry : inputs.entrySet()) {
             assertShadowLaneProgram(analysis, entry.getKey(), entry.getValue());
         }
@@ -197,7 +198,7 @@ final class ShadowPassTest {
         for (String key : List.of("shadow_lines", "shadow_leash", "shadow_basic")) {
             assertEquals("shadow", authored.resolution(key).selectedProgram(), key + " is Iris ProgramId.Shadow");
         }
-        for (String key : List.of("shadow_text", "shadow_text_bg", "shadow_glint", "shadow_lightning")) {
+        for (String key : List.of("shadow_text", "shadow_text_bg", "shadow_lightning")) {
             assertEquals("shadow_entities", authored.resolution(key).selectedProgram(),
                     key + " is Iris ProgramId.ShadowEntities (shadow_lightning falls back to it)");
         }
