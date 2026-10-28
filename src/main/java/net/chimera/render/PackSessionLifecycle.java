@@ -7,7 +7,6 @@ import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.shader.RenderedItemIds;
-import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.HandLightDirectives;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackConfig;
@@ -647,8 +646,7 @@ final class PackSessionLifecycle {
                 pass.packAdvancedImageOwner, pass.packStorageBufferOwner);
         for (String compute : pass.packPassComputes.installedNames()) {
             if (pass.conformanceReport != null && pass.conformanceReport.program(compute) != null) {
-                pass.conformanceReport.markRuntime(compute, ConformanceReport.RuntimeDisposition.INSTALLED,
-                        "PASS_COMPUTE_INSTALLED");
+                pass.conformanceReport.markPassComputeInstalled(compute);
             }
         }
     }

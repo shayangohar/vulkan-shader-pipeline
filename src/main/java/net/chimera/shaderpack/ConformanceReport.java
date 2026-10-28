@@ -181,6 +181,18 @@ public final class ConformanceReport {
         ));
     }
 
+    /**
+     * Records that a pass's computes loaded. A pass of computes alone is then installed. A pass that
+     * also draws keeps its disposition for its program's install, which decides it: Iris runs the
+     * pass's computes and then its program, so a program left unattempted here would never draw.
+     */
+    public void markPassComputeInstalled(String name) {
+        ProgramReport program = programs.get(name);
+        RuntimeDisposition runtime = program != null && program.stages().contains("fragment")
+                ? program.runtime() : RuntimeDisposition.INSTALLED;
+        markRuntime(name, runtime, "PASS_COMPUTE_INSTALLED");
+    }
+
     public void markUnattemptedAsFallback() {
         for (ProgramReport program : List.copyOf(programs.values())) {
             if (program.runtime() == RuntimeDisposition.NOT_ATTEMPTED) {
