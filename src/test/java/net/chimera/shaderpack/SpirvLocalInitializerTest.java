@@ -149,6 +149,57 @@ final class SpirvLocalInitializerTest {
         assertTrue(SpirvLocalInitializer.apply(initialized) == initialized, "initializer is not idempotent");
     }
 
+    /**
+     * BSL's world programs store their light-colour table after the short-circuit test of an
+     * earlier initializer, and zeroing it first made each terrain draw ten times slower. A store
+     * that comes first on every path to every read is enough; a variable written on one path
+     * only, or an output an early return leaves unwritten, still starts at zero.
+     */
+    @Test
+    void storesAfterBranches() {
+        String source = """
+                #version 460
+                layout(location = 0) in vec3 pos;
+                layout(location = 1) flat in int held;
+                layout(location = 0) out vec4 color;
+                layout(location = 1) out vec4 glow;
+                layout(binding = 0) uniform Frame { float timeAngle; };
+                void main() {
+                    float side = 1.0;
+                    if (timeAngle < 0.25 || timeAngle > 0.75) side = -1.0;
+                    vec3 lightColors[4] = vec3[](vec3(4.0, 1.0, 1.0), vec3(1.0, 4.0, 1.0),
+                                                 vec3(1.0, 1.0, 4.0), vec3(4.0));
+                    float fade;
+                    if (held > 2) fade = 0.5;
+                    vec3 light = vec3(side * fade);
+                    if (held >= 1 && held <= 4) light += lightColors[held - 1];
+                    color = vec4(light * pos, 1.0);
+                    if (held == 0) return;
+                    glow = vec4(light, 1.0);
+                }
+                """;
+        int[] initialized = SpirvLocalInitializer.apply(words(compile(source)));
+        Map<String, Integer> names = names(initialized);
+        Map<Integer, Integer> wordCounts = new HashMap<>();
+        int firstLabel = -1;
+        int tableStore = -1;
+        for (int at = 5; at < initialized.length; at += initialized[at] >>> 16) {
+            int opcode = initialized[at] & 0xFFFF;
+            if (opcode == 59) wordCounts.put(initialized[at + 2], initialized[at] >>> 16);
+            if (opcode == 248 && firstLabel < 0) firstLabel = at;
+            if (opcode == 62 && initialized[at + 1] == names.get("lightColors")) tableStore = at;
+        }
+        int secondLabel = firstLabel;
+        do secondLabel += initialized[secondLabel] >>> 16; while ((initialized[secondLabel] & 0xFFFF) != 248);
+        assertTrue(tableStore > secondLabel, "the table is stored in the first block; the fixture lost its branch");
+        assertEquals(4, wordCounts.get(names.get("lightColors")), "the table stored before its reads has one");
+        assertEquals(4, wordCounts.get(names.get("light")), "a local stored after branches, before its reads, has one");
+        assertEquals(5, wordCounts.get(names.get("fade")), "a local written on one path only lost its initializer");
+        assertEquals(4, wordCounts.get(names.get("color")), "an output written before every return has an initializer");
+        assertEquals(5, wordCounts.get(names.get("glow")), "an output an early return leaves unwritten lost its one");
+        assertTrue(SpirvLocalInitializer.apply(initialized) == initialized, "initializer is not idempotent");
+    }
+
     /** Each OpName's string and target; the first target where a name repeats. */
     private static Map<String, Integer> names(int[] words) {
         Map<String, Integer> names = new HashMap<>();

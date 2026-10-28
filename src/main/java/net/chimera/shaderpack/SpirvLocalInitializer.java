@@ -39,12 +39,14 @@ import java.util.Set;
  * registers held there, and the reprojected history spread it as bright
  * single-colour specks along every edge against the sky.</p>
  *
- * <p>A variable its function writes whole before anything can read it keeps no
- * initializer: glslang stores a GLSL initializer at the top of the function, so
- * the zero is never seen, under GL or here. The null still costs: NVIDIA then
+ * <p>A variable every path writes whole before anything can read it keeps no
+ * initializer ({@link SpirvWrittenFirst}): a GLSL initializer is such a write,
+ * so the zero is never seen, under GL or here. The null still costs: NVIDIA then
  * fills the variable per invocation. BSL's shadowcomp copies two colour tables
  * (75 vec3) into private globals this way, and zeroing them first took its
- * dispatch from 0.2 ms to 33 ms on an RTX 5080.</p>
+ * dispatch from 0.2 ms to 33 ms on an RTX 5080. In BSL's world programs the
+ * optimizer makes such tables locals stored after a branch; zeroing those made
+ * each terrain draw ten times slower with multicoloured block light on.</p>
  */
 public final class SpirvLocalInitializer {
     private static final int MAGIC = 0x07230203;
@@ -61,13 +63,9 @@ public final class SpirvLocalInitializer {
     private static final int OP_TYPE_POINTER = 32;
     private static final int OP_CONSTANT_NULL = 46;
     private static final int OP_FUNCTION = 54;
-    private static final int OP_FUNCTION_END = 56;
-    private static final int OP_FUNCTION_CALL = 57;
     private static final int OP_VARIABLE = 59;
-    private static final int OP_STORE = 62;
     private static final int OP_DECORATE = 71;
     private static final int OP_MEMBER_DECORATE = 72;
-    private static final int OP_LABEL = 248;
     private static final int DECORATION_BUILT_IN = 11;
     private static final int STORAGE_OUTPUT = 3;
     private static final int STORAGE_PRIVATE = 6;
@@ -111,7 +109,7 @@ public final class SpirvLocalInitializer {
         private final Map<Integer, Integer> storage = new HashMap<>();
         private final List<Integer> variables = new ArrayList<>();
         private final Set<Integer> entryFunctions = new HashSet<>();
-        /** Variables their function writes whole before anything can read them. */
+        /** Variables every path writes whole before anything can read them. */
         private final Set<Integer> writtenFirst = new HashSet<>();
         private boolean outputStages = true;
         private int firstFunction = -1;
@@ -130,7 +128,7 @@ public final class SpirvLocalInitializer {
                 if (count == 0) return false;
                 record(words[at] & 0xFFFF, at, count);
             }
-            findWrittenFirst();
+            writtenFirst.addAll(SpirvWrittenFirst.find(words, firstFunction, storage, entryFunctions));
             for (int at : variables) needed |= initializable(at) != null;
             return true;
         }
@@ -157,56 +155,6 @@ public final class SpirvLocalInitializer {
             }
         }
 
-        /**
-         * Finds the variables each function's first block stores whole before any instruction
-         * there names them: the function's own locals, and module-scope variables when the
-         * function is the module's only entry point. The block is read up to its first call,
-         * which may read any global.
-         */
-        private void findWrittenFirst() {
-            Set<Integer> named = new HashSet<>();
-            int function = -1;
-            boolean started = false;
-            boolean firstBlock = false;
-            for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
-                int opcode = words[at] & 0xFFFF;
-                switch (opcode) {
-                    case OP_FUNCTION -> {
-                        function = words[at + 2];
-                        started = false;
-                        named.clear();
-                    }
-                    case OP_LABEL -> {
-                        firstBlock = !started;
-                        started = true;
-                    }
-                    case OP_FUNCTION_CALL, OP_FUNCTION_END -> firstBlock = false;
-                    case OP_VARIABLE -> { }
-                    default -> { if (firstBlock) readFirstBlock(at, opcode, function, named); }
-                }
-            }
-        }
-
-        /** Records a whole store to a variable nothing named before it, then every variable the instruction names. */
-        private void readFirstBlock(int at, int opcode, int function, Set<Integer> named) {
-            if (opcode == OP_STORE && !named.contains(words[at + 1]) && storedFirstIn(words[at + 1], function)) {
-                writtenFirst.add(words[at + 1]);
-            }
-            for (int i = at + 1; i < at + (words[at] >>> 16); i++) {
-                if (storage.containsKey(words[i])) named.add(words[i]);
-            }
-        }
-
-        /**
-         * Whether {@code function}'s first block runs before anything can read {@code variable}:
-         * for a local, its own function; for a module-scope variable, the module's only entry point.
-         */
-        private boolean storedFirstIn(int variable, int function) {
-            Integer kind = storage.get(variable);
-            if (kind == null) return false;
-            return kind == STORAGE_FUNCTION || entryFunctions.size() == 1 && entryFunctions.contains(function);
-        }
-
         /** Records a BuiltIn decoration's target: a variable, or a struct through one of its members. */
         private void recordBuiltIn(int opcode, int at) {
             int decoration = opcode == OP_DECORATE ? words[at + 2] : words[at + 3];
@@ -216,7 +164,7 @@ public final class SpirvLocalInitializer {
         /**
          * The pointee of the uninitialized variable at {@code at} when it takes a null initializer:
          * a plain function local or private global, or a plain output of a stage whose outputs
-         * start at zero, built-ins aside, that its function does not write whole first. Null otherwise.
+         * start at zero, built-ins aside, that is not written whole first. Null otherwise.
          */
         private Integer initializable(int at) {
             if ((words[at] & 0xFFFF) != OP_VARIABLE || words[at] >>> 16 != 4) return null;
