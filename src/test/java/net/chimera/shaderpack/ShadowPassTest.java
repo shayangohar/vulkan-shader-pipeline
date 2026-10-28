@@ -14,6 +14,7 @@ import org.objectweb.asm.tree.MethodInsnNode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -367,28 +368,36 @@ final class ShadowPassTest {
         return frustum.visible(x, y, z, x + 1.0F, y + 1.0F, z + 1.0F);
     }
 
-    /** Iris renders shadows before any terrain: the shadow segment runs before the opaque layer draws. */
+    /**
+     * Iris's order before the sky (IrisRenderingPipeline.renderShadows): VulkanMod's section setup,
+     * whose indirect-buffer reset must precede the shadow draws, then the shadow pass, then the
+     * prepare passes. The frame's later setup call is skipped, and the terrain layers no longer
+     * render shadows.
+     */
     @Test
     void shadowPassOrder() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/WorldRendererMixin");
-        assertTrue(MixinBytecode.injects(mixin, "Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;",
-                "renderSectionLayer", null), "the terrain layers must be wrapped");
-        var hook = mixin.methods.stream().filter(method -> method.name.equals("chimera$terrainLayer")).findFirst()
-                .orElseThrow();
-        int shadow = -1;
-        int layer = -1;
-        int index = 0;
-        for (var instruction : hook.instructions) {
-            if (instruction instanceof MethodInsnNode call) {
-                if (call.name.equals("renderShadowSegment") && shadow < 0) shadow = index;
-                if (shadow >= 0 && layer < 0 && call.name.equals("call")
-                        && call.owner.equals("com/llamalad7/mixinextras/injector/wrapoperation/Operation")) {
-                    layer = index;
-                }
+        var levelRenderer = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLevelRendererMixin");
+        assertTrue(MixinBytecode.injects(levelRenderer, "Lorg/spongepowered/asm/mixin/injection/Inject;",
+                "renderLevel", "Lnet/minecraft/client/renderer/LevelRenderer;renderSky(Lorg/joml/Matrix4f;"
+                        + "Lorg/joml/Matrix4f;FLnet/minecraft/client/Camera;ZLjava/lang/Runnable;)V"),
+                "the shadow and prepare passes must run at the sky call");
+        List<String> calls = new ArrayList<>();
+        for (var instruction : MixinBytecode.instructionsThrough(
+                MixinBytecode.nativeClass("net/chimera/render/PreSkyPasses"), "render")) {
+            if (instruction instanceof MethodInsnNode call
+                    && List.of("setupRenderer", "renderShadowSegment", "runPrepareWindow").contains(call.name)) {
+                calls.add(call.name);
             }
-            index++;
         }
-        assertTrue(shadow >= 0 && layer > shadow, "the shadow map must render before the opaque layer samples it");
+        assertEquals(List.of("setupRenderer", "renderShadowSegment", "runPrepareWindow"), calls,
+                "section setup, then shadows, then prepare");
+        var worldRenderer = MixinBytecode.nativeClass("net/chimera/mixin/WorldRendererMixin");
+        assertTrue(MixinBytecode.injects(worldRenderer, "Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;",
+                "setupRenderer", null), "the frame's second section setup must be skippable");
+        assertTrue(MixinBytecode.instructionsThrough(worldRenderer, "chimera$terrainLayer").stream()
+                        .noneMatch(instruction -> instruction instanceof MethodInsnNode call
+                                && call.name.equals("renderShadowSegment")),
+                "the terrain layers must not render shadows after the sky");
     }
 
     /** BSL-style legacy shadow program: terrain attributes, both identities and both shadow colours. */

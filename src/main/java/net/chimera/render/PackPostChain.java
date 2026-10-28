@@ -120,32 +120,48 @@ final class PackPostChain {
         }
     }
 
-    /** Whether a frame opens with pack work: setup computes due, or a begin or prepare pass. */
+    /** Whether a frame opens with pack work: setup computes due, or a begin pass. */
     boolean hasOpeningWork() {
         return pass.packPassComputes != null && pass.packPassComputes.setupDue()
-                || pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.BEGIN)
-                || pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE);
+                || pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.BEGIN);
+    }
+
+    /** Whether the pack has prepare passes, which run before the sky (PreSkyPasses). */
+    boolean hasPrepareWork() {
+        return pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE);
     }
 
     /**
-     * Runs the setup computes when due, then the BEGIN window, then the PREPARE window, over the
-     * freshly cleared world target, then reopens it. Iris runs the begin passes after the clear
-     * passes, before the sky.
+     * Runs the setup computes when due, then the BEGIN window, over the freshly cleared world
+     * target, then reopens it. Iris runs the begin passes after the clear passes, before the shadow
+     * pass and the sky.
      */
     void runOpeningWindows(VkCommandBuffer commandBuffer) {
+        runOverWorldTarget(commandBuffer, true, PackFrameSchedulePlan.PostWindow.BEGIN);
+    }
+
+    /** Runs the PREPARE window over the world target, after the shadow pass and before the sky. */
+    void runPrepareWindow(VkCommandBuffer commandBuffer) {
+        runOverWorldTarget(commandBuffer, false, PackFrameSchedulePlan.PostWindow.PREPARE);
+    }
+
+    /**
+     * Closes the world pass, runs the setup computes when due and {@code setup} allows, then
+     * {@code window}, adopts colortex0 into the world target and reopens it.
+     */
+    private void runOverWorldTarget(VkCommandBuffer commandBuffer, boolean setup,
+                                    PackFrameSchedulePlan.PostWindow window) {
         Renderer.getInstance().endRenderPass(commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            if (pass.packPassComputes != null && pass.packPassComputes.setupDue() && pass.packPostFrameStarted) {
+            if (setup && pass.packPassComputes != null && pass.packPassComputes.setupDue()
+                    && pass.packPostFrameStarted) {
                 // Iris's setup computes, after a full clear of new targets and before the begin passes.
                 pass.packPassComputes.dispatchSetup(commandBuffer, computeSources(commandBuffer));
                 if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
             }
-            for (PackFrameSchedulePlan.PostWindow window
-                    : List.of(PackFrameSchedulePlan.PostWindow.BEGIN, PackFrameSchedulePlan.PostWindow.PREPARE)) {
-                if (pass.packFrameSchedule.hasWindow(window)) runPackPostWindow(commandBuffer, hdrColor, window);
-            }
+            if (pass.packFrameSchedule.hasWindow(window)) runPackPostWindow(commandBuffer, hdrColor, window);
             if (pass.packPostChainActive) {
                 pass.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
             }

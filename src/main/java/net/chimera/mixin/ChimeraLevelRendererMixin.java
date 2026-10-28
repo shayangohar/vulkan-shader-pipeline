@@ -8,12 +8,14 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.PreSkyPasses;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.FamilyBufferSource;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.ParticleDirectives;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.particle.ParticleRenderType;
 import net.minecraft.client.renderer.GameRenderer;
@@ -22,6 +24,7 @@ import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
@@ -37,6 +40,7 @@ import java.util.function.Predicate;
  * - HEAD captures the frame the pack uniforms read and opens the family lanes' world window.
  * - The world clear opens the internal RGBA16F world target instead, cleared as the pack asks,
  *   with the fog colour FogRenderer has just set.
+ * - Just before the sky, the shadow pass and the prepare passes run, as in Iris (PreSkyPasses).
  * - The level's family batches are held to Iris's translucent boundary, where they draw before the
  *   centre-depth sample and the solid hand; with separateEntityDraws the late kinds wait for the
  *   deferred passes at the translucent terrain layer (WorldRendererMixin).
@@ -53,6 +57,8 @@ public abstract class ChimeraLevelRendererMixin {
     private static final String RENDER_ENTITY = "Lnet/minecraft/client/renderer/LevelRenderer;renderEntity("
             + "Lnet/minecraft/world/entity/Entity;DDDFLcom/mojang/blaze3d/vertex/PoseStack;"
             + "Lnet/minecraft/client/renderer/MultiBufferSource;)V";
+    private static final String RENDER_SKY = "Lnet/minecraft/client/renderer/LevelRenderer;renderSky("
+            + "Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;FLnet/minecraft/client/Camera;ZLjava/lang/Runnable;)V";
 
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void chimera$beginFrame(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
@@ -60,6 +66,7 @@ public abstract class ChimeraLevelRendererMixin {
                                     Matrix4f projection, CallbackInfo ci) {
         ChimeraHandRenderer.beginFrame();
         FamilyBufferSource.beginLevel();
+        PreSkyPasses.beginFrame();
         if (ChimeraRenderer.beginLevelSegments()) {
             ChimeraEntityBridge.beginWorldWindow();
             PackUniformProvider.beginFrame(camera, deltaTracker.getGameTimeDeltaPartialTick(false),
@@ -79,6 +86,24 @@ public abstract class ChimeraLevelRendererMixin {
         float[] fog = RenderSystem.getShaderFogColor();
         Vec3 position = camera.getPosition();
         pass.openLevelSegment(position.x, position.y, position.z, new float[] {fog[0], fog[1], fog[2]});
+    }
+
+    /**
+     * Iris's shadow pass and prepare passes, just before the sky (PreSkyPasses), with the frustum
+     * renderLevel then passes setupRender: the captured one if the debug key froze it, else the
+     * culling frustum.
+     */
+    @Inject(method = "renderLevel", at = @At(value = "INVOKE", target = RENDER_SKY), require = 1)
+    private void chimera$beforeSky(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
+                                   GameRenderer gameRenderer, LightTexture lightTexture, Matrix4f modelView,
+                                   Matrix4f projection, CallbackInfo ci) {
+        ChimeraMainPass pass = ChimeraRenderer.segmentsActive() ? ChimeraRenderer.getMainPass() : null;
+        if (pass == null) return;
+        var renderer = (ChimeraLevelRendererAccessor) this;
+        Frustum captured = renderer.chimera$capturedFrustum();
+        Player player = Minecraft.getInstance().player;
+        PreSkyPasses.render(pass, camera, captured != null ? captured : renderer.chimera$cullingFrustum(),
+                captured != null, player != null && player.isSpectator());
     }
 
     /**

@@ -69,8 +69,8 @@ final class PackShadowPass {
     private String shadowTerrainProgram = "shadow";
 
     /**
-     * Armed at level-segment HEAD, consumed at the opaque layer's head
-     * (WorldRendererMixin): guarantees exactly one shadow segment per frame.
+     * Armed at level-segment HEAD, consumed just before the sky
+     * (PreSkyPasses): guarantees exactly one shadow segment per frame.
      */
     boolean shadowPending;
 
@@ -427,16 +427,13 @@ final class PackShadowPass {
     }
 
     /**
-     * Renders the shadow map at the head of the opaque section layer, before
-     * any terrain draw samples it, as Iris renders shadows first. Closes the
-     * HDR pass opened at HEAD, draws the casters from the light's perspective
-     * into the shadow map, then reopens the HDR pass (load ops) so the
-     * terrain layers draw into it.
+     * Renders the shadow map just before the sky, as Iris does (PreSkyPasses). Closes the HDR
+     * pass, draws the casters from the light's perspective into the shadow map, then reopens the
+     * HDR pass (load ops) for the sky and terrain.
      *
-     * Timing matters: by this point cullTerrain has updated VulkanMod's
-     * section graph for this frame. The shadow phase draws its own sections
-     * chosen from the light volume ({@link ShadowSectionQueue}), not the
-     * camera's culled queues.
+     * Timing matters: VulkanMod's section setup for this frame has run by this point (it resets
+     * the indirect draws this pass records). The shadow phase draws its own sections chosen from
+     * the light volume ({@link ShadowSectionQueue}), not the camera's culled queues.
      */
     public void renderShadowSegment(double cameraX, double cameraY, double cameraZ) {
         if (!this.shadowMap.isInitialized() || !this.shadowFrameReady || !shadowAttachmentsLive()) {
@@ -500,8 +497,8 @@ final class PackShadowPass {
 
     /**
      * Readies the frame's shadow map at level-segment HEAD: computes the light once before any
-     * terrain draw (the shadow pass at the opaque layer's head reuses this exact state), arms the
-     * shadow segment, and binds the map for the terrain shaders' first draw.
+     * terrain draw (the shadow pass before the sky reuses this exact state), arms the shadow
+     * segment, and binds the map for the terrain shaders' first draw.
      */
     void beginShadowFrame(double cameraX, double cameraY, double cameraZ) {
         if (this.shadowMap.isInitialized()) {
@@ -515,7 +512,7 @@ final class PackShadowPass {
             }
         }
 
-        // Arm this frame's shadow segment; consumed at the opaque layer's head.
+        // Arm this frame's shadow segment; consumed just before the sky (PreSkyPasses).
         this.shadowPending = this.shadowFrameReady;
 
         // Terrain shaders sample the shadow map from their first draw.

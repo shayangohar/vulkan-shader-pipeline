@@ -129,9 +129,6 @@ public final class PackFrameSchedulePlan {
         if (depth1) deviations.add("SCHEDULE_DEPTH_TEX1_BEFORE_TRANSLUCENT");
         if (depth2) deviations.add("SCHEDULE_DEPTH_TEX2_BEFORE_HAND");
         if (depth0) deviations.add("SCHEDULE_DEPTH_TEX0_BEFORE_COMPOSITE");
-        if (stages.stream().anyMatch(stage -> stage.window() == PostWindow.PREPARE)) {
-            deviations.add("SCHEDULE_PREPARE_BEFORE_WORLD");
-        }
         if (stages.stream().anyMatch(stage -> stage.window() == PostWindow.EARLY)) {
             deviations.add("SCHEDULE_EARLY_POST_BEFORE_TRANSLUCENT");
         }
@@ -181,8 +178,9 @@ public final class PackFrameSchedulePlan {
 
     /**
      * The window a begin, prepare, deferred or composite pass runs in, by its name. Iris runs the
-     * begin passes each frame before the sky (IrisRenderingPipeline.beginLevelRendering), which
-     * Chimera's opening windows do.
+     * begin passes each frame at the level's start (IrisRenderingPipeline.beginLevelRendering),
+     * which Chimera's opening windows do, and the prepare passes after the shadow pass, just before
+     * the sky (IrisRenderingPipeline.renderShadows), which PreSkyPasses does.
      */
     private static PostWindow passWindow(String pass) {
         if (pass.startsWith("begin")) return PostWindow.BEGIN;

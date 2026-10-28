@@ -54,8 +54,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * VulkShade:
  *
  *   - renderLevel HEAD opens the internal RGBA16F world target.
- *   - The opaque layer's head temporarily records the shadow map and resumes
- *     the world target.
+ *   - Just before the sky, the shadow map is recorded (PreSkyPasses) and the
+ *     world target resumes.
  *   - renderLevel RETURN resolves the HDR world into a separate output target.
  *     Entity passes inside renderLevel follow the HDR alias; hand, GUI, and
  *     post-chain passes follow the output alias.
