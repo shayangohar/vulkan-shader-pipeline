@@ -293,16 +293,6 @@ final class GlslVertexPreambles {
 
             """;
 
-    /** DefaultVertexFormat.BLOCK as drawn on its host layout: position, colour, texture, light and normal. */
-    private static final String HOST_BLOCK_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("layout(location = 3) in ivec2 UV1;\n", "const ivec2 UV1 = ivec2(0);\n")
-            .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
-            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 4) in vec3 Normal;")
-            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
-            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
-
     static final String HAND_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
             .replace("vec4 chimeraEntityVertexValue()", """
                     mat4 chimeraHandProjection() {
@@ -432,11 +422,20 @@ final class GlslVertexPreambles {
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
     /**
-     * DefaultVertexFormat.BLOCK beacon beams on the host block layout, with the host colour
-     * modulator as for any native layout.
+     * Beacon beams on DefaultVertexFormat.BLOCK widened to EXTENDED_BLOCK, as Iris widens it to
+     * TERRAIN: the face normal, mid-coordinate and tangent come per quad. Iris's BEACON key is
+     * fullbright (ShaderAttributeInputs), so the light reads (240, 240), and the host colour
+     * modulator applies as for any native layout. The entity ids are uniforms there.
      */
-    static final String BEACON_VERTEX_PREAMBLE = "// DefaultVertexFormat.BLOCK beacon beam\n"
-            + HOST_BLOCK_VERTEX_PREAMBLE;
+    static final String BEACON_VERTEX_PREAMBLE = "// DefaultVertexFormat.BLOCK beacon beam, widened\n"
+            + ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 3) in ivec2 UV1;\n", "const ivec2 UV1 = ivec2(0);\n")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
+            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 4) in vec3 Normal;")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "layout(location = 6) in vec2 MidTexCoord;")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "layout(location = 7) in vec4 ChimeraPackedTangent;");
 
     /**
      * DefaultVertexFormat.POSITION_COLOR_LIGHTMAP leads. Iris supplies UV0 (0.5, 0.5) and +Z;

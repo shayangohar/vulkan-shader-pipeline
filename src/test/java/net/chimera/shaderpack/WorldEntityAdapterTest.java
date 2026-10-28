@@ -157,6 +157,24 @@ final class WorldEntityAdapterTest {
         assertEquals(null, ChimeraEntityBridge.worldTypeFamily("rendertype_solid", block), "terrain");
     }
 
+    /** Iris draws beacon beams with BEACON on BLOCK widened to TERRAIN, a beacon's or a mod's. */
+    @Test
+    void beaconBeamsBatchOnTheWidenedBlockLayout() {
+        var block = DefaultVertexFormat.BLOCK;
+        assertEquals(Family.BEACON_BEAM, ChimeraEntityBridge.worldTypeFamily("rendertype_beacon_beam", block));
+        ChimeraEntityBridge.beginBlockEntity(0);
+        try {
+            assertEquals(Family.BEACON_BEAM, ChimeraEntityBridge.worldTypeFamily("rendertype_beacon_beam", block),
+                    "a beacon's beam");
+            assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.BEACON_BEAM),
+                    "Iris draws a beacon's beam inside its block entity's wrapper");
+        } finally {
+            ChimeraEntityBridge.endContext();
+        }
+        assertEquals(null, ChimeraEntityBridge.shadowFamily("rendertype_beacon_beam", block, Family.BLOCK),
+                "Iris cancels beacon beams in the shadow pass");
+    }
+
     /** Iris reports BLOCK_ENTITIES for whatever a block entity draws, in either pass, and ENTITIES for an entity's. */
     @Test
     void familyBatchesReportTheirContextPhase() {

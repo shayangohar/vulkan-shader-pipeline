@@ -97,7 +97,8 @@ public final class FamilyAdapterRegistry {
             // Iris LIGHTNING (LIGHTNING, DRAGON_RAYS) on the host POSITION_COLOR layout.
             plan("gbuffers_lightning", FamilyAdapterPlan.Family.LIGHTNING,
                     UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_LIGHTNING),
-            // Iris BEACON (BEACON_BEAM_OPAQUE, BEACON_BEAM_TRANSLUCENT) on the host BLOCK layout.
+            // Iris BEACON (BEACON_BEAM_OPAQUE, BEACON_BEAM_TRANSLUCENT) on the BLOCK layout Iris widens to
+            // TERRAIN, as Chimera widens it to EXTENDED_BLOCK.
             plan("gbuffers_beaconbeam", FamilyAdapterPlan.Family.BEACON_BEAM,
                     UniformRegistry.Stage.PARTICLE, FamilyAdapterPlan.VertexContract.HOST_BEACON),
             // Iris LEASH (ProgramId.Basic) on the host POSITION_COLOR_LIGHTMAP lead strip.
@@ -238,8 +239,8 @@ public final class FamilyAdapterRegistry {
 
     /**
      * Lanes whose pack program runs on a host vertex layout Iris also draws natively: lines,
-     * glint, lightning, beacon beams and leads, and in the shadow pass lines, leads, lightning,
-     * text and the water mask.
+     * glint, lightning, beacon beams (on the block layout widened as Iris widens it) and leads,
+     * and in the shadow pass lines, leads, lightning, text and the water mask.
      */
     public static boolean isHostLayoutFamily(String name) {
         return forProgram(name).vertexContract().hostLayout();

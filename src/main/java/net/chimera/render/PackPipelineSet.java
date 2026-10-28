@@ -95,6 +95,9 @@ final class PackPipelineSet {
     /** Pack translucent particle program on the host translucent particle window. */
     PackPipelines.PackParticle translucentParticle;
 
+    /** gbuffers_beaconbeam on the beam's widened block layout (Iris BEACON). */
+    PackPipelines.PackParticle beaconBeam;
+
     /** Pack programs of the installed host-layout lanes (weather, lines, glint, lightning, ...). */
     final EnumMap<ChimeraEntityBridge.Family, PackPipelines.PackParticle> hostLayout =
             new EnumMap<>(ChimeraEntityBridge.Family.class);
@@ -127,6 +130,7 @@ final class PackPipelineSet {
         if (handWater != null) handWater.cleanUp();
         if (particle != null) particle.pipeline().cleanUp();
         if (translucentParticle != null) translucentParticle.pipeline().cleanUp();
+        if (beaconBeam != null) beaconBeam.pipeline().cleanUp();
         hostLayout.values().forEach(lane -> lane.pipeline().cleanUp());
         if (skyBasic != null) skyBasic.cleanUp();
         if (skyTextured != null) skyTextured.cleanUp();
@@ -169,6 +173,7 @@ final class PackPipelineSet {
         handWater = null;
         particle = null;
         translucentParticle = null;
+        beaconBeam = null;
         hostLayout.clear();
         skyBasic = null;
         skyTextured = null;
@@ -204,11 +209,12 @@ final class PackPipelineSet {
         return lane == null ? null : lane.outputPlan();
     }
 
-    /** The selected host-particle or host-layout lane retains its own authored output contract. */
+    /** A particle, beacon-beam or host-layout lane retains its own authored output contract. */
     private PackPipelines.PackParticle particlePipeline(ChimeraEntityBridge.Family family) {
         return switch (family) {
             case PARTICLE -> this.particle;
             case PARTICLE_TRANSLUCENT -> this.translucentParticle;
+            case BEACON_BEAM -> this.beaconBeam;
             default -> this.hostLayout.get(family);
         };
     }

@@ -17,7 +17,7 @@
   "gbuffers_basic.fsh": "57454fe23d01c44d 6babfefb659c95c1",
   "gbuffers_basic.vsh": "2b742076daa7117b ee2e91450419aece",
   "gbuffers_beaconbeam.fsh": "ccb6ec22b9868555 0805c3fd40ae9971",
-  "gbuffers_beaconbeam.vsh": "1dddbc8a0e45bb16 44734c4655f90b0f",
+  "gbuffers_beaconbeam.vsh": "7d0f1c649aadf01b 2022d3ff688a606e",
   "gbuffers_block [moving-block input variant Position,Color,UV0,UV2,Normal].fsh": "f00aa5657fc621d6 e823c5f0c14dd99b",
   "gbuffers_block [moving-block input variant Position,Color,UV0,UV2,Normal].vsh": "cbc11a639b74db96 14b69421a40634a7",
   "gbuffers_block.fsh": "84eafb2ef670fc8b 37edca0cf2982233",

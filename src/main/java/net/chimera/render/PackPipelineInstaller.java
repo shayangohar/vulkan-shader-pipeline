@@ -172,7 +172,7 @@ final class PackPipelineInstaller {
     }
 
     /**
-     * Installs an entity, block, hand, particle or host-layout program; an exact program name
+     * Installs an entity, block, hand, particle, beacon-beam or host-layout program; an exact program name
      * takes its own installer before the family it belongs to.
      */
     void installFamilyProgram(String name, PackProgramPlan programPlan) {
@@ -192,6 +192,8 @@ final class PackPipelineInstaller {
             installParticles(name, programPlan);
         } else if (FamilyAdapterRegistry.isParticleLike(name)) {
             installTranslucentParticles(name, programPlan);
+        } else if (name.equals("gbuffers_beaconbeam")) {
+            installBeaconBeam(name, programPlan);
         } else if (!HostLayoutLane.forProgram(name).isEmpty()) {
             installHostLayoutLanes(name, programPlan);
         } else {
@@ -596,6 +598,22 @@ final class PackPipelineInstaller {
         }
         pipelines.damagedBlock = damaged;
         markFamilyPipelineInstalled(name, "DAMAGED_BLOCK_INSTALLED");
+    }
+
+    /** gbuffers_beaconbeam on the beam's block layout, widened as Iris widens it to TERRAIN. */
+    void installBeaconBeam(String name, PackProgramPlan programPlan) {
+        PackPipelines.PackParticle beam = PackFamilyPipelines.buildHostLayout(programPlan,
+                advancedResources(), storage);
+        if (beam == null) {
+            markFamilyPipelineFallback(name, "BEACON_BEAM_PIPELINE_BUILD_FAILED");
+            return;
+        }
+        if (!attachPackStoragePipeline(name, beam.pipeline(), beam.imageBindings())) {
+            beam.pipeline().cleanUp();
+            return;
+        }
+        pipelines.beaconBeam = beam;
+        markFamilyPipelineInstalled(name, "BEACON_BEAM_PIPELINE_INSTALLED");
     }
 
     /** gbuffers_hand or gbuffers_hand_water, one pipeline per native hand mesh shape. */

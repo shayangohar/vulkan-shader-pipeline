@@ -107,6 +107,7 @@ final class PackPipelineLoad {
                 pass.packPlan == null ? null : pass.packPlan.entityIds());
         ChimeraEntityBridge.installLayoutVariants(pass.pipelines.translucentEntityText,
                 pass.pipelines.blockTranslucent, pass.pipelines.blockTranslucentText, pass.pipelines.movingBlock);
+        ChimeraEntityBridge.installBeaconBeam(pass.pipelines.beaconBeam);
         ChimeraEntityBridge.installHostLayout(pass.pipelines.hostLayout);
         ChimeraEntityBridge.installShadowCasters(pass.pipelines.shadowEntities, pass.pipelines.shadowMovingBlock,
                 pass.pipelines.shadowBlock);

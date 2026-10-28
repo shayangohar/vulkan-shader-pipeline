@@ -850,8 +850,9 @@ public final class EntityVertexBridge {
     }
 
     /**
-     * Iris writes mc_Entity as (-1, -1) for a block drawn outside a chunk mesh, no block having
-     * begun in its builder; the entity layout reads the unbound default instead. A gbuffers
+     * Iris writes mc_Entity as (-1, -1) for a block quad drawn outside a chunk mesh (a moving block,
+     * a beacon beam), no block having begun in its builder; the entity layout reads the unbound
+     * default instead. A gbuffers
      * program declares it as a constant, a shadow program reads it through chimeraMcEntityValue.
      */
     static String movingBlockEntity(String source) {

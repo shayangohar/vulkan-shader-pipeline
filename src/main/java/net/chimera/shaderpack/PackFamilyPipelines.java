@@ -167,9 +167,9 @@ public final class PackFamilyPipelines {
     }
 
     /**
-     * Builds a host-layout lane on the host vertex format of its contract: in the main pass
-     * lines, glint, lightning, beacon beams and leads (Iris ShaderKey.LINES, GLINT, LIGHTNING,
-     * BEACON and LEASH); in the shadow pass the shadow keys Iris draws on those layouts, into the
+     * Builds a host-layout lane on the vertex format of its contract: in the main pass lines,
+     * glint, lightning, beacon beams and leads (Iris ShaderKey.LINES, GLINT, LIGHTNING, BEACON and
+     * LEASH); in the shadow pass the shadow keys Iris draws on those layouts, into the
      * shadow map's attachments with the shadow blend (PackBlendPlan.shadowAttachments), as
      * shadow_entities is built.
      */
@@ -188,13 +188,16 @@ public final class PackFamilyPipelines {
                 shadow.convertedVertex(), shadow.convertedFragment(), shadow.outputPlan(), shadow.imageBindings());
     }
 
-    /** The host vertex format a host-layout contract draws on. */
+    /**
+     * The vertex format a host-layout contract draws on: the host's own, and for beacon beams the
+     * block layout widened as Iris widens it to TERRAIN.
+     */
     public static VertexFormat hostLayoutFormat(FamilyAdapterPlan.VertexContract contract) {
         return switch (contract) {
             case HOST_LINE -> DefaultVertexFormat.POSITION_COLOR_NORMAL;
             case HOST_GLINT -> DefaultVertexFormat.POSITION_TEX;
             case HOST_LIGHTNING -> DefaultVertexFormat.POSITION_COLOR;
-            case HOST_BEACON -> DefaultVertexFormat.BLOCK;
+            case HOST_BEACON -> ChimeraVertexFormats.EXTENDED_BLOCK;
             case HOST_LEASH, HOST_TEXT_BACKGROUND -> DefaultVertexFormat.POSITION_COLOR_LIGHTMAP;
             case HOST_TEXT -> DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP;
             case HOST_WATER_MASK -> DefaultVertexFormat.POSITION;

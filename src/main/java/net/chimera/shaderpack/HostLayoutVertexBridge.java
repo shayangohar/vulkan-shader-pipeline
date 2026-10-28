@@ -11,8 +11,8 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
 
 /**
  * Converts programs drawn on the host's own vertex layouts, as Iris draws them natively: lines,
- * lightning, leads, text and the water mask in both passes, glint and beacon beams in the world,
- * and the sky and cloud layouts.
+ * lightning, leads, text and the water mask in both passes, glint in the world, and the sky and
+ * cloud layouts. Beacon beams convert the same way onto the block layout Iris widens them to.
  */
 final class HostLayoutVertexBridge {
     private HostLayoutVertexBridge() {}
@@ -170,8 +170,15 @@ final class HostLayoutVertexBridge {
             case HOST_POSITION_TEX_COLOR -> GlslVertexPreambles.TEXTURED_COLOR_VERTEX_PREAMBLE;
             default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
         };
-        return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), null, fragmentSource,
+        if (contract != FamilyAdapterPlan.VertexContract.HOST_BEACON) {
+            return EntityVertexBridge.convertEntityVertexOrThrow(unboundMaterialAttributes(source), null,
+                    fragmentSource, sharedLocations, preamble, allowStorageBuffers, uniforms, samplerPlan);
+        }
+        // The beam's widened layout carries the material attributes, and its mc_Entity is a moving block's.
+        var beam = EntityVertexBridge.convertEntityVertexOrThrow(source, null, fragmentSource,
                 sharedLocations, preamble, allowStorageBuffers, uniforms, samplerPlan);
+        return new LegacyGlslConverter.TerrainVertexConversion(EntityVertexBridge.movingBlockEntity(beam.source()),
+                beam.layout());
     }
 
     private static final Set<String> MATERIAL_ATTRIBUTES = Set.of("mc_midTexCoord", "at_tangent");

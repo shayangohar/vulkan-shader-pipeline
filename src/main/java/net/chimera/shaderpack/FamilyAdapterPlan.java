@@ -99,7 +99,7 @@ public record FamilyAdapterPlan(
         HOST_GLINT,
         /** DefaultVertexFormat.POSITION_COLOR lightning and dragon rays. */
         HOST_LIGHTNING,
-        /** DefaultVertexFormat.BLOCK beacon beams. */
+        /** DefaultVertexFormat.BLOCK beacon beams, widened to EXTENDED_BLOCK as Iris widens them to TERRAIN. */
         HOST_BEACON,
         /** DefaultVertexFormat.POSITION_COLOR_LIGHTMAP leads, drawn as a triangle strip. */
         HOST_LEASH,
@@ -124,8 +124,9 @@ public record FamilyAdapterPlan(
 
         /**
          * Lanes whose program runs on a host vertex layout Iris also draws natively
-         * (VanillaTransformer): converted by LegacyGlslConverter.convertHostLayoutVertexChecked in
-         * the main pass and convertShadowLaneVertexChecked in the shadow pass.
+         * (VanillaTransformer), the beam's widened as Iris widens BLOCK: converted by
+         * LegacyGlslConverter.convertHostLayoutVertexChecked in the main pass and
+         * convertShadowLaneVertexChecked in the shadow pass.
          */
         public boolean hostLayout() {
             return switch (this) {

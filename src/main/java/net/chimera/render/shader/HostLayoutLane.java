@@ -19,7 +19,9 @@ import java.util.List;
  *
  * <p>Depth-only main-pass shaders Iris also maps (the water mask, the dragon rays' depth) write no
  * colour, so their host draw is equivalent and they are not main-pass lanes. In the shadow pass
- * every draw writes the shadow map, so the water mask draws with SHADOW_BASIC.</p>
+ * every draw writes the shadow map, so the water mask draws with SHADOW_BASIC. Iris BEACON draws
+ * on the block layout widened to TERRAIN, so beacon beams are a family lane
+ * (ChimeraEntityBridge.Family.BEACON_BEAM), batched on the widened layout where they are written.</p>
  */
 public enum HostLayoutLane {
     /** Iris WEATHER: rain and snow, drawn with the particle shader inside renderSnowAndRain. */
@@ -37,9 +39,6 @@ public enum HostLayoutLane {
     /** Iris LIGHTNING: lightning bolts and dragon death rays. */
     LIGHTNING(ChimeraEntityBridge.Family.LIGHTNING, "gbuffers_lightning", DefaultVertexFormat.POSITION_COLOR,
             PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, "rendertype_lightning"),
-    /** Iris BEACON: beacon and end gateway beams. */
-    BEACON_BEAM(ChimeraEntityBridge.Family.BEACON_BEAM, "gbuffers_beaconbeam", DefaultVertexFormat.BLOCK,
-            PackRenderingPhase.BLOCK_ENTITIES, Pass.WORLD, AlphaTest.OFF, "rendertype_beacon_beam"),
     /** Iris LEASH: leads, drawn with gbuffers_basic. */
     LEASH(ChimeraEntityBridge.Family.LEASH, "gbuffers_basic", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP,
             PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.OFF, "rendertype_leash"),

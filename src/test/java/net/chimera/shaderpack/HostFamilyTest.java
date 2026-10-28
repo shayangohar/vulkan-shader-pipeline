@@ -593,13 +593,23 @@ final class HostFamilyTest {
             }
         }
         for (String program : List.of("gbuffers_line", "gbuffers_armor_glint", "gbuffers_lightning",
-                "gbuffers_beaconbeam", "gbuffers_basic", "shadow_lines", "shadow_leash", "shadow_lightning",
+                "gbuffers_basic", "shadow_lines", "shadow_leash", "shadow_lightning",
                 "shadow_text", "shadow_text_bg", "shadow_basic", "text_bg", "gbuffers_textured",
                 "textured_color", "shadow_tex", "shadow_tex_color")) {
             assertTrue(servedPrograms.contains(program), program + " has no host-layout lane");
         }
-        assertEquals(FamilyAdapterRegistry.hostLayoutLanes().size(), servedPrograms.size(),
-                "every host-layout program needs a lane");
+        // Iris BEACON converts as a host-layout key but draws on BLOCK widened to TERRAIN: a family lane.
+        assertTrue(HostLayoutLane.forProgram("gbuffers_beaconbeam").isEmpty()
+                        && FamilyAdapterRegistry.isHostLayoutFamily("gbuffers_beaconbeam"),
+                "beacon beams convert as Iris BEACON and batch on the widened block layout");
+        assertEquals(ChimeraVertexFormats.EXTENDED_BLOCK,
+                PackFamilyPipelines.hostLayoutFormat(FamilyAdapterPlan.VertexContract.HOST_BEACON));
+        var widened = ChimeraVertexFormats.EXTENDED_BLOCK.getElementAttributeNames();
+        assertEquals(List.of(2, 4, 6, 7), List.of(widened.indexOf("UV0"), widened.indexOf("Normal"),
+                widened.indexOf("MidTexCoord"), widened.indexOf("Tangent")),
+                "the beam preamble reads EXTENDED_BLOCK's locations");
+        assertEquals(FamilyAdapterRegistry.hostLayoutLanes().size(), servedPrograms.size() + 1,
+                "every other host-layout program needs a lane");
     }
 
     @Test
@@ -612,15 +622,16 @@ final class HostFamilyTest {
                         && HostLayoutLane.SHADOW_TEXT_BG.whiteAlbedo()
                         && HostLayoutLane.SHADOW_BASIC.whiteAlbedo()
                         && !HostLayoutLane.GLINT.whiteAlbedo()
-                        && !HostLayoutLane.SHADOW_TEXT.whiteAlbedo()
-                        && !HostLayoutLane.BEACON_BEAM.whiteAlbedo(),
+                        && !HostLayoutLane.SHADOW_TEXT.whiteAlbedo(),
                 "Iris binds white to unit 0 exactly for host formats without UV0: " + table.getSimpleName());
         assertTrue(HostLayoutLane.forDraw("rendertype_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL,
                         HostLayoutLane.Pass.HAND) == null,
                 "a world-only lane must not take a first-person draw");
-        for (var lane : List.of(HostLayoutLane.LIGHTNING, HostLayoutLane.BEACON_BEAM, HostLayoutLane.LEASH)) {
-            assertEquals(0.0F, lane.alphaReference(), "Iris LIGHTNING, BEACON and LEASH use AlphaTests.OFF");
+        for (var lane : List.of(HostLayoutLane.LIGHTNING, HostLayoutLane.LEASH)) {
+            assertEquals(0.0F, lane.alphaReference(), "Iris LIGHTNING and LEASH use AlphaTests.OFF");
         }
+        assertEquals(0.0F, HostAlphaTest.reference("rendertype_beacon_beam", ChimeraEntityBridge.Family.BEACON_BEAM,
+                false), "Iris BEACON uses AlphaTests.OFF");
         // Iris TEXTURED tests NON_ZERO_ALPHA and TEXTURED_COLOR ONE_TENTH_ALPHA (ShaderKey), with
         // their texture on unit 0; the sun and moon stay with the sky keys.
         assertTrue(HostLayoutLane.TEXTURED.alphaReference() < HostLayoutLane.TEXTURED_COLOR.alphaReference()
@@ -632,7 +643,8 @@ final class HostFamilyTest {
 
     /**
      * LIGHTNING (through the entity fallback), BEACON and LEASH converted and compiled with
-     * Iris's host-layout inputs and identity: entityId per draw, blockEntityId -1.
+     * Iris's host-layout inputs and identity: entityId per draw, blockEntityId -1. BEACON's inputs
+     * are the block layout Iris widens to TERRAIN, at EXTENDED_BLOCK's locations.
      */
     @Test
     void hostLayoutLanePrograms(@TempDir Path root) throws IOException {
@@ -677,6 +689,7 @@ final class HostFamilyTest {
             Files.copy(shaders.resolve("gbuffers_entities.vsh"), shaders.resolve(program + ".vsh"));
             Files.copy(shaders.resolve("gbuffers_entities.fsh"), shaders.resolve(program + ".fsh"));
         }
+        readTerrainAttributes(shaders.resolve("gbuffers_beaconbeam.vsh"));
         var analysis = PackProbe.analyze(root);
         assertEquals("gbuffers_entities", analysis.resolution().resolution("gbuffers_lightning").selectedProgram(),
                 "Iris ProgramId.Lightning falls back to gbuffers_entities");
@@ -684,9 +697,13 @@ final class HostFamilyTest {
                 "gbuffers_lightning", List.of("layout(location = 1) in vec4 Color;",
                         "const vec2 UV0 = vec2(0.5);", "const ivec2 UV2 = ivec2(240);",
                         "const vec3 Normal = vec3(0.0, 0.0, 1.0);"),
+                // Iris BEACON: BLOCK widened to TERRAIN, fullbright, no block begun for mc_Entity.
                 "gbuffers_beaconbeam", List.of("layout(location = 2) in vec2 UV0;",
-                        "layout(location = 3) in ivec2 UV2;", "layout(location = 4) in vec3 Normal;",
-                        "return vec4(Position, 1.0);"),
+                        "const ivec2 UV2 = ivec2(240);", "layout(location = 4) in vec3 Normal;",
+                        "layout(location = 6) in vec2 MidTexCoord;",
+                        "layout(location = 7) in vec4 ChimeraPackedTangent;",
+                        "chimeraEntityTangentValue().w + MidTexCoord.x + mc_Entity.x",
+                        "const vec2 mc_Entity = vec2(-1.0);", "return vec4(Position, 1.0);"),
                 "gbuffers_basic", List.of("layout(location = 1) in vec4 Color;",
                         "const vec2 UV0 = vec2(0.5);", "layout(location = 2) in ivec2 UV2;",
                         "const vec3 Normal = vec3(0.0, 0.0, 1.0);"));
@@ -706,6 +723,18 @@ final class HostFamilyTest {
                 "text_bg tests the lane's ONE_TENTH_ALPHA per draw");
         var compiled = PackCompileTest.run(root, analysis);
         assertTrue(compiled.failures().isEmpty(), "host-layout lane compilation: " + compiled.failures());
+    }
+
+    /** The test vertex stage also reading the TERRAIN attributes Iris binds for every program (ProgramCreator). */
+    private static void readTerrainAttributes(Path vertex) throws IOException {
+        Files.writeString(vertex, Files.readString(vertex)
+                .replace("varying float block;", """
+                        attribute vec4 at_tangent;
+                        attribute vec2 mc_midTexCoord;
+                        attribute vec2 mc_Entity;
+                        varying float block;""")
+                .replace("block = float(blockEntityId);",
+                        "block = float(blockEntityId) + at_tangent.w + mc_midTexCoord.x + mc_Entity.x;"));
     }
 
     /** One host-layout program reads Iris's host inputs, entityId 0 and blockEntityId -1, with no alpha test. */
