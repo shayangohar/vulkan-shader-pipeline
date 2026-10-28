@@ -5,13 +5,17 @@ import java.nio.ByteOrder;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Gives every uninitialized function-scope variable of a plain data type an
  * {@code OpConstantNull} initializer, and turns every plain-data
- * {@code OpUndef} into an {@code OpConstantNull}.
+ * {@code OpUndef} into an {@code OpConstantNull}. Module-scope private globals
+ * and the vertex, geometry and fragment stages' outputs, built-ins aside, get
+ * the same initializer.
  *
  * <p>GLSL leaves such locals undefined. The GL drivers packs are authored
  * against start them at zero, and packs read them before writing them
@@ -28,11 +32,18 @@ import java.util.Map;
  * that to the slightly negative torch level, and {@code pow} of it turned the
  * water NaN, then black. The null constant is the zero the variable would have
  * started at.</p>
+ *
+ * <p>An output a path never writes is zero under NVIDIA's GL compiler too.
+ * Escheridia's composite5 returns before writing its reflection history over the
+ * sky. Iris leaves those pixels black; a Vulkan driver wrote whatever its
+ * registers held there, and the reprojected history spread it as bright
+ * single-colour specks along every edge against the sky.</p>
  */
 public final class SpirvLocalInitializer {
     private static final int MAGIC = 0x07230203;
     private static final int HEADER_WORDS = 5;
     private static final int OP_UNDEF = 1;
+    private static final int OP_ENTRY_POINT = 15;
     private static final int OP_TYPE_BOOL = 20;
     private static final int OP_TYPE_INT = 21;
     private static final int OP_TYPE_FLOAT = 22;
@@ -44,7 +55,14 @@ public final class SpirvLocalInitializer {
     private static final int OP_CONSTANT_NULL = 46;
     private static final int OP_FUNCTION = 54;
     private static final int OP_VARIABLE = 59;
+    private static final int OP_DECORATE = 71;
+    private static final int OP_MEMBER_DECORATE = 72;
+    private static final int DECORATION_BUILT_IN = 11;
+    private static final int STORAGE_OUTPUT = 3;
+    private static final int STORAGE_PRIVATE = 6;
     private static final int STORAGE_FUNCTION = 7;
+    /** Vertex, Geometry and Fragment: the stages whose outputs a GL driver starts at zero here. */
+    private static final Set<Integer> OUTPUT_STAGES = Set.of(0, 3, 4);
 
     private SpirvLocalInitializer() {}
 
@@ -67,12 +85,18 @@ public final class SpirvLocalInitializer {
         return result;
     }
 
-    /** The types, function-storage pointers, null constants and undefs of one module, and the rewrite they allow. */
+    /** The types, pointers, built-ins, null constants and undefs of one module, and the rewrite they allow. */
     private static final class Module {
         private final int[] words;
         private final Map<Integer, int[]> types = new HashMap<>();
-        private final Map<Integer, Integer> functionPointee = new HashMap<>();
+        /** Each pointer type's storage class and pointee. */
+        private final Map<Integer, int[]> pointers = new HashMap<>();
         private final Map<Integer, Integer> nulls = new HashMap<>();
+        /** The null constants already written while the module is rewritten, by type. */
+        private final Map<Integer, Integer> declaredNulls = new HashMap<>();
+        /** Variables and struct types decorated BuiltIn. */
+        private final Set<Integer> builtIns = new HashSet<>();
+        private boolean outputStages = true;
         private int firstFunction = -1;
         private boolean needed;
         private int bound;
@@ -94,54 +118,87 @@ public final class SpirvLocalInitializer {
 
         private void record(int opcode, int at, int count) {
             switch (opcode) {
+                case OP_ENTRY_POINT -> outputStages &= OUTPUT_STAGES.contains(words[at + 1]);
+                case OP_DECORATE, OP_MEMBER_DECORATE -> recordBuiltIn(opcode, at);
                 case OP_TYPE_BOOL, OP_TYPE_INT, OP_TYPE_FLOAT, OP_TYPE_VECTOR, OP_TYPE_MATRIX,
                         OP_TYPE_ARRAY, OP_TYPE_STRUCT ->
                         types.put(words[at + 1], Arrays.copyOfRange(words, at, at + count));
-                case OP_TYPE_POINTER -> {
-                    if (words[at + 2] == STORAGE_FUNCTION) functionPointee.put(words[at + 1], words[at + 3]);
-                }
+                case OP_TYPE_POINTER -> pointers.put(words[at + 1], new int[] {words[at + 2], words[at + 3]});
                 case OP_CONSTANT_NULL -> nulls.putIfAbsent(words[at + 1], words[at + 2]);
                 case OP_FUNCTION -> { if (firstFunction < 0) firstFunction = at; }
-                case OP_VARIABLE -> {
-                    if (count == 4 && words[at + 3] == STORAGE_FUNCTION
-                            && plainData(types, functionPointee.get(words[at + 1]))) needed = true;
-                }
+                case OP_VARIABLE -> { if (initializable(at) != null) needed = true; }
                 case OP_UNDEF -> { if (plainData(types, words[at + 1])) needed = true; }
                 default -> { }
             }
         }
 
+        /** Records a BuiltIn decoration's target: a variable, or a struct through one of its members. */
+        private void recordBuiltIn(int opcode, int at) {
+            int decoration = opcode == OP_DECORATE ? words[at + 2] : words[at + 3];
+            if (decoration == DECORATION_BUILT_IN) builtIns.add(words[at + 1]);
+        }
+
         /**
-         * Every word after the header, with each plain function-scope variable given a null
-         * initializer, each plain undef made a null constant, and any null constant that
-         * needed placed before the first function.
+         * The pointee of the uninitialized variable at {@code at} when it takes a null initializer:
+         * a plain function local or private global, or a plain output of a stage whose outputs
+         * start at zero, built-ins aside. Null otherwise.
+         */
+        private Integer initializable(int at) {
+            if ((words[at] & 0xFFFF) != OP_VARIABLE || words[at] >>> 16 != 4) return null;
+            int[] pointer = pointers.get(words[at + 1]);
+            if (pointer == null || !plainData(types, pointer[1])) return null;
+            int storage = words[at + 3];
+            boolean output = storage == STORAGE_OUTPUT && outputStages
+                    && !builtIns.contains(words[at + 2]) && !builtIns.contains(pointer[1]);
+            return storage == STORAGE_FUNCTION || storage == STORAGE_PRIVATE || output ? pointer[1] : null;
+        }
+
+        /**
+         * Every word after the header, with each initializable variable given a null initializer,
+         * each plain undef made a null constant, and the null constants function variables need
+         * placed before the first function. A module-level variable's constant goes just ahead of
+         * it, unless one is already declared there.
          */
         private List<Integer> initializedBody() {
             List<Integer> inserted = new ArrayList<>();
             List<Integer> body = new ArrayList<>(words.length + 16);
+            int functionStart = -1;
             for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
+                if (at == firstFunction) functionStart = body.size();
                 if (initializeVariable(at, body, inserted) || nullUndef(at, body, inserted)) continue;
+                if ((words[at] & 0xFFFF) == OP_CONSTANT_NULL) declaredNulls.putIfAbsent(words[at + 1], words[at + 2]);
                 for (int i = 0; i < words[at] >>> 16; i++) body.add(words[at + i]);
             }
-            // Null constants are module-level: place them before the first function.
-            // Every word before it keeps its length: an undef there becomes a null
-            // constant in place, and function variables only occur inside functions.
-            body.addAll(firstFunction - HEADER_WORDS, inserted);
+            body.addAll(functionStart, inserted);
             return body;
         }
 
-        /** Writes the instruction at {@code at} with a null initializer when it is a plain function variable. */
+        /** Writes the instruction at {@code at} with a null initializer when it is an initializable variable. */
         private boolean initializeVariable(int at, List<Integer> body, List<Integer> inserted) {
-            boolean variable = (words[at] & 0xFFFF) == OP_VARIABLE && words[at] >>> 16 == 4
-                    && words[at + 3] == STORAGE_FUNCTION;
-            Integer pointee = variable ? functionPointee.get(words[at + 1]) : null;
-            if (!plainData(types, pointee)) return false;
+            Integer pointee = initializable(at);
+            if (pointee == null) return false;
+            int initializer = words[at + 3] == STORAGE_FUNCTION
+                    ? nullConstant(pointee, inserted) : declaredNull(pointee, body);
             body.add((5 << 16) | OP_VARIABLE);
             body.add(words[at + 1]);
             body.add(words[at + 2]);
-            body.add(STORAGE_FUNCTION);
-            body.add(nullConstant(pointee, inserted));
+            body.add(words[at + 3]);
+            body.add(initializer);
             return true;
+        }
+
+        /** A null constant of {@code type} already written to {@code body}, declaring one there when none is. */
+        private int declaredNull(int type, List<Integer> body) {
+            Integer nullId = declaredNulls.get(type);
+            if (nullId == null) {
+                nullId = bound++;
+                declaredNulls.put(type, nullId);
+                nulls.putIfAbsent(type, nullId);
+                body.add((3 << 16) | OP_CONSTANT_NULL);
+                body.add(type);
+                body.add(nullId);
+            }
+            return nullId;
         }
 
         /**
@@ -151,7 +208,9 @@ public final class SpirvLocalInitializer {
          */
         private boolean nullUndef(int at, List<Integer> body, List<Integer> inserted) {
             if ((words[at] & 0xFFFF) != OP_UNDEF || !plainData(types, words[at + 1])) return false;
-            List<Integer> into = at < firstFunction ? body : inserted;
+            boolean moduleLevel = at < firstFunction;
+            if (moduleLevel) declaredNulls.putIfAbsent(words[at + 1], words[at + 2]);
+            List<Integer> into = moduleLevel ? body : inserted;
             into.add((3 << 16) | OP_CONSTANT_NULL);
             into.add(words[at + 1]);
             into.add(words[at + 2]);

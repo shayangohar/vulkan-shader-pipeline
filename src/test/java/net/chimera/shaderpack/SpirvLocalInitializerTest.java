@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -48,12 +49,68 @@ final class SpirvLocalInitializerTest {
         verifyInitializers(initialized);
         assertTrue(SpirvLocalInitializer.apply(initialized) == initialized, "initializer is not idempotent");
 
-        // glslang stores a GLSL initializer after an uninitialized OpVariable,
-        // so only a module with no function variables is left byte-identical.
-        String noLocals = "#version 460\nlayout(location = 0) out vec4 color;\n"
-                + "void main() { color = vec4(0.5); }\n";
-        int[] clean = words(compile(noLocals));
-        assertTrue(SpirvLocalInitializer.apply(clean) == clean, "a module without function variables changed");
+        // glslang stores a GLSL initializer after an uninitialized OpVariable, so only a module
+        // with no local, private global or output to initialize is left byte-identical.
+        String nothing = "#version 460\nlayout(location = 0) in vec2 uv;\n"
+                + "void main() { if (uv.x > 2.0) discard; }\n";
+        int[] clean = words(compile(nothing));
+        assertTrue(SpirvLocalInitializer.apply(clean) == clean, "a module with nothing to initialize changed");
+    }
+
+    /**
+     * Escheridia's composite5 returns before writing its reflection history over the sky. Under
+     * NVIDIA's GL compiler that output, like a private global read before it is written, starts
+     * at zero, so both get a null initializer declared ahead of them. A built-in output and an
+     * input are left alone.
+     */
+    @Test
+    void moduleScopeInitializers() {
+        String source = """
+                #version 460
+                layout(location = 0) in vec2 uv;
+                layout(location = 0) out vec4 color;
+                layout(location = 1) out vec4 history;
+                float accumulated;
+                void main() {
+                    color = vec4(uv, 0.0, 1.0);
+                    if (uv.x > 0.5) return;
+                    accumulated += uv.y;
+                    history = vec4(accumulated);
+                    gl_FragDepth = uv.y;
+                }
+                """;
+        int[] initialized = SpirvLocalInitializer.apply(words(compile(source)));
+        Set<Integer> locations = new HashSet<>();
+        Set<Integer> builtIns = new HashSet<>();
+        Set<Integer> declaredNulls = new HashSet<>();
+        Map<Integer, Integer> initializers = new HashMap<>();
+        Map<Integer, Integer> storage = new HashMap<>();
+        for (int at = 5; at < initialized.length; at += initialized[at] >>> 16) {
+            int opcode = initialized[at] & 0xFFFF;
+            if (opcode == 71 && initialized[at + 2] == 30) locations.add(initialized[at + 1]);
+            if (opcode == 71 && initialized[at + 2] == 11) builtIns.add(initialized[at + 1]);
+            if (opcode == 46) declaredNulls.add(initialized[at + 2]);
+            if (opcode == 59 && initialized[at + 3] != 7) {
+                int id = initialized[at + 2];
+                storage.put(id, initialized[at + 3]);
+                if (initialized[at] >>> 16 == 5) {
+                    assertTrue(declaredNulls.contains(initialized[at + 4]),
+                            "%" + id + "'s initializer is not a null constant declared ahead of it");
+                    initializers.put(id, initialized[at + 4]);
+                }
+            }
+        }
+        storage.forEach((id, kind) -> {
+            boolean output = kind == 3 && locations.contains(id);
+            boolean expected = kind == 6 || output;
+            assertEquals(expected, initializers.containsKey(id), "%" + id + " in storage class " + kind
+                    + (builtIns.contains(id) ? " (built-in)" : ""));
+        });
+        assertEquals(2, storage.entrySet().stream()
+                .filter(entry -> entry.getValue() == 3 && locations.contains(entry.getKey())).count(),
+                "fixture lost its located outputs");
+        assertTrue(storage.containsValue(6) && !builtIns.isEmpty(), "fixture lost its private global or built-in");
+        assertTrue(SpirvLocalInitializer.apply(initialized) == initialized, "initializer is not idempotent");
     }
 
     /**
@@ -84,7 +141,6 @@ final class SpirvLocalInitializerTest {
         assertTrue(!undefs.isEmpty(), "the optimizer kept falloff in memory; the fixture no longer reaches OpUndef");
         int[] initialized = SpirvLocalInitializer.apply(original);
         assertTrue(undefTypes(initialized).isEmpty(), "plain undefs survived");
-        assertTrue(initialized[3] == original[3], "undefs become null constants under their own ids");
         Map<Integer, Integer> nulls = new HashMap<>();
         boolean inFunction = false;
         int at = 5;
