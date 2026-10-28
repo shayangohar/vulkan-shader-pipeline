@@ -109,6 +109,14 @@ public final class ConformanceReport {
         this.deviations = new TreeSet<>(deviations);
     }
 
+    /** A report of the same content that later runtime marks change apart from this one. */
+    public ConformanceReport copy() {
+        ConformanceReport copy = new ConformanceReport(packName, passListPresent, passInventory, metadataHashes,
+                settings, deviations, selectedDimension, selectedVariantFolder);
+        copy.programs.putAll(programs);
+        return copy;
+    }
+
     public void addProgram(ProgramReport program) {
         programs.put(program.name(), program);
     }

@@ -15,7 +15,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,8 +42,13 @@ public final class PackSource {
     private static final Pattern PROPERTY_DEFINE = Pattern.compile(
             "^([A-Za-z_]\\w*)(?:\\s+(.*))?$");
 
+    /** A dimension's analysis, and the macros and locked names it left the sources prepared with. */
+    record AnalyzedDimension(PackProbe.Analysis analysis, Map<String, String> macros, Set<String> locked) {}
+
     /** The selected programs, shader root, archive owner, and load metadata. */
     public static final class LoadResult implements AutoCloseable {
+        /** The vanilla three, and one more for a mod's; the least recently selected goes first. */
+        private static final int ANALYZED_DIMENSIONS = 4;
         private final Path shadersDir;
         private final Path temporaryRoot;
         private final StagedOptions options;
@@ -58,6 +65,16 @@ public final class PackSource {
         private String selectedDimension = "minecraft:overworld";
         private String selectedVariantFolder = "";
         private boolean closed;
+        /**
+         * The analyses of the dimensions this load selected (PackProbe.analyze). Its options and
+         * sources never change, so a dimension's analysis holds for as long as the load does.
+         */
+        private final Map<String, AnalyzedDimension> analyzed = new LinkedHashMap<>(8, 0.75F, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, AnalyzedDimension> eldest) {
+                return size() > ANALYZED_DIMENSIONS;
+            }
+        };
 
         private LoadResult(
                 Path shadersDir,
@@ -96,6 +113,23 @@ public final class PackSource {
                     .sorted(Comparator.comparing(PackProgram::name)
                             .thenComparing(value -> relativePath(shadersDir, value.fragmentPath())))
                     .toList();
+        }
+
+        /** The selected dimension's analysis, when this load made one; null otherwise. */
+        AnalyzedDimension analyzed() {
+            return analyzed.get(selectedDimension);
+        }
+
+        /** Keeps the selected dimension's analysis, with the preparation it leaves the sources in. */
+        void keep(PackProbe.Analysis analysis) {
+            analyzed.put(selectedDimension, new AnalyzedDimension(analysis,
+                    Collections.unmodifiableMap(new TreeMap<>(preparedMacros)),
+                    Collections.unmodifiableSet(new TreeSet<>(preparedLocked))));
+        }
+
+        /** Prepares the sources as a kept analysis left them, so the load reads the same programs. */
+        void restore(AnalyzedDimension known) {
+            prepare(known.macros(), known.locked());
         }
 
         /** Re-prepares every variant with the active load-time option defaults. */

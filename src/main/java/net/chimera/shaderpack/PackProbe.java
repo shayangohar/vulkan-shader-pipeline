@@ -54,6 +54,11 @@ public final class PackProbe {
         ) {
             this(report, plan, config, PackSettingsPlan.empty(), PackResolutionPlan.empty(), PassComputePlan.empty());
         }
+
+        /** The same analysis with a copy of its report, the one part the runtime changes. */
+        Analysis withOwnReport() {
+            return new Analysis(report.copy(), plan, config, settings, resolution, passComputes);
+        }
     }
 
     public static ConformanceReport probe(Path packPath) {
@@ -71,9 +76,22 @@ public final class PackProbe {
         return analyze(packPath, loaded).report();
     }
 
-    /** Builds the report and the immutable runtime plan from one loaded source tree. */
+    /**
+     * Builds the report and the immutable runtime plan from one loaded source tree. A dimension
+     * this load analysed before is not analysed again: the load's options and sources are fixed,
+     * so its analysis still holds (PackSource.LoadResult.analyzed), as Iris builds a dimension's
+     * pipeline from the shader pack it loaded once. Each caller gets its own report, which the
+     * runtime marks.
+     */
     public static Analysis analyze(Path packPath, PackSource.LoadResult loaded) {
-        return new Probe(packPath, loaded).analyze();
+        PackSource.AnalyzedDimension known = loaded.analyzed();
+        if (known != null) {
+            loaded.restore(known);
+            return known.analysis().withOwnReport();
+        }
+        Analysis analysis = new Probe(packPath, loaded).analyze();
+        loaded.keep(analysis.withOwnReport());
+        return analysis;
     }
 
     /** One probe of a loaded pack: the report inputs it reads and the plans it builds from them. */
