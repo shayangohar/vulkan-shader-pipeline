@@ -16,6 +16,8 @@ import net.vulkanmod.render.vertex.CustomVertexFormat;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
@@ -49,6 +51,8 @@ public final class ChimeraTerrainPipelines {
     private static volatile boolean separateAo;
     /** The installed pack's terrain shading, whose ambient occlusion level chunk builders read. */
     private static volatile TerrainShadingDirectives shading = TerrainShadingDirectives.VANILLA;
+    /** The rebuilds a handoff asked for (rebuildingOnce), by reason; null outside one. Render thread only. */
+    private static Set<String> heldRebuilds;
 
     private ChimeraTerrainPipelines() {}
 
@@ -279,7 +283,32 @@ public final class ChimeraTerrainPipelines {
         }
     }
 
+    /**
+     * Runs {@code handoff}, rebuilding the live level at most once, at its end. A frame boundary
+     * that hands terrain to the host, applies a pack or dimension variant and reinstalls it changes
+     * the terrain format and shading up to four times, and no frame draws in between: each change
+     * rebuilt the whole level, and the chunk builders meshed sections only to throw them away.
+     */
+    public static void rebuildingOnce(Runnable handoff) {
+        if (heldRebuilds != null) {
+            handoff.run();
+            return;
+        }
+        heldRebuilds = new LinkedHashSet<>();
+        try {
+            handoff.run();
+        } finally {
+            Set<String> reasons = heldRebuilds;
+            heldRebuilds = null;
+            if (!reasons.isEmpty()) rebuildLiveLevel(String.join(", ", reasons));
+        }
+    }
+
     private static void rebuildLiveLevel(String reason) {
+        if (heldRebuilds != null) {
+            heldRebuilds.add(reason);
+            return;
+        }
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level != null && minecraft.levelRenderer != null) {
             minecraft.levelRenderer.allChanged();

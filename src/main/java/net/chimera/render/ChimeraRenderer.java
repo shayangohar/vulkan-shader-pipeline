@@ -170,6 +170,11 @@ public final class ChimeraRenderer {
         // uploads arrive whether or not a pack is installed.
         chimeraPass.pumpMaterialMapBuilds();
         chimeraPass.resources.refreshWorldResourcesIfDue();
+        ChimeraTerrainPipelines.rebuildingOnce(ChimeraRenderer::changePackAtFrameBoundary);
+    }
+
+    /** Hands a pending pack change or dimension variant to the host, applies it, and resumes Chimera. */
+    private static void changePackAtFrameBoundary() {
         if (chimeraPass.hasPendingPackChange() && installed) {
             Renderer.getInstance().setMainPass(hostPass);
             ChimeraTerrainPipelines.disable();
