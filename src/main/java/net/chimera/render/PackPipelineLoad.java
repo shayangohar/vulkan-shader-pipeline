@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
+import net.chimera.render.shader.CompiledStages;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackFeatureFlags;
@@ -65,6 +66,7 @@ final class PackPipelineLoad {
         }
         new PackPipelineInstaller(pass).installPrograms();
         installFamilyBridge();
+        LOGGER.info("[chimera] pack stages: {}", CompiledStages.endLoad());
         if (!enforceMaskCriticalFamilyContract()) {
             return;
         }

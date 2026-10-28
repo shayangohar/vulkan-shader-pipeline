@@ -7,6 +7,7 @@ import net.chimera.render.ChimeraDevice;
 import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageViewDescriptor;
 import net.chimera.shaderpack.PackDescriptorLayout;
+import net.chimera.shaderpack.PackWorkers;
 import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.SpirvOutputWrites;
 import net.chimera.shaderpack.SpirvTrigPrecision;
@@ -101,35 +102,26 @@ public final class HostPipelineLayout {
         Pipeline.Builder builder = new Pipeline.Builder(format, name);
         builder.setUniforms(uniformBuffers(layout, uniforms), images(layout));
         ((ChimeraPipelineBuilderAccessor) builder).chimera$setPushConstants(pushConstants(layout, uniforms));
-        List<SPIRVUtils.SPIRV> compiled = new ArrayList<>(3);
-        try {
-            SPIRVUtils.SPIRV vertex = compileInto(compiled, name + ".vsh", vertexSource,
-                    Shaderc.shaderc_glsl_vertex_shader, packModules);
-            SPIRVUtils.SPIRV geometry = geometrySource == null ? null : compileInto(compiled, name + ".gsh",
-                    geometrySource, Shaderc.shaderc_glsl_geometry_shader, packModules);
-            SPIRVUtils.SPIRV fragment = compileInto(compiled, name + ".fsh", fragmentSource,
-                    Shaderc.shaderc_glsl_fragment_shader, packModules);
-            builder.setSPIRVs(vertex, fragment);
-            GraphicsPipeline pipeline = geometry == null ? builder.createGraphicsPipeline()
-                    : GeometryStageModules.construct(geometry.bytecode(), builder::createGraphicsPipeline);
-            if (packModules) {
-                MrtPipelineContext.recordWrittenOutputs(pipeline,
-                        SpirvOutputWrites.writtenLocations(fragment.bytecode()));
-            }
-            return pipeline;
-        } finally {
-            // The pipeline holds its shader modules; the bytes are no longer needed.
-            compiled.forEach(SPIRVUtils.SPIRV::free);
+        List<Stage> stages = new ArrayList<>(3);
+        stages.add(new Stage(name + ".vsh", vertexSource, Shaderc.shaderc_glsl_vertex_shader));
+        if (geometrySource != null) {
+            stages.add(new Stage(name + ".gsh", geometrySource, Shaderc.shaderc_glsl_geometry_shader));
         }
+        stages.add(new Stage(name + ".fsh", fragmentSource, Shaderc.shaderc_glsl_fragment_shader));
+        // The stages compile apart (PackWorkers); the pipeline is created here, on the calling thread.
+        List<SPIRVUtils.SPIRV> compiled = PackWorkers.map(stages, stage -> compile(stage, packModules));
+        SPIRVUtils.SPIRV fragment = compiled.get(compiled.size() - 1);
+        builder.setSPIRVs(compiled.get(0), fragment);
+        GraphicsPipeline pipeline = geometrySource == null ? builder.createGraphicsPipeline()
+                : GeometryStageModules.construct(compiled.get(1).bytecode(), builder::createGraphicsPipeline);
+        if (packModules) {
+            MrtPipelineContext.recordWrittenOutputs(pipeline, SpirvOutputWrites.writtenLocations(fragment.bytecode()));
+        }
+        return pipeline;
     }
 
-    /** Compiles one stage and keeps it in {@code compiled}, so every stage made so far is freed together. */
-    private static SPIRVUtils.SPIRV compileInto(List<SPIRVUtils.SPIRV> compiled, String name, String source, int kind,
-                                                boolean packModule) {
-        SPIRVUtils.SPIRV stage = compile(name, source, kind, packModule);
-        compiled.add(stage);
-        return stage;
-    }
+    /** One stage of a pipeline: its file name for shaderc's reports, its source, and its shaderc kind. */
+    private record Stage(String name, String source, int kind) {}
 
     /**
      * Builds one of Chimera's own pipelines, named {@code name}, from a config in
@@ -256,17 +248,32 @@ public final class HostPipelineLayout {
         }
     }
 
-    private static SPIRVUtils.SPIRV compile(String name, String source, int kind, boolean packModule) {
+    /**
+     * The stage's module in a garbage-collected direct buffer, so a pipeline whose other stage
+     * fails leaves nothing to release. A source compiled earlier in the load is not compiled again
+     * (CompiledStages).
+     */
+    private static SPIRVUtils.SPIRV compile(Stage stage, boolean packModule) {
+        byte[] module = CompiledStages.module(stage.kind(), packModule, stage.source(),
+                () -> compileModule(stage, packModule));
+        ByteBuffer bytecode = ByteBuffer.allocateDirect(module.length).put(module).flip();
+        return SPIRVUtils.SPIRV.ownedBuffer(bytecode, () -> {});
+    }
+
+    private static byte[] compileModule(Stage stage, boolean packModule) {
         ByteBuffer compiled;
         try {
-            compiled = GlslCompiler.compile(name, source, kind, GlslCompiler::optimize);
+            compiled = GlslCompiler.compile(stage.name(), stage.source(), stage.kind(), GlslCompiler::optimize);
         } catch (IllegalStateException failure) {
             throw new ShaderCompilationFailure(failure);
         }
-        ByteBuffer module = packModule ? SpirvTrigPrecision.apply(SpirvLocalInitializer.apply(compiled)) : compiled;
-        if (module == compiled) return SPIRVUtils.SPIRV.ownedBuffer(compiled, () -> MemoryUtil.memFree(compiled));
-        MemoryUtil.memFree(compiled);
-        // The transformed bytes are a garbage-collected direct buffer: nothing to release.
-        return SPIRVUtils.SPIRV.ownedBuffer(module, () -> {});
+        try {
+            ByteBuffer module = packModule ? SpirvTrigPrecision.apply(SpirvLocalInitializer.apply(compiled)) : compiled;
+            byte[] bytes = new byte[module.remaining()];
+            module.duplicate().get(bytes);
+            return bytes;
+        } finally {
+            MemoryUtil.memFree(compiled);
+        }
     }
 }
