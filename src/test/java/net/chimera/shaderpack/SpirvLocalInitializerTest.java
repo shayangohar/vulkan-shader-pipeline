@@ -6,6 +6,7 @@ import org.lwjgl.util.shaderc.Shaderc;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -30,8 +31,8 @@ final class SpirvLocalInitializerTest {
                 layout(location = 0) in vec2 uv;
                 layout(location = 0) out vec4 color;
                 struct Hit { float depth; vec2 at; };
-                vec4 look(sampler2D s, vec2 p) { return texture(s, p); }
-                void march(inout float depth) { if (depth <= 1.0) depth = look(tex, uv).a; }
+                vec4 look(sampler2D s) { return texture(s, uv); }
+                void march(inout float depth) { if (depth <= 1.0) depth = look(tex).a; }
                 void main() {
                     float fade, depth;
                     vec3 trace;
@@ -46,13 +47,13 @@ final class SpirvLocalInitializerTest {
         int[] initialized = SpirvLocalInitializer.apply(original);
         assertTrue(initialized != original, "uninitialized pack locals were left undefined");
         assertTrue(initialized[3] > original[3], "new null constants must extend the id bound");
-        verifyInitializers(initialized);
+        // lit, and glslang's copy of depth for march's inout parameter, are written whole before anything reads them.
+        verifyInitializers(initialized, Set.of("lit", "param"));
         assertTrue(SpirvLocalInitializer.apply(initialized) == initialized, "initializer is not idempotent");
 
-        // glslang stores a GLSL initializer after an uninitialized OpVariable, so only a module
-        // with no local, private global or output to initialize is left byte-identical.
+        // A module with no local, private global or output that could be read unwritten is left byte-identical.
         String nothing = "#version 460\nlayout(location = 0) in vec2 uv;\n"
-                + "void main() { if (uv.x > 2.0) discard; }\n";
+                + "void main() { float edge = 2.0; if (uv.x > edge) discard; }\n";
         int[] clean = words(compile(nothing));
         assertTrue(SpirvLocalInitializer.apply(clean) == clean, "a module with nothing to initialize changed");
     }
@@ -60,8 +61,8 @@ final class SpirvLocalInitializerTest {
     /**
      * Escheridia's composite5 returns before writing its reflection history over the sky. Under
      * NVIDIA's GL compiler that output, like a private global read before it is written, starts
-     * at zero, so both get a null initializer declared ahead of them. A built-in output and an
-     * input are left alone.
+     * at zero, so both get a null initializer declared ahead of them. The colour output main
+     * writes first, a built-in output and an input are left alone.
      */
     @Test
     void moduleScopeInitializers() {
@@ -100,17 +101,67 @@ final class SpirvLocalInitializerTest {
                 }
             }
         }
-        storage.forEach((id, kind) -> {
-            boolean output = kind == 3 && locations.contains(id);
-            boolean expected = kind == 6 || output;
-            assertEquals(expected, initializers.containsKey(id), "%" + id + " in storage class " + kind
-                    + (builtIns.contains(id) ? " (built-in)" : ""));
-        });
+        Map<String, Integer> names = names(initialized);
+        Set<Integer> zeroed = Set.of(names.get("accumulated"), names.get("history"));
+        storage.forEach((id, kind) -> assertEquals(zeroed.contains(id), initializers.containsKey(id),
+                "%" + id + " in storage class " + kind + (builtIns.contains(id) ? " (built-in)" : "")));
         assertEquals(2, storage.entrySet().stream()
                 .filter(entry -> entry.getValue() == 3 && locations.contains(entry.getKey())).count(),
                 "fixture lost its located outputs");
         assertTrue(storage.containsValue(6) && !builtIns.isEmpty(), "fixture lost its private global or built-in");
         assertTrue(SpirvLocalInitializer.apply(initialized) == initialized, "initializer is not idempotent");
+    }
+
+    /**
+     * BSL's shadowcomp copies its light and tint colour tables into private globals at the top of
+     * main, where glslang stores a global's initializer. The zero would never be seen, and NVIDIA
+     * then fills the tables per invocation (33 ms for the dispatch, against 0.2 ms), so they keep no
+     * initializer. A global main writes only in part, or only after a call that reads it, does.
+     */
+    @Test
+    void variablesWrittenFirst() {
+        String source = """
+                #version 460
+                layout(location = 0) in vec2 uv;
+                layout(location = 0) out vec4 color;
+                vec3 tints[3] = vec3[](vec3(1.0, 0.5, 0.5), vec3(0.5, 1.0, 0.5), vec3(0.5, 0.5, 1.0));
+                vec2 corner;
+                float late;
+                float bump() { return late + 1.0; }
+                float lookup(int i) { return tints[i].x + corner.y; }
+                void main() {
+                    corner.x = uv.y;
+                    late = bump();
+                    color = vec4(lookup(int(uv.x * 2.0)) + late);
+                }
+                """;
+        int[] initialized = SpirvLocalInitializer.apply(words(compile(source)));
+        Map<String, Integer> names = names(initialized);
+        Map<Integer, Integer> wordCounts = new HashMap<>();
+        for (int at = 5; at < initialized.length; at += initialized[at] >>> 16) {
+            if ((initialized[at] & 0xFFFF) == 59) wordCounts.put(initialized[at + 2], initialized[at] >>> 16);
+        }
+        assertEquals(4, wordCounts.get(names.get("tints")),
+                "the colour table main writes first was given an initializer");
+        assertEquals(5, wordCounts.get(names.get("corner")), "a global main writes only in part lost its initializer");
+        assertEquals(5, wordCounts.get(names.get("late")),
+                "a global a call reads before main writes it lost its initializer");
+        assertTrue(SpirvLocalInitializer.apply(initialized) == initialized, "initializer is not idempotent");
+    }
+
+    /** Each OpName's string and target; the first target where a name repeats. */
+    private static Map<String, Integer> names(int[] words) {
+        Map<String, Integer> names = new HashMap<>();
+        for (int at = 5; at < words.length; at += words[at] >>> 16) {
+            int count = words[at] >>> 16;
+            if ((words[at] & 0xFFFF) != 5) continue;
+            ByteBuffer bytes = ByteBuffer.allocate((count - 2) * 4).order(ByteOrder.LITTLE_ENDIAN);
+            bytes.asIntBuffer().put(words, at + 2, count - 2);
+            int end = 0;
+            while (end < bytes.capacity() && bytes.get(end) != 0) end++;
+            names.putIfAbsent(new String(bytes.array(), 0, end, StandardCharsets.UTF_8), words[at + 1]);
+        }
+        return names;
     }
 
     /**
@@ -235,9 +286,13 @@ final class SpirvLocalInitializerTest {
         }
     }
 
-    private static void verifyInitializers(int[] words) {
+    /** Every function variable but those named in {@code writtenFirst} carries a null initializer of its type. */
+    private static void verifyInitializers(int[] words, Set<String> writtenFirst) {
         Map<Integer, Integer> pointee = new HashMap<>();
         Map<Integer, Integer> nullType = new HashMap<>();
+        Set<Integer> uninitialized = new HashSet<>();
+        names(words).forEach((name, id) -> { if (writtenFirst.contains(name)) uninitialized.add(id); });
+        assertEquals(writtenFirst.size(), uninitialized.size(), "fixture lost a variable it writes first");
         int functionVariables = 0;
         int at = 5;
         for (; at < words.length; at += words[at] >>> 16) {
@@ -249,7 +304,10 @@ final class SpirvLocalInitializerTest {
             if (opcode == 46) nullType.put(words[at + 2], words[at + 1]);
             if (opcode == 59 && words[at + 3] == 7) {
                 functionVariables++;
-                assertTrue(count == 5, "function variable %" + words[at + 2] + " has no initializer");
+                boolean first = uninitialized.contains(words[at + 2]);
+                assertTrue(count == (first ? 4 : 5), "function variable %" + words[at + 2]
+                        + (first ? " is written first but has an initializer" : " has no initializer"));
+                if (first) continue;
                 Integer initializer = words[at + 4];
                 Integer type = nullType.get(initializer);
                 if (type != null) {
