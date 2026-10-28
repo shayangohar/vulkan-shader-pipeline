@@ -1,58 +1,87 @@
 package net.chimera.render.shader;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
 
 /**
- * The SPIR-V of the stages a pack load compiled, by shader kind, pack treatment and source. A
- * program drawn in several vertex layouts binds the same fragment source in each (the hand in four,
- * an entity family in its lanes), and compiling it again only gives the same module again.
- * Complementary compiled its hand fragment stage four times per load. A load ends with
- * {@link #endLoad}, which empties the store; between loads it holds no more than
- * {@link #RECENT} modules.
+ * The SPIR-V of the stages compiled this session, by shader kind, pack treatment and the source's
+ * SHA-256: a module is a function of those alone, so a stored one is never stale. A program drawn
+ * in several vertex layouts binds the same fragment source in each (Complementary compiled its hand
+ * fragment stage four times per load), and a dimension the session visited before compiles the
+ * same sources again, as Iris's TransformPatcher keeps its transformed sources across pipeline
+ * rebuilds. The modules least recently used go once the store passes its byte budget.
  */
 public final class CompiledStages {
-    private static final int RECENT = 32;
-    private static final Map<Key, byte[]> MODULES = new LinkedHashMap<>(RECENT, 0.75F, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<Key, byte[]> eldest) {
-            return size() > RECENT;
-        }
-    };
-    private static int compiled;
-    private static int reused;
+    /** About three of Complementary's dimension variants; a load reports the store's size. */
+    static final long SESSION_BUDGET = 64L << 20;
+    private static final CompiledStages SESSION = new CompiledStages(SESSION_BUDGET);
 
-    private record Key(int kind, boolean packModule, String source) {}
+    private final long budget;
+    private final Map<Key, byte[]> modules = new LinkedHashMap<>(256, 0.75F, true);
+    private long bytes;
+    private int compiled;
+    private int reused;
 
-    private CompiledStages() {}
+    private record Key(int kind, boolean packModule, String sourceSha256) {}
 
-    /** The module of this stage, compiled by {@code compile} unless it was compiled before. */
+    CompiledStages(long budget) {
+        this.budget = budget;
+    }
+
+    /** The session's module of this stage, compiled by {@code compile} unless it was compiled before. */
     static byte[] module(int kind, boolean packModule, String source, Supplier<byte[]> compile) {
-        Key key = new Key(kind, packModule, source);
-        synchronized (MODULES) {
-            byte[] known = MODULES.get(key);
+        return SESSION.moduleOf(kind, packModule, source, compile);
+    }
+
+    /** Ends a load: how many stages it compiled and reused, and what the store holds. */
+    public static String endLoad() {
+        return SESSION.report();
+    }
+
+    byte[] moduleOf(int kind, boolean packModule, String source, Supplier<byte[]> compile) {
+        Key key = new Key(kind, packModule, sha256(source));
+        synchronized (this) {
+            byte[] known = modules.get(key);
             if (known != null) {
                 reused++;
                 return known;
             }
         }
         byte[] module = compile.get();
-        synchronized (MODULES) {
-            MODULES.put(key, module);
+        synchronized (this) {
+            byte[] replaced = modules.put(key, module);
+            bytes += module.length - (replaced == null ? 0 : replaced.length);
             compiled++;
+            var eldest = modules.entrySet().iterator();
+            while (bytes > budget && eldest.hasNext()) {
+                bytes -= eldest.next().getValue().length;
+                eldest.remove();
+            }
         }
         return module;
     }
 
-    /** Ends a load: how many stages it compiled and how many it reused. The store is emptied. */
-    public static String endLoad() {
-        synchronized (MODULES) {
-            String counts = compiled + " compiled, " + reused + " reused";
-            MODULES.clear();
-            compiled = 0;
-            reused = 0;
-            return counts;
+    /** The counts since the last report, which starts them again, and the store's size. */
+    synchronized String report() {
+        String counts = String.format(Locale.ROOT, "%d compiled, %d reused; the session keeps %d modules, %.1f MB",
+                compiled, reused, modules.size(), bytes / (1024.0 * 1024.0));
+        compiled = 0;
+        reused = 0;
+        return counts;
+    }
+
+    private static String sha256(String source) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(source.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException missing) {
+            throw new IllegalStateException("SHA-256 is unavailable", missing);
         }
     }
 }

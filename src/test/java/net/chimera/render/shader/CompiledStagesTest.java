@@ -8,32 +8,49 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
- * Complementary's hand binds one fragment source in four vertex layouts. A load compiles that
- * stage once; a different kind or pack treatment of the same text is another module; the load's
- * end reports the counts and lets the modules go.
+ * Complementary's hand binds one fragment source in four vertex layouts, and a dimension visited
+ * again compiles the same sources again. Each is compiled once per session; a different kind or
+ * pack treatment of the same text is another module; past its byte budget the store lets the
+ * least recently used modules go.
  */
 final class CompiledStagesTest {
     @Test
-    void compilesEachStageOncePerLoad() {
-        CompiledStages.endLoad();
+    void compilesEachStageOncePerSession() {
+        CompiledStages stages = new CompiledStages(1024);
         AtomicInteger compiles = new AtomicInteger();
-        byte[] first = CompiledStages.module(1, true, "void main() {}", () -> compiled(compiles, 7));
-        byte[] again = CompiledStages.module(1, true, "void main() {}", () -> compiled(compiles, 9));
+        byte[] first = stages.moduleOf(1, true, "void main() {}", () -> compiled(compiles, 7, 4));
+        byte[] again = stages.moduleOf(1, true, "void main() {}", () -> compiled(compiles, 9, 4));
         assertArrayEquals(first, again);
-        assertEquals(1, compiles.get(), "the same stage was compiled twice in one load");
+        assertEquals(1, compiles.get(), "the same stage was compiled twice");
 
-        CompiledStages.module(0, true, "void main() {}", () -> compiled(compiles, 1));
-        CompiledStages.module(1, false, "void main() {}", () -> compiled(compiles, 2));
+        stages.moduleOf(0, true, "void main() {}", () -> compiled(compiles, 1, 4));
+        stages.moduleOf(1, false, "void main() {}", () -> compiled(compiles, 2, 4));
         assertEquals(3, compiles.get(), "another kind or pack treatment is another module");
-        assertEquals("3 compiled, 1 reused", CompiledStages.endLoad());
+        assertEquals("3 compiled, 1 reused; the session keeps 3 modules, 0.0 MB", stages.report());
 
-        CompiledStages.module(1, true, "void main() {}", () -> compiled(compiles, 7));
-        assertEquals(4, compiles.get(), "a new load kept the last load's modules");
-        CompiledStages.endLoad();
+        stages.moduleOf(1, true, "void main() {}", () -> compiled(compiles, 7, 4));
+        assertEquals(3, compiles.get(), "the next load compiled a stage the session already has");
     }
 
-    private static byte[] compiled(AtomicInteger compiles, int marker) {
+    @Test
+    void dropsTheLeastRecentlyUsedPastItsBudget() {
+        CompiledStages stages = new CompiledStages(10);
+        AtomicInteger compiles = new AtomicInteger();
+        stages.moduleOf(1, true, "a", () -> compiled(compiles, 1, 4));
+        stages.moduleOf(1, true, "b", () -> compiled(compiles, 2, 4));
+        stages.moduleOf(1, true, "a", () -> compiled(compiles, 1, 4));
+        stages.moduleOf(1, true, "c", () -> compiled(compiles, 3, 4));
+        assertEquals(3, compiles.get());
+        stages.moduleOf(1, true, "a", () -> compiled(compiles, 1, 4));
+        assertEquals(3, compiles.get(), "the module used most recently was dropped");
+        stages.moduleOf(1, true, "b", () -> compiled(compiles, 2, 4));
+        assertEquals(4, compiles.get(), "the least recently used module was kept past the budget");
+    }
+
+    private static byte[] compiled(AtomicInteger compiles, int marker, int length) {
         compiles.incrementAndGet();
-        return new byte[] {(byte) marker};
+        byte[] module = new byte[length];
+        module[0] = (byte) marker;
+        return module;
     }
 }
