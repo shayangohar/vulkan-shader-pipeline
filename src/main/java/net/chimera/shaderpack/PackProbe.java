@@ -125,10 +125,10 @@ public final class PackProbe {
             ConformanceReport report = conformanceReport();
             inventoryAliases(packPlan);
             PassComputePlan passComputes = PassComputePlan.build(packPlan, shadersDir);
-            for (Inventory inventory : inventories.values()) {
-                report.addProgram(ProgramReportRules.toProgram(inventory, packConfig,
-                        packPlan.program(inventory.name), resourcePlan, packPlan, passComputes));
-            }
+            PackPlan planned = packPlan;
+            PackWorkers.map(List.copyOf(inventories.values()), inventory -> ProgramReportRules.toProgram(inventory,
+                    packConfig, planned.program(inventory.name), resourcePlan, planned, passComputes))
+                    .forEach(report::addProgram);
             return new Analysis(report, packPlan, packConfig, settingsPlan, resolution, passComputes);
         }
 

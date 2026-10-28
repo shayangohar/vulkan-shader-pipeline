@@ -45,10 +45,9 @@ public final class PackPlanBuilder {
     ) {
         List<PackProgramPlan> plans = new ArrayList<>();
         if (programs != null) {
-            for (PackProgram program : (resolution == null ? PackResolutionPlan.empty() : resolution)
-                    .executablePrograms(programs)) {
-                plans.add(build(program, config, resolution, advancedResources));
-            }
+            // Each program plans from the shared, unchanging inputs alone, so the workers share them.
+            plans.addAll(PackWorkers.map((resolution == null ? PackResolutionPlan.empty() : resolution)
+                    .executablePrograms(programs), program -> build(program, config, resolution, advancedResources)));
         }
         return new PackPlan(config, plans, entityIds,
                 config == null ? PackSettingsPlan.empty() : config.settings(), resolution,

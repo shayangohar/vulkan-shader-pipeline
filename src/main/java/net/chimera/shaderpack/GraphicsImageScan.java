@@ -46,11 +46,29 @@ final class GraphicsImageScan {
     static GraphicsImageScan scan(PackPlan plan, Map<String, PackAdvancedResourcePlan.ImageSpec> images,
                                   List<String> deviations) {
         GraphicsImageScan scan = new GraphicsImageScan(plan, images, deviations);
-        for (PackProgramPlan program : plan.programs()) {
-            if (program == null || program.name().isBlank()) continue;
-            scan.scanProgram(program);
+        List<PackProgramPlan> programs = plan.programs().stream()
+                .filter(program -> program != null && !program.name().isBlank()).toList();
+        // A program's bindings and deviations are its own: scanned apart and merged in program
+        // order, they are what one scan of every program records.
+        for (GraphicsImageScan part : PackWorkers.map(programs, program -> {
+            GraphicsImageScan own = new GraphicsImageScan(plan, images, new ArrayList<>());
+            own.scanProgram(program);
+            return own;
+        })) {
+            scan.merge(part);
         }
         return scan;
+    }
+
+    private void merge(GraphicsImageScan part) {
+        dependent.addAll(part.dependent);
+        customImageFeaturePrograms.addAll(part.customImageFeaturePrograms);
+        part.writers.forEach((program, bindings) ->
+                writers.computeIfAbsent(program, ignored -> new ArrayList<>()).addAll(bindings));
+        part.readers.forEach((program, bindings) ->
+                readers.computeIfAbsent(program, ignored -> new ArrayList<>()).addAll(bindings));
+        producedImages.addAll(part.producedImages);
+        deviations.addAll(part.deviations);
     }
 
     private void scanProgram(PackProgramPlan program) {

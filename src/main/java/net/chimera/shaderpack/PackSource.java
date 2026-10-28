@@ -616,37 +616,40 @@ public final class PackSource {
             Map<String, String> initialMacros,
             Set<String> lockedMacros
     ) {
-        List<PackProgram> result = new ArrayList<>();
-        for (PackProgram candidate : candidates) {
-            ShaderSourcePreprocessor.Result fragment = normalizePreparedSource(
-                    ShaderSourcePreprocessor.prepare(
-                    shadersRoot, candidate.fragmentPath(), candidate.fragmentSource(), initialMacros,
-                    lockedMacros), false);
-            ShaderSourcePreprocessor.Result vertex = candidate.vertexSource() == null
-                    ? new ShaderSourcePreprocessor.Result(null, List.of())
-                    : normalizePreparedSource(ShaderSourcePreprocessor.prepare(
-                    shadersRoot, candidate.vertexPath(), candidate.vertexSource(), initialMacros,
-                    lockedMacros), true);
-            List<String> prepDeviations = new ArrayList<>();
-            prepDeviations.addAll(fragment.deviations());
-            prepDeviations.addAll(vertex.deviations());
-            Map<String, PreparedShaderSource> preparedSources = new TreeMap<>();
-            if (candidate.fragmentSource() != null) {
-                preparedSources.put("fragment", new PreparedShaderSource(
-                        "fragment", relativePath(shadersRoot, candidate.fragmentPath()),
-                        fragment.source(), fragment.dependencies(), fragment.deviations()));
-            }
-            if (candidate.vertexSource() != null) {
-                preparedSources.put("vertex", new PreparedShaderSource(
-                        "vertex", relativePath(shadersRoot, candidate.vertexPath()),
-                        vertex.source(), vertex.dependencies(), vertex.deviations()));
-            }
-            prepareGeometryStages(candidate, shadersRoot, initialMacros, lockedMacros, preparedSources);
-            result.add(new PackProgram(candidate.name(), candidate.fragmentSource(), candidate.fragmentPath(),
-                    candidate.vertexSource(), candidate.vertexPath(), shadersRoot,
-                    fragment.source(), vertex.source(), prepDeviations, variantFolder, preparedSources));
+        // Each program preprocesses from its own files and the shared macros, so the workers share them.
+        return List.copyOf(PackWorkers.map(candidates, candidate ->
+                prepareProgram(candidate, shadersRoot, variantFolder, initialMacros, lockedMacros)));
+    }
+
+    private static PackProgram prepareProgram(PackProgram candidate, Path shadersRoot, String variantFolder,
+                                              Map<String, String> initialMacros, Set<String> lockedMacros) {
+        ShaderSourcePreprocessor.Result fragment = normalizePreparedSource(
+                ShaderSourcePreprocessor.prepare(
+                shadersRoot, candidate.fragmentPath(), candidate.fragmentSource(), initialMacros,
+                lockedMacros), false);
+        ShaderSourcePreprocessor.Result vertex = candidate.vertexSource() == null
+                ? new ShaderSourcePreprocessor.Result(null, List.of())
+                : normalizePreparedSource(ShaderSourcePreprocessor.prepare(
+                shadersRoot, candidate.vertexPath(), candidate.vertexSource(), initialMacros,
+                lockedMacros), true);
+        List<String> prepDeviations = new ArrayList<>();
+        prepDeviations.addAll(fragment.deviations());
+        prepDeviations.addAll(vertex.deviations());
+        Map<String, PreparedShaderSource> preparedSources = new TreeMap<>();
+        if (candidate.fragmentSource() != null) {
+            preparedSources.put("fragment", new PreparedShaderSource(
+                    "fragment", relativePath(shadersRoot, candidate.fragmentPath()),
+                    fragment.source(), fragment.dependencies(), fragment.deviations()));
         }
-        return List.copyOf(result);
+        if (candidate.vertexSource() != null) {
+            preparedSources.put("vertex", new PreparedShaderSource(
+                    "vertex", relativePath(shadersRoot, candidate.vertexPath()),
+                    vertex.source(), vertex.dependencies(), vertex.deviations()));
+        }
+        prepareGeometryStages(candidate, shadersRoot, initialMacros, lockedMacros, preparedSources);
+        return new PackProgram(candidate.name(), candidate.fragmentSource(), candidate.fragmentPath(),
+                candidate.vertexSource(), candidate.vertexPath(), shadersRoot,
+                fragment.source(), vertex.source(), prepDeviations, variantFolder, preparedSources);
     }
 
     /**
