@@ -792,9 +792,11 @@ final class FixturePackTest {
                 shaders.resolve("deferred1.fsh"), null, null), new PackProgram("composite",
                 "#version 120\nconst int colortex5Format = RGB8;\nconst int colortex6Format = RGBA16F;",
                 shaders.resolve("composite.fsh"), null, null)), shaders);
-        assertEquals(List.of(4, 5, 7), List.copyOf(config.paddedAlphaTargets()),
+        assertEquals(List.of(4, 5), List.copyOf(config.paddedAlphaTargets()),
                 "targets declared without alpha, a later declaration replacing an earlier one");
         assertEquals(97, config.colortexFormats().get(4), "RGB16F is stored as RGBA16F");
+        assertEquals(122, config.colortexFormats().get(7),
+                "R11F_G11F_B10F is stored exactly, unsigned and without alpha, so it needs no padding");
         assertTrue(!config.colortexFormats().containsKey(9), "a shaders.properties format applied");
     }
 

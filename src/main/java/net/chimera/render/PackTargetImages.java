@@ -23,6 +23,7 @@ import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FILTER_LINEAR;
 import static org.lwjgl.vulkan.VK10.VK_FILTER_NEAREST;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_B10G11R11_UFLOAT_PACK32;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_SRC_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
@@ -61,16 +62,20 @@ import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 final class PackTargetImages {
     private PackTargetImages() {}
 
-    /** R16, RG16 and RGBA16 in their exact normalized formats, whose target features are optional. */
-    private static final Set<Integer> NORMALIZED_16_FORMATS = Set.of(
-            VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16A16_UNORM);
+    /**
+     * Exact formats whose target features are optional in Vulkan: R16, RG16 and RGBA16 normalized,
+     * and R11F_G11F_B10F as B10G11R11_UFLOAT_PACK32.
+     */
+    private static final Set<Integer> OPTIONAL_TARGET_FORMATS = Set.of(
+            VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16A16_UNORM,
+            VK_FORMAT_B10G11R11_UFLOAT_PACK32);
 
     /** Checks the device features the targets' formats rely on before any image is allocated. */
     static void verifyFormats(Collection<TargetSpec> targets) {
-        // The 16-bit normalized formats' sampled/attachment features are not mandatory on every
-        // device. Reject unsupported storage rather than silently substituting floating point.
-        targets.stream().map(TargetSpec::format).filter(NORMALIZED_16_FORMATS::contains)
-                .distinct().forEach(PackTargetImages::verifyNormalized16Support);
+        // These formats' sampled/attachment features are not mandatory on every device. Reject
+        // unsupported storage rather than silently substituting a format that stores other values.
+        targets.stream().map(TargetSpec::format).filter(OPTIONAL_TARGET_FORMATS::contains)
+                .distinct().forEach(PackTargetImages::verifyOptionalTargetSupport);
         targets.stream().filter(TargetSpec::mipmapped).map(TargetSpec::format)
                 .distinct().forEach(PackTargetImages::verifyMipmapSupport);
     }
@@ -111,14 +116,14 @@ final class PackTargetImages {
         requireFeatures(format, required, "mipmapped target format", "blit");
     }
 
-    /** Check an optional exact normalized format before allocating any target images. */
-    private static void verifyNormalized16Support(int format) {
+    /** Check an optional exact format before allocating any target images. */
+    private static void verifyOptionalTargetSupport(int format) {
         requireFeatures(format, VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
                 | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
                 | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT
                 | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT
                 | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT,
-                "16-bit normalized target format", "sampled/linear/attachment/blend/transfer");
+                "optional target format", "sampled/linear/attachment/blend/transfer");
     }
 
     private static void requireFeatures(int format, int required, String what, String support) {

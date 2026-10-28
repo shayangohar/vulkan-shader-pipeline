@@ -219,9 +219,9 @@ final class CorpusCompileFixesTest {
                 Map.entry("RGBA16_SNORM", 109), Map.entry("R16_SNORM", 100), Map.entry("RG8_SNORM", 83),
                 Map.entry("RGB32F", 109), Map.entry("RGB565", 37), Map.entry("RGB9_E5", 97),
                 Map.entry("RGBA32UI", 107), Map.entry("R32UI", 98), Map.entry("RG16I", 82),
-                Map.entry("RGB8UI", 41), Map.entry("RGB10_A2UI", 68));
+                Map.entry("RGB8UI", 41), Map.entry("RGB10_A2UI", 68), Map.entry("R11F_G11F_B10F", 122));
         Set<String> padded = Set.of("RGB8", "RGB8_SNORM", "RGB16", "RGB16_SNORM", "RGB16F", "RGB32F", "R3_G3_B2",
-                "RGB565", "R11F_G11F_B10F", "RGB9_E5", "RGB8UI", "RGB8I", "RGB16UI", "RGB16I", "RGB32UI", "RGB32I");
+                "RGB565", "RGB9_E5", "RGB8UI", "RGB8I", "RGB16UI", "RGB16I", "RGB32UI", "RGB32I");
         List<String> tokens = List.of("RGBA", "R8", "RG8", "RGB8", "RGBA8", "R8_SNORM", "RG8_SNORM", "RGB8_SNORM",
                 "RGBA8_SNORM", "R16", "RG16", "RGB16", "RGBA16", "R16_SNORM", "RG16_SNORM", "RGB16_SNORM",
                 "RGBA16_SNORM", "R16F", "RG16F", "RGB16F", "RGBA16F", "R32F", "RG32F", "RGB32F", "RGBA32F",

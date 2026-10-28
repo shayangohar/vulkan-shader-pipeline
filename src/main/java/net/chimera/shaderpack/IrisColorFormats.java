@@ -39,6 +39,8 @@ public final class IrisColorFormats {
         exact("R32F", 100, 4, Kind.FLOAT);          // VK_FORMAT_R32_SFLOAT
         exact("RG32F", 103, 8, Kind.FLOAT);         // VK_FORMAT_R32G32_SFLOAT
         exact("RGBA32F", 109, 16, Kind.FLOAT);      // VK_FORMAT_R32G32B32A32_SFLOAT
+        // VK_FORMAT_B10G11R11_UFLOAT_PACK32: unsigned like GL's, so a negative store is 0 and alpha reads 1.
+        exact("R11F_G11F_B10F", 122, 4, Kind.FLOAT);
         exact("R8UI", 13, 1, Kind.UINT);            // VK_FORMAT_R8_UINT
         exact("R8I", 14, 1, Kind.SINT);             // VK_FORMAT_R8_SINT
         exact("RG8UI", 20, 2, Kind.UINT);           // VK_FORMAT_R8G8_UINT
@@ -75,7 +77,6 @@ public final class IrisColorFormats {
         approximate("R3_G3_B2", "RGBA8", true);
         approximate("RGB5_A1", "RGBA8", false);
         approximate("RGB565", "RGBA8", true);
-        approximate("R11F_G11F_B10F", "RGBA16F", true);
         approximate("RGB9_E5", "RGBA16F", true);
         approximate("RGB8UI", "RGBA8UI", true);
         approximate("RGB8I", "RGBA8I", true);
