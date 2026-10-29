@@ -370,13 +370,19 @@ public final class PackPostTargets {
         this.sourceImages[0] = target;
     }
 
-    /** Invalidates logical outputs while retaining physical images. */
+    /**
+     * Invalidates a skipped stage's outputs while retaining physical images. An auxiliary target
+     * loses its producer, so its readers fall back too: its last image holds another pass's
+     * meaning (BSL's bloom atlas in colortex1). colortex0 keeps its last committed write, the
+     * scene as the passes that ran left it: resetting it to the pre-post scene would also drop
+     * every earlier pass's output (Glimmer's composite3 water when composite4 was skipped).
+     */
     public void invalidateOutputs(List<Integer> targets) {
         if (targets == null) return;
         for (int target : targets) {
-            if (target < 0 || target >= TARGET_COUNT) continue;
+            if (target <= 0 || target >= TARGET_COUNT) continue;
             this.valid[target] = false;
-            this.sourceImages[target] = target == 0 ? this.hdrIdentitySource : null;
+            this.sourceImages[target] = null;
             this.temporal.invalidate(target);
         }
     }
@@ -678,9 +684,10 @@ public final class PackPostTargets {
         return true;
     }
 
+    /** {@link #invalidateOutputs} over written flags: colortex0 keeps its last write. */
     static void invalidateWrittenTargets(boolean[] written, List<Integer> targets) {
         if (written == null || targets == null) return;
-        for (int target : targets) if (target >= 0 && target < TARGET_COUNT
+        for (int target : targets) if (target > 0 && target < TARGET_COUNT
                 && target < written.length) written[target] = false;
     }
 

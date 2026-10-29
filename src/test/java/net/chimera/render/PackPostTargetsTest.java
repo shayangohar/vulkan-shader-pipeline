@@ -33,10 +33,8 @@ final class PackPostTargetsTest {
         assertTrue(PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
                 "target 0 must become pack-owned after a successful write");
         PackPostTargets.invalidateWrittenTargets(targetZeroWritten, List.of(0));
-        assertTrue(PackPostTargets.isTargetAvailable(0, true, targetZeroWritten),
-                "target 0 invalidation must restore HDR identity");
-        assertTrue(!PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
-                "target 0 must not remain pack-owned after invalidation");
+        assertTrue(PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
+                "a skipped target 0 writer must leave the last pass's scene, not the pre-post HDR");
 
         boolean[] targetOneWritten = unwritten.clone();
         targetOneWritten[1] = true;
