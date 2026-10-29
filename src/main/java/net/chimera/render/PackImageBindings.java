@@ -69,7 +69,34 @@ final class PackImageBindings {
             if (pipeline != pass.compositePipeline) return null;
             program = new ChimeraMainPass.ProgramImages("identity", IDENTITY_IMAGES, Set.of());
         }
-        ChimeraMainPass.ProgramImages bound = program;
+        return bind(program, colors, fallback, drawContext);
+    }
+
+    /**
+     * Binds the images a pass owns across all its draws, before the first: its targets, depths,
+     * shadow maps and pack images. Host textures and material maps follow each draw's albedo, so
+     * each draw binds them after the host's selector (bindDescriptorImages). Before the first draw a
+     * host slot holds whatever an earlier draw left, or nothing once a pack cleanup cleared it.
+     */
+    public ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindPassImages(
+            GraphicsPipeline pipeline) {
+        ChimeraMainPass.ProgramImages program = this.programImages.get(pipeline);
+        if (program == null) return null;
+        ProgramImageBindingManifest owned = new ProgramImageBindingManifest(program.manifest().entries().stream()
+                .filter(entry -> !followsDraw(entry.kind())).toList());
+        // No material map entry remains, so no draw context is read.
+        return bind(new ChimeraMainPass.ProgramImages(program.name(), owned, program.shadowSamplerSymbols()),
+                null, null, null);
+    }
+
+    private static boolean followsDraw(ProgramImageBindingManifest.Kind kind) {
+        return kind == ProgramImageBindingManifest.Kind.HOST_TEXTURE
+                || kind == ProgramImageBindingManifest.Kind.MATERIAL_MAP;
+    }
+
+    private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bind(
+            ChimeraMainPass.ProgramImages bound, VulkanImage[] colors, VulkanImage fallback,
+            DrawMaterialContext drawContext) {
         return ProgramImageBindingTransaction.bind(bound.name(), bound.manifest(), IMAGE_STORE, entry -> {
             if (entry.kind() == ProgramImageBindingManifest.Kind.HOST_TEXTURE) {
                 int hostSlot = PackResourcePlan.HOST_TEXTURE_SLOTS.get(entry.resourceKey());

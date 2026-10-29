@@ -149,11 +149,14 @@ final class PackShadowPass {
     private record ShadowFrame(VkCommandBuffer cmd, VulkanImage color, VulkanImage depth, boolean pack,
             Matrix4f projection, double cameraX, double cameraY, double cameraZ) {}
 
-    /** Binds a pack shadow terrain program's images for its draws. */
+    /**
+     * Binds a pack shadow terrain program's own images for its draws. The pass opens before any
+     * layer has bound its albedo, so each draw binds its host textures (bindDescriptorImages).
+     */
     private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindPackShadowImages(
             GraphicsPipeline pipeline) {
         pass.prepareProgramImages(pipeline);
-        return pass.images.bindProgramImages(pipeline, null, null, DrawMaterialContext.captureLive());
+        return pass.images.bindPassImages(pipeline);
     }
 
     /**
