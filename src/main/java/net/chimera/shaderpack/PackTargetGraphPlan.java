@@ -621,28 +621,27 @@ public final class PackTargetGraphPlan {
      * True when a program reads the target before any program writes it in
      * frame order. Such targets carry cross-frame state by construction:
      * clearing them every frame destroys what their first reader expects.
+     * A target no program writes counts too: Iris creates every target a
+     * program samples and clears it on its first frame (clearPassesFull), so
+     * the reader runs on the clear colour. Kappa's composite2 reads its
+     * reflection capture colortex12, whose writer composite1 is off by default.
      *
      * @param preProduced targets already produced before the steps run,
      *                    such as geometry outputs that always precede post
      */
     static boolean hasReadBeforeWrite(int index, List<TargetStep> steps, Set<Integer> preProduced) {
-        boolean producerSeen = preProduced != null && preProduced.contains(index);
-        boolean readBeforeProducer = false;
+        if (preProduced != null && preProduced.contains(index)) {
+            return false;
+        }
         for (TargetStep step : steps == null ? List.<TargetStep>of() : steps) {
-            if (step == null) {
+            if (step == null || !step.executable()) {
                 continue;
             }
-            if (!step.executable()) {
-                continue;
-            }
-            if (!producerSeen && step.reads(index)) {
-                readBeforeProducer = true;
+            if (step.reads(index)) {
+                return true;
             }
             if (step.writes(index)) {
-                if (readBeforeProducer) {
-                    return true;
-                }
-                producerSeen = true;
+                return false;
             }
         }
         return false;

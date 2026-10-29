@@ -218,6 +218,35 @@ final class PackPostTargetsTest {
         }
     }
 
+    /**
+     * Kappa's composite2 samples its reflection capture colortex12, whose only writer composite1 is
+     * off by default. Iris creates the sampled target and clears it on its first frame
+     * (clearPassesFull), so composite2 runs on black. Unseeded, the target stayed unavailable and
+     * the whole pass, Kappa's reflections and fog, fell back to identity.
+     */
+    @Test
+    void aTargetNoPassWritesIsSeededForItsReader(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        String header = "#version 120\nconst bool colortex12Clear = false;\nuniform sampler2D colortex0;\n"
+                + "uniform sampler2D colortex12;\nvarying vec2 texcoord;\n";
+        Files.writeString(shaders.resolve("composite1.fsh"), header
+                + "/* RENDERTARGETS: 12 */\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("composite2.fsh"), header + "/* RENDERTARGETS: 0 */\nvoid main() {\n"
+                + "    gl_FragColor = texture2D(colortex0, texcoord) + texture2D(colortex12, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"), "program.composite1.enabled=false\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        TargetStep reader = graph.step("composite2");
+        assertTrue(reader != null && reader.executable() && reader.reads(12), graph.steps().toString());
+        assertTrue(graph.steps().stream().noneMatch(step -> step.executable() && step.writes(12)),
+                graph.steps().toString());
+        assertTrue(graph.target(12) != null && graph.target(12).persistent(), String.valueOf(graph.target(12)));
+        assertTrue(graph.requiresInitialSeed(12), "a sampled target no pass writes must hold its clear colour");
+    }
+
     private static void writeUnwrittenFixture(Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst bool colortex2Clear = false;\n"
