@@ -168,9 +168,9 @@ public final class HostPipelineLayout {
     }
 
     /**
-     * The image descriptors of a layout. A pack program's image outside the host's texture units
-     * (the albedo, overlay and lightmap) is Chimera's to bind (PackImageDescriptor); Chimera's own
-     * shaders read the host's units.
+     * The image descriptors of a layout. A pack program's image other than the albedo and lightmap,
+     * which VulkanMod binds from the game's units, is Chimera's to bind (PackImageDescriptor);
+     * Chimera's own shaders read the host's units.
      */
     static List<ImageDescriptor> images(PackDescriptorLayout layout, boolean packModules) {
         List<ImageDescriptor> images = new ArrayList<>();
@@ -180,7 +180,7 @@ public final class HostPipelineLayout {
             if (slot.viewFormat() != 0) {
                 image = new PackStorageViewDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(),
                         slot.viewFormat());
-            } else if (packModules && !PackResourcePlan.HOST_TEXTURE_SLOTS.containsValue(slot.textureSlot())) {
+            } else if (packModules && !PackResourcePlan.HOST_BOUND_SLOTS.contains(slot.textureSlot())) {
                 image = new PackImageDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(), storage);
             } else {
                 image = new ImageDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(), storage);

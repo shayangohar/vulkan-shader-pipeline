@@ -1,9 +1,11 @@
 package net.chimera.render;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.vulkanmod.gl.GlTexture;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
@@ -89,6 +91,18 @@ final class PackImageBindings {
                 null, null, null);
     }
 
+    /**
+     * The overlay entityColor reads: the texture on the game's overlay unit. A render type without
+     * an overlay (eyes, energy swirl) leaves the unit empty, where GL samples an opaque texel and
+     * entityColor comes out zero; the white texture is that opaque texel.
+     */
+    private static ChimeraTextureBindingState.Snapshot overlay(int unit) {
+        GlTexture texture = GlTexture.getTexture(RenderSystem.getShaderTexture(unit));
+        VulkanImage image = texture == null ? null : texture.getVulkanImage();
+        return new ChimeraTextureBindingState.Snapshot(image != null ? image : VTextureSelector.getWhiteTexture(),
+                null);
+    }
+
     private static boolean followsDraw(ProgramImageBindingManifest.Kind kind) {
         return kind == ProgramImageBindingManifest.Kind.HOST_TEXTURE
                 || kind == ProgramImageBindingManifest.Kind.MATERIAL_MAP;
@@ -100,7 +114,8 @@ final class PackImageBindings {
         return ProgramImageBindingTransaction.bind(bound.name(), bound.manifest(), IMAGE_STORE, entry -> {
             if (entry.kind() == ProgramImageBindingManifest.Kind.HOST_TEXTURE) {
                 int hostSlot = PackResourcePlan.HOST_TEXTURE_SLOTS.get(entry.resourceKey());
-                return IMAGE_STORE.capture(hostSlot);
+                return PackResourcePlan.HOST_BOUND_SLOTS.contains(hostSlot)
+                        ? IMAGE_STORE.capture(hostSlot) : overlay(hostSlot);
             }
             if (entry.kind() == ProgramImageBindingManifest.Kind.MATERIAL_MAP) {
                 // The context was captured before the first slot capture, so

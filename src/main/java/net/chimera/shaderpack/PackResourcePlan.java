@@ -46,6 +46,14 @@ public final class PackResourcePlan {
     public static final Map<String, Integer> HOST_TEXTURE_SLOTS =
             Map.of("texture", 0, OVERLAY_SAMPLER, 1, "lightmap", 2);
 
+    /**
+     * The host textures VulkanMod binds for a pack draw from the game's texture units: the atlas and
+     * the lightmap. Chimera reads the overlay unit itself, since a render type without an overlay
+     * leaves it empty.
+     */
+    public static final Set<Integer> HOST_BOUND_SLOTS =
+            Set.of(HOST_TEXTURE_SLOTS.get("texture"), HOST_TEXTURE_SLOTS.get("lightmap"));
+
     public static boolean isHostTexture(String resourceKey) {
         return resourceKey != null && HOST_TEXTURE_SLOTS.containsKey(resourceKey);
     }
