@@ -281,6 +281,8 @@ final class SweepParityFixesTest {
      * RedHat's composite and Spring's composite6, composite7 and final read centerDepthSmooth. Iris
      * rewrites a fullscreen pass's uniform declaration into its smoothed texture and each reference
      * into the texture's centre (CompositeDepthTransformer); a world program keeps an unset uniform.
+     * The pass samples the texture in GENERAL, where its compute kernel keeps it: a shader-read
+     * descriptor made VulkanMod transition it, which threw and dropped Insanity's depth of field to vanilla.
      */
     @Test
     void fullscreenPassesReadTheSmoothedCentreDepth(@TempDir Path root) throws IOException {
@@ -311,6 +313,13 @@ final class SweepParityFixesTest {
                 .filter(binding -> binding.sampler().equals(CenterDepthSmooth.SAMPLER)).findFirst().orElseThrow();
         assertEquals(SelectorNamespace.CENTER_DEPTH_SLOT, centre.slot());
         assertEquals(PackResourceKind.CENTER_DEPTH, centre.kind());
+        var images = PackDescriptorContracts.ordinaryDescriptorContract(plan.program("composite"), Set.of())
+                .layout().images();
+        assertEquals(List.of(PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL), images.stream()
+                .filter(image -> image.textureSlot() == SelectorNamespace.CENTER_DEPTH_SLOT)
+                .map(PackDescriptorLayout.ImageSlot::access).toList(), images.toString());
+        assertTrue(images.stream().filter(image -> image.textureSlot() != SelectorNamespace.CENTER_DEPTH_SLOT)
+                .allMatch(image -> image.access() == PackDescriptorLayout.ImageAccess.SAMPLED), images.toString());
         EntityRealPackTest.compileStage(plan.program("composite").convertedFragment(), false, "centre depth");
     }
 

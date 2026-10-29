@@ -103,8 +103,19 @@ final class PackDescriptorContracts {
     static List<PackDescriptorLayout.ImageSlot> samplerImages(int base, int[] slots) {
         List<PackDescriptorLayout.ImageSlot> images = new ArrayList<>();
         for (int index = 0; index < slots.length; index++) images.add(new PackDescriptorLayout.ImageSlot(
-                base + index, "sampler2D", "Sampler" + slots[index], slots[index]));
+                base + index, "sampler2D", "Sampler" + slots[index], slots[index], samplerAccess(slots[index])));
         return images;
+    }
+
+    /**
+     * The centre-depth slot holds iris_centerDepthSmooth, a storage image its compute kernel keeps in
+     * the general layout (PackCenterDepth), so it is sampled there as the pack's own images are. A
+     * shader-read descriptor made VulkanMod transition it from GENERAL, which its helper rejects
+     * ("Unexpected value:1"), and the first depth-of-field frame dropped the whole pack to vanilla.
+     */
+    static PackDescriptorLayout.ImageAccess samplerAccess(int slot) {
+        return slot == SelectorNamespace.CENTER_DEPTH_SLOT
+                ? PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL : PackDescriptorLayout.ImageAccess.SAMPLED;
     }
 
     /** A family layout: the host transform blocks, the pack's uniform block, then samplers. */
