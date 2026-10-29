@@ -14,7 +14,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * gbufferModelView and gbufferModelViewInverse are the pack's uniforms in every world lane, as in
  * Iris. Ebin rebuilds positions through them, and an enchanted item in a frame draws its glint
  * with depth test EQUAL over the item: the two lanes must place each vertex bit for bit, which a
- * GPU inverse of ModelViewMat in one lane and the uniform in the other did not.
+ * GPU inverse of ModelViewMat in one lane and the uniform in the other did not. The same expression
+ * must also evaluate the same in both programs, which GLSL promises only for an invariant position.
  */
 final class WorldMatrixLaneTest {
     private static final String POSITION = "vec3 world = mat3(gbufferModelViewInverse) * (ModelViewMat * ";
@@ -38,6 +39,46 @@ final class WorldMatrixLaneTest {
                 gl_FragData[0] = color;
             }
             """;
+    /** Insanity's (BSL's) entity and glint vertex: the position is plain ftransform(). */
+    private static final String FTRANSFORM_VERTEX = """
+            #version 120
+            varying vec4 color;
+            void main() {
+                color = gl_Color;
+                gl_Position = ftransform();
+            }
+            """;
+    private static final String LEGACY_FRAGMENT = """
+            #version 120
+            /* DRAWBUFFERS:0 */
+            varying vec4 color;
+            void main() {
+                gl_FragData[0] = color;
+            }
+            """;
+
+    /**
+     * Under Insanity an enchanted item in a frame and its glint both wrote ftransform() on the same
+     * inputs, yet NVIDIA placed them one ulp apart and the glint speckled. Every lane an item or its
+     * glint draws on declares its position invariant ahead of any use, the hand's glint included.
+     */
+    @Test
+    void itemAndGlintPositionsAreInvariant(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        String[] programs = {"gbuffers_entities", "gbuffers_block", "gbuffers_hand", "gbuffers_armor_glint"};
+        for (String program : programs) {
+            Files.writeString(shaders.resolve(program + ".vsh"), FTRANSFORM_VERTEX);
+            Files.writeString(shaders.resolve(program + ".fsh"), LEGACY_FRAGMENT);
+        }
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        for (String program : programs) {
+            assertInvariantPosition(program, convertedVertex(analysis, program));
+        }
+        assertInvariantPosition("hand glint",
+                EntityVertexBridge.handGlintVertex(convertedVertex(analysis, "gbuffers_armor_glint")));
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
+    }
 
     @Test
     void itemGlintAndCloudsKeepThePackMatrices(@TempDir Path root) throws IOException {
@@ -57,11 +98,22 @@ final class WorldMatrixLaneTest {
         assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
     }
 
-    private static String positionLine(PackProbe.Analysis analysis, String name) {
+    private static String convertedVertex(PackProbe.Analysis analysis, String name) {
         PackProgramPlan plan = analysis.plan().program(name);
         assertTrue(plan != null && plan.executable() && plan.convertedVertex() != null,
                 name + " rejected: " + (plan == null ? "missing" : plan.deviations()));
-        String vertex = plan.convertedVertex();
+        return plan.convertedVertex();
+    }
+
+    /** The stage declares gl_Position invariant, and the declaration is its first mention. */
+    private static void assertInvariantPosition(String name, String vertex) {
+        int declaration = vertex.indexOf(EntityVertexBridge.INVARIANT_POSITION);
+        assertTrue(declaration >= 0 && vertex.indexOf("gl_Position") == declaration + "invariant ".length(),
+                name + " must declare its position invariant before using it: " + vertex);
+    }
+
+    private static String positionLine(PackProbe.Analysis analysis, String name) {
+        String vertex = convertedVertex(analysis, name);
         assertTrue(!vertex.contains("inverse(ModelViewMat)") && vertex.contains("mat3(gbufferModelView) * world"),
                 name + " must read the pack's world matrices: " + vertex);
         int start = vertex.indexOf(POSITION);

@@ -40,6 +40,17 @@ public final class EntityVertexBridge {
     static final String ENTITY_ID_VARYING = "chimeraEntityId";
 
     /**
+     * Every stage this bridge converts declares its position invariant. A glint layer draws with
+     * depth test EQUAL over the item, armour or held item under it, from another program. The two
+     * evaluate the same expression on the same inputs, but GLSL promises the same result in both
+     * only for an invariant output (GLSL 4.60, 4.8.1). Without it NVIDIA put Insanity's entity and
+     * glint ftransform() one ulp apart, so the glint speckled as the camera moved. Iris declares
+     * nothing; its GL driver happened to agree. Interface blocks are flattened before conversion
+     * (ProgramStageSources), so no gl_PerVertex redeclaration follows this one.
+     */
+    static final String INVARIANT_POSITION = "invariant gl_Position;\n";
+
+    /**
      * A host value the entity vertex bridge forwards to a fragment that reads it: the overlay
      * coordinates entityColor fetches with (EntityOverlayColor), and the vertex colour's alpha
      * Iris's vertex-alpha test compares against (PackAlphaTestPlan).
@@ -363,8 +374,8 @@ public final class EntityVertexBridge {
         }
         String cameraBlock = GlslVertexPreambles.entityCameraUniformBlock(converted, fragmentUniforms);
         converted = clip.convert(wrapProjectedMain(converted, vertexPreamble));
-        return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n" + vertexPreamble
-                + chimeraVaryings + cameraBlock + converted,
+        return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n" + INVARIANT_POSITION
+                + vertexPreamble + chimeraVaryings + cameraBlock + converted,
                 layout);
     }
 
