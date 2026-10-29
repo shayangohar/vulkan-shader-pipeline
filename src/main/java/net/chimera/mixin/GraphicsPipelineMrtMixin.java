@@ -2,6 +2,7 @@ package net.chimera.mixin;
 
 import net.chimera.render.ChimeraDevice;
 import net.chimera.render.ChimeraRenderingPass;
+import net.chimera.render.WindowBlendAttachments;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.IrisColorFormats;
 import net.chimera.shaderpack.PackBlendPlan;
@@ -25,18 +26,17 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import static org.lwjgl.system.MemoryStack.stackGet;
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-import static org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 
 /**
  * Pipelines for Chimera's dynamic-rendering windows. A variant created while a
  * {@link ChimeraRenderingPass} is bound renders without a Vulkan render pass, into the window's
- * color and depth formats, with one blend attachment per color attachment: each starts from the
- * host draw's blend (the vanilla render type's, as in Iris) and takes the pack's blend directive
- * for that buffer where the pipeline's MRT contract declares one. An attachment whose location a
- * pack fragment stage never writes gets no color writes (SpirvOutputWrites). Variants for
- * VulkanMod's own render passes are untouched.
+ * color and depth formats, with one blend attachment per color attachment (WindowBlendAttachments):
+ * each starts from the host draw's blend (the vanilla render type's, as in Iris) and takes the
+ * pack's blend directive for that buffer where the pipeline's MRT contract declares one. An
+ * attachment whose location a pack fragment stage never writes gets no color writes
+ * (SpirvOutputWrites). Variants for VulkanMod's own render passes are untouched.
  */
 @Mixin(value = GraphicsPipeline.class, remap = false)
 public abstract class GraphicsPipelineMrtMixin {
@@ -100,32 +100,7 @@ public abstract class GraphicsPipelineMrtMixin {
             blends = PackBlendPlan.sharedAttachments(blends, integer);
             written = SpirvOutputWrites.ALL;
         }
-        VkPipelineColorBlendAttachmentState host = attachments.get(0);
-        for (int index = 0; index < attachments.capacity(); index++) {
-            VkPipelineColorBlendAttachmentState target = attachments.get(index);
-            PackBlendPlan.Mode mode = blends == null ? null : blends[index];
-            // An attachment the shader never writes keeps its contents, as a GL draw buffer does.
-            target.colorWriteMask((written >>> index & 1) != 0 ? host.colorWriteMask() : 0);
-            if (mode == null) {
-                target.blendEnable(host.blendEnable())
-                        .srcColorBlendFactor(host.srcColorBlendFactor())
-                        .dstColorBlendFactor(host.dstColorBlendFactor())
-                        .colorBlendOp(host.colorBlendOp())
-                        .srcAlphaBlendFactor(host.srcAlphaBlendFactor())
-                        .dstAlphaBlendFactor(host.dstAlphaBlendFactor())
-                        .alphaBlendOp(host.alphaBlendOp());
-            } else {
-                target.blendEnable(mode.enabled())
-                        .srcColorBlendFactor(mode.srcColor())
-                        .dstColorBlendFactor(mode.dstColor())
-                        .colorBlendOp(VK_BLEND_OP_ADD)
-                        .srcAlphaBlendFactor(mode.srcAlpha())
-                        .dstAlphaBlendFactor(mode.dstAlpha())
-                        .alphaBlendOp(VK_BLEND_OP_ADD);
-            }
-            // GL skips blending for an integer colour buffer; Vulkan requires it off there.
-            if (IrisColorFormats.integer(this.chimera$window.colorFormats()[index])) target.blendEnable(false);
-        }
+        WindowBlendAttachments.fill(attachments, blends, written, this.chimera$window.colorFormats());
         return attachments;
     }
 
