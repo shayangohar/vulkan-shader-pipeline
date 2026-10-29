@@ -1,6 +1,7 @@
 package net.chimera.gui.options;
 
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.renderer.RenderType;
 
 /**
  * The look of the shader pack settings, matching Iris's: flat translucent controls drawn in code as
@@ -39,25 +40,29 @@ public final class OptionLook {
     private OptionLook() {}
 
     public static void control(GuiGraphics graphics, int x, int y, int width, int height, State state) {
-        frame(graphics, x, y, width, height, state.border);
-        frame(graphics, x + 1, y + 1, width - 2, height - 2, state.ring);
+        frame(graphics, RenderType.gui(), x, y, width, height, state.border);
+        frame(graphics, RenderType.gui(), x + 1, y + 1, width - 2, height - 2, state.ring);
         graphics.fill(x + 2, y + 2, x + width - 2, y + height - 2, state.fill);
     }
 
-    /** The dark panel behind tooltips and comments. */
+    /**
+     * The dark panel behind tooltips and comments, on the depth-test-free overlay type as Iris draws
+     * it (GuiUtil.drawPanel). Text sits 0.03 in front of its widget (Font's shadow offset), so a
+     * depth-tested panel would hide a button's face but leave its label showing through.
+     */
     static void panel(GuiGraphics graphics, int x, int y, int width, int height) {
-        frame(graphics, x, y, width, height, PANEL_BORDER);
-        graphics.fill(x + 1, y + 1, x + width - 1, y + height - 1, PANEL_FILL);
+        frame(graphics, RenderType.guiOverlay(), x, y, width, height, PANEL_BORDER);
+        graphics.fill(RenderType.guiOverlay(), x + 1, y + 1, x + width - 1, y + height - 1, PANEL_FILL);
     }
 
     /** A 1 px outline whose edges do not overlap at the corners. */
-    private static void frame(GuiGraphics graphics, int x, int y, int width, int height, int color) {
+    private static void frame(GuiGraphics graphics, RenderType type, int x, int y, int width, int height, int color) {
         if (width <= 0 || height <= 0) return;
-        graphics.fill(x, y, x + width, y + 1, color);
-        if (height > 1) graphics.fill(x, y + height - 1, x + width, y + height, color);
+        graphics.fill(type, x, y, x + width, y + 1, color);
+        if (height > 1) graphics.fill(type, x, y + height - 1, x + width, y + height, color);
         if (height > 2) {
-            graphics.fill(x, y + 1, x + 1, y + height - 1, color);
-            if (width > 1) graphics.fill(x + width - 1, y + 1, x + width, y + height - 1, color);
+            graphics.fill(type, x, y + 1, x + 1, y + height - 1, color);
+            if (width > 1) graphics.fill(type, x + width - 1, y + 1, x + width, y + height - 1, color);
         }
     }
 }
