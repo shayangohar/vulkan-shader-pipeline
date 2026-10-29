@@ -37,11 +37,9 @@ final class PackPipelineSet {
 
     /** Pack geometry program (gbuffers_terrain) on the terrain path; null = chimera's terrain pipeline. */
     GraphicsPipeline terrainPipeline;
-    int[] terrainSlots;
 
     /** Pack water program on the host translucent terrain path; null = host/chimera fallback. */
     GraphicsPipeline waterPipeline;
-    int[] waterSlots;
 
     /** Pack shadow program on the shadow terrain path; null means fixed identity shadow. */
     GraphicsPipeline shadowPipeline;
@@ -148,10 +146,8 @@ final class PackPipelineSet {
         finalSamplerNames = List.of();
         finalPost = null;
         terrainPipeline = null;
-        terrainSlots = null;
         terrainRoute = null;
         waterPipeline = null;
-        waterSlots = null;
         waterRoute = null;
         shadowPipeline = null;
         shadowSlots = null;

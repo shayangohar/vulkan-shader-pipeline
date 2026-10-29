@@ -332,12 +332,10 @@ final class PackPipelineInstaller {
         }
         pipelines.terrainRoute = terrain;
         pipelines.terrainPipeline = terrain.pipeline();
-        pipelines.terrainSlots = terrain.samplerSlots();
         if (!attachPackStoragePipeline(name, terrain.pipeline(), terrain.imageBindings())) {
             terrain.pipeline().cleanUp();
             pipelines.terrainRoute = null;
             pipelines.terrainPipeline = null;
-            pipelines.terrainSlots = null;
             return;
         }
         ChimeraTerrainPipelines.setGeometryOverride(terrain.pipeline());
@@ -373,12 +371,10 @@ final class PackPipelineInstaller {
         }
         pipelines.waterRoute = water;
         pipelines.waterPipeline = water.pipeline();
-        pipelines.waterSlots = water.samplerSlots();
         if (!attachPackStoragePipeline(name, water.pipeline(), water.imageBindings())) {
             water.pipeline().cleanUp();
             pipelines.waterRoute = null;
             pipelines.waterPipeline = null;
-            pipelines.waterSlots = null;
             return;
         }
         ChimeraTerrainPipelines.setTranslucentOverride(water.pipeline());

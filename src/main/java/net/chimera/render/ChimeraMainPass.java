@@ -953,15 +953,6 @@ public final class ChimeraMainPass implements MainPass {
         return shadowPass.packShadowPassActive();
     }
 
-    static boolean containsSlot(int[] slots, int slot) {
-        for (int candidate : slots) {
-            if (candidate == slot) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     void cleanUpPipelines() {
         if (this.presentPipeline != null) this.presentPipeline.cleanUp();
         if (this.compositePipeline != null) this.compositePipeline.cleanUp();

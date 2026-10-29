@@ -197,7 +197,6 @@ final class PackSessionLifecycle {
         // The host rebinds its normal slots during the next draw window.
         SelectorNamespace.clearOwned(slot -> VTextureSelector.bindTexture(slot, null));
         ChimeraTextureBindingState.reset();
-        pass.shadowPass.releasePackShadowView();
         pass.shadowPass.shadowMap.cleanUp();
         pass.shadowPass.packShadowDepth.cleanUp();
         pass.packPostTargets.cleanUp();

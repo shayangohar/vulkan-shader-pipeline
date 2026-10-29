@@ -1,6 +1,5 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.render.shader.PackUniformProvider;
@@ -46,9 +45,6 @@ final class PackShadowPass {
     /** Iris's shadow culling for this pack session (shadow.culling and the shadow distances). */
     ShadowCullingPlan shadowCulling;
 
-    /** OpenGL name of the shadow depth on texture unit 5, for pack geometry sampling (shadowtex0); 0 when none. */
-    int packShadowGlId;
-    long packShadowSourceId;
     ChimeraShadowMap shadowMap = new ChimeraShadowMap();
     final PackShadowDepth packShadowDepth = new PackShadowDepth();
 
@@ -323,7 +319,6 @@ final class PackShadowPass {
         }
 
         this.shadowMap.bindShadowTexture();
-        maintainPackShadowGoal();
     }
 
     /**
@@ -522,7 +517,6 @@ final class PackShadowPass {
         if (this.shadowFrameReady) {
             clearComputeColors();
             this.shadowMap.bindShadowTexture();
-            maintainPackShadowGoal();
         }
     }
 
@@ -611,34 +605,6 @@ final class PackShadowPass {
     }
 
     /**
-     * Keeps RenderSystem texture unit 5 (the sampler slot pack geometry declares as
-     * shadowtex0) pointing at the shadow map's depth. Terrain draws bind sampler
-     * slots from those units (VTextureSelector.bindShaderTextures), unlike post
-     * seams which bind through boundTextures; the alias is renamed only when the
-     * shadow attachment is recreated (id change).
-     */
-    void maintainPackShadowGoal() {
-        boolean geometryUsesShadow = pass.pipelines.terrainPipeline != null
-                && pass.pipelines.terrainSlots != null && ChimeraMainPass.containsSlot(pass.pipelines.terrainSlots, 5);
-        boolean translucentUsesShadow = pass.pipelines.waterPipeline != null
-                && pass.pipelines.waterSlots != null && ChimeraMainPass.containsSlot(pass.pipelines.waterSlots, 5);
-        if (!geometryUsesShadow && !translucentUsesShadow) {
-            return;
-        }
-        if (!this.shadowMap.isInitialized() || this.shadowMap.getShadowFramebuffer() == null) {
-            return;
-        }
-        VulkanImage shadowDepth = this.shadowMap.getShadowFramebuffer().getDepthAttachment();
-        if (this.packShadowGlId == 0 || shadowDepth.getId() != this.packShadowSourceId) {
-            // A recreated shadow attachment retires the old name.
-            releasePackShadowView();
-            this.packShadowGlId = GlImageAlias.create(shadowDepth);
-            this.packShadowSourceId = shadowDepth.getId();
-        }
-        RenderSystem.setShaderTexture(5, this.packShadowGlId);
-    }
-
-    /**
      * Pack shadow depth is only valid when the matching pack terrain adapter
      * consumes it.  A pack shadow caster paired with host terrain has no
      * compatible depth semantics, so retain VulkanMod's fixed shadow path.
@@ -712,11 +678,5 @@ final class PackShadowPass {
         }
         LOGGER.info("[chimera] pack shadow cutout path: {}",
                 merged ? "merged by uniqueOpaqueLayer" : "separate");
-    }
-
-    void releasePackShadowView() {
-        GlImageAlias.retire(this.packShadowGlId);
-        this.packShadowGlId = 0;
-        this.packShadowSourceId = 0L;
     }
 }

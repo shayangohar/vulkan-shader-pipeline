@@ -4,9 +4,11 @@ import com.google.gson.JsonObject;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.mixin.ChimeraPipelineBuilderAccessor;
 import net.chimera.render.ChimeraDevice;
+import net.chimera.render.PackImageDescriptor;
 import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageViewDescriptor;
 import net.chimera.shaderpack.PackDescriptorLayout;
+import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackWorkers;
 import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.SpirvOutputWrites;
@@ -100,7 +102,7 @@ public final class HostPipelineLayout {
             throw new LayoutFailure("the device has no geometryShader for " + name + ".gsh");
         }
         Pipeline.Builder builder = new Pipeline.Builder(format, name);
-        builder.setUniforms(uniformBuffers(layout, uniforms), images(layout));
+        builder.setUniforms(uniformBuffers(layout, uniforms), images(layout, packModules));
         ((ChimeraPipelineBuilderAccessor) builder).chimera$setPushConstants(pushConstants(layout, uniforms));
         List<Stage> stages = new ArrayList<>(3);
         stages.add(new Stage(name + ".vsh", vertexSource, Shaderc.shaderc_glsl_vertex_shader));
@@ -165,14 +167,24 @@ public final class HostPipelineLayout {
         return buffers;
     }
 
-    static List<ImageDescriptor> images(PackDescriptorLayout layout) {
+    /**
+     * The image descriptors of a layout. A pack program's image outside the host's texture units
+     * (the albedo, overlay and lightmap) is Chimera's to bind (PackImageDescriptor); Chimera's own
+     * shaders read the host's units.
+     */
+    static List<ImageDescriptor> images(PackDescriptorLayout layout, boolean packModules) {
         List<ImageDescriptor> images = new ArrayList<>();
         for (PackDescriptorLayout.ImageSlot slot : layout.images()) {
-            ImageDescriptor image = slot.viewFormat() != 0
-                    ? new PackStorageViewDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(),
-                    slot.viewFormat())
-                    : new ImageDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(),
-                    slot.access() == PackDescriptorLayout.ImageAccess.STORAGE);
+            boolean storage = slot.access() == PackDescriptorLayout.ImageAccess.STORAGE;
+            ImageDescriptor image;
+            if (slot.viewFormat() != 0) {
+                image = new PackStorageViewDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(),
+                        slot.viewFormat());
+            } else if (packModules && !PackResourcePlan.HOST_TEXTURE_SLOTS.containsValue(slot.textureSlot())) {
+                image = new PackImageDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(), storage);
+            } else {
+                image = new ImageDescriptor(slot.binding(), slot.type(), slot.name(), slot.textureSlot(), storage);
+            }
             // Pack storage images stay in the general layout, as a graphics or compute stage may also write them.
             if (slot.access() == PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL) {
                 image.setLayout(VK_IMAGE_LAYOUT_GENERAL);
