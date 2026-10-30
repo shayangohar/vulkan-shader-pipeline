@@ -95,6 +95,31 @@ final class PassBlendDirectiveTest {
                 new PackBlendPlan.Mode[] {add, add, add}, new boolean[] {false, true, false})), "an integer target");
     }
 
+    /**
+     * A pipeline drawn into VulkanMod's render pass (no attachment contract) takes its program's
+     * directive for that pass's one attachment, colortex0, as Iris's BlendModeOverride does. Kappa's
+     * glint draws SRC_ALPHA ONE ZERO ONE there, not vanilla's SRC_COLOR, ONE.
+     */
+    @Test
+    void aHostPassPipelineTakesItsDirectiveForColortex0() {
+        PackBlendPlan.Mode glint = PackBlendPlan.parse("SRC_ALPHA ONE ZERO ONE");
+        PackBlendPlan.Mode[] program = PackPipelines.hostPassBlends(PackBlendPlan.forProgram("gbuffers_armor_glint",
+                properties("blend.gbuffers_armor_glint", "SRC_ALPHA ONE ZERO ONE")));
+        assertTrue(program != null && program.length == 1 && program[0].equals(glint),
+                "the program directive did not reach the host pass: " + Arrays.toString(program));
+
+        PackBlendPlan.Mode[] buffer = PackPipelines.hostPassBlends(PackBlendPlan.forProgram("gbuffers_weather",
+                properties("blend.gbuffers_weather", "SRC_ALPHA ONE ZERO ONE", "blend.gbuffers_weather.colortex0",
+                        "off")));
+        assertTrue(buffer != null && buffer[0] == PackBlendPlan.Mode.OFF,
+                "colortex0's own directive must win: " + Arrays.toString(buffer));
+
+        assertTrue(PackPipelines.hostPassBlends(PackBlendPlan.forProgram("gbuffers_line",
+                properties("blend.gbuffers_line.colortex2", "off")))[0] == null,
+                "a directive for another buffer must leave colortex0 on the host blend");
+        assertTrue(PackPipelines.hostPassBlends(PackBlendPlan.empty()) == null, "no directive, no override");
+    }
+
     @Test
     void shadowProgramKeepsItsDirectives(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));

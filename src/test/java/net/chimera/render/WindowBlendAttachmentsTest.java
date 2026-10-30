@@ -11,6 +11,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_ALPHA;
+import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_SRC_COLOR;
+import static org.lwjgl.vulkan.VK10.VK_BLEND_FACTOR_ZERO;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UNORM;
@@ -56,6 +58,33 @@ final class WindowBlendAttachmentsTest {
                 assertEquals(ALL_CHANNELS, attachments.get(index).colorWriteMask(), "attachment " + index);
                 assertTrue(attachments.get(index).blendEnable(), "attachment " + index);
             }
+        }
+    }
+
+    /**
+     * A glint variant in VulkanMod's own render pass: vanilla's glint blend (SRC_COLOR, ONE, ZERO,
+     * ONE) gives way to Kappa's blend.gbuffers_armor_glint, SRC_ALPHA ONE ZERO ONE, as in Iris.
+     */
+    @Test
+    void aHostPassAttachmentTakesTheProgramDirective() {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPipelineColorBlendAttachmentState.Buffer attachments =
+                    VkPipelineColorBlendAttachmentState.calloc(1, stack);
+            attachments.get(0).colorWriteMask(ALL_CHANNELS).blendEnable(true)
+                    .srcColorBlendFactor(VK_BLEND_FACTOR_SRC_COLOR).dstColorBlendFactor(VK_BLEND_FACTOR_ONE)
+                    .colorBlendOp(VK_BLEND_OP_ADD)
+                    .srcAlphaBlendFactor(VK_BLEND_FACTOR_ZERO).dstAlphaBlendFactor(VK_BLEND_FACTOR_ONE)
+                    .alphaBlendOp(VK_BLEND_OP_ADD);
+            PackBlendPlan.Mode glint = new PackBlendPlan.Mode(true, VK_BLEND_FACTOR_SRC_ALPHA, VK_BLEND_FACTOR_ONE,
+                    VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ONE);
+            WindowBlendAttachments.fill(attachments, new PackBlendPlan.Mode[] {glint}, 0b1,
+                    new int[] {VK_FORMAT_R16G16B16A16_SFLOAT});
+            VkPipelineColorBlendAttachmentState result = attachments.get(0);
+            assertTrue(result.blendEnable());
+            assertEquals(VK_BLEND_FACTOR_SRC_ALPHA, result.srcColorBlendFactor());
+            assertEquals(VK_BLEND_FACTOR_ONE, result.dstColorBlendFactor());
+            assertEquals(VK_BLEND_FACTOR_ZERO, result.srcAlphaBlendFactor());
+            assertEquals(ALL_CHANNELS, result.colorWriteMask());
         }
     }
 

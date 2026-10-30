@@ -8,7 +8,8 @@ import org.lwjgl.vulkan.VkPipelineColorBlendAttachmentState;
 import static org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
 
 /**
- * The blend attachments of a pipeline variant for a Chimera rendering window. VulkanMod writes the
+ * The blend attachments of a pipeline variant for a Chimera rendering window, or for one of
+ * VulkanMod's render passes when the pack pipeline has a directive there. VulkanMod writes the
  * host draw's blend (the vanilla render type's, as in Iris) into attachment 0; every attachment
  * starts from it and takes the pack's blend directive for its buffer where one applies.
  */

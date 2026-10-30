@@ -24,6 +24,8 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.Arrays;
+
 import static org.lwjgl.system.MemoryStack.stackGet;
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_UNDEFINED;
@@ -36,7 +38,9 @@ import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
  * each starts from the host draw's blend (the vanilla render type's, as in Iris) and takes the
  * pack's blend directive for that buffer where the pipeline's MRT contract declares one. An
  * attachment whose location a pack fragment stage never writes gets no color writes
- * (SpirvOutputWrites). Variants for VulkanMod's own render passes are untouched.
+ * (SpirvOutputWrites). A variant for one of VulkanMod's own render passes keeps its render pass and
+ * takes the pack pipeline's directive for that pass's attachment, if it has one
+ * (MrtPipelineContext.hostPassBlends).
  */
 @Mixin(value = GraphicsPipeline.class, remap = false)
 public abstract class GraphicsPipelineMrtMixin {
@@ -44,10 +48,16 @@ public abstract class GraphicsPipelineMrtMixin {
     @Unique
     private ChimeraRenderingPass chimera$window;
 
+    /** The colour format of the VulkanMod render pass the variant renders into; 0 when unknown. */
+    @Unique
+    private int chimera$hostFormat;
+
     @Inject(method = "createGraphicsPipeline", at = @At("HEAD"))
     private void chimera$beginVariant(PipelineState state, CallbackInfoReturnable<Long> callback) {
-        this.chimera$window = ((ChimeraPipelineStateAccessor) state).chimera$renderPass()
-                instanceof ChimeraRenderingPass window ? window : null;
+        RenderPass renderPass = ((ChimeraPipelineStateAccessor) state).chimera$renderPass();
+        this.chimera$window = renderPass instanceof ChimeraRenderingPass window ? window : null;
+        this.chimera$hostFormat = renderPass == null || renderPass.getFramebuffer() == null
+                ? 0 : renderPass.getFramebuffer().getFormat();
         MrtPipelineContext.beginPipeline((GraphicsPipeline) (Object) this);
     }
 
@@ -85,7 +95,7 @@ public abstract class GraphicsPipelineMrtMixin {
                     + "Lorg/lwjgl/vulkan/VkPipelineColorBlendStateCreateInfo;"))
     private VkPipelineColorBlendAttachmentState.Buffer chimera$copyBlendState(
             VkPipelineColorBlendAttachmentState.Buffer attachments) {
-        if (this.chimera$window == null) return attachments;
+        if (this.chimera$window == null) return chimera$hostPassBlend(attachments);
         PackBlendPlan.Mode[] blends = MrtPipelineContext.attachmentBlends();
         int written = MrtPipelineContext.writtenOutputs();
         // A contract for another attachment set does not describe this window.
@@ -101,6 +111,18 @@ public abstract class GraphicsPipelineMrtMixin {
             written = SpirvOutputWrites.ALL;
         }
         WindowBlendAttachments.fill(attachments, blends, written, this.chimera$window.colorFormats());
+        return attachments;
+    }
+
+    /** A VulkanMod render pass's attachments with the pack pipeline's directive, where it has one. */
+    @Unique
+    private VkPipelineColorBlendAttachmentState.Buffer chimera$hostPassBlend(
+            VkPipelineColorBlendAttachmentState.Buffer attachments) {
+        PackBlendPlan.Mode[] blends = MrtPipelineContext.hostPassBlends();
+        if (blends == null || blends.length != attachments.capacity()) return attachments;
+        int[] formats = new int[attachments.capacity()];
+        Arrays.fill(formats, this.chimera$hostFormat);
+        WindowBlendAttachments.fill(attachments, blends, SpirvOutputWrites.ALL, formats);
         return attachments;
     }
 

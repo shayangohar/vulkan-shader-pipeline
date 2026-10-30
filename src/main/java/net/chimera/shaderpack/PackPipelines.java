@@ -429,7 +429,7 @@ public final class PackPipelines {
                     ? outputPlan.outputFormatsArray() : null;
             PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
                     ? plan.blendPlan().shadowAttachments(attachmentFormats.length)
-                    : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
+                    : routedBlends(plan.blendPlan(), outputPlan, attachmentFormats);
             GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, geometrySource,
                     fragmentSource, imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
@@ -447,9 +447,32 @@ public final class PackPipelines {
     }
 
     /**
+     * The blend a pipeline with no attachment contract draws with in VulkanMod's render pass, one
+     * mode for that pass's single attachment (colortex0): the program's {@code blend.<program>}, or
+     * its {@code blend.<program>.colortex0}, as Iris's BlendModeOverride replaces the host blend for
+     * every draw of the program. Null keeps the host blend. Kappa's glint (SRC_ALPHA ONE ZERO ONE)
+     * otherwise drew with vanilla's SRC_COLOR, ONE, which squares its dim colour.
+     */
+    static PackBlendPlan.Mode[] hostPassBlends(PackBlendPlan blendPlan) {
+        return blendPlan == null ? null : blendPlan.attachments(List.of(0));
+    }
+
+    /**
+     * The blend modes for a world pipeline's attachments: the authored route's when it takes its own
+     * attachments, none for a coverage build's colour-plus-depth pair, and the host pass's otherwise.
+     */
+    private static PackBlendPlan.Mode[] routedBlends(PackBlendPlan blendPlan, GeometryOutputPlan outputPlan,
+                                                     int[] attachmentFormats) {
+        if (attachmentFormats == null) return hostPassBlends(blendPlan);
+        return outputPlan != null && outputPlan.requiresDynamicAttachments()
+                ? blendPlan.attachments(outputPlan.targetSlots()) : null;
+    }
+
+    /**
      * Creates the pipeline under its attachment contract, when it has one, and registers that
-     * contract for the variants VulkanMod creates lazily. The program's {@code blend.<program>}
-     * directive is registered for its draws' blendFunc.
+     * contract for the variants VulkanMod creates lazily. Without a contract, {@code attachmentBlends}
+     * holds the modes for VulkanMod's render pass (hostPassBlends). The program's
+     * {@code blend.<program>} directive is registered for its draws' blendFunc.
      */
     private static GraphicsPipeline createRouted(
             String name, VertexFormat format, PackDescriptorLayout layout, String vertex, String geometry,
@@ -467,6 +490,8 @@ public final class PackPipelines {
         }
         if (attachmentFormats != null) {
             MrtPipelineContext.register(pipeline, attachmentFormats, attachmentBlends);
+        } else {
+            MrtPipelineContext.registerHostPassBlends(pipeline, attachmentBlends);
         }
         PackUniformProvider.registerProgramBlend(pipeline, programBlend);
         return pipeline;
@@ -786,8 +811,7 @@ public final class PackPipelines {
             boolean dynamicAttachments = outputPlan != null && outputPlan.requiresDynamicAttachments();
             int[] attachmentFormats = dynamicAttachments ? outputPlan.outputFormatsArray()
                     : coverage ? new int[] {targetFormat, VK10.VK_FORMAT_R32_SFLOAT} : null;
-            PackBlendPlan.Mode[] attachmentBlends = dynamicAttachments
-                    ? plan.blendPlan().attachments(outputPlan.targetSlots()) : null;
+            PackBlendPlan.Mode[] attachmentBlends = routedBlends(plan.blendPlan(), outputPlan, attachmentFormats);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
                     ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, null, fragment,
                     imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));

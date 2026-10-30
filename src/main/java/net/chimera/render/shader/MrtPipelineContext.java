@@ -7,6 +7,7 @@ import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Map;
+import java.util.Objects;
 import java.util.WeakHashMap;
 
 /**
@@ -29,6 +30,9 @@ public final class MrtPipelineContext {
     private static final Map<GraphicsPipeline, Contract> REGISTERED =
             Collections.synchronizedMap(new WeakHashMap<>());
     private static final Map<GraphicsPipeline, Integer> WRITTEN_OUTPUTS =
+            Collections.synchronizedMap(new WeakHashMap<>());
+    private static final ThreadLocal<PackBlendPlan.Mode[]> CURRENT_HOST_PASS_BLENDS = new ThreadLocal<>();
+    private static final Map<GraphicsPipeline, PackBlendPlan.Mode[]> HOST_PASS_BLENDS =
             Collections.synchronizedMap(new WeakHashMap<>());
 
     private MrtPipelineContext() {}
@@ -81,15 +85,26 @@ public final class MrtPipelineContext {
         if (pipeline != null) WRITTEN_OUTPUTS.put(pipeline, locations);
     }
 
+    /**
+     * Retains the pack blend modes for {@code pipeline}'s variants in VulkanMod's own render passes,
+     * one per attachment there; a null mode keeps the host blend, and all-null modes register nothing.
+     */
+    public static void registerHostPassBlends(GraphicsPipeline pipeline, PackBlendPlan.Mode[] blends) {
+        if (pipeline == null || blends == null || Arrays.stream(blends).allMatch(Objects::isNull)) return;
+        HOST_PASS_BLENDS.put(pipeline, blends.clone());
+    }
+
     public static void unregister(GraphicsPipeline pipeline) {
         if (pipeline == null) return;
         REGISTERED.remove(pipeline);
         WRITTEN_OUTPUTS.remove(pipeline);
+        HOST_PASS_BLENDS.remove(pipeline);
     }
 
     /** Activates a registered contract at GraphicsPipeline.createGraphicsPipeline. */
     public static void beginPipeline(GraphicsPipeline pipeline) {
         CURRENT_WRITES.set(WRITTEN_OUTPUTS.get(pipeline));
+        CURRENT_HOST_PASS_BLENDS.set(HOST_PASS_BLENDS.get(pipeline));
         Contract contract = REGISTERED.get(pipeline);
         if (contract == null) {
             PIPELINE_SCOPE.set(Boolean.FALSE);
@@ -103,6 +118,7 @@ public final class MrtPipelineContext {
     /** Restores any outer render-pass contract after lazy pipeline creation. */
     public static void endPipeline() {
         CURRENT_WRITES.remove();
+        CURRENT_HOST_PASS_BLENDS.remove();
         if (!Boolean.TRUE.equals(PIPELINE_SCOPE.get())) {
             PIPELINE_SCOPE.remove();
             return;
@@ -123,6 +139,12 @@ public final class MrtPipelineContext {
     public static PackBlendPlan.Mode[] attachmentBlends() {
         Contract contract = CURRENT.get();
         return contract == null || contract.blends() == null ? null : contract.blends().clone();
+    }
+
+    /** The pack blend modes for the pipeline being created in a VulkanMod render pass, or null. */
+    public static PackBlendPlan.Mode[] hostPassBlends() {
+        PackBlendPlan.Mode[] blends = CURRENT_HOST_PASS_BLENDS.get();
+        return blends == null ? null : blends.clone();
     }
 
     /**
