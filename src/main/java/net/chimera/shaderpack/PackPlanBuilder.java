@@ -555,7 +555,7 @@ public final class PackPlanBuilder {
                 geometryOutputPlan = geometryOutputPlan.withSnapshotTargets(snapshots);
             }
             if (stage.shadowPass()) {
-                PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", fragment).plan();
+                PostTargetPlan shadowOutputs = PostTargetPlan.parseShadow("shadow", fragment, Map.of()).plan();
                 for (String deviation : shadowOutputs.deviations()) {
                     deviations.add(deviation.replaceFirst("^POST_", "SHADOW_"));
                 }

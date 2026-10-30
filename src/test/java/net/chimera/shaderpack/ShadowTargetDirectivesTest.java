@@ -157,6 +157,37 @@ final class ShadowTargetDirectivesTest {
     }
 
     /**
+     * A shadow program with no target directive draws to {0, 1}, as Iris's shadow framebuffers do
+     * when the draw buffers are unknown. Kappa writes its material ids to shadowcolor1 that way for
+     * its shadowcomp to read; routing that output to nothing left shadowcolor1 at its clear colour.
+     */
+    @Test
+    void aShadowProgramWithoutADirectiveDrawsToTheFirstTwo(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 430 compatibility
+                out vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 430 compatibility
+                layout(location = 0) out vec4 data0;
+                layout(location = 1) out vec4 data1;
+                in vec2 uv;
+                void main() {
+                    data0 = vec4(uv, 0.0, 1.0);
+                    data1 = vec4(0.5, 0.5, 0.4, 1.0);
+                }
+                """);
+        PackProgramPlan shadow = PackProbe.analyze(root).plan().program("shadow");
+        assertTrue(shadow.executable() && shadow.deviations().stream()
+                .noneMatch(deviation -> deviation.startsWith("FRAGMENT_OUTPUT_DISCARDED")),
+                shadow.deviations().toString());
+        assertTrue(shadow.convertedFragment().contains("chimeraShadowColor1 = vec4(0.5, 0.5, 0.4, 1.0)"),
+                shadow.convertedFragment());
+    }
+
+    /**
      * With SEPARATE_HARDWARE_SAMPLERS, shadowtexNHW reads its depth through the comparison sampler,
      * and only for a depth with shadowHardwareFiltering (IrisSamplers.addShadowSamplers).
      */

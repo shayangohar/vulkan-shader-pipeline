@@ -380,7 +380,7 @@ public final class PackConfig {
             }
             if (!FamilyAdapterRegistry.isShadowFamily(program.name())) continue;
             String fragment = program.executableFragmentSource();
-            for (int target : PostTargetPlan.parse("shadow", fragment == null ? "" : fragment).plan().targetSlots()) {
+            for (int target : PostTargetPlan.parseShadow("shadow", fragment, Map.of()).plan().targetSlots()) {
                 if (target < ShadowTargetDirectives.MAX_COLOR_TARGETS) highest = Math.max(highest, target);
             }
         }

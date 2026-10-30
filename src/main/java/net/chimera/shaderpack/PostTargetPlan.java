@@ -34,6 +34,8 @@ public final class PostTargetPlan {
 
     private static final Pattern TARGET_COMMENT = Pattern.compile(
             "(?is)/\\*\\s*(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([^*]*?)\\*/");
+    /** The route Iris gives a shadow-pass source with no target directive: shadowcolor0 and shadowcolor1. */
+    private static final String SHADOW_DEFAULT_TARGETS = "/* DRAWBUFFERS:01 */";
     private static final Pattern DIRECTIVE_WORD = Pattern.compile(
             "(?i)\\b(?:DRAWBUFFERS|RENDERTARGETS)\\b");
     private static final Pattern FRAG_DATA = Pattern.compile(
@@ -171,7 +173,7 @@ public final class PostTargetPlan {
                 .toList();
         if (outside.isEmpty()) return source;
         outside.forEach(target -> deviations.add("SHADOW_DRAWBUFFERS_RESET:" + target));
-        return TARGET_COMMENT.matcher(source).replaceAll("/* DRAWBUFFERS:01 */");
+        return TARGET_COMMENT.matcher(source).replaceAll(SHADOW_DEFAULT_TARGETS);
     }
 
     /**
@@ -269,17 +271,25 @@ public final class PostTargetPlan {
         return PassComputePlan.isShadowcomp(name) ? parseShadowcomp(name, fragment, config).plan() : null;
     }
 
-    /**
-     * A shadowcomp pass's route over the shadowcolor targets, in the pack's shadowcolor formats: its
-     * directive, or with none {0, 1}, as ShadowCompositeRenderer draws a source with unknown draw buffers.
-     */
+    /** A shadowcomp pass's route over the shadowcolor targets (parseShadow), in the pack's shadowcolor formats. */
     static ParseResult parseShadowcomp(String programName, String source, PackConfig.PackConfigData config) {
         List<Integer> shadowFormats = config == null ? List.of() : config.shadowSettings().colorAttachmentFormats();
         Map<Integer, Integer> formats = new TreeMap<>();
         for (int index = 0; index < shadowFormats.size(); index++) formats.put(index, shadowFormats.get(index));
+        return parseShadow(programName, source, formats);
+    }
+
+    /**
+     * A shadow-pass source's route over the shadowcolor targets: its directive, or with none {0, 1}.
+     * Iris draws a shadow program or a shadowcomp pass whose draw buffers are unknown to both
+     * (IrisRenderingPipeline.createShadowShader, SodiumPrograms.createFramebuffer,
+     * ShadowCompositeRenderer), where a colour program's default is {0}. Kappa's shadow program
+     * declares no directive and writes its material ids to shadowcolor1 for its shadowcomp to read.
+     */
+    static ParseResult parseShadow(String programName, String source, Map<Integer, Integer> formats) {
         String text = source == null ? "" : source;
-        return parse(programName, TARGET_COMMENT.matcher(text).find() ? text : text + "\n/* DRAWBUFFERS:01 */\n",
-                formats);
+        return parse(programName,
+                TARGET_COMMENT.matcher(text).find() ? text : text + "\n" + SHADOW_DEFAULT_TARGETS + "\n", formats);
     }
 
     public static Comparator<String> programComparator() {

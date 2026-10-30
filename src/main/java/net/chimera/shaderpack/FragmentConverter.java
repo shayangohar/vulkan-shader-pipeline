@@ -327,7 +327,7 @@ public final class FragmentConverter {
          * and its attachment's writes are masked.
          */
         private String rewriteShadowOutputs() {
-            PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", src).plan();
+            PostTargetPlan shadowOutputs = PostTargetPlan.parseShadow("shadow", src, Map.of()).plan();
             if (!shadowOutputs.executable() || shadowOutputs.targetSlots().stream()
                     .anyMatch(target -> target < 0 || target >= ShadowTargetDirectives.MAX_COLOR_TARGETS)) {
                 throw new IllegalArgumentException("SHADOW_OUTPUT_TARGET_UNSUPPORTED");
