@@ -73,8 +73,7 @@
   "Kappa_v5.3.zip": [
     "gbuffers_clouds",
     "gbuffers_textured_lit",
-    "gbuffers_translucent",
-    "shadowcomp"
+    "gbuffers_translucent"
   ],
   "MakeUp-UltraFast-9.5g.zip": [
     "dh_terrain",

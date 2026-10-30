@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -60,6 +61,13 @@ public class ChimeraShadowMap {
      * rest before the shadow pass (ClearPassCreator).
      */
     private Map<Integer, VulkanImage> computeColors = Map.of();
+    /**
+     * The other side of each shadowcolor target a shadowcomp pass draws, made on its first draw
+     * (Iris ShadowRenderTargets keeps a main and an alternate texture for every target).
+     */
+    private final Map<Integer, VulkanImage> alternateColors = new TreeMap<>();
+    /** The shadowcolor targets whose current contents are on their alternate side. */
+    private final Set<Integer> flippedColors = new TreeSet<>();
     private GraphicsPipeline shadowPipeline;
     private final DepthSampleView depthSampleView = new DepthSampleView();
     /**
@@ -558,9 +566,45 @@ public class ChimeraShadowMap {
         VTextureSelector.bindTexture(5, shadowDepth); // slot 5 for pack shadowtex0
     }
 
+    /** The current side of shadowcolor{@code index}: the one the latest shadowcomp pass drew, else the drawn one. */
     public VulkanImage shadowColor(int index) {
+        return this.flippedColors.contains(index) ? this.alternateColors.get(index) : drawnColor(index);
+    }
+
+    /** The side the shadow pass draws shadowcolor{@code index} on, or a compute-only target's one image. */
+    private VulkanImage drawnColor(int index) {
         return index >= 0 && index < this.shadowColors.size() ? this.shadowColors.get(index)
                 : this.computeColors.get(index);
+    }
+
+    /**
+     * The image a shadowcomp pass draws shadowcolor{@code index} into: the side opposite the current
+     * one (ShadowRenderTargets.createColorFramebuffer with the pass's flips). An alternate side has
+     * mip level 0 only and starts as its target's clear colour.
+     */
+    VulkanImage shadowcompOutput(MemoryStack stack, VkCommandBuffer commandBuffer, int index) {
+        VulkanImage drawn = drawnColor(index);
+        if (drawn == null) throw new IllegalStateException("shadowcomp draws shadowcolor" + index + ", no target");
+        if (this.flippedColors.contains(index)) return drawn;
+        VulkanImage alternate = this.alternateColors.get(index);
+        if (alternate == null) {
+            TargetSpec spec = colorSpec(index);
+            alternate = createColorTarget(new TargetSpec(index, spec.format(), spec.width(), spec.height(),
+                    spec.clear(), spec.clearColor(), false, false, false, spec.paddedAlpha(), List.of()));
+            PackTargetImages.clearImage(stack, commandBuffer, alternate, this.targets.color(index).clearColor());
+            this.alternateColors.put(index, alternate);
+        }
+        return alternate;
+    }
+
+    /** A shadowcomp pass drew shadowcolor{@code index}: its other side is now the current one. */
+    void flipColor(int index) {
+        if (!this.flippedColors.remove(index)) this.flippedColors.add(index);
+    }
+
+    /** The shadow pass draws every target's main side: each reads from there until shadowcomp flips it. */
+    void resetColorSides() {
+        this.flippedColors.clear();
     }
 
     public List<VulkanImage> shadowColors() { return this.shadowColors; }
@@ -653,6 +697,9 @@ public class ChimeraShadowMap {
         this.shadowColors = List.of();
         this.computeColors.values().forEach(TargetFormatViews::free);
         this.computeColors = Map.of();
+        this.alternateColors.values().forEach(TargetFormatViews::free);
+        this.alternateColors.clear();
+        this.flippedColors.clear();
         this.computeTargets = Map.of();
         this.targets = ShadowTargetDirectives.defaults();
         this.shadowFramebuffer = null;

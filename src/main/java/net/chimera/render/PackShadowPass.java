@@ -47,6 +47,7 @@ final class PackShadowPass {
 
     ChimeraShadowMap shadowMap = new ChimeraShadowMap();
     final PackShadowDepth packShadowDepth = new PackShadowDepth();
+    private final PackShadowComposites composites;
 
     /** Programs whose routed shadow sampler was already reported once. */
     final Set<String> loggedShadowSamplerPrograms = new HashSet<>();
@@ -82,6 +83,7 @@ final class PackShadowPass {
 
     PackShadowPass(ChimeraMainPass pass) {
         this.pass = pass;
+        this.composites = new PackShadowComposites(pass);
     }
 
     /**
@@ -119,6 +121,8 @@ final class PackShadowPass {
 
             try {
                 if (packShadow) {
+                    // The shadow pass draws, and its programs sample, every target's main side.
+                    this.shadowMap.resetColorSides();
                     shadowBindings = bindPackShadowImages(layerPipeline(TerrainLayers.OPAQUE));
                 }
                 beginShadowDraw(frame);
@@ -308,7 +312,7 @@ final class PackShadowPass {
             pass.packAdvancedImageOwner.afterImageWrites(cmd);
         }
         // Iris runs shadowcomp only inside its ShadowRenderer, over the pack's own map.
-        if (frame.pack()) dispatchShadowCompute(cmd);
+        if (frame.pack()) runShadowComposites(cmd);
         this.shadowMap.markInitialSamplingLayoutReady();
         if (frame.pack()) {
             this.shadowMap.commitRenderedMap(frame.cameraX(), frame.cameraY(), frame.cameraZ());
@@ -322,16 +326,12 @@ final class PackShadowPass {
     }
 
     /**
-     * Runs the shadowcomp passes' computes over the new map, in pass order, at the main target's size
-     * (ShadowCompositeRenderer.renderAll).
+     * Runs the shadowcomp passes over the new map, in pass order (ShadowCompositeRenderer.renderAll):
+     * each pass's computes at the main target's size, then its program at the map's.
      */
-    private void dispatchShadowCompute(VkCommandBuffer cmd) {
-        if (pass.packPassComputes != null) {
-            VulkanImage screen = pass.targets.hdrFramebuffer.getColorAttachment();
-            pass.packPassComputes.dispatchShadowcomp(cmd, pass.postChain.computeSources(cmd), screen.width,
-                    screen.height);
-            if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(cmd);
-        }
+    private void runShadowComposites(VkCommandBuffer cmd) {
+        VulkanImage screen = pass.targets.hdrFramebuffer.getColorAttachment();
+        this.composites.run(cmd, screen.width, screen.height);
     }
 
     /**

@@ -31,6 +31,8 @@ final class PackPipelineSet {
 
     /** All successfully built post programs, sorted by deterministic pass order. */
     final List<PackPipelines.PackPost> postStages = new ArrayList<>();
+    /** The shadowcomp passes' programs, over the shadowcolor targets (PackShadowComposites). */
+    final List<PackPipelines.PackPost> shadowcompStages = new ArrayList<>();
 
     /** The final pass is retained separately because it runs before hand/GUI composition. */
     PackPipelines.PackPost finalPost;
@@ -114,6 +116,7 @@ final class PackPipelineSet {
         for (PackPipelines.PackPost post : postStages) {
             postPipelines.add(post.pipeline());
         }
+        shadowcompStages.forEach(post -> postPipelines.add(post.pipeline()));
         if (compositePipeline != null) postPipelines.add(compositePipeline);
         if (finalPipeline != null) postPipelines.add(finalPipeline);
         postPipelines.forEach(GraphicsPipeline::cleanUp);
@@ -138,6 +141,7 @@ final class PackPipelineSet {
     /** Forgets every pipeline, leaving each family to its host draw. */
     void clear() {
         postStages.clear();
+        shadowcompStages.clear();
         compositePipeline = null;
         compositeSlots = null;
         compositeSamplerNames = List.of();

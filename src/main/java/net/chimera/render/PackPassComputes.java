@@ -114,7 +114,7 @@ final class PackPassComputes implements AutoCloseable {
 
     /**
      * Each pass of the frame some loaded compute runs before, with the depth snapshots its computes
-     * read; setup and shadowcomp computes run apart (dispatchSetup, dispatchShadowcomp).
+     * read; setup and shadowcomp computes run apart (dispatchSetup, PackShadowComposites).
      */
     Map<String, Set<String>> depthReadsByPass() {
         Map<String, Set<String>> passes = new TreeMap<>();
@@ -214,15 +214,16 @@ final class PackPassComputes implements AutoCloseable {
     }
 
     /**
-     * Runs the shadowcomp computes, pass by pass, after the shadow map is drawn and the pack's own
-     * shadowcomp.csh has run, at the screen's size (ShadowCompositeRenderer.renderAll dispatches
-     * at the main render target's).
+     * The shadowcomp passes with computes. PackShadowComposites runs each pass's computes before its
+     * fragment program (dispatchBefore), at the screen's size, as ShadowCompositeRenderer.renderAll
+     * dispatches at the main render target's.
      */
-    void dispatchShadowcomp(VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
+    Set<String> shadowcompPasses() {
+        Set<String> passes = new TreeSet<>();
         for (Loaded compute : loaded) {
-            if (!PassComputePlan.isShadowcomp(compute.plan().pass())) continue;
-            run(compute, commandBuffer, sources, width, height);
+            if (PassComputePlan.isShadowcomp(compute.plan().pass())) passes.add(compute.plan().pass());
         }
+        return passes;
     }
 
     /** Whether the computes of {@code pass} run in the frame's colour chain: setup and shadowcomp run apart. */

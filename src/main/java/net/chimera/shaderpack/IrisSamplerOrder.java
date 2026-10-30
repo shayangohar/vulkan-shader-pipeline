@@ -104,9 +104,9 @@ final class IrisSamplerOrder {
             Source.NOISE, Source.IMAGE, Source.SHADOW), Set.of(Source.LEVEL), Pattern.compile("depthtex[0-2]"), 4);
 
     /**
-     * A shadowcomp compute (ShadowCompositeRenderer.createComputes): noise, customTexture entries and
-     * the shadow samplers through the interceptor, then custom images on the builder; no colour
-     * target and no depth texture.
+     * A shadowcomp pass, compute or fragment (ShadowCompositeRenderer.createComputes, createProgram):
+     * noise, customTexture entries and the shadow samplers through the interceptor, then custom
+     * images on the builder; no colour target and no depth texture.
      */
     static final Order SHADOWCOMP = new Order(List.of(Source.NOISE, Source.CUSTOM_TEXTURE, Source.SHADOW,
             Source.IMAGE), Set.of(Source.IMAGE), Pattern.compile("(?!)"), 0);
@@ -116,7 +116,7 @@ final class IrisSamplerOrder {
     /** The order {@code program} registers in, or a compute of that pass ({@code compute}). */
     static Order of(String program, boolean compute) {
         if (PassComputePlan.isSetup(program)) return SETUP;
-        if (compute && PassComputePlan.isShadowcomp(program)) return SHADOWCOMP;
+        if (PassComputePlan.isShadowcomp(program)) return SHADOWCOMP;
         if (program == null || PackResourcePlan.postChain(program) == null) return WORLD;
         return !compute && program.equals("final") ? FINAL : POST;
     }

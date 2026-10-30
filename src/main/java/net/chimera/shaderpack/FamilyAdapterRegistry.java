@@ -126,7 +126,7 @@ public final class FamilyAdapterRegistry {
         if (exact != null) {
             return exact;
         }
-        if (PostTargetPlan.isPostProgramName(name)) {
+        if (PostTargetPlan.isFullscreenProgramName(name)) {
             return new FamilyAdapterPlan(name, FamilyAdapterPlan.Family.POST,
                     UniformRegistry.Stage.POST, FamilyAdapterPlan.VertexContract.FULLSCREEN,
                     true, List.of());

@@ -57,7 +57,7 @@ final class PackImageBindings {
             GraphicsPipeline pipeline) {
         ChimeraMainPass.ProgramImages program = this.programImages.get(pipeline);
         // Fullscreen and terrain seams already hold a transaction with their exact graph inputs.
-        if (program == null || PostTargetPlan.isPostProgramName(program.name())
+        if (program == null || PostTargetPlan.isFullscreenProgramName(program.name())
                 || (!pass.shadowPass.shadowPassActive && pass.packGeometryBindings != null)) return null;
         return bindProgramImages(pipeline);
     }

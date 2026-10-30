@@ -609,14 +609,14 @@ final class ProgramReportRules {
 
     /**
      * Why Chimera runs a world program in no lane: Iris draws it under no key of its own; it is a
-     * begin or shadowcomp program, which Iris's composite renderers run and Chimera does not; Iris
+     * begin program, which Iris's composite renderer runs and Chimera does not; Iris
      * draws it and Chimera routes none of those draws to it (the per-layer terrain and shadow
      * programs, dh_*); or Iris never runs a program
      * of that name at all (setup.fsh, names that are no ProgramId).
      */
     private static String laneReason(String name) {
         if (IRIS_FALLBACK_SOURCES.contains(name)) return "IRIS_FALLBACK_SOURCE_ONLY";
-        if (name.matches("(?:begin|shadowcomp)\\d*")) return "PASS_PROGRAM_UNSUPPORTED:" + name;
+        if (name.matches("begin\\d*")) return "PASS_PROGRAM_UNSUPPORTED:" + name;
         if (FamilyAdapterRegistry.isMergedLayerProgram(name)) return "TERRAIN_LAYER_MERGED_BY_HOST:" + name;
         return PackResolutionPlan.isIrisProgram(name) ? "FAMILY_LANE_UNSUPPORTED:" + name
                 : "IRIS_PROGRAM_UNUSED:" + name;

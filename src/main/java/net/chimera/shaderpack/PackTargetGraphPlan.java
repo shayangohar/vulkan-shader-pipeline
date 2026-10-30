@@ -105,8 +105,10 @@ public final class PackTargetGraphPlan {
     public static PackTargetGraphPlan build(List<PackProgramPlan> programs, PackConfig.PackConfigData config,
                                             PackResourcePlan resources, Limits limits, ComputeUse computes) {
         int deviceMaxColorAttachments = limits.deviceMaxColorAttachments();
+        // A shadowcomp pass routes over the shadowcolor targets (PackShadowComposites), not these.
         GraphInputs inputs = new GraphInputs(
-                programs == null ? List.of() : programs.stream().filter(value -> value != null).toList(),
+                programs == null ? List.of() : programs.stream()
+                        .filter(value -> value != null && !PassComputePlan.isShadowcomp(value.name())).toList(),
                 config, resources == null ? PackResourcePlan.empty() : resources,
                 Math.max(1, limits.windowWidth()), Math.max(1, limits.windowHeight()), deviceMaxColorAttachments,
                 limits.deviceMaxImageDimension() <= 0 ? Integer.MAX_VALUE : limits.deviceMaxImageDimension(),

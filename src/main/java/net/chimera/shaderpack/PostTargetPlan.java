@@ -250,6 +250,38 @@ public final class PostTargetPlan {
         return name != null && name.matches("(?:prepare|deferred|composite)\\d*|final");
     }
 
+    /**
+     * A fullscreen pass converted with the post converter: a post program over the colour targets, or
+     * a shadowcomp pass over the shadowcolor targets (PackShadowComposites).
+     */
+    public static boolean isFullscreenProgramName(String name) {
+        return isPostProgramName(name) || PassComputePlan.isShadowcomp(name);
+    }
+
+    /**
+     * A fullscreen pass's route: a post program's over the colour targets in their formats, a
+     * shadowcomp pass's over the shadowcolor targets in theirs; null for any other program.
+     */
+    static PostTargetPlan forFullscreenProgram(String name, String fragment, PackConfig.PackConfigData config) {
+        if (isPostProgramName(name)) {
+            return parse(name, fragment, config == null ? Map.of() : config.colortexFormats()).plan();
+        }
+        return PassComputePlan.isShadowcomp(name) ? parseShadowcomp(name, fragment, config).plan() : null;
+    }
+
+    /**
+     * A shadowcomp pass's route over the shadowcolor targets, in the pack's shadowcolor formats: its
+     * directive, or with none {0, 1}, as ShadowCompositeRenderer draws a source with unknown draw buffers.
+     */
+    static ParseResult parseShadowcomp(String programName, String source, PackConfig.PackConfigData config) {
+        List<Integer> shadowFormats = config == null ? List.of() : config.shadowSettings().colorAttachmentFormats();
+        Map<Integer, Integer> formats = new TreeMap<>();
+        for (int index = 0; index < shadowFormats.size(); index++) formats.put(index, shadowFormats.get(index));
+        String text = source == null ? "" : source;
+        return parse(programName, TARGET_COMMENT.matcher(text).find() ? text : text + "\n/* DRAWBUFFERS:01 */\n",
+                formats);
+    }
+
     public static Comparator<String> programComparator() {
         return Comparator.comparingInt(PostTargetPlan::familyRank)
                 .thenComparingInt(PostTargetPlan::numericSuffix)

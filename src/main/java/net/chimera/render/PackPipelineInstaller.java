@@ -15,6 +15,7 @@ import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackResourcePlan;
+import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.TerrainMaterialPlan;
@@ -156,7 +157,7 @@ final class PackPipelineInstaller {
             installShadow(name, programPlan);
         } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
             installShadowEntities(name, programPlan);
-        } else if (PostTargetPlan.isPostProgramName(name)) {
+        } else if (PostTargetPlan.isFullscreenProgramName(name)) {
             installPost(name, programPlan, fixedVertex);
         } else if (name.equals("gbuffers_terrain")) {
             installTerrain(program, name, programPlan);
@@ -268,7 +269,10 @@ final class PackPipelineInstaller {
         markFamilyPipelineInstalled(name, "SHADOW_ENTITY_PIPELINE_INSTALLED");
     }
 
-    /** A post program; composite and final are also kept for the resolve and present seams. */
+    /**
+     * A fullscreen program: a post stage, or a shadowcomp pass over the shadowcolor targets;
+     * composite and final are also kept for the resolve and present seams.
+     */
     void installPost(String name, PackProgramPlan programPlan, String fixedVertex) {
         PackPipelines.PackPost post = PackPipelines.buildPost(programPlan, fixedVertex,
                 plan == null ? PackResourcePlan.empty() : plan.resources(), advancedResources(), storage);
@@ -285,7 +289,7 @@ final class PackPipelineInstaller {
             post.pipeline().cleanUp();
             return;
         }
-        pipelines.postStages.add(post);
+        (PassComputePlan.isShadowcomp(name) ? pipelines.shadowcompStages : pipelines.postStages).add(post);
         if (name.equals("composite")) {
             pipelines.compositePipeline = post.pipeline();
             pipelines.compositeSlots = post.samplerSlots();

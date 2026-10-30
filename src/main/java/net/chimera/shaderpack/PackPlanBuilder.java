@@ -150,8 +150,7 @@ public final class PackPlanBuilder {
             this.preparedSnapshot = !program.preparedSources().isEmpty();
             this.stage = FamilyAdapterRegistry.stageFor(name);
             Map<Integer, Integer> formats = config == null ? Map.of() : config.colortexFormats();
-            this.targetPlan = PostTargetPlan.isPostProgramName(name)
-                    ? PostTargetPlan.parse(name, fragment, formats).plan() : null;
+            this.targetPlan = PostTargetPlan.forFullscreenProgram(name, fragment, config);
             this.geometryOutputPlan = isGeometryOutputFamily(name)
                     ? GeometryOutputPlan.parse(name, fragment, formats) : null;
             PackProgramResolution sourceResolution = resolution == null ? null : resolution.resolution(name);
@@ -742,7 +741,7 @@ public final class PackPlanBuilder {
             if (!executable) {
                 return;
             }
-            if (PostTargetPlan.isPostProgramName(name)) {
+            if (PostTargetPlan.isFullscreenProgramName(name)) {
                 convertPost();
             } else if (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")) {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
