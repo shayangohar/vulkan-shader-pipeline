@@ -460,6 +460,43 @@ final class CorpusCompileFixesTest {
         assertTrue(entities.executable(), entities.deviations().toString());
     }
 
+    /**
+     * Kappa's translucent program declares its outputs out of location order, translucentColor
+     * first at location 2. Numbered in declaration order, the glass colour wrote colortex1 and the
+     * normals colortex2, so composite read normals as the glass: stained glass drew black.
+     */
+    @Test
+    void aFragmentOutputKeepsItsDeclaredLocation(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_water.vsh"), """
+                #version 430 compatibility
+                out vec2 waterUv;
+                void main() { waterUv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_water.fsh"), """
+                #version 430 compatibility
+                in vec2 waterUv;
+                /* RENDERTARGETS: 1,2,3,4 */
+                layout(location = 2) out vec4 translucentColor;
+                layout(location = 0) out vec4 sceneDataA;
+                layout(location = 1) out vec4 sceneDataB;
+                layout(location = 3) out vec4 reflectionAux;
+                void main() {
+                    translucentColor = vec4(waterUv, 0.2, 0.5);
+                    sceneDataA = vec4(0.0);
+                    sceneDataB = vec4(1.0);
+                    reflectionAux = vec4(0.3);
+                }
+                """);
+        PackProgramPlan water = PackProbe.analyze(root).plan().program("gbuffers_water");
+        assertTrue(water.executable(), water.deviations().toString());
+        String fragment = water.convertedFragment();
+        assertTrue(fragment.contains("chimeraFragColor2 = vec4(") && fragment.contains("0.2, 0.5)"), fragment);
+        assertTrue(fragment.contains("chimeraFragColor0 = vec4(0.0)"), fragment);
+        assertTrue(fragment.contains("chimeraFragColor1 = vec4(1.0)"), fragment);
+        assertTrue(fragment.contains("chimeraFragColor3 = vec4(0.3)"), fragment);
+    }
+
     /** An unread uniform removed whole takes its layout qualifier, which would qualify the next line. */
     @Test
     void aRemovedUniformTakesItsLayout() {

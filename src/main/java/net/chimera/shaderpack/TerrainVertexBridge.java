@@ -244,13 +244,16 @@ final class TerrainVertexBridge {
         return plainShadow ? GlslVertexPreambles.SHADOW_VERTEX_PREAMBLE : preamble;
     }
 
-    /** The fragment source normalized as its vertex stage is, when it declares a supported version. */
+    /**
+     * The fragment source normalized as its vertex stage is, when it declares a supported version;
+     * its outputs keep their locations.
+     */
     static String normalizedFragment(String fragmentSource, boolean shadowStage) {
         String fragment = fragmentSource == null ? "" : fragmentSource;
         if (shadowStage && hasShadowTerrainVersion(fragment)) {
-            return normalizeShadowTerrain(fragment);
+            return normalizeTo460(fragment, "shadow", true);
         }
-        return hasModernTerrainVersion(fragment) ? normalizeModernTerrain(fragment) : fragment;
+        return hasModernTerrainVersion(fragment) ? normalizeModernTerrainFragment(fragment) : fragment;
     }
 
     /** Drops the functions main never reaches; a source the resource analysis refuses fails with its reasons. */
@@ -649,20 +652,30 @@ final class TerrainVertexBridge {
     }
 
     static String normalizeModernTerrain(String source) {
-        return normalizeTo460(source, "modern terrain");
+        return normalizeTo460(source, "modern terrain", false);
+    }
+
+    /**
+     * A modern fragment stage, normalized as its vertex stage is except that its outputs keep their
+     * locations. Kappa's translucent program declares translucentColor first, at location 2;
+     * numbered in declaration order, it wrote colortex1 and its normals colortex2.
+     */
+    static String normalizeModernTerrainFragment(String source) {
+        return normalizeTo460(source, "modern terrain", true);
     }
 
     /**
      * Removes the authored version, known legacy extensions, precision statements and qualifiers,
      * and declares 460. The result stays self-describing for the shared program plan; the
      * converter also accepts this prepared form, so the authored version is removed exactly once.
+     * A fragment stage's outputs keep their layouts (LegacyGlslConverter.withoutInterfaceLayouts).
      */
-    static String normalizeTo460(String source, String stage) {
+    static String normalizeTo460(String source, String stage, boolean fragment) {
         GlslVersion.requireSupported(source, stage, true);
         String result = LegacyGlslConverter.withoutVersionLines(source);
         result = LegacyGlslConverter.withoutKnownLegacyExtensions(result);
         result = LegacyGlslConverter.withoutPrecisionStatements(result);
-        result = LegacyGlslConverter.withoutInterfaceLayouts(result);
+        result = LegacyGlslConverter.withoutInterfaceLayouts(result, fragment);
         result = GlslTokenRewriter.replaceIdentifiers(result, Map.of("lowp", "", "mediump", "", "highp", ""));
         return "#version 460\n" + GlslTokenRewriter.relaxNonConstantGlobals(result);
     }
@@ -703,7 +716,7 @@ final class TerrainVertexBridge {
     }
 
     static String normalizeShadowTerrain(String source) {
-        return normalizeTo460(source, "shadow");
+        return normalizeTo460(source, "shadow", false);
     }
 
     static String removeModernTerrainInputs(

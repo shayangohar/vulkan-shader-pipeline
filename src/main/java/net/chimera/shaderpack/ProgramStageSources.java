@@ -151,7 +151,9 @@ final class ProgramStageSources {
             }
             String normalized;
             try {
-                normalized = TerrainVertexBridge.normalizeModernTerrain(prepared.source());
+                normalized = entry.getKey().equals("fragment")
+                        ? TerrainVertexBridge.normalizeModernTerrainFragment(prepared.source())
+                        : TerrainVertexBridge.normalizeModernTerrain(prepared.source());
             } catch (IllegalArgumentException unsupportedVersion) {
                 // Leave unsupported versions authored so the program plan can
                 // record a per-program fallback instead of rejecting the pack.

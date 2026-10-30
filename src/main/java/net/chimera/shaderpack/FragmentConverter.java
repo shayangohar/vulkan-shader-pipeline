@@ -716,9 +716,10 @@ public final class FragmentConverter {
     }
 
     /**
-     * A modern terrain fragment's one {@code out vec4 name;} becomes fragColor at location 0. The
-     * declaration goes with the blank lines before it and the whitespace after it, as the
-     * {@code (?m)^\s*out vec4 name;\s*} pattern it replaces removed them.
+     * A modern terrain fragment's one {@code out vec4 name;} becomes fragColor at location 0, with
+     * or without the layout a fragment stage keeps. The declaration goes with the blank lines
+     * before it and the whitespace after it, as the {@code (?m)^\s*out vec4 name;\s*} pattern it
+     * replaces removed them.
      */
     static String convertModernGeometryOutputs(String source) {
         GlslTree tree = GlslTree.parse(source);
@@ -726,8 +727,9 @@ public final class FragmentConverter {
         List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
         for (GlslDeclarations.Variable output : GlslDeclarations.variables(tree)) {
             int start = GlslDeclarations.lineStartBefore(source, tree.offset(output.declaration().range().start()));
-            if (start < 0 || !output.qualifiers().equals(List.of("out")) || !output.type().equals("vec4")
-                    || !output.plain()) {
+            List<String> qualifiers = output.qualifiers();
+            boolean plainOutput = qualifiers.equals(List.of("out")) || qualifiers.equals(List.of("layout", "out"));
+            if (start < 0 || !plainOutput || !output.type().equals("vec4") || !output.plain()) {
                 continue;
             }
             int end = tree.offset(output.declaration().range().end());

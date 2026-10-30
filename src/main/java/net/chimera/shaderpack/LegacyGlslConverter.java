@@ -169,9 +169,11 @@ public final class LegacyGlslConverter {
     /**
      * An interface declaration's {@code layout(...)} goes with the space after it, and its
      * interpolation and storage qualifiers stay. Only a layout written on one line, on a line of
-     * its own declaration's, is removed.
+     * its own declaration's, is removed. With {@code keepOutputs} (a fragment stage) an output keeps
+     * its layout: its location names the draw buffer it writes, as GL links it for Iris, and
+     * PostTargetPlan.modernOutputs routes it by that location.
      */
-    static String withoutInterfaceLayouts(String source) {
+    static String withoutInterfaceLayouts(String source, boolean keepOutputs) {
         GlslTree tree = GlslTree.parse(source);
         List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
         for (GlslTree.External external : tree.externals()) {
@@ -188,7 +190,8 @@ public final class LegacyGlslConverter {
             }
             int storage = INTERPOLATION.contains(tree.text(qualifiers.get(1).keyword())) && qualifiers.size() > 2
                     ? 2 : 1;
-            if (INTERFACE_STORAGE.contains(tree.text(qualifiers.get(storage).keyword()))) {
+            String keyword = tree.text(qualifiers.get(storage).keyword());
+            if (INTERFACE_STORAGE.contains(keyword) && !(keepOutputs && keyword.equals("out"))) {
                 removals.add(new GlslDeclarations.TextEdit(tree.offset(qualifiers.get(0).range().start()),
                         tree.offset(qualifiers.get(1).range().start()), ""));
             }
