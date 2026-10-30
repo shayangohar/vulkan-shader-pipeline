@@ -28,6 +28,9 @@ final class MainPassResources {
     /** A screen opened or closed: the world attachments are recreated at the next frame boundary. */
     boolean worldRefreshDue;
 
+    /** The swapchain format the present render pass was built for. */
+    private int presentFormat;
+
     MainPassResources(ChimeraMainPass pass) {
         this.pass = pass;
     }
@@ -53,6 +56,7 @@ final class MainPassResources {
         SwapChain swapChain = Vulkan.getSwapChain();
         int width = Math.max(swapChain.getWidth(), 1);
         int height = Math.max(swapChain.getHeight(), 1);
+        this.presentFormat = swapChain.getFormat();
 
         pass.sessions.loadPackConfig();
         PackConfig.ShadowSettings shadowSettings = pass.packConfig != null
@@ -78,6 +82,33 @@ final class MainPassResources {
         if (pass.shadowPass.usePackShadowRuntime() && pass.shadowPass.shadowMap.isInitialized()) {
             pass.shadowPass.packShadowDepth.install();
         }
+    }
+
+    /**
+     * Whether the live resources still serve the swapchain VulkanMod just recreated. VulkanMod
+     * recreates it at 0x0 when the window is minimized and again on restore. Minecraft ignores a
+     * 0x0 framebuffer and Iris sizes its targets from Minecraft's, so neither step resets a pack's
+     * targets there; rebuilding them here wiped their history (Kappa's TAA then divides by a zero
+     * exposure for a frame). The swapchain's own framebuffers are rebuilt per render pass on use.
+     */
+    boolean serveSwapchain() {
+        Framebuffer output = pass.targets.compositeFramebuffer;
+        if (!this.outputResourcesReady || output == null || !pass.targets.outputResourcesLive()) {
+            return false;
+        }
+        SwapChain swapChain = Vulkan.getSwapChain();
+        return serves(output.getWidth(), output.getHeight(), this.presentFormat,
+                swapChain.getWidth(), swapChain.getHeight(), swapChain.getFormat());
+    }
+
+    /**
+     * Whether an output built at {@code builtWidth}x{@code builtHeight}, presenting in
+     * {@code builtFormat}, serves a swapchain now {@code width}x{@code height} in {@code format}.
+     * A 0x0 swapchain draws nothing; otherwise the size and the present format must match.
+     */
+    static boolean serves(int builtWidth, int builtHeight, int builtFormat, int width, int height, int format) {
+        if (width == 0 && height == 0) return true;
+        return builtWidth == width && builtHeight == height && builtFormat == format;
     }
 
     void invalidateWorldResources() {

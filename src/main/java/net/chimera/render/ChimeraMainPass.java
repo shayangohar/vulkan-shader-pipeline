@@ -892,6 +892,7 @@ public final class ChimeraMainPass implements MainPass {
         // Renderer idles the device before resize and may change its frames-in-flight
         // count. Recreate the diagnostic ring at this same safe boundary.
         this.postChain.nanTripwire.close();
+        if (resources.serveSwapchain()) return;
         resources.createResources();
     }
 
