@@ -752,6 +752,22 @@ public final class ChimeraEntityBridge {
         return lane != null && lane.whiteAlbedo();
     }
 
+    /** Iris ExtendedShader binds a white lightmap for a key with no light input (whiteLightmap(Family)). */
+    public static boolean whiteLightmap() {
+        return activeFamily != null && whiteLightmap(activeFamily);
+    }
+
+    /**
+     * Whether Iris samples a white lightmap for the family's key: a host-layout lane's format
+     * without UV2, or a FULLBRIGHT key, which are ENTITIES_EYES and ENTITIES_EYES_TRANS (the
+     * spider-eyes family outside block entities), BEACON and CRUMBLING.
+     */
+    public static boolean whiteLightmap(Family family) {
+        HostLayoutLane lane = HostLayoutLane.of(family);
+        if (lane != null) return lane.whiteLightmap();
+        return family == Family.SPIDER_EYES || family == Family.BEACON_BEAM || family == Family.DAMAGED_BLOCK;
+    }
+
     /** The pack pipeline a lane draws {@code format} with, or null when it has none installed. */
     public static GraphicsPipeline lanePipeline(Family family, VertexFormat format) {
         return pipelineFor(family, format);

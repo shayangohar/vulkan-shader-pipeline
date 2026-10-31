@@ -2,9 +2,12 @@ package net.chimera.render.shader;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
 import net.chimera.shaderpack.PackPipelines;
 import net.minecraft.client.CloudStatus;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
+import net.vulkanmod.vulkan.texture.VTextureSelector;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 
 /**
  * The pack's sky and cloud programs, chosen per host draw as Iris 1.21.1 overrides the sky's
@@ -130,6 +133,34 @@ public final class ChimeraSkyBridge {
 
     public static void endDraw() {
         active = null;
+    }
+
+    /**
+     * Binds Iris's level samplers for the open sky or cloud draw (IrisSamplers.addLevelSamplers): a
+     * format without texture coordinates (the sky disc, stars and sunrise fan) reads Iris's white
+     * pixel as its albedo, and one without light coordinates, as every sky and cloud key's is, reads
+     * it as lightmap. Returns units 0 and 2 as they were, for restoreLevelSamplers.
+     */
+    public static VulkanImage[] bindLevelSamplers() {
+        VulkanImage[] bound = {VTextureSelector.getBoundTexture(0), VTextureSelector.getBoundTexture(2)};
+        VertexFormat format = active == null ? null : active.vertexFormat();
+        if (format == null) return bound;
+        if (whiteAlbedo(format)) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
+        if (whiteLightmap(format)) VTextureSelector.bindTexture(2, VTextureSelector.getWhiteTexture());
+        return bound;
+    }
+
+    public static void restoreLevelSamplers(VulkanImage[] bound) {
+        VTextureSelector.bindTexture(0, bound[0]);
+        VTextureSelector.bindTexture(2, bound[1]);
+    }
+
+    public static boolean whiteAlbedo(VertexFormat format) {
+        return !format.contains(VertexFormatElement.UV0);
+    }
+
+    public static boolean whiteLightmap(VertexFormat format) {
+        return !format.contains(VertexFormatElement.UV2);
     }
 
     /** The open draw's pipeline, or null when no sky or cloud draw is open. */

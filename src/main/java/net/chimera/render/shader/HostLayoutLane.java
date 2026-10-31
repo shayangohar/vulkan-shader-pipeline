@@ -186,6 +186,15 @@ public enum HostLayoutLane {
         return !format.contains(VertexFormatElement.UV0);
     }
 
+    /**
+     * A format without light coordinates reads a white lightmap: Iris registers its white pixel
+     * under lightmap for a key with no light input (IrisSamplers.addLevelSamplers), and every lane
+     * key that has UV2 lights by the lightmap. Iris LIGHTNING is FULLBRIGHT besides.
+     */
+    public boolean whiteLightmap() {
+        return !format.contains(VertexFormatElement.UV2);
+    }
+
     /** The lane that owns a host draw in a pass, or null when the draw keeps its host program. */
     public static HostLayoutLane forDraw(String shader, VertexFormat format, Pass pass) {
         for (HostLayoutLane lane : values()) {
