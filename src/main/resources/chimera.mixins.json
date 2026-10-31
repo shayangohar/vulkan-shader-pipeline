@@ -18,6 +18,7 @@
     "ChimeraBiomeAmbienceMixin",
     "ChimeraShadeBrightnessMixin",
     "ChimeraFogRendererMixin",
+    "ChimeraFogRangeMixin",
     "ChimeraSkyRendererMixin",
     "ChimeraMinecraftMixin",
     "VTextureSelectorMixin",

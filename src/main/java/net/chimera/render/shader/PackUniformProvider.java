@@ -166,9 +166,21 @@ public final class PackUniformProvider {
         INSTANCE.rewrite(FOG_SHAPE_KEYS);
     }
 
+    /**
+     * Serves the fog range RenderSystem now holds to the draws that follow, as Iris's fogStart and
+     * fogEnd follow each RenderSystem.setShaderFogStart and setShaderFogEnd (ChimeraFogRangeMixin).
+     * Read once a frame, a pack's terrain saw the Float.MAX_VALUE start FogRenderer.setupNoFog left
+     * at the previous frame's end, and its linear fog came out zero in the Nether and underwater.
+     */
+    public static void updateFogRange(float start, float end) {
+        if (INSTANCE.frameState.setFogRange(start, end)) INSTANCE.rewrite(FOG_RANGE_KEYS);
+    }
+
     private static final List<UniformKey> FOG_DENSITY_KEYS = List.of(
             new UniformKey("fogMode", "int"), new UniformKey("fogDensity", "float"));
     private static final List<UniformKey> FOG_SHAPE_KEYS = List.of(new UniformKey("fogShape", "int"));
+    private static final List<UniformKey> FOG_RANGE_KEYS = List.of(new UniformKey("fogStart", "float"),
+            new UniformKey("FogStart", "float"), new UniformKey("fogEnd", "float"), new UniformKey("FogEnd", "float"));
 
     /** Rewrites the bindings of the given names from the frame state. */
     private void rewrite(List<UniformKey> keys) {

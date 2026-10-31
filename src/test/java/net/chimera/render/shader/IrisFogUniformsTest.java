@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -33,6 +34,19 @@ final class IrisFogUniformsTest {
         assertEquals(0, buffer.getInt(0), "spherical before any capture");
         state.write(UniformRegistry.descriptor("cloudTime"), "float", buffer);
         assertEquals(0.0F, buffer.getFloat(0), "no ticks before a level renders");
+    }
+
+    /** Each fog setup serves its range, as Miniature's Nether reads start 12.8 and end 96 under Iris. */
+    @Test
+    void theFogRangeFollowsEachSetup() {
+        PackFrameState state = new PackFrameState();
+        MappedBuffer buffer = new MappedBuffer(4);
+        assertTrue(state.setFogRange(12.8F, 96.0F));
+        assertFalse(state.setFogRange(12.8F, 96.0F), "an unchanged range rewrites nothing");
+        state.write(UniformRegistry.descriptor("fogStart"), "float", buffer);
+        assertEquals(12.8F, buffer.getFloat(0));
+        state.write(UniformRegistry.descriptor("fogEnd"), "float", buffer);
+        assertEquals(96.0F, buffer.getFloat(0));
     }
 
     /** A world program plans the live values; a post program reads FogMode.OFF's constants. */

@@ -636,8 +636,7 @@ final class PackFrameState {
             lightDirection1[i] = direction1.getFloat(i * 4);
         }
         alphaCutout = VRenderSystem.alphaCutout;
-        fogStart = RenderSystem.getShaderFogStart();
-        fogEnd = RenderSystem.getShaderFogEnd();
+        setFogRange(RenderSystem.getShaderFogStart(), RenderSystem.getShaderFogEnd());
     }
 
     private void captureWorld(ClientLevel level, Minecraft minecraft, Camera camera,
@@ -818,6 +817,14 @@ final class PackFrameState {
     boolean setHostEntityId(int entityId) {
         if (this.hostEntityId == entityId) return false;
         this.hostEntityId = entityId;
+        return true;
+    }
+
+    /** Returns true when the fog range (Iris fogStart and fogEnd) changed. */
+    boolean setFogRange(float start, float end) {
+        if (Float.compare(this.fogStart, start) == 0 && Float.compare(this.fogEnd, end) == 0) return false;
+        this.fogStart = start;
+        this.fogEnd = end;
         return true;
     }
 
