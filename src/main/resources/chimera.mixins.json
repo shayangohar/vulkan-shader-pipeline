@@ -84,6 +84,8 @@
     "ChimeraModelViewBobbingMixin",
     "ChimeraRenderTargetBlitMixin",
     "ChimeraNativeImageDownloadMixin",
+    "ChimeraNativeImageClampMixin",
+    "ChimeraVulkanImageClampMixin",
     "ChimeraModelCubeColorMixin"
   ],
   "injectors": {

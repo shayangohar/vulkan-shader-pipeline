@@ -70,10 +70,20 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
                 : ChimeraSamplerManagerAccessor.chimera$glSamplers().entrySet()) {
             if (entry.getValue() == sampler) return entry.getKey();
         }
+        int packed = flagKey(sampler);
+        return packed < 0 ? null : legacyKey((short) packed);
+    }
+
+    /**
+     * The flags (low byte) and mip ceiling (high byte) VulkanMod built {@code sampler} from, as its
+     * texture-sampler cache keys them; -1 when the sampler is not in that cache.
+     */
+    public static int flagKey(long sampler) {
+        if (sampler == 0L) return -1;
         for (var entry : ChimeraSamplerManagerAccessor.chimera$samplers().short2LongEntrySet()) {
-            if (entry.getLongValue() == sampler) return legacyKey(entry.getShortKey());
+            if (entry.getLongValue() == sampler) return entry.getShortKey() & 0xFFFF;
         }
-        return null;
+        return -1;
     }
 
     /**
