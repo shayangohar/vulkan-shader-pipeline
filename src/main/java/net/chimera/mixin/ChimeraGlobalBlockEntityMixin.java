@@ -9,6 +9,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.vulkanmod.render.chunk.build.task.BuildTask;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Slice;
 
 import java.util.List;
 
@@ -22,9 +23,14 @@ import java.util.List;
  */
 @Mixin(value = BuildTask.class, remap = false)
 public abstract class ChimeraGlobalBlockEntityMixin {
-    /** handleBlockEntity's first add, to the section's list; the second adds to the global one. */
+    /**
+     * handleBlockEntity's add to the section's list: the first add after it reads that list, so the
+     * global list's add is never taken for it, in whichever order VulkanMod makes the two.
+     */
     @WrapOperation(method = "handleBlockEntity",
-            at = @At(value = "INVOKE", target = "Ljava/util/List;add(Ljava/lang/Object;)Z", ordinal = 0))
+            at = @At(value = "INVOKE", target = "Ljava/util/List;add(Ljava/lang/Object;)Z", ordinal = 0),
+            slice = @Slice(from = @At(value = "FIELD",
+                    target = "Lnet/vulkanmod/render/chunk/build/task/CompileResult;blockEntities:Ljava/util/List;")))
     private boolean chimera$sectionBlockEntity(List<BlockEntity> sectionList, Object blockEntity,
                                                Operation<Boolean> original,
                                                @Local BlockEntityRenderer<BlockEntity> renderer) {
