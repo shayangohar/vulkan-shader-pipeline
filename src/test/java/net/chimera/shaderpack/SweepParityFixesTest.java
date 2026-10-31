@@ -393,4 +393,25 @@ final class SweepParityFixesTest {
                 UniformRegistry.Stage.POST, true, true).deviations().contains("UNIFORM_TYPE_UNSUPPORTED:worldTime"),
                 "a type Chimera cannot place stays unsupported");
     }
+
+    /**
+     * Mellow with COLORED_LIGHTS declares its voxel images in every stage, and most programs never use
+     * them. Each stage compiles alone, so a declaration the vertex and fragment stages share is still
+     * no use: the report runs the program, as the plan and Iris do.
+     */
+    @Test
+    void anImageBothStagesOnlyDeclareIsNoUse(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.voxelImg = voxelImgSampler RGBA RGBA16 UNSIGNED_SHORT false false 16 16 16\n");
+        String declaration = "#version 430 compatibility\nlayout(rgba16) uniform restrict image3D voxelImg;\n";
+        Files.writeString(shaders.resolve("composite.vsh"), declaration
+                + "out vec2 uv;\nvoid main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }\n");
+        Files.writeString(shaders.resolve("composite.fsh"), declaration
+                + "in vec2 uv;\nvoid main() { gl_FragData[0] = vec4(uv, 0.0, 1.0); }\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        ConformanceReport.ProgramReport report = analysis.report().program("composite");
+        assertTrue(analysis.plan().shouldAttempt("composite") && analysis.report().shouldAttempt("composite")
+                && !report.deviations().contains("ADVANCED_RESOURCE_UNSUPPORTED"), report.deviations().toString());
+    }
 }

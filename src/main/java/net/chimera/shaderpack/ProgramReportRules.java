@@ -65,7 +65,8 @@ final class ProgramReportRules {
                     deviations);
         }
         addVertexDeviations(inventory, packPlan, programPlan, fragment, postName, deviations);
-        addSourceDeviations(inventory, packPlan, programPlan, source, samplers, relaxed, modern, deviations);
+        addSourceDeviations(inventory, packPlan, programPlan, sources.advancedDeclarations(), samplers, relaxed,
+                modern, deviations);
         addTargetCountDeviations(name, programPlan, targetResult, targets, deviations);
         if (!hasFragment) {
             deviations.add("MISSING_FRAGMENT_SOURCE");
@@ -83,9 +84,11 @@ final class ProgramReportRules {
 
     /**
      * The sources a program's report reads, joined by stage name: a variant's prepared sources when
-     * it has them, else the authored ones.
+     * it has them, else the authored ones. Advanced declarations are judged per stage, as each stage
+     * compiles alone and as the plan judges them (PackAdvancedResourcePlan.addUnplannedDeclarations):
+     * an image both stages only declare is no use of it.
      */
-    private record ReportSources(boolean relaxed, String source, String fragment) {
+    private record ReportSources(boolean relaxed, String source, String fragment, boolean advancedDeclarations) {
         static ReportSources of(PackProbe.Inventory inventory) {
             boolean relaxed = !inventory.variantFolder.isBlank();
             Map<String, String> sourceView = relaxed && !inventory.preparedSources.isEmpty()
@@ -95,7 +98,9 @@ final class ProgramReportRules {
                     .sorted(Map.Entry.comparingByKey())
                     .forEach(entry -> combinedSource.append(entry.getValue()).append('\n'));
             String source = combinedSource.toString();
-            return new ReportSources(relaxed, source, sourceView.getOrDefault("fragment", source));
+            boolean advanced = sourceView.values().stream()
+                    .anyMatch(PackAdvancedResourcePlan::containsAdvancedDeclarations);
+            return new ReportSources(relaxed, source, sourceView.getOrDefault("fragment", source), advanced);
         }
     }
 
@@ -170,16 +175,15 @@ final class ProgramReportRules {
 
     /** Stages, GLSL dialect, advanced resources and samplers the program's sources use. */
     static void addSourceDeviations(PackProbe.Inventory inventory, PackPlan packPlan, PackProgramPlan programPlan,
-                                            String source, List<String> samplers, boolean relaxed, boolean modern,
-                                            Set<String> deviations) {
+                                            boolean advancedDeclarations, List<String> samplers, boolean relaxed,
+                                            boolean modern, Set<String> deviations) {
         if (runsUnsupportedStage(inventory, packPlan, programPlan)) {
             deviations.add("UNSUPPORTED_PACK_STAGE");
         }
         if (modern) {
             deviations.add("MODERN_GLSL_UNSUPPORTED");
         }
-        if (PackAdvancedResourcePlan.containsAdvancedDeclarations(source)
-                && !advancedResourcesArePlanned(inventory.name, packPlan)) {
+        if (advancedDeclarations && !advancedResourcesArePlanned(inventory.name, packPlan)) {
             deviations.add("ADVANCED_RESOURCE_UNSUPPORTED");
         }
         if (packPlan != null && packPlan.advancedResources() != null) {
