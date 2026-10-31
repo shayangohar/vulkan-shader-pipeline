@@ -80,11 +80,13 @@ public final class ChimeraTerrainPipelines {
     }
 
     /**
-     * True while Chimera meshes terrain for a pack: a light-emitting block then darkens its
-     * neighbours' ambient occlusion as in vanilla and Sodium (ChimeraEmitterOcclusionMixin). The
-     * level rebuilds when it changes, with the terrain format.
+     * True while Chimera meshes terrain for a pack: sections then compile as NeoForge's
+     * SectionCompiler and Sodium do where VulkanMod departs. A light-emitting block darkens its
+     * neighbours' ambient occlusion (ChimeraEmitterOcclusionMixin), and a block entity that renders
+     * off-screen joins only the level's global set (ChimeraGlobalBlockEntityMixin). The level
+     * rebuilds when it changes, with the terrain format.
      */
-    public static boolean vanillaEmitterOcclusion() {
+    public static boolean vanillaSectionCompile() {
         return extendedMode;
     }
 

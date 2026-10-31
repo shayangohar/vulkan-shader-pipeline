@@ -30,7 +30,7 @@ public abstract class ChimeraEmitterOcclusionMixin {
     private void chimera$emitterOcclusion(int x, int y, int z, CallbackInfoReturnable<Integer> result,
                                           @Local BlockState state) {
         // The emission VulkanMod tests (LightDataAccess's lu).
-        if (LightEmission.of(state) == 0 || !ChimeraTerrainPipelines.vanillaEmitterOcclusion()) return;
+        if (LightEmission.of(state) == 0 || !ChimeraTerrainPipelines.vanillaSectionCompile()) return;
         result.setReturnValue(EmitterOcclusion.occluding(result.getReturnValueI(),
                 state.getShadeBrightness(this.world, this.pos)));
     }

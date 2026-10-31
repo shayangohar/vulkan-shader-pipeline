@@ -86,7 +86,8 @@
     "ChimeraNativeImageDownloadMixin",
     "ChimeraNativeImageClampMixin",
     "ChimeraEmitterOcclusionMixin",
-    "ChimeraModelCubeColorMixin"
+    "ChimeraModelCubeColorMixin",
+    "ChimeraGlobalBlockEntityMixin"
   ],
   "injectors": {
     "defaultRequire": 1
