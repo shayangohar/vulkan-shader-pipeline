@@ -1,5 +1,6 @@
 package net.chimera.render.shader;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
@@ -16,7 +17,8 @@ import java.util.function.BooleanSupplier;
  * weather, lines, glint, lightning, leads, text backgrounds and the shadow lanes). The
  * program is chosen by the draw's shader and vertex format; the host's state and draw call stay,
  * and the ShaderInstance pipeline seam answers with the open draw's pipeline. In the shadow pass a
- * draw no shadow lane serves stays out of the shadow map. Family batches arrive with their draw
+ * draw no shadow lane serves stays out of the shadow map. Without a gbuffers_skybasic the sky disc
+ * keeps its host shader but draws unfogged, as Iris's SKY_BASIC fallback does. Family batches arrive with their draw
  * already open (FamilyRenderType) and pass through.
  */
 public final class PackHostDraws {
@@ -40,6 +42,10 @@ public final class PackHostDraws {
                     }, ChimeraSkyBridge::endDraw, draw);
             return;
         }
+        if (ChimeraSkyBridge.drawsUnfoggedSky(name)) {
+            drawUnfogged(draw);
+            return;
+        }
         ChimeraEntityBridge.Family lane = pass == null ? null : ChimeraEntityBridge.hostLaneFor(name, format);
         if (lane != null) {
             drawInWindow(pass, ChimeraEntityBridge.lanePipeline(lane, format), pass.laneWindowOutputs(lane),
@@ -48,6 +54,17 @@ public final class PackHostDraws {
             drop.run();
         } else {
             draw.run();
+        }
+    }
+
+    /** Runs a host draw with no fog, as FogRenderer.setupNoFog leaves it, then restores the fog start. */
+    private static void drawUnfogged(Runnable draw) {
+        float start = RenderSystem.getShaderFogStart();
+        RenderSystem.setShaderFogStart(Float.MAX_VALUE);
+        try {
+            draw.run();
+        } finally {
+            RenderSystem.setShaderFogStart(start);
         }
     }
 

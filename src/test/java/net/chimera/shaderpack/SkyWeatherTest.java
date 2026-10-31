@@ -24,10 +24,38 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Sky, weather and rain programs, the horizon, and the end portal hooks. */
 final class SkyWeatherTest {
+    /**
+     * Without a gbuffers_skybasic Iris draws the sky disc with its SKY_BASIC fallback, the sky colour
+     * unfogged; only the sky window's position draws take that path.
+     */
+    @Test
+    void aPackWithoutSkyBasicDrawsTheSkyDiscUnfogged() {
+        ChimeraSkyBridge.disable();
+        assertFalse(ChimeraSkyBridge.drawsUnfoggedSky("position"), "outside the sky window");
+        ChimeraSkyBridge.beginSky();
+        try {
+            assertTrue(ChimeraSkyBridge.drawsUnfoggedSky("position"));
+            assertFalse(ChimeraSkyBridge.drawsUnfoggedSky("position_color"), "the sunrise fan has no fog");
+            assertFalse(ChimeraSkyBridge.drawsUnfoggedSky("position_tex"), "the sun and moon have no fog");
+        } finally {
+            ChimeraSkyBridge.endSky();
+        }
+    }
+
+    /** The shadow pass hands renderSky back the shader vanilla set for the sky disc (Iris iris$beginSky). */
+    @Test
+    void thePreSkyPassesRestoreTheHostShader() throws IOException {
+        var calls = MixinBytecode.instructionsThrough(MixinBytecode.nativeClass("net/chimera/render/PreSkyPasses"),
+                "render").stream().filter(MethodInsnNode.class::isInstance).map(MethodInsnNode.class::cast)
+                .filter(call -> call.owner.equals("com/mojang/blaze3d/systems/RenderSystem"))
+                .map(call -> call.name).toList();
+        assertEquals(List.of("getShader", "setShader"), calls.stream().distinct().toList());
+    }
     @Test
     void rainContracts(@TempDir Path root) throws IOException {
         for (int target : List.of(10, 12, 15)) {
