@@ -39,13 +39,14 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
     }
 
     /**
-     * This profile at OpenGL's mip bias, which Iris samples with: a mipmapped sampler VulkanMod
-     * built from texture flags becomes the same sampler at bias 0. VulkanMod's {@link #HOST_MIP_BIAS}
-     * picks mip levels half a level finer, and Vulkan adds it to an explicit textureLod too. Any
-     * other sampler keeps its own bias.
+     * This profile as OpenGL samples {@code image} for Iris, for a pack draw. A sampler VulkanMod
+     * built from texture flags loses VulkanMod's {@link #HOST_MIP_BIAS}, which picks mip levels half
+     * a level finer and which Vulkan adds to an explicit textureLod too. It also clamps to the edge
+     * where vanilla's upload asked (EdgeClampedImages), which VulkanMod drops. Any other sampler is
+     * kept, and VulkanMod's own draws keep theirs.
      */
-    public SamplerProfile withoutHostBias() {
-        SamplerManager.SamplerKey gl = unbiasedKey(flagKey(id));
+    public SamplerProfile asGl(VulkanImage image) {
+        SamplerManager.SamplerKey gl = glKey(flagKey(id), EdgeClampedImages.contains(image));
         return gl == null ? this : new SamplerProfile(SamplerManager.getTextureSampler(gl), gl);
     }
 
@@ -91,7 +92,7 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
      * The flags (low byte) and mip ceiling (high byte) VulkanMod built {@code sampler} from, as its
      * texture-sampler cache keys them; -1 when the sampler is not in that cache.
      */
-    public static int flagKey(long sampler) {
+    private static int flagKey(long sampler) {
         if (sampler == 0L) return -1;
         for (var entry : ChimeraSamplerManagerAccessor.chimera$samplers().short2LongEntrySet()) {
             if (entry.getLongValue() == sampler) return entry.getShortKey() & 0xFFFF;
@@ -100,14 +101,17 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
     }
 
     /**
-     * The key of the flag sampler {@code packed} (flagKey) at bias 0; null when it carries no host
-     * bias, or is not a flag sampler with an OpenGL form.
+     * The key of the flag sampler {@code packed} (flagKey) at bias 0, clamped to the edge when
+     * {@code clampToEdge}; null when that changes nothing, or it is not a flag sampler with an
+     * OpenGL form.
      */
-    static SamplerManager.SamplerKey unbiasedKey(int packed) {
+    static SamplerManager.SamplerKey glKey(int packed, boolean clampToEdge) {
         SamplerManager.SamplerKey host = packed < 0 ? null : legacyKey((short) packed);
-        if (host == null || host.lodBias() == 0.0F) return null;
-        return new SamplerManager.SamplerKey(host.minFilter(), host.magFilter(), host.wrapS(), host.wrapT(),
-                host.wrapR(), host.minLod(), host.maxLod(), 0.0F, host.compareMode(), host.compareFunc());
+        if (host == null) return null;
+        int wrap = clampToEdge ? GL_CLAMP_TO_EDGE : host.wrapS();
+        if (host.lodBias() == 0.0F && wrap == host.wrapS()) return null;
+        return new SamplerManager.SamplerKey(host.minFilter(), host.magFilter(), wrap, wrap, wrap,
+                host.minLod(), host.maxLod(), 0.0F, host.compareMode(), host.compareFunc());
     }
 
     /**

@@ -113,7 +113,7 @@ final class PackImageBindings {
             ChimeraMainPass.ProgramImages bound, VulkanImage[] colors, VulkanImage fallback,
             DrawMaterialContext drawContext) {
         return ProgramImageBindingTransaction.bind(bound.name(), bound.manifest(), IMAGE_STORE,
-                entry -> atGlBias(entry.slot(), resolve(bound, entry, colors, fallback, drawContext)));
+                entry -> asGl(entry.slot(), resolve(bound, entry, colors, fallback, drawContext)));
     }
 
     private ChimeraTextureBindingState.Snapshot resolve(ChimeraMainPass.ProgramImages bound,
@@ -138,14 +138,15 @@ final class PackImageBindings {
 
     /**
      * {@code bound} as the pack program at {@code slot} samples it: with the sampler its descriptor
-     * would take, at OpenGL's mip bias (SamplerProfile.withoutHostBias). Only a mipmapped sampler
-     * VulkanMod built from texture flags changes, such as the block atlas's.
+     * would take, as OpenGL samples it (SamplerProfile.asGl): at bias 0, and clamped where vanilla
+     * asked. Only a sampler VulkanMod built from texture flags changes, such as the block atlas's
+     * mipmapped one or the entity shadow's.
      */
-    private static ChimeraTextureBindingState.Snapshot atGlBias(int slot, ChimeraTextureBindingState.Snapshot bound) {
+    private static ChimeraTextureBindingState.Snapshot asGl(int slot, ChimeraTextureBindingState.Snapshot bound) {
         if (bound == null || bound.image() == null) return bound;
         long sampler = bound.samplerOverride() != null ? bound.samplerOverride()
                 : GlSampler.resolveSampler(slot, bound.image());
-        long gl = SamplerProfile.ofId(sampler).withoutHostBias().id();
+        long gl = SamplerProfile.ofId(sampler).asGl(bound.image()).id();
         return gl == sampler ? bound : new ChimeraTextureBindingState.Snapshot(bound.image(), gl);
     }
 
