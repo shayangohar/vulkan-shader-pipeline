@@ -20,10 +20,10 @@ public record DrawMaterialContext(VulkanImage albedo, SamplerProfile profile) {
         }
     }
 
-    /** Terrain path: the atlas and the sampler its texture parameters chose. */
+    /** Terrain path: the atlas and the sampler its texture parameters chose, at OpenGL's mip bias. */
     public static DrawMaterialContext forTerrain(VulkanImage albedo) {
         return albedo == null ? new DrawMaterialContext(null, null)
-                : new DrawMaterialContext(albedo, SamplerProfile.of(albedo));
+                : new DrawMaterialContext(albedo, SamplerProfile.of(albedo).withoutHostBias());
     }
 
     /** Legacy query for callers with no captured seam: live slot 0 plus its recorded profile. */
@@ -36,6 +36,6 @@ public record DrawMaterialContext(VulkanImage albedo, SamplerProfile profile) {
         SamplerProfile profile = recorded != null
                 ? recorded
                 : SamplerProfile.of(albedo);
-        return new DrawMaterialContext(albedo, profile);
+        return new DrawMaterialContext(albedo, profile.withoutHostBias());
     }
 }

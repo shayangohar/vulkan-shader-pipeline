@@ -5,6 +5,7 @@ import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.vulkanmod.gl.GlSampler;
 import net.vulkanmod.gl.GlTexture;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
@@ -111,23 +112,41 @@ final class PackImageBindings {
     private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bind(
             ChimeraMainPass.ProgramImages bound, VulkanImage[] colors, VulkanImage fallback,
             DrawMaterialContext drawContext) {
-        return ProgramImageBindingTransaction.bind(bound.name(), bound.manifest(), IMAGE_STORE, entry -> {
-            if (entry.kind() == ProgramImageBindingManifest.Kind.HOST_TEXTURE) {
-                int hostSlot = PackResourcePlan.HOST_TEXTURE_SLOTS.get(entry.resourceKey());
-                return PackResourcePlan.HOST_BOUND_SLOTS.contains(hostSlot)
-                        ? IMAGE_STORE.capture(hostSlot) : overlay(hostSlot);
-            }
-            if (entry.kind() == ProgramImageBindingManifest.Kind.MATERIAL_MAP) {
-                // The context was captured before the first slot capture, so
-                // the resolver sees the unmutated draw. Rollback stays with
-                // the transaction.
-                if (pass.materials.materialMapOwner == null) return null;
-                return pass.materials.materialMapOwner.resolveDrawMaterial(drawContext, entry.resourceKey());
-            }
-            VulkanImage image = entryImage(entry, colors, fallback);
-            return new ChimeraTextureBindingState.Snapshot(image,
-                    image == null ? null : pass.shadowPass.shadowSamplerFor(bound, entry, image));
-        });
+        return ProgramImageBindingTransaction.bind(bound.name(), bound.manifest(), IMAGE_STORE,
+                entry -> atGlBias(entry.slot(), resolve(bound, entry, colors, fallback, drawContext)));
+    }
+
+    private ChimeraTextureBindingState.Snapshot resolve(ChimeraMainPass.ProgramImages bound,
+            ProgramImageBindingManifest.Entry entry, VulkanImage[] colors, VulkanImage fallback,
+            DrawMaterialContext drawContext) {
+        if (entry.kind() == ProgramImageBindingManifest.Kind.HOST_TEXTURE) {
+            int hostSlot = PackResourcePlan.HOST_TEXTURE_SLOTS.get(entry.resourceKey());
+            return PackResourcePlan.HOST_BOUND_SLOTS.contains(hostSlot)
+                    ? IMAGE_STORE.capture(hostSlot) : overlay(hostSlot);
+        }
+        if (entry.kind() == ProgramImageBindingManifest.Kind.MATERIAL_MAP) {
+            // The context was captured before the first slot capture, so
+            // the resolver sees the unmutated draw. Rollback stays with
+            // the transaction.
+            if (pass.materials.materialMapOwner == null) return null;
+            return pass.materials.materialMapOwner.resolveDrawMaterial(drawContext, entry.resourceKey());
+        }
+        VulkanImage image = entryImage(entry, colors, fallback);
+        return new ChimeraTextureBindingState.Snapshot(image,
+                image == null ? null : pass.shadowPass.shadowSamplerFor(bound, entry, image));
+    }
+
+    /**
+     * {@code bound} as the pack program at {@code slot} samples it: with the sampler its descriptor
+     * would take, at OpenGL's mip bias (SamplerProfile.withoutHostBias). Only a mipmapped sampler
+     * VulkanMod built from texture flags changes, such as the block atlas's.
+     */
+    private static ChimeraTextureBindingState.Snapshot atGlBias(int slot, ChimeraTextureBindingState.Snapshot bound) {
+        if (bound == null || bound.image() == null) return bound;
+        long sampler = bound.samplerOverride() != null ? bound.samplerOverride()
+                : GlSampler.resolveSampler(slot, bound.image());
+        long gl = SamplerProfile.ofId(sampler).withoutHostBias().id();
+        return gl == sampler ? bound : new ChimeraTextureBindingState.Snapshot(bound.image(), gl);
     }
 
     /** The image one target, depth, shadow, pack or advanced manifest entry binds this draw. */

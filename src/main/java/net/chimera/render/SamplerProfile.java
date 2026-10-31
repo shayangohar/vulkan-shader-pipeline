@@ -24,6 +24,8 @@ import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
  * guess its fields.
  */
 public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
+    /** The level-of-detail bias VulkanMod gives every mipmapped sampler it builds from flags (MIP_BIAS). */
+    static final float HOST_MIP_BIAS = -0.5F;
 
     /** ID-only profile: the sampler exists, its fields were never observed. */
     public static SamplerProfile ofId(long id) {
@@ -34,6 +36,17 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
     public static SamplerProfile of(VulkanImage image) {
         long id = image.getSampler();
         return new SamplerProfile(id, keyOf(id));
+    }
+
+    /**
+     * This profile at OpenGL's mip bias, which Iris samples with: a mipmapped sampler VulkanMod
+     * built from texture flags becomes the same sampler at bias 0. VulkanMod's {@link #HOST_MIP_BIAS}
+     * picks mip levels half a level finer, and Vulkan adds it to an explicit textureLod too. Any
+     * other sampler keeps its own bias.
+     */
+    public SamplerProfile withoutHostBias() {
+        SamplerManager.SamplerKey gl = unbiasedKey(flagKey(id));
+        return gl == null ? this : new SamplerProfile(SamplerManager.getTextureSampler(gl), gl);
     }
 
     /** True when every field needed to derive a sampler is known. */
@@ -87,9 +100,20 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
     }
 
     /**
+     * The key of the flag sampler {@code packed} (flagKey) at bias 0; null when it carries no host
+     * bias, or is not a flag sampler with an OpenGL form.
+     */
+    static SamplerManager.SamplerKey unbiasedKey(int packed) {
+        SamplerManager.SamplerKey host = packed < 0 ? null : legacyKey((short) packed);
+        if (host == null || host.lodBias() == 0.0F) return null;
+        return new SamplerManager.SamplerKey(host.minFilter(), host.magFilter(), host.wrapS(), host.wrapT(),
+                host.wrapR(), host.minLod(), host.maxLod(), 0.0F, host.compareMode(), host.compareFunc());
+    }
+
+    /**
      * The OpenGL-style key of a texture sampler VulkanMod built from its flags (texture parameters):
      * the flags in the low byte and the mip ceiling in the high byte, mipmapped levels biased by
-     * {@code -0.5}. A min/max reduction sampler has no OpenGL form, so it stays unknown.
+     * {@link #HOST_MIP_BIAS}. A min/max reduction sampler has no OpenGL form, so it stays unknown.
      */
     static SamplerManager.SamplerKey legacyKey(short packed) {
         int flags = packed & 0xFF;
@@ -105,6 +129,6 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
         int wrap = (flags & SamplerManager.CLAMP_BIT) != 0 ? GL_CLAMP_TO_EDGE : GL_REPEAT;
         float maxLod = mipmaps ? (packed >> 8) & 0xFF : 0.0F;
         return new SamplerManager.SamplerKey(min, mag, wrap, wrap, wrap, 0.0F, maxLod,
-                mipmaps ? -0.5F : 0.0F, GL_NONE, GL_LEQUAL);
+                mipmaps ? HOST_MIP_BIAS : 0.0F, GL_NONE, GL_LEQUAL);
     }
 }
