@@ -27,6 +27,7 @@ import net.chimera.shaderpack.ParticleDirectives;
 import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.SelectorNamespace;
+import net.chimera.shaderpack.ShadowPassUse;
 import net.chimera.shaderpack.StagedOptions;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.chimera.shaderpack.TerrainShadingDirectives;
@@ -242,6 +243,7 @@ final class PackSessionLifecycle {
         pass.packConfig = null;
         pass.packPlan = null;
         pass.shadowPass.shadowCulling = null;
+        pass.shadowPass.shadowUse = ShadowPassUse.ALWAYS;
         pass.screenOverlays = null;
         pass.skyDirectives = null;
         pass.packTargetGraph = null;
@@ -580,6 +582,12 @@ final class PackSessionLifecycle {
                 pass.shadowPass.shadowCulling.entities(renderDistance).describe(), renderDistance,
                 pass.shadowPass.shadowCulling.deviations().isEmpty() ? "" : " "
                         + pass.shadowPass.shadowCulling.deviations());
+        ShadowPassUse shadowUse = ShadowPassUse.of(pass.packPlan, this.passComputes);
+        pass.shadowPass.shadowUse = shadowUse;
+        LOGGER.info("[chimera] shadow pass: runs={}, entityShadowsReplaced={} (shadow.enabled={}, readers={}, "
+                + "writers={}){}", shadowUse.runs(), shadowUse.replacesEntityShadows(), shadowUse.enabled(),
+                shadowUse.readers(), shadowUse.writers(),
+                shadowUse.deviations().isEmpty() ? "" : " " + shadowUse.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(pass.packPlan.terrainMaterial());
         TerrainShadingDirectives shading = pass.packPlan.terrainShading();
         LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}, voxelizeLightBlocks={}{}",

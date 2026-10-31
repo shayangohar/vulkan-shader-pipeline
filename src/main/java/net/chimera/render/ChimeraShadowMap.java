@@ -526,7 +526,7 @@ public class ChimeraShadowMap {
                 cameraX, cameraY, cameraZ);
     }
 
-    /** Publishes the current caster pair only while its shadow draw is active. */
+    /** Publishes the current caster pair: while its shadow draw is active, and on frames no shadow pass draws. */
     void publishCurrentDrawState() {
         PackUniformProvider.updateShadowState(this.lightView, this.packLightProjection);
     }

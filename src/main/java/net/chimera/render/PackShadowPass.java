@@ -6,6 +6,7 @@ import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.ShadowCasterDirectives;
 import net.chimera.shaderpack.ShadowCullingPlan;
+import net.chimera.shaderpack.ShadowPassUse;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.chunk.WorldRenderer;
@@ -44,6 +45,9 @@ final class PackShadowPass {
 
     /** Iris's shadow culling for this pack session (shadow.culling and the shadow distances). */
     ShadowCullingPlan shadowCulling;
+
+    /** Who observes the pack's shadow pass, and so whether it draws (Iris's ShadowRenderer rule). */
+    ShadowPassUse shadowUse = ShadowPassUse.ALWAYS;
 
     ChimeraShadowMap shadowMap = new ChimeraShadowMap();
     final PackShadowDepth packShadowDepth = new PackShadowDepth();
@@ -499,19 +503,24 @@ final class PackShadowPass {
      * segment, and binds the map for the terrain shaders' first draw.
      */
     void beginShadowFrame(double cameraX, double cameraY, double cameraZ) {
+        boolean drawn = shadowPassObserved();
         if (this.shadowMap.isInitialized()) {
             this.shadowMap.updateLight(PackUniformProvider.currentShadowLightRotation(),
                     cameraX, cameraY, cameraZ, Minecraft.getInstance().options.getEffectiveRenderDistance());
             this.shadowFrameReady = prepareShadowForSampling(cameraX, cameraY, cameraZ);
-            if (this.shadowFrameReady && this.shadowMap.hasMapSnapshot()) {
+            if (this.shadowFrameReady && !drawn) {
+                // No map is drawn, so none moves: Iris still recomputes shadowModelView and
+                // shadowProjection every frame (MatrixUniforms), so the current light goes out.
+                this.shadowMap.publishCurrentDrawState();
+            } else if (this.shadowFrameReady && this.shadowMap.hasMapSnapshot()) {
                 this.shadowMap.publishMapState(cameraX, cameraY, cameraZ);
             } else {
                 PackUniformProvider.clearShadowState();
             }
         }
 
-        // Arm this frame's shadow segment; consumed just before the sky (PreSkyPasses).
-        this.shadowPending = this.shadowFrameReady;
+        // Arm this frame's shadow segment when something observes it; consumed just before the sky (PreSkyPasses).
+        this.shadowPending = this.shadowFrameReady && drawn;
 
         // Terrain shaders sample the shadow map from their first draw.
         if (this.shadowFrameReady) {
@@ -615,11 +624,17 @@ final class PackShadowPass {
     }
 
     /**
-     * True while the pack renders its own shadow map. Iris then suppresses vanilla entity
-     * ground shadows (IrisRenderingPipeline.shouldDisableVanillaEntityShadows: shadowRenderer != null).
+     * True while the pack has a shadow map Iris would build its ShadowRenderer for. Iris then
+     * suppresses vanilla entity ground shadows (IrisRenderingPipeline.shouldDisableVanillaEntityShadows:
+     * shadowRenderer != null); a pass that only writes pack images keeps them (ShadowPassUse).
      */
     public boolean packShadowPassActive() {
-        return usePackShadowRuntime();
+        return usePackShadowRuntime() && this.shadowUse.replacesEntityShadows();
+    }
+
+    /** Whether this frame draws a shadow map: the host's fixed path always, the pack's when observed. */
+    private boolean shadowPassObserved() {
+        return !usePackShadowRuntime() || this.shadowUse.runs();
     }
 
     /** Makes newly created shadow images valid shader inputs exactly once. */
