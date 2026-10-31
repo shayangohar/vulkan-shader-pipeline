@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Sky, weather and rain programs, the horizon fan, and the end portal hooks. */
+/** Sky, weather and rain programs, the horizon, and the end portal hooks. */
 final class SkyWeatherTest {
     @Test
     void rainContracts(@TempDir Path root) throws IOException {
@@ -52,19 +52,6 @@ final class SkyWeatherTest {
             assertTrue(!GeometryOutputPlan.parse("gbuffers_weather", source, Map.of()).executable(),
                     "normalization concealed malformed target: " + malformed);
         }
-
-        float[] cone = ChimeraHorizonRenderer.vertices(32);
-        assertEquals(30, cone.length, "Iris fan must have ten POSITION vertices");
-        assertTrue(cone[0] == 0 && cone[1] == -16 && cone[2] == 0, "horizon apex must be below camera");
-        for (int i = 1; i < 10; i++) {
-            float x = cone[i * 3], z = cone[i * 3 + 2];
-            assertTrue(cone[i * 3 + 1] == 16 && Math.abs(Math.hypot(x, z) - 256) < 0.001,
-                    "Iris horizon radius/height changed");
-        }
-        assertTrue(cone[8] < 0, "horizon must use inward Iris winding");
-        assertTrue(Math.abs(cone[3] - cone[27]) < 0.001 && Math.abs(cone[5] - cone[29]) < 0.001,
-                "horizon rim must close");
-        assertTrue(ChimeraHorizonRenderer.vertices(8)[3] == 128, "horizon must track render distance");
 
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         try {
@@ -108,29 +95,82 @@ final class SkyWeatherTest {
     }
 
     /**
-     * The horizon is Iris's ten-vertex fan in a vertex buffer, drawn with the position shader so the
-     * sky window gives it gbuffers_skybasic. VulkanMod's vertex buffer expands an unindexed fan with
-     * its own index buffer into eight triangles.
+     * Iris 1.8.14's horizon: eight walls at the render distance's radius, capped at 256, that face
+     * the axes and diagonals and close into a ring, then the top plane and the bottom plane as
+     * 64-block grids from -384 to 448. Every quad faces the camera, so back-face culling keeps it.
+     */
+    @Test
+    void horizonGeometry() {
+        float[] horizon = ChimeraHorizonRenderer.vertices(32);
+        assertEquals(ChimeraHorizonRenderer.VERTEX_COUNT * 3, horizon.length, "horizon vertex count");
+        for (int quad = 0; quad < horizon.length / 12; quad++) {
+            assertTrue(facesOrigin(horizon, quad * 12), "horizon quad " + quad + " faces away from the camera");
+        }
+        for (int wall = 0; wall < 8; wall++) {
+            int at = wall * 12;
+            for (int corner = 0; corner < 4; corner++) {
+                int v = at + corner * 3;
+                assertEquals(256, Math.hypot(horizon[v], horizon[v + 2]), 0.001, "wall corner radius");
+                assertEquals(corner == 1 || corner == 2 ? 16 : -16, horizon[v + 1], "wall height");
+            }
+            double x = (horizon[at] + horizon[at + 6]) / 2;
+            double z = (horizon[at + 2] + horizon[at + 8]) / 2;
+            assertEquals(0, Math.IEEEremainder(Math.toDegrees(Math.atan2(z, x)), 45), 0.001,
+                    "walls must face the axes and diagonals");
+            int previous = (wall + 7) % 8 * 12;
+            assertTrue(horizon[at + 9] == horizon[previous] && horizon[at + 11] == horizon[previous + 2],
+                    "the walls must close into a ring");
+        }
+        int planeStart = 8 * 4;
+        int cells = 13 * 13 * 4;
+        for (int v = planeStart; v < planeStart + 2 * cells; v++) {
+            assertEquals(v < planeStart + cells ? 16 : -16, horizon[v * 3 + 1], "the top plane draws first");
+            for (int axis : new int[] {0, 2}) {
+                float coordinate = horizon[v * 3 + axis];
+                assertTrue(coordinate >= -384 && coordinate <= 448 && coordinate % 64 == 0, "plane grid");
+            }
+        }
+        assertEquals(128, Math.hypot(ChimeraHorizonRenderer.vertices(8)[0], ChimeraHorizonRenderer.vertices(8)[2]),
+                0.001, "the walls must track the render distance");
+    }
+
+    /** True when the quad at offset is counterclockwise seen from the origin: its normal points back. */
+    private static boolean facesOrigin(float[] v, int at) {
+        double ux = v[at + 3] - v[at], uy = v[at + 4] - v[at + 1], uz = v[at + 5] - v[at + 2];
+        double wx = v[at + 6] - v[at], wy = v[at + 7] - v[at + 1], wz = v[at + 8] - v[at + 2];
+        double nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+        double dot = 0;
+        for (int corner = 0; corner < 4; corner++) {
+            int c = at + corner * 3;
+            dot += nx * v[c] + ny * v[c + 1] + nz * v[c + 2];
+        }
+        return dot < 0;
+    }
+
+    /**
+     * The horizon is Iris 1.8.14's quads in a vertex buffer, drawn with the position shader so the
+     * sky window gives it gbuffers_skybasic. VulkanMod's quad index buffer draws its 346 quads with
+     * Iris's 2076 indices.
      */
     @Test
     void horizonSubmission() throws IOException {
-        assertEquals(24, AutoIndexBuffer.DrawType.getTriangleStripIndexCount(ChimeraHorizonRenderer.VERTEX_COUNT),
-                "horizon fan must expand to eight triangles");
+        assertEquals(2076, AutoIndexBuffer.DrawType.getQuadIndexCount(ChimeraHorizonRenderer.VERTEX_COUNT),
+                "the horizon must draw Iris's 346 quads");
         var draw = MixinBytecode.nativeClass("net/chimera/render/ChimeraHorizonRenderer").methods.stream()
                 .filter(method -> method.name.equals("draw")).findFirst().orElseThrow();
-        boolean fan = false;
+        boolean quads = false;
         boolean positionShader = false;
         boolean vertexBuffer = false;
         for (var instruction : draw.instructions) {
-            if (instruction instanceof FieldInsnNode field && field.name.equals("TRIANGLE_FAN")) fan = true;
+            if (instruction instanceof FieldInsnNode field && field.name.equals("QUADS")) quads = true;
             if (instruction instanceof MethodInsnNode call) {
                 if (call.name.equals("getPositionShader")) positionShader = true;
                 if (call.owner.equals("com/mojang/blaze3d/vertex/VertexBuffer")
                         && call.name.equals("drawWithShader")) vertexBuffer = true;
             }
         }
-        assertTrue(fan && positionShader && vertexBuffer,
-                "the horizon must draw a fan from a vertex buffer with the position shader");
+        assertTrue(quads && positionShader && vertexBuffer,
+                "the horizon must draw quads from a vertex buffer with the position shader");
     }
 
     /**
