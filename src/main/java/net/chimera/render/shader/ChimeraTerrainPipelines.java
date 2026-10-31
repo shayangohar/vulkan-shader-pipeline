@@ -33,7 +33,8 @@ import java.util.function.UnaryOperator;
  */
 public final class ChimeraTerrainPipelines {
     private static boolean initialized;
-    private static boolean extendedMode;
+    /** True while Chimera's terrain format and pipelines are installed for a pack; chunk builders read it. */
+    private static volatile boolean extendedMode;
     /** Chimera's own terrain pipelines by vertex layout (bit 1: modern) and separateAo (bit 0). */
     private static final GraphicsPipeline[] fixedPipelines = new GraphicsPipeline[4];
     /** Read by the chunk-build threads, through the render-layer overrides; replaced on the render thread. */
@@ -76,6 +77,15 @@ public final class ChimeraTerrainPipelines {
      */
     public static boolean separateAoActive() {
         return separateAo && extendedMode;
+    }
+
+    /**
+     * True while Chimera meshes terrain for a pack: a light-emitting block then darkens its
+     * neighbours' ambient occlusion as in vanilla and Sodium (ChimeraEmitterOcclusionMixin). The
+     * level rebuilds when it changes, with the terrain format.
+     */
+    public static boolean vanillaEmitterOcclusion() {
+        return extendedMode;
     }
 
     /**

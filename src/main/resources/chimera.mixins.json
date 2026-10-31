@@ -86,6 +86,7 @@
     "ChimeraNativeImageDownloadMixin",
     "ChimeraNativeImageClampMixin",
     "ChimeraVulkanImageClampMixin",
+    "ChimeraEmitterOcclusionMixin",
     "ChimeraModelCubeColorMixin"
   ],
   "injectors": {
