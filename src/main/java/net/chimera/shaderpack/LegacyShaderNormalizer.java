@@ -16,8 +16,9 @@ import java.util.regex.Pattern;
  * program: gl_Fog fields to Iris's iris_Fog uniforms, and gl_FogFragCoord to
  * an ordinary varying. The legacy colour and texture-coordinate varyings
  * (gl_FrontColor and gl_Color, gl_TexCoord[n]) become ordinary varyings too,
- * which GL's compatibility profile gives packs and Vulkan does not. In the
- * vertex stage it starts every referenced output
+ * which GL's compatibility profile gives packs and Vulkan does not. A fragment
+ * stage's read of a gl_FragDepth it never writes reads the rasterized depth
+ * ({@link UnwrittenFragDepth}). In the vertex stage it starts every referenced output
  * at zero, the value GL drivers leave in one a path never writes. It also
  * gives every uniform its own declaration, so
  * per-name rewriters never meet a declarator list. Its input is already
@@ -161,7 +162,7 @@ final class LegacyShaderNormalizer {
             }
             boolean fogFragCoord = !compute && renameFogFragCoord(tokens);
             Set<String> privateGlobals = new TreeSet<>();
-            Set<String> varyings = compute ? Set.of() : renameLegacyVaryings(tokens, vertexStage, privateGlobals);
+            Set<String> varyings = compute ? Set.of() : renameStageBuiltins(split, tokens, vertexStage, privateGlobals);
 
             String normalized = GlslLexer.render(tokens);
             if (!varyings.isEmpty() || !privateGlobals.isEmpty()) {
@@ -305,6 +306,17 @@ final class LegacyShaderNormalizer {
             }
         }
         return found;
+    }
+
+    /**
+     * A graphics stage's built-ins Vulkan lacks: its legacy varyings ({@link #renameLegacyVaryings}),
+     * and outside the vertex stage the reads of an unwritten gl_FragDepth ({@link UnwrittenFragDepth}).
+     * Returns the varyings the source now uses.
+     */
+    private static Set<String> renameStageBuiltins(GlslTree tree, List<GlslLexer.Token> tokens, boolean vertexStage,
+                                                   Set<String> privateGlobals) {
+        if (!vertexStage) UnwrittenFragDepth.readRasterDepth(tree, tokens);
+        return renameLegacyVaryings(tokens, vertexStage, privateGlobals);
     }
 
     /**

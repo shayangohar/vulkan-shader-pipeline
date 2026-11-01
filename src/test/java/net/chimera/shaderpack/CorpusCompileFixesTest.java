@@ -1,7 +1,10 @@
 package net.chimera.shaderpack;
 
+import net.chimera.render.shader.GlslCompiler;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.util.shaderc.Shaderc;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -59,6 +62,41 @@ final class CorpusCompileFixesTest {
                 void main() { gl_FragColor = gl_Color * gl_TexCoord[0]; }
                 """, false).source();
         assertTrue(fragment.contains("chimera_FrontColor * chimera_TexCoord0"), fragment);
+    }
+
+    /**
+     * Noble passes gl_FragDepth to its shadow lookup and never writes it. GL compiles the read;
+     * Vulkan's validator rejects FragDepth without DepthReplacing, which glslang declares only for a
+     * write. A read of an unwritten one reads the rasterized depth; a shader that may write it keeps
+     * its reads, and a redeclaration stays.
+     */
+    @Test
+    void anUnwrittenFragDepthReadsTheRasterizedDepth() {
+        String header = "#version 430\nlayout(location = 0) out vec4 color;\n";
+        String noble = LegacyShaderNormalizer.normalize(header + """
+                vec4 shadow(vec3 position, float depth) { return vec4(depth < 0.56 ? 1.0 : 0.5); }
+                void main() { color = shadow(vec3(0.0), gl_FragDepth) * max(gl_FragDepth, 0.5); }
+                """, false).source();
+        assertTrue(noble.contains("shadow(vec3(0.0), gl_FragCoord.z) * max(gl_FragCoord.z, 0.5)")
+                && !noble.contains("gl_FragDepth"), noble);
+        MemoryUtil.memFree(GlslCompiler.compile("noble.fsh", noble, Shaderc.shaderc_glsl_fragment_shader,
+                GlslCompiler::optimize));
+        for (String writes : List.of(
+                "void main() { gl_FragDepth = gl_FragCoord.z; color = vec4(gl_FragDepth); }",
+                "void main() { gl_FragDepth += 0.1; color = vec4(gl_FragDepth); }",
+                "void store(out float d) { d = 0.5; }\n"
+                        + "void main() { store(gl_FragDepth); color = vec4(gl_FragDepth); }",
+                "void main() { color = vec4(modf(1.5, gl_FragDepth)); }")) {
+            String kept = LegacyShaderNormalizer.normalize(header + writes + "\n", false).source();
+            assertTrue(kept.contains(writes), kept);
+        }
+        String redeclared = LegacyShaderNormalizer.normalize(header
+                + "layout(depth_greater) out float gl_FragDepth;\nvoid main() { color = vec4(gl_FragDepth); }\n",
+                false).source();
+        assertTrue(redeclared.contains("layout(depth_greater) out float gl_FragDepth;")
+                && redeclared.contains("color = vec4(gl_FragCoord.z);"), redeclared);
+        MemoryUtil.memFree(GlslCompiler.compile("redeclared.fsh", redeclared, Shaderc.shaderc_glsl_fragment_shader,
+                GlslCompiler::optimize));
     }
 
     /** I Like Vanilla declares varyings through #define in_out in; Bloop defines packSnorm4x8 at 1.40. */
