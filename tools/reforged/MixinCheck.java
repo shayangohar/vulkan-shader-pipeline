@@ -49,7 +49,9 @@ import java.util.Set;
  *       diff two versions.</li>
  *   <li>{@code merged <chimera classes> <reforged dir>}: Chimera injectors into vanilla methods whose body a
  *       Reforged mixin overwrites or merges in, checked against Reforged's body instead of vanilla's: a HIT line
- *       per such body, then a FAIL or ok line per injector. It prints no SUMMARY.</li>
+ *       per such body, then a FAIL or ok line per injector. It also fails what Mixin 0.8.7 refuses at launch:
+ *       a non-HEAD injector into such a body from a priority not above the Reforged mixin's, and any injector
+ *       in an interface mixin. It prints no SUMMARY.</li>
  * </ul>
  */
 public final class MixinCheck {
@@ -174,43 +176,95 @@ public final class MixinCheck {
 
     /**
      * Checks Chimera injectors into vanilla classes against the methods Reforged's mixins put there: a HIT line
-     * per Reforged body an injector selects, then the injector's check against those bodies alone.
+     * per Reforged body an injector selects, then the injector's check against those bodies alone. Two Mixin
+     * 0.8.7 rules fail at launch whatever the target: an injector in an interface mixin, and an injector into
+     * another mixin's merged body from a priority not above that mixin's, unless it injects at HEAD
+     * (MethodHead.checkPriority) or wraps the whole method.
      */
     static void merged(String chimeraDirectory, String reforgedDirectory) throws IOException {
-        Map<String, ClassNode> bodies = reforgedBodies(new ClassDirectory(reforgedDirectory));
+        ClassDirectory reforged = new ClassDirectory(reforgedDirectory);
+        Map<String, ClassNode> bodies = reforgedBodies(reforged);
         ClassDirectory chimera = new ClassDirectory(chimeraDirectory);
         for (String className : chimera.classNames(CHIMERA_MIXINS)) {
             ClassNode mixin = chimera.find(className);
             String mixinName = simpleName(className);
+            if ((mixin.access & Opcodes.ACC_INTERFACE) != 0) failInterfaceInjectors(mixin, mixinName);
             for (String target : mixinTargets(mixin)) {
                 ClassNode body = target.startsWith(VULKANMOD) ? null : bodies.get(target);
                 if (body == null) continue;
                 InjectCheck check = new InjectCheck(name -> name.equals(target) ? body : null, true);
+                MergedTarget merged = new MergedTarget(check, mixinName, mixinPriority(mixin), target, body, reforged);
                 for (MethodNode handler : mixin.methods) {
                     for (AnnotationNode annotation : annotations(handler.visibleAnnotations,
                             handler.invisibleAnnotations)) {
-                        checkMergedInjector(check, mixinName, target, body, handler, annotation);
+                        checkMergedInjector(merged, handler, annotation);
                     }
                 }
             }
         }
     }
 
-    private static void checkMergedInjector(InjectCheck check, String mixinName, String target, ClassNode body,
-                                            MethodNode handler, AnnotationNode annotation) {
+    /** A Chimera mixin's view of one vanilla class that Reforged's mixins put bodies into. */
+    private record MergedTarget(InjectCheck check, String mixinName, int priority, String target, ClassNode body,
+                                ClassDirectory reforged) {}
+
+    private static void failInterfaceInjectors(ClassNode mixin, String mixinName) {
+        for (MethodNode handler : mixin.methods) {
+            for (AnnotationNode annotation : annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
+                if (INJECTORS.contains(annotationName(annotation))) {
+                    System.out.println("FAIL\t" + mixinName + "\t" + handler.name
+                            + "\t<interface>\tinjector in an interface mixin: Mixin 0.8.7 applies none");
+                }
+            }
+        }
+    }
+
+    private static void checkMergedInjector(MergedTarget merged, MethodNode handler, AnnotationNode annotation) {
         String kind = annotationName(annotation);
         if (!INJECTORS.contains(kind)) return;
         boolean hit = false;
         for (Object text : values(annotation, "method")) {
             Selector selector = Selector.parse(text.toString());
-            for (MethodNode method : body.methods) {
-                if (!selector.matches(target, method.name, method.desc)) continue;
+            for (MethodNode method : merged.body().methods) {
+                if (!selector.matches(merged.target(), method.name, method.desc)) continue;
                 hit = true;
-                System.out.println("HIT\t" + mixinName + "." + handler.name + "\t" + target + "." + method.name
-                        + method.desc + "\t" + method.signature.replace(REFORGED_MIXINS, ""));
+                System.out.println("HIT\t" + merged.mixinName() + "." + handler.name + "\t" + merged.target() + "."
+                        + method.name + method.desc + "\t" + method.signature.replace(REFORGED_MIXINS, ""));
+                checkMergedPriority(merged, handler, annotation, method);
             }
         }
-        if (hit) check.checkInjector(target, mixinName, handler, annotation, kind);
+        if (hit) merged.check().checkInjector(merged.target(), merged.mixinName(), handler, annotation, kind);
+    }
+
+    /** Fails an injector that Mixin refuses into another mixin's merged body at its priority. */
+    private static void checkMergedPriority(MergedTarget merged, MethodNode handler, AnnotationNode annotation,
+                                            MethodNode method) {
+        if (annotationName(annotation).equals("WrapMethod") || atHeadOnly(annotation)) return;
+        String owner = method.signature.substring(method.signature.indexOf(' ') + 1);
+        int ownerPriority = mixinPriority(merged.reforged().find(owner));
+        if (merged.priority() > ownerPriority) return;
+        System.out.println("FAIL\t" + merged.mixinName() + "\t" + handler.name + "\t" + merged.target() + "."
+                + method.name + "\tbody merged by " + simpleName(owner) + " at priority " + ownerPriority
+                + "; a non-HEAD injector needs a higher priority than " + merged.priority());
+    }
+
+    /** True when every {@code @At} of the injector is HEAD; false when it has none (ModifyConstant). */
+    private static boolean atHeadOnly(AnnotationNode annotation) {
+        List<Object> points = values(annotation, "at");
+        if (points.isEmpty()) return false;
+        for (Object point : points) {
+            if (!"HEAD".equals(stringValue((AnnotationNode) point, "value"))) return false;
+        }
+        return true;
+    }
+
+    /** A mixin's {@code @Mixin(priority)}, 1000 when unset (neither Chimera's nor Reforged's config sets one). */
+    static int mixinPriority(ClassNode type) {
+        if (type == null) return 1000;
+        for (AnnotationNode annotation : annotations(type.visibleAnnotations, type.invisibleAnnotations)) {
+            if (annotation.desc.equals(MIXIN)) return intValue(annotation, "priority", 1000);
+        }
+        return 1000;
     }
 
     /**

@@ -2,7 +2,9 @@
 Checks whether Chimera still works on a new VulkanMod Reforged jar, before moving the host to it.
 chimera.mixins.json sets defaultRequire 1, so every Chimera mixin must apply: one injector that finds no
 target, or one shadowed member that is gone, stops the game at launch. That includes Chimera's injectors
-into vanilla methods whose body a Reforged mixin overwrites: they must find their target in Reforged's body.
+into vanilla methods whose body a Reforged mixin overwrites: they must find their target in Reforged's body,
+and Mixin 0.8.7 accepts one there only at HEAD, as a whole-method wrap, or from a higher priority. It also
+applies no injector in an interface mixin. Run it after adding such a hook, with the pinned jar as -NewJar.
 
   .\tools\check-reforged.ps1 -NewJar <jar>                   the new Reforged jar against the pinned one
   .\tools\check-reforged.ps1 -NewJar <jar> -OldJar <jar>     a control other than the pinned version
@@ -219,8 +221,8 @@ try {
 
     if ($controlFailures.Count -gt 0) {
         Write-Warning ("CONTROL FAILED: $($controlFailures.Count) failure(s) against $oldLabel, which should have" +
-            " none. Chimera's build or MixinCheck is out of date; rebuild, or fix the checker, before trusting" +
-            " the results for $newLabel.")
+            " none. Chimera as built does not launch on it, or its build or MixinCheck is out of date; fix that" +
+            " before trusting the results for $newLabel.")
         foreach ($line in $controlFailures) { Write-Warning $line }
         $exitCode = 2
     }
