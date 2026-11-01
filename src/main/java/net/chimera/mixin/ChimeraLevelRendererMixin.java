@@ -45,7 +45,8 @@ import java.util.function.Predicate;
  *
  * - HEAD captures the frame the pack uniforms read and opens the family lanes' world window.
  * - The world clear opens the internal RGBA16F world target instead, cleared as the pack asks,
- *   with the fog colour FogRenderer has just set, and draws the pack horizon there, as Iris does.
+ *   with the fog colour FogRenderer has just set, which the pack's fogColor reads from there on,
+ *   and draws the pack horizon there, as Iris does.
  * - Just before the sky, the shadow pass and the prepare passes run, as in Iris (PreSkyPasses).
  * - The level's family batches are held to Iris's translucent boundary, where they draw before the
  *   centre-depth sample and the solid hand; with separateEntityDraws the late kinds wait for the
@@ -92,6 +93,7 @@ public abstract class ChimeraLevelRendererMixin {
             return;
         }
         float[] fog = RenderSystem.getShaderFogColor();
+        PackUniformProvider.latchFogColor(fog);
         Vec3 position = camera.getPosition();
         pass.openLevelSegment(position.x, position.y, position.z, new float[] {fog[0], fog[1], fog[2]});
         chimera$horizon(pass, modelView, projection);

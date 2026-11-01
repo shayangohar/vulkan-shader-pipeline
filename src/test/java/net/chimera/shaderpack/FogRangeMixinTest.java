@@ -1,14 +1,28 @@
 package net.chimera.shaderpack;
 
 import org.junit.jupiter.api.Test;
+import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Iris's fogStart and fogEnd follow RenderSystem's fog setters (MixinRenderSystem), and so do Chimera's. */
+/**
+ * Iris's fogStart and fogEnd follow RenderSystem's fog setters (MixinRenderSystem), and so do
+ * Chimera's; its per-frame fogColor is this frame's, as the world clear finds it.
+ */
 final class FogRangeMixinTest {
+    /** The colour is latched before openLevelSegment, whose begin passes are a frame's first programs. */
+    @Test
+    void theWorldClearLatchesTheFogColourFirst() throws IOException {
+        var calls = MixinBytecode.instructionsThrough(
+                MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLevelRendererMixin"), "chimera$openWorld").stream()
+                .filter(MethodInsnNode.class::isInstance).map(call -> ((MethodInsnNode) call).name).toList();
+        assertTrue(calls.contains("latchFogColor")
+                && calls.indexOf("latchFogColor") < calls.indexOf("openLevelSegment"), calls.toString());
+    }
+
     @Test
     void bothFogSettersServeTheRange() throws IOException {
         MixinBytecode.assertMixinRegistered("ChimeraFogRangeMixin");

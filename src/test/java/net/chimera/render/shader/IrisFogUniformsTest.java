@@ -49,6 +49,18 @@ final class IrisFogUniformsTest {
         assertEquals(96.0F, buffer.getFloat(0));
     }
 
+    /** The frame's fog colour, latched once setupColor has set it (Iris's per-frame fogColor). */
+    @Test
+    void theFogColourIsTheFramesOwn() {
+        PackFrameState state = new PackFrameState();
+        MappedBuffer buffer = new MappedBuffer(16);
+        float[] water = {0.0686F, 0.0686F, 0.6998F, 1.0F};
+        assertTrue(state.setFogColor(water));
+        assertFalse(state.setFogColor(water.clone()), "an unchanged colour rewrites nothing");
+        state.write(UniformRegistry.descriptor("fogColor"), "vec3", buffer);
+        assertEquals(0.6998F, buffer.getFloat(8));
+    }
+
     /** A world program plans the live values; a post program reads FogMode.OFF's constants. */
     @Test
     void aPostProgramReadsFogModeOff(@TempDir Path root) throws IOException {

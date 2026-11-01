@@ -27,6 +27,7 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -817,6 +818,13 @@ final class PackFrameState {
     boolean setHostEntityId(int entityId) {
         if (this.hostEntityId == entityId) return false;
         this.hostEntityId = entityId;
+        return true;
+    }
+
+    /** Returns true when the fog colour (Iris fogColor) changed. */
+    boolean setFogColor(float[] color) {
+        if (Arrays.equals(this.fogColor, 0, 4, color, 0, 4)) return false;
+        System.arraycopy(color, 0, this.fogColor, 0, 4);
         return true;
     }
 

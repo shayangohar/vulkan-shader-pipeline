@@ -176,6 +176,17 @@ public final class PackUniformProvider {
         if (INSTANCE.frameState.setFogRange(start, end)) INSTANCE.rewrite(FOG_RANGE_KEYS);
     }
 
+    /**
+     * Serves this frame's fog colour, as FogRenderer.setupColor left it, to every pack draw from the
+     * world clear on: Iris reads its per-frame fogColor at a program's first use in the frame, which
+     * follows setupColor. Read at renderLevel's head, it was the previous frame's colour.
+     */
+    public static void latchFogColor(float[] color) {
+        if (INSTANCE.frameState.setFogColor(color)) INSTANCE.rewrite(FOG_COLOR_KEYS);
+    }
+
+    private static final List<UniformKey> FOG_COLOR_KEYS = List.of(new UniformKey("fogColor", "vec3"),
+            new UniformKey("fogColor", "vec4"), new UniformKey("FogColor", "vec4"));
     private static final List<UniformKey> FOG_DENSITY_KEYS = List.of(
             new UniformKey("fogMode", "int"), new UniformKey("fogDensity", "float"));
     private static final List<UniformKey> FOG_SHAPE_KEYS = List.of(new UniformKey("fogShape", "int"));
