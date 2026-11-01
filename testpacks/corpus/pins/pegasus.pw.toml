@@ -1,15 +1,15 @@
-filename = 'Pegasus (v 0.5).zip'
+filename = 'Pegasus (v 0.8.1).zip'
 name = 'Pegasus Shaders'
 side = 'client'
-x-modrinth-version-number = '0.5'
-x-modrinth-release-type = 'release'
+x-modrinth-version-number = '0.8.1'
+x-modrinth-release-type = 'beta'
 
 [download]
-hash = 'ea387e7117020f27ca3956306c0e07e57a7a8db0dde088c5778594a55c9d5e3349088b6162541c1fc3734b5342256ba27e0d67ac38e72d4436aa31a3b6289dac'
+hash = 'ce50fa1405cae5390780c3d468611e4925638e7844da34d881c58c377fe3185e93c88bb0d90f0bc7424f49777caf4e2ed3436f690978f134840bd8bacddb0859'
 hash-format = 'sha512'
 mode = 'url'
-url = 'https://cdn.modrinth.com/data/1BZ68dI8/versions/ueGS2tlf/Pegasus%20%28v%200.5%29.zip'
+url = 'https://cdn.modrinth.com/data/1BZ68dI8/versions/WmZTYuqV/Pegasus%20%28v%200.8.1%29.zip'
 
 [update.modrinth]
 mod-id = '1BZ68dI8'
-version = 'ueGS2tlf'
+version = 'WmZTYuqV'
