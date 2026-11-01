@@ -88,6 +88,8 @@
     "ChimeraNativeImageClampMixin",
     "ChimeraEmitterOcclusionMixin",
     "ChimeraModelCubeColorMixin",
+    "ChimeraBulkNormalMixin",
+    "ChimeraPoseAccessor",
     "ChimeraGlobalBlockEntityMixin"
   ],
   "injectors": {
