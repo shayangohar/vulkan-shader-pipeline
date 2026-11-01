@@ -415,7 +415,7 @@ final class EntityRealPackTest {
         try {
             MemoryUtil.memFree(GlslCompiler.compile(vertex ? "entity.vsh" : "entity.fsh", source,
                     vertex ? Shaderc.shaderc_glsl_vertex_shader : Shaderc.shaderc_glsl_fragment_shader,
-                    options -> {}));
+                    GlslCompiler::optimize));
         } catch (IllegalStateException failure) {
             throw new AssertionError(what + " did not compile: " + failure.getMessage()
                     + " [source dumped to " + dumpSource(source, what) + "]", failure);

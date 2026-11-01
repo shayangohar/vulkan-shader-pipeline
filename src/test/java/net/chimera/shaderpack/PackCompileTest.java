@@ -32,6 +32,7 @@ import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongConsumer;
 
 /**
  * Compiles every program a pack plan would install, through the runtime preparation seam
@@ -371,11 +372,17 @@ final class PackCompileTest {
         return ConformanceReport.sha256(bytes.array()).substring(0, 16);
     }
 
-    /** Compiled as the runtime compiles (GlslCompiler), without the optimizer. */
+    /**
+     * Compiled as the runtime compiles each kind (GlslCompiler). A graphics stage takes the
+     * optimizer HostPipelineLayout runs; shaderc validates the module before it optimizes, so a
+     * stage the Vulkan validator rejects fails here as it does in game (Noble's unwritten
+     * gl_FragDepth reads passed a plain compile). A compute takes none, as in ComputeKernel.
+     */
     private static Compiled spirv(String source, int kind, String fileName) {
+        LongConsumer configure = kind == Shaderc.shaderc_glsl_compute_shader ? options -> {} : GlslCompiler::optimize;
         ByteBuffer bytes;
         try {
-            bytes = GlslCompiler.compile(fileName, source, kind, options -> {});
+            bytes = GlslCompiler.compile(fileName, source, kind, configure);
         } catch (IllegalStateException failure) {
             String message = failure.getMessage().strip();
             // Warnings precede errors in shaderc's report; name the first error.

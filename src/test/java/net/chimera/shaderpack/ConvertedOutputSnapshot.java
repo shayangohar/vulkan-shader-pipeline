@@ -19,7 +19,8 @@ import java.util.TreeSet;
 /**
  * Every shader one pack compiles in {@link PackCompileTest}: each prepared stage, input variant
  * and compute, by key ({@code gbuffers_terrain.vsh}, {@code gbuffers_hand [hand input variant
- * ...].vsh}), with a hash of its converted source and of its SPIR-V. The baseline
+ * ...].vsh}), with a hash of its converted source and of its SPIR-V (for a graphics stage, the
+ * optimized module the game builds). The baseline
  * {@code testpacks/baselines/converted/<pack>.json} holds both as "source spirv"; a change in
  * either names the key. GLSL front-end migrations (EPIC-715) must keep both, except where a
  * commit names a fix. With {@code chimera.snapshot.spirvOnly} only SPIR-V must match: full macro
