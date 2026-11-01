@@ -669,6 +669,29 @@ final class HostFamilyTest {
         }
     }
 
+    /**
+     * Iris draws spider eyes and emissive entities with ENTITIES_EYES and _TRANS, FULLBRIGHT keys:
+     * their light reads (240, 240) whatever the vertex's (Noble's eyes store it and glow by it).
+     * gbuffers_entities keeps the vertex light.
+     */
+    @Test
+    void spiderEyesReadFullLight(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        String vertex = "#version 120\nvarying vec2 light;\nvoid main() { light = gl_MultiTexCoord1.xy / 240.0;"
+                + " gl_Position = gl_ModelViewProjectionMatrix * gl_Vertex; }\n";
+        String fragment = "#version 120\n/* DRAWBUFFERS:0 */\nvarying vec2 light;"
+                + " void main() { gl_FragColor = vec4(light, 0.0, 1.0); }\n";
+        for (String name : List.of("gbuffers_entities", "gbuffers_spidereyes")) {
+            Files.writeString(shaders.resolve(name + ".vsh"), vertex);
+            Files.writeString(shaders.resolve(name + ".fsh"), fragment);
+        }
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        String eyes = PackFamilyPipelines.familyVertex(executablePlan(analysis, "gbuffers_spidereyes", "eyes"));
+        String entities = PackFamilyPipelines.familyVertex(executablePlan(analysis, "gbuffers_entities", "entities"));
+        assertTrue(eyes.contains("const ivec2 UV2 = ivec2(240);") && !eyes.contains("in ivec2 UV2;"), eyes);
+        assertTrue(entities.contains("in ivec2 UV2;"), entities);
+    }
+
     @Test
     void skyAndCloudKeysHaveNoLight() {
         for (VertexFormat format : List.of(DefaultVertexFormat.POSITION, DefaultVertexFormat.POSITION_COLOR,

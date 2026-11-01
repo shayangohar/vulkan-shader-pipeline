@@ -34,7 +34,18 @@ public final class PackFamilyPipelines {
             default -> UniformRegistry.Stage.ENTITY;
         };
         return buildEntityLike(plan, stage, "pack_" + plan.name(), ChimeraVertexFormats.EXTENDED_ENTITY,
-                advancedResources, storageOwner);
+                advancedResources, storageOwner, familyVertex(plan));
+    }
+
+    /**
+     * The converted vertex a family draws with. The spider-eyes family is Iris's ENTITIES_EYES and
+     * ENTITIES_EYES_TRANS, fullbright keys, so its light reads (240, 240)
+     * (EntityVertexBridge.fullbrightLight).
+     */
+    static String familyVertex(PackProgramPlan plan) {
+        String vertex = plan.convertedVertex();
+        return vertex != null && plan.familyAdapter().family() == FamilyAdapterPlan.Family.SPIDER_EYES
+                ? EntityVertexBridge.fullbrightLight(vertex) : vertex;
     }
 
     /**

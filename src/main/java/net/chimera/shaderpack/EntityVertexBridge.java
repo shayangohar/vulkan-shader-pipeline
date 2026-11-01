@@ -889,13 +889,21 @@ public final class EntityVertexBridge {
     }
 
     /**
+     * The light input of a key Iris draws fullbright (ShaderKey, LightingModel.FULLBRIGHT): its
+     * ShaderAttributeInputs drop UV2, so VanillaTransformer reads gl_MultiTexCoord1 as (240, 240)
+     * whatever the vertex's. Noble's spider eyes store that block light, which lights them.
+     */
+    public static String fullbrightLight(String source) {
+        return source.replaceFirst("layout\\(location = \\d+\\) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);");
+    }
+
+    /**
      * The crumbling overlay's inputs as Iris's CRUMBLING key gives them (ShaderKey: the TERRAIN
-     * layout, LightingModel.FULLBRIGHT). The key ignores the lightmap, so VanillaTransformer reads
-     * its light as (240, 240) whatever the block's; the entity ids are those of {@link #withoutEntityIds}.
+     * layout, LightingModel.FULLBRIGHT): {@link #fullbrightLight}, and the entity ids of
+     * {@link #withoutEntityIds}.
      */
     public static String crumblingInputs(String source) {
-        return withoutEntityIds(source).replaceFirst("layout\\(location = \\d+\\) in ivec2 UV2;",
-                "const ivec2 UV2 = ivec2(240);");
+        return fullbrightLight(withoutEntityIds(source));
     }
 
     /**
