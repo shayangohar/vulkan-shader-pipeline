@@ -62,6 +62,7 @@ final class GlslVertexPreambles {
                 mat4 MVP;
                 mat4 LightMVP;
                 vec4 ChimeraCameraFraction;
+                vec4 ChimeraTexCoordShrink;
             };
 
             layout(push_constant) uniform Push {
@@ -87,7 +88,7 @@ final class GlslVertexPreambles {
             // adding it first put a corner two areas share a float step apart in each. Here the
             // position in the section, the section's place in its area and the area's whole-block
             // offset from the camera's block all add exactly; the camera's fraction, one value for
-            // every area (TerrainCameraFraction), is subtracted last, so a shared corner rounds once.
+            // every area (TerrainVertexUniforms), is subtracted last, so a shared corner rounds once.
             vec3 chimeraWorldPosition() {
                 vec3 areaBlocks = round(ChunkOffset + ChimeraCameraFraction.xyz);
                 precise vec3 blocks = fma(vec3(inPositionLight.xyz), CHIMERA_POSITION_SCALE,
@@ -104,8 +105,14 @@ final class GlslVertexPreambles {
                 return inColor;
             }
 
+            // Iris's terrain coordinate (XHFPTerrainVertex): the word holds the coordinate rounded to
+            // 1/32768 plus one step toward the quad's centre, and in bit 15 whether that step went up
+            // (ChimeraExtVertexBuilder.encodeTexture). Taking the step back less one sub-texel
+            // (ChimeraTexCoordShrink) leaves every coordinate just inside its sprite, never on its edge.
             vec4 chimeraTexCoord0Value() {
-                return vec4(vec2(inUV) * CHIMERA_UV_SCALE, 0.0, 1.0);
+                vec2 stepUp = vec2(greaterThan(inUV, uvec2(0x7FFFu))) * 2.0 - 1.0;
+                vec2 uv = vec2(inUV & 0x7FFFu) * CHIMERA_UV_SCALE - stepUp * ChimeraTexCoordShrink.xy;
+                return vec4(uv, 0.0, 1.0);
             }
 
             // Raw UV2 light coordinates, one byte each (block, sky), as Iris supplies

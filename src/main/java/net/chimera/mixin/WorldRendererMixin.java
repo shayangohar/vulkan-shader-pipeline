@@ -9,7 +9,7 @@ import net.chimera.render.PreSkyPasses;
 import net.chimera.render.TerrainLayers;
 import net.chimera.render.shader.FamilyBufferSource;
 import net.chimera.render.shader.PackUniformProvider;
-import net.chimera.render.shader.TerrainCameraFraction;
+import net.chimera.render.shader.TerrainVertexUniforms;
 import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.culling.Frustum;
@@ -42,8 +42,8 @@ public abstract class WorldRendererMixin {
     @WrapMethod(method = "renderSectionLayer")
     private void chimera$terrainLayer(RenderType renderType, double camX, double camY, double camZ,
                                       Matrix4f view, Matrix4f projection, Operation<Void> original) {
-        // The camera every area's ChunkOffset is relative to, for Chimera's terrain shaders.
-        TerrainCameraFraction.set(camX, camY, camZ);
+        // The camera every area's ChunkOffset is relative to, and the atlas shrink, for Chimera's terrain shaders.
+        TerrainVertexUniforms.update(camX, camY, camZ);
         TerrainRenderType type = ChimeraRenderer.segmentsActive() ? TerrainRenderType.get(renderType) : null;
         if (type == null) {
             original.call(renderType, camX, camY, camZ, view, projection);

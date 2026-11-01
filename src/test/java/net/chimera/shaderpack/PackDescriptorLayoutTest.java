@@ -31,7 +31,8 @@ final class PackDescriptorLayoutTest {
                 blocks.stream().map(PackDescriptorLayout.UniformBlock::stages).toList());
         assertEquals(List.of(new PackDescriptorLayout.Field("mat4", "MVP"),
                 new PackDescriptorLayout.Field("mat4", "LightMVP"),
-                new PackDescriptorLayout.Field("vec4", "ChimeraCameraFraction")), blocks.get(0).fields());
+                new PackDescriptorLayout.Field("vec4", "ChimeraCameraFraction"),
+                new PackDescriptorLayout.Field("vec4", "ChimeraTexCoordShrink")), blocks.get(0).fields());
         assertEquals(List.of(new PackDescriptorLayout.Field("vec4", "FogColor"),
                 new PackDescriptorLayout.Field("float", "FogStart"), new PackDescriptorLayout.Field("float", "FogEnd"),
                 new PackDescriptorLayout.Field("float", "AlphaCutout")), blocks.get(1).fields());

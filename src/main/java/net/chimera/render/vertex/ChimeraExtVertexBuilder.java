@@ -6,7 +6,10 @@ import org.lwjgl.system.MemoryUtil;
 
 import java.util.Arrays;
 
-/** Compressed host vertex writer with two scalar material attributes. */
+/**
+ * Compressed host vertex writer with two scalar material attributes. Each finished quad's texture
+ * coordinates are rewritten as Iris's terrain vertex holds them ({@link #encodeTexture}).
+ */
 public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVertexBuilder {
     /** mc_Entity.y of a block model's quads, as Iris's MixinChunkMeshBuildTask passes to beginBlock. */
     public static final int BLOCK_RENDER_TYPE = 0;
@@ -19,13 +22,6 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
      * XHFPTerrainVertex's octahedral encoding stores as (0, 0) and the shader decodes as +Z.
      */
     static final int LIGHT_BLOCK_NORMAL = ChimeraEntityVertexData.pack(0.0F, 0.0F, 1.0F, 0.0F);
-    /**
-     * The voxel quad's texture coordinates. Iris writes 0 at a centroid of 0, and
-     * XHFPTerrainVertex.encodeTexture biases a coordinate that equals its centroid down a step, which
-     * wraps the 15-bit word to its top: 32767/32768, to which Iris's shader adds its texel shrink. The
-     * largest coordinate VulkanMod's compressed vertex holds, it names the same texel.
-     */
-    static final float LIGHT_BLOCK_UV = 32767.0F / 32768.0F;
 
     private final TerrainMaterialPlan materialPlan;
     private final int vertexSize;
@@ -77,10 +73,10 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
     /**
      * Writes Iris's voxelizeLightBlocks quad for a light block, which has no model, from ptr
      * (MixinChunkMeshBuildTask.iris$setLightBlock): four vertices at one point a quarter block
-     * into it, so it covers no pixel, with its id and render type 0. Colour is 0, the texture
-     * coordinates read as Iris's encoding leaves them ({@link #LIGHT_BLOCK_UV}), both lightmap
-     * coordinates are the emission, and at_midBlock keeps only the emission, as Iris ignores the
-     * mid-block offset for it.
+     * into it, so it covers no pixel, with its id and render type 0. Colour and texture coordinates
+     * are 0 at a centroid of 0, which {@link #encodeTexture} steps down and wraps to the top word, as
+     * Iris's does; both lightmap coordinates are the emission, and at_midBlock keeps only the
+     * emission, as Iris ignores the mid-block offset for it.
      */
     public void lightBlockQuad(long ptr, int materialId, int emission, int localX, int localY, int localZ) {
         setBlockData(materialId, BLOCK_RENDER_TYPE, emission);
@@ -89,7 +85,7 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         int light = emission << 4 | emission << 20;
         for (int corner = 0; corner < 4; corner++) {
             vertex(ptr + (long) corner * vertexSize, localX + LIGHT_BLOCK_INSET, localY + LIGHT_BLOCK_INSET,
-                    localZ + LIGHT_BLOCK_INSET, 0, LIGHT_BLOCK_UV, LIGHT_BLOCK_UV, light, LIGHT_BLOCK_NORMAL);
+                    localZ + LIGHT_BLOCK_INSET, 0, 0.0F, 0.0F, light, LIGHT_BLOCK_NORMAL);
         }
         writingLightBlockQuad = false;
     }
@@ -108,18 +104,16 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         super.vertex(ptr, x, y, z, color, u, v, light, packedNormal);
         MemoryUtil.memPutInt(ptr + 16, materialId);
         MemoryUtil.memPutInt(ptr + 20, renderType);
-        if (!materialPlan.modern()) {
-            return;
+        if (materialPlan.modern()) {
+            // Every modern vertex is initialized, even when a pack does not read
+            // one of the optional fields. This prevents stale data after a chunk
+            // builder is reused.
+            MemoryUtil.memPutShort(ptr + 24, (short) 0);
+            MemoryUtil.memPutShort(ptr + 26, (short) 0);
+            MemoryUtil.memPutInt(ptr + 28, encodeMidBlock(x, y, z));
+            // The fourth byte carries the quad tangent once the polygon closes.
+            MemoryUtil.memPutInt(ptr + 32, packedNormal & 0x00FFFFFF);
         }
-
-        // Every modern vertex is initialized, even when a pack does not read
-        // one of the optional fields. This prevents stale data after a chunk
-        // builder is reused.
-        MemoryUtil.memPutShort(ptr + 24, (short) 0);
-        MemoryUtil.memPutShort(ptr + 26, (short) 0);
-        MemoryUtil.memPutInt(ptr + 28, encodeMidBlock(x, y, z));
-        // The fourth byte carries the quad tangent once the polygon closes.
-        MemoryUtil.memPutInt(ptr + 32, packedNormal & 0x00FFFFFF);
 
         int index = polygonVertices++;
         if (index < 4) {
@@ -152,6 +146,34 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
         }
         midU = writingLightBlockQuad ? 0.0F : clamp01(midU * 0.25F);
         midV = writingLightBlockQuad ? 0.0F : clamp01(midV * 0.25F);
+        for (int index = 0; index < 4; index++) {
+            long ptr = polygonPointers[index];
+            int into = index * 5;
+            MemoryUtil.memPutShort(ptr + 12, encodeTexture(midU, polygonValues[into + 3]));
+            MemoryUtil.memPutShort(ptr + 14, encodeTexture(midV, polygonValues[into + 4]));
+        }
+        if (materialPlan.modern()) finishMaterialAttributes(midU, midV);
+        polygonVertices = 0;
+        Arrays.fill(polygonPointers, 0L);
+    }
+
+    /**
+     * A terrain texture coordinate as Iris's terrain vertex holds it (XHFPTerrainVertex): rounded to
+     * 1/32768, moved one step toward the quad's centroid, and bit 15 set when that step went up. The
+     * vertex shaders take the step back less one sub-texel (TerrainVertexUniforms), so a coordinate on
+     * a sprite's edge lands just inside it. VulkanMod's own word truncates: on an atlas wider than
+     * 1024 texels that dropped vanilla's inward shrink and left each quad's low edge on its sprite's
+     * boundary, where a lookup could read the neighbouring sprite (Noble's discarded the transparent
+     * texel it found there, and the empty pixel lit as sky).
+     */
+    static short encodeTexture(float centroid, float coordinate) {
+        boolean up = coordinate < centroid;
+        int word = Math.round(coordinate * 32768.0F) + (up ? 1 : -1);
+        return (short) (word & 0x7FFF | (up ? 0x8000 : 0));
+    }
+
+    /** The modern layout's mid-coordinate, mid-block offset and tangent frame of the quad just closed. */
+    private void finishMaterialAttributes(float midU, float midV) {
         // Iris derives a terrain quad's normal from its diagonals. VulkanMod
         // passes the quad's facing axis instead (unit bytes, not scaled to
         // 127), and none at all for fluids, so derive it here. A degenerate
@@ -185,8 +207,6 @@ public final class ChimeraExtVertexBuilder extends VertexBuilder.CompressedVerte
             // its spare byte (TerrainTangentCodec).
             MemoryUtil.memPutInt(ptr + 32, TerrainTangentCodec.encode(polygonNormals[index], tangent));
         }
-        polygonVertices = 0;
-        Arrays.fill(polygonPointers, 0L);
     }
 
     private static float clamp01(float value) {
