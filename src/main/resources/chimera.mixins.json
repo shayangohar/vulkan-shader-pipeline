@@ -89,7 +89,6 @@
     "ChimeraEmitterOcclusionMixin",
     "ChimeraModelCubeColorMixin",
     "ChimeraBulkNormalMixin",
-    "ChimeraPoseAccessor",
     "ChimeraGlobalBlockEntityMixin"
   ],
   "injectors": {
