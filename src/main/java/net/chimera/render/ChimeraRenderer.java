@@ -5,6 +5,7 @@ import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.chimera.render.shader.TerrainCameraFraction;
 import net.chimera.shaderpack.ParticleDirectives;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.chimera.shaderpack.SkyDirectives;
@@ -80,6 +81,8 @@ public final class ChimeraRenderer {
         }
 
         hostPass = current;
+        // Before the main pass and the terrain pipelines build the terrain and shadow configs.
+        TerrainCameraFraction.register();
         chimeraPass = new ChimeraMainPass();
         renderer.addOnResizeCallback(ChimeraRenderer::refreshIdleHostPass);
         ready = true;

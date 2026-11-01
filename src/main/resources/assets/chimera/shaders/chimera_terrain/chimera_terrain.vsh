@@ -8,6 +8,7 @@
 layout(binding = 0) uniform ViewUBO {
     mat4 MVP;
     mat4 LightMVP;
+    vec4 ChimeraCameraFraction;
 };
 
 layout(push_constant) uniform Push {
@@ -40,8 +41,17 @@ vec4 fetchLightmap(uint packedLight) {
     return texelFetch(LightMap, ivec2(blockLevel, skyLevel), 0);
 }
 
+// Watertight across sections and areas, as the pack preamble's chimeraWorldPosition: the exact
+// section-local position plus the area's whole-block offset, then the shared camera fraction.
+vec3 cameraRelativePosition() {
+    vec3 areaBlocks = round(ChunkOffset + ChimeraCameraFraction.xyz);
+    precise vec3 blocks = fma(vec3(inPositionLight.xyz), POSITION_SCALE, sectionOffset()) + areaBlocks;
+    precise vec3 position = blocks - ChimeraCameraFraction.xyz;
+    return position;
+}
+
 void main() {
-    vec3 worldPos = fma(vec3(inPositionLight.xyz), POSITION_SCALE, ChunkOffset + sectionOffset());
+    vec3 worldPos = cameraRelativePosition();
 
     gl_Position = MVP * vec4(worldPos, 1.0);
     outVertexDistance = length(worldPos);

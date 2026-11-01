@@ -5,6 +5,7 @@
 
 layout(binding = 0) uniform LightSpaceUBO {
     mat4 LightMVP;
+    vec4 ChimeraCameraFraction;
 };
 
 layout(push_constant) uniform Push {
@@ -24,8 +25,17 @@ vec3 sectionOffset() {
     return vec3(bitfieldExtract(ivec3(gl_InstanceIndex) >> ivec3(0, 16, 8), 0, 8));
 }
 
+// Watertight across sections and areas, as the pack preamble's chimeraWorldPosition: the exact
+// section-local position plus the area's whole-block offset, then the shared camera fraction.
+vec3 cameraRelativePosition() {
+    vec3 areaBlocks = round(ChunkOffset + ChimeraCameraFraction.xyz);
+    precise vec3 blocks = fma(vec3(inPositionLight.xyz), POSITION_SCALE, sectionOffset()) + areaBlocks;
+    precise vec3 position = blocks - ChimeraCameraFraction.xyz;
+    return position;
+}
+
 void main() {
-    vec3 worldPos = fma(vec3(inPositionLight.xyz), POSITION_SCALE, ChunkOffset + sectionOffset());
+    vec3 worldPos = cameraRelativePosition();
 
     outTexCoord = vec2(inUV) * UV_SCALE;
     gl_Position = LightMVP * vec4(worldPos, 1.0);

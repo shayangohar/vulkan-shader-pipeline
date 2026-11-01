@@ -61,6 +61,7 @@ final class GlslVertexPreambles {
             layout(binding = 0) uniform ViewUBO {
                 mat4 MVP;
                 mat4 LightMVP;
+                vec4 ChimeraCameraFraction;
             };
 
             layout(push_constant) uniform Push {
@@ -81,9 +82,18 @@ final class GlslVertexPreambles {
                 return vec3(bitfieldExtract(ivec3(gl_InstanceIndex) >> ivec3(0, 16, 8), 0, 8));
             }
 
+            // The camera-relative position, watertight across sections and chunk areas. VulkanMod
+            // rounds each area's ChunkOffset (its origin minus the camera) to float on its own, so
+            // adding it first put a corner two areas share a float step apart in each. Here the
+            // position in the section, the section's place in its area and the area's whole-block
+            // offset from the camera's block all add exactly; the camera's fraction, one value for
+            // every area (TerrainCameraFraction), is subtracted last, so a shared corner rounds once.
             vec3 chimeraWorldPosition() {
-                return fma(vec3(inPositionLight.xyz), CHIMERA_POSITION_SCALE,
-                        ChunkOffset + chimeraSectionOffset());
+                vec3 areaBlocks = round(ChunkOffset + ChimeraCameraFraction.xyz);
+                precise vec3 blocks = fma(vec3(inPositionLight.xyz), CHIMERA_POSITION_SCALE,
+                        chimeraSectionOffset()) + areaBlocks;
+                precise vec3 position = blocks - ChimeraCameraFraction.xyz;
+                return position;
             }
 
             vec4 chimeraVertexValue() {
