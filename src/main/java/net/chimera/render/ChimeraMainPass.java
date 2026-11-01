@@ -4,7 +4,6 @@ import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.mixin.ChimeraRendererAccessor;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraPostPipelines;
-import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.GeometryOutputPlan;
@@ -373,10 +372,14 @@ public final class ChimeraMainPass implements MainPass {
         return this.levelPhase && this.packPostChainActive && this.packPostTargets.isConfigured();
     }
 
-    /** Called as the sky window opens, ahead of the sky, under its model-view and projection. */
+    /**
+     * Called after the world clear, ahead of the sky, under the level's model-view and projection.
+     * Without a gbuffers_skybasic it draws as Iris's SKY_BASIC fallback does (PackHostDraws).
+     */
     public void drawPackHorizon(Matrix4f modelView, Matrix4f projection) {
-        if (this.levelPhase && this.skyDirectives != null && this.skyDirectives.sky()
-                && ChimeraSkyBridge.hasBasicSky()) this.horizonRenderer.draw(modelView, projection);
+        if (this.levelPhase && this.skyDirectives != null && this.skyDirectives.sky()) {
+            this.horizonRenderer.draw(modelView, projection);
+        }
     }
 
     /** Resolves the world into the stable output before hand and GUI work. */

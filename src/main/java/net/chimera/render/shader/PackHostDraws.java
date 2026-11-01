@@ -17,9 +17,9 @@ import java.util.function.BooleanSupplier;
  * weather, lines, glint, lightning, leads, text backgrounds and the shadow lanes). The
  * program is chosen by the draw's shader and vertex format; the host's state and draw call stay,
  * and the ShaderInstance pipeline seam answers with the open draw's pipeline. In the shadow pass a
- * draw no shadow lane serves stays out of the shadow map. Without a gbuffers_skybasic the sky disc
- * keeps its host shader but draws unfogged, as Iris's SKY_BASIC fallback does. Family batches arrive with their draw
- * already open (FamilyRenderType) and pass through.
+ * draw no shadow lane serves stays out of the shadow map. Without a gbuffers_skybasic the horizon
+ * and the sky disc keep their host shader but draw unfogged, as Iris's SKY_BASIC fallback does.
+ * Family batches arrive with their draw already open (FamilyRenderType) and pass through.
  */
 public final class PackHostDraws {
     private PackHostDraws() {}

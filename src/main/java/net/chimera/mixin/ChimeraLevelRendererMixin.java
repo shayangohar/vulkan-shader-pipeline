@@ -10,14 +10,18 @@ import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.PreSkyPasses;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.FamilyBufferSource;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.ParticleDirectives;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.particle.ParticleRenderType;
+import net.minecraft.client.renderer.DimensionSpecialEffects;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
@@ -26,8 +30,10 @@ import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
+import net.vulkanmod.render.chunk.TerrainRenderState;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -39,7 +45,7 @@ import java.util.function.Predicate;
  *
  * - HEAD captures the frame the pack uniforms read and opens the family lanes' world window.
  * - The world clear opens the internal RGBA16F world target instead, cleared as the pack asks,
- *   with the fog colour FogRenderer has just set.
+ *   with the fog colour FogRenderer has just set, and draws the pack horizon there, as Iris does.
  * - Just before the sky, the shadow pass and the prepare passes run, as in Iris (PreSkyPasses).
  * - The level's family batches are held to Iris's translucent boundary, where they draw before the
  *   centre-depth sample and the solid hand; with separateEntityDraws the late kinds wait for the
@@ -77,7 +83,9 @@ public abstract class ChimeraLevelRendererMixin {
     @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE",
             target = "Lcom/mojang/blaze3d/systems/RenderSystem;clear(IZ)V"), require = 1)
     private void chimera$openWorld(int mask, boolean checkError, Operation<Void> original,
-                                   @Local(argsOnly = true) Camera camera) {
+                                   @Local(argsOnly = true) Camera camera,
+                                   @Local(argsOnly = true, ordinal = 0) Matrix4f modelView,
+                                   @Local(argsOnly = true, ordinal = 1) Matrix4f projection) {
         ChimeraMainPass pass = ChimeraRenderer.segmentsActive() ? ChimeraRenderer.getMainPass() : null;
         if (pass == null) {
             original.call(mask, checkError);
@@ -86,6 +94,33 @@ public abstract class ChimeraLevelRendererMixin {
         float[] fog = RenderSystem.getShaderFogColor();
         Vec3 position = camera.getPosition();
         pass.openLevelSegment(position.x, position.y, position.z, new float[] {fog[0], fog[1], fog[2]});
+        chimera$horizon(pass, modelView, projection);
+    }
+
+    /**
+     * Iris IrisRenderingPipeline.beginLevelRendering's horizon: after the clear and the begin passes,
+     * in the SKY phase and the sky window, ahead of the sky's fog setup and the shadow pass, so the
+     * pack's sky program reads the fog the last frame left, as under Iris. It draws wherever the sky
+     * is the normal one or the dimension has skylight.
+     */
+    @Unique
+    private static void chimera$horizon(ChimeraMainPass pass, Matrix4f modelView, Matrix4f projection) {
+        ClientLevel level = Minecraft.getInstance().level;
+        if (level == null || (level.effects().skyType() != DimensionSpecialEffects.SkyType.NORMAL
+                && !level.dimensionType().hasSkyLight())) {
+            return;
+        }
+        var previous = PackUniformProvider.setRenderingPhase(PackRenderingPhase.SKY);
+        ChimeraSkyBridge.beginSky();
+        try {
+            // The state VulkanMod sets for the world at the head of renderSky.
+            TerrainRenderState.prepareWorldTerrainState();
+            pass.rebindMainTarget();
+            pass.drawPackHorizon(modelView, projection);
+        } finally {
+            ChimeraSkyBridge.endSky();
+            PackUniformProvider.setRenderingPhase(previous);
+        }
     }
 
     /**

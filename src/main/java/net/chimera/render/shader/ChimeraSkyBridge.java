@@ -100,8 +100,8 @@ public final class ChimeraSkyBridge {
     }
 
     /**
-     * True for a position-shader draw in the sky window (the sky disc, the dark disc) when the pack
-     * serves no gbuffers_skybasic: Iris then draws SKY_BASIC with its fallback program, which
+     * True for a position-shader draw in the sky window (the horizon, the sky and dark discs) when the
+     * pack serves no gbuffers_skybasic: Iris then draws SKY_BASIC with its fallback program, which
      * writes the sky colour unfogged (FogMode.OFF), where the host's position shader fogs it.
      */
     public static boolean drawsUnfoggedSky(String shader) {

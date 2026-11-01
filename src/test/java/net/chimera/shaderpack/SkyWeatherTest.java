@@ -47,6 +47,21 @@ final class SkyWeatherTest {
         }
     }
 
+    /**
+     * Iris draws the horizon in beginLevelRendering, right after the world clear: before the sky's
+     * fog setup and the shadow pass, not inside renderSky.
+     */
+    @Test
+    void theHorizonDrawsAfterTheWorldClear() throws IOException {
+        assertTrue(callsDrawPackHorizon("net/chimera/mixin/ChimeraLevelRendererMixin", "chimera$openWorld"));
+        assertFalse(callsDrawPackHorizon("net/chimera/mixin/ChimeraSkyRendererMixin", "chimera$skyWindow"));
+    }
+
+    private static boolean callsDrawPackHorizon(String owner, String method) throws IOException {
+        return MixinBytecode.instructionsThrough(MixinBytecode.nativeClass(owner), method).stream()
+                .anyMatch(insn -> insn instanceof MethodInsnNode call && call.name.equals("drawPackHorizon"));
+    }
+
     /** The shadow pass hands renderSky back the shader vanilla set for the sky disc (Iris iris$beginSky). */
     @Test
     void thePreSkyPassesRestoreTheHostShader() throws IOException {
