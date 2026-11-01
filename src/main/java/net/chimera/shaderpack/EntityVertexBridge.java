@@ -627,9 +627,9 @@ public final class EntityVertexBridge {
 
     /**
      * Particle and weather vertex conversion whose referenced samplers take the shared bindings.
-     * DefaultVertexFormat.PARTICLE has no mid-coordinate or tangent; the particle preamble serves
-     * them as it does for the other host layouts (Photon's gbuffers_textured, which its particles
-     * fall back to, reads both).
+     * DefaultVertexFormat.PARTICLE has no mid-coordinate or tangent, and Iris widens it to no
+     * format that does; the particle preamble serves GL's unbound defaults for both (Photon's
+     * gbuffers_textured, which its particles fall back to, reads both).
      */
     public static LegacyGlslConverter.TerrainVertexConversion convertParticleVertexChecked(
             String source, Path sourceFile, String fragmentSource,

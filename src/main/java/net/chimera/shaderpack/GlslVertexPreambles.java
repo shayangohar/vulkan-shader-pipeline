@@ -192,6 +192,13 @@ final class GlslVertexPreambles {
             .replace("mat4 LightMVP;\n", "");
 
     /**
+     * The mid-coordinate of a host format Iris does not widen. Iris binds mc_midTexCoord only in
+     * IrisVertexFormats TERRAIN, ENTITY and GLYPH; any other format reads GL's unbound generic
+     * attribute, (0, 0, 0, 1). Pegasus's weather rebuilds its sprite from it (POM on).
+     */
+    static final String UNBOUND_MID_TEX_COORD = "const vec2 MidTexCoord = vec2(0.0);";
+
+    /**
      * Host transform blocks and the append-only EXTENDED_ENTITY inputs. Every value is the host's
      * (RenderSystem state through VulkanMod's uniform suppliers); LineWidth serves the line lane.
      */
@@ -331,7 +338,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -349,7 +356,7 @@ final class GlslVertexPreambles {
                     + "#define chimeraLineDirection Normal\n"
                     + "#define chimeraLineVertexIndex gl_VertexIndex")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -406,7 +413,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -434,7 +441,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -464,7 +471,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 2) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -483,7 +490,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -498,7 +505,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "const vec2 MidTexCoord = vec2(0.0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -513,7 +520,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "const vec2 MidTexCoord = vec2(0.0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -676,7 +683,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "layout(location = 3) in vec3 Normal;")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 }
