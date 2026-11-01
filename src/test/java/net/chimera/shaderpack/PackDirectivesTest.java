@@ -397,6 +397,17 @@ final class PackDirectivesTest {
                 "an unexpected value keeps Iris's default and is reported: " + mellow);
     }
 
+    /** Iris's rain.depth, off by default; Pegasus 0.5 and RenderPearl 2.4.0 turn it on. */
+    @Test
+    void weatherDirectives() {
+        assertEquals(WeatherDirectives.DEFAULTS, WeatherDirectives.fromProperties(Map.of()), "rain writes no depth");
+        assertTrue(WeatherDirectives.fromProperties(Map.of("rain.depth", "true")).rainDepth());
+        var malformed = WeatherDirectives.fromProperties(Map.of("rain.depth", "yes"));
+        assertTrue(!malformed.rainDepth()
+                        && malformed.deviations().equals(List.of("WEATHER_DIRECTIVE_MALFORMED:rain.depth")),
+                "an unexpected value keeps Iris's default and is reported: " + malformed);
+    }
+
     private static ParticleDirectives particles(String... keyValues) {
         Map<String, String> properties = new LinkedHashMap<>();
         for (int index = 0; index + 1 < keyValues.length; index += 2) {

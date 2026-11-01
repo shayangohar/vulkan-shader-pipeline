@@ -15,6 +15,7 @@ import net.chimera.render.shader.FamilyBufferSource;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.ParticleDirectives;
+import net.chimera.shaderpack.WeatherDirectives;
 import net.minecraft.client.Camera;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -36,6 +37,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.function.Predicate;
@@ -233,6 +235,19 @@ public abstract class ChimeraLevelRendererMixin {
         } finally {
             ChimeraEntityBridge.endWeather();
         }
+    }
+
+    /**
+     * Iris rain.depth: rain and snow write depth, so the passes after them see the weather in
+     * depthtex0. Iris MixinLevelRenderer forces renderSnowAndRain's first RenderSystem.depthMask,
+     * which vanilla sets to Fabulous's transparency mode, to true; without the switch the call
+     * keeps its own value. VulkanMod's weather state is set at the method's head, before this call.
+     */
+    @ModifyArg(method = "renderSnowAndRain", at = @At(value = "INVOKE",
+            target = "Lcom/mojang/blaze3d/systems/RenderSystem;depthMask(Z)V", ordinal = 0), require = 1)
+    private boolean chimera$rainDepth(boolean depthMask) {
+        WeatherDirectives weather = ChimeraRenderer.packWeatherDirectives();
+        return depthMask || weather != null && weather.rainDepth();
     }
 
     @Inject(method = "renderLevel", at = @At("RETURN"))

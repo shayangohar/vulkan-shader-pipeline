@@ -182,6 +182,11 @@ public record PackPlan(
         return SkyDirectives.fromProperties(settings.propertyValues());
     }
 
+    /** Whether the pack's rain and snow write depth (Iris rain.depth, default off). */
+    public WeatherDirectives weatherDirectives() {
+        return WeatherDirectives.fromProperties(settings.propertyValues());
+    }
+
     /** Which entities and block entities the pack lets cast shadows (Iris shadowEntities and friends). */
     public ShadowCasterDirectives shadowCasters() {
         return ShadowCasterDirectives.fromProperties(settings.propertyValues());

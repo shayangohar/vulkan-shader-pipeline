@@ -9,6 +9,7 @@ import net.chimera.shaderpack.ParticleDirectives;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.chimera.shaderpack.SkyDirectives;
 import net.chimera.shaderpack.StagedOptions;
+import net.chimera.shaderpack.WeatherDirectives;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.vulkanmod.vulkan.Renderer;
@@ -235,6 +236,15 @@ public final class ChimeraRenderer {
      */
     public static SkyDirectives packSkyDirectives() {
         return packProjectionActive() ? chimeraPass.skyDirectives() : null;
+    }
+
+    /**
+     * The weather switch of the pack rendering this frame's world, or null when the world is not
+     * pack-rendered and rain and snow draw as vanilla's (Iris MixinLevelRenderer checks its active
+     * pipeline the same way).
+     */
+    public static WeatherDirectives packWeatherDirectives() {
+        return packProjectionActive() ? chimeraPass.weatherDirectives() : null;
     }
 
     /**

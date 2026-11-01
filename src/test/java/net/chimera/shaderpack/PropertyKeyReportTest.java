@@ -21,7 +21,7 @@ final class PropertyKeyReportTest {
         for (String applied : List.of("clouds", "blend.composite", "screen.MAIN", "screen", "sliders",
                 "profile.HIGH", "vignette", "shadowTranslucent", "particles.ordering", "image.voxels",
                 "size.buffer.colortex1", "uniform.float.x", "shadow.culling", "shadow.enabled",
-                "separateEntityDraws", "voxelizeLightBlocks")) {
+                "separateEntityDraws", "voxelizeLightBlocks", "rain.depth")) {
             assertNull(PackPropertyKeys.unread(applied), applied);
         }
         // Source const names: Iris reads them only as const directives, so neither reader takes them here.
@@ -29,7 +29,7 @@ final class PropertyKeyReportTest {
                 "sunPathRotation")) {
             assertEquals("SETTING_UNKNOWN", PackPropertyKeys.unread(constOnly), constOnly);
         }
-        for (String irisOnly : List.of("rain.depth", "backFace.solid", "dhShadow.enabled", "scale.composite",
+        for (String irisOnly : List.of("beacon.beam.depth", "backFace.solid", "dhShadow.enabled", "scale.composite",
                 "weather")) {
             assertEquals("SETTING_UNSUPPORTED", PackPropertyKeys.unread(irisOnly), irisOnly);
         }
@@ -72,6 +72,7 @@ final class PropertyKeyReportTest {
     void theReportNamesOnlyKeysIrisReadsAndChimeraDoesNotApply(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), """
+                backFace.solid=true
                 rain.depth=true
                 vignette=false
                 blend.composite=off
@@ -88,6 +89,6 @@ final class PropertyKeyReportTest {
                 """);
         List<String> settings = PackProbe.analyze(root).report().deviations().stream()
                 .filter(deviation -> deviation.startsWith("SETTING_")).toList();
-        assertEquals(List.of("SETTING_NOT_APPLIED:rain.depth"), settings);
+        assertEquals(List.of("SETTING_NOT_APPLIED:backFace.solid"), settings);
     }
 }

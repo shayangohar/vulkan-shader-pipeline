@@ -19,6 +19,7 @@ import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.chimera.shaderpack.SkyDirectives;
 import net.chimera.shaderpack.TargetSpec;
+import net.chimera.shaderpack.WeatherDirectives;
 import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
@@ -197,6 +198,8 @@ public final class ChimeraMainPass implements MainPass {
     ScreenOverlayDirectives screenOverlays;
     /** Which parts of Minecraft's sky this pack session keeps (Iris sun, moon, stars and sky). */
     SkyDirectives skyDirectives;
+    /** Whether this pack session's rain and snow write depth (Iris rain.depth). */
+    WeatherDirectives weatherDirectives;
     /** True after renderLevel opens the internal HDR world target. */
     boolean levelPhase;
     /** Set when vanilla requests a depth clear while no pass is recording. */
@@ -935,6 +938,9 @@ public final class ChimeraMainPass implements MainPass {
 
     /** The loaded pack's sky switches, or null while no pack session is loaded. */
     public SkyDirectives skyDirectives() { return this.skyDirectives; }
+
+    /** The loaded pack's weather switch, or null while no pack session is loaded. */
+    public WeatherDirectives weatherDirectives() { return this.weatherDirectives; }
 
     public void recordShadowDraw() {
         shadowPass.recordShadowDraw();

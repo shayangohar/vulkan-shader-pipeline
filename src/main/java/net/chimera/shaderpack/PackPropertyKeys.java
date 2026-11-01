@@ -18,21 +18,21 @@ final class PackPropertyKeys {
     /**
      * Keys Chimera reads: clouds (PackPlan), shadow.culling (ShadowCullingPlan), shadow.enabled
      * (ShadowPassUse), the hand-light,
-     * terrain-shading (voxelizeLightBlocks included), shadow-caster, sky and screen-overlay
-     * directives, separateEntityDraws (ParticleDirectives), and the option menu's screen and
-     * sliders. A source const's name (colortexNFormat, shadowMapResolution) is no key here: neither
-     * reader takes it from this file.
+     * terrain-shading (voxelizeLightBlocks included), shadow-caster, sky, screen-overlay and weather
+     * (rain.depth) directives, separateEntityDraws (ParticleDirectives), and the option menu's
+     * screen and sliders. A source const's name (colortexNFormat, shadowMapResolution) is no key
+     * here: neither reader takes it from this file.
      */
     private static final Set<String> APPLIED_NAMES = Set.of(
             "clouds", "shadow.culling", "shadow.enabled", "oldHandLight", "oldLighting", "separateAo", "shadowTerrain",
             "shadowTranslucent", "shadowEntities", "shadowPlayer", "shadowBlockEntities",
             "shadowLightBlockEntities", "underwaterOverlay", "vignette", "sun", "moon", "stars", "sky",
-            "voxelizeLightBlocks", "separateEntityDraws", "screen", "sliders");
+            "voxelizeLightBlocks", "separateEntityDraws", "rain.depth", "screen", "sliders");
 
     /** ShaderProperties keys Iris 1.21.1 reads that Chimera does not apply. */
     private static final Set<String> IRIS_ONLY_NAMES = Set.of(
             "dhClouds", "dynamicHandLight", "backFace.solid", "backFace.cutout", "backFace.cutoutMipped",
-            "backFace.translucent", "rain.depth", "allowConcurrentCompute", "beacon.beam.depth",
+            "backFace.translucent", "allowConcurrentCompute", "beacon.beam.depth",
             "frustum.culling", "occlusion.culling", "skipAllRendering", "dhShadow.enabled",
             "prepareBeforeShadow", "supportsColorCorrection", "fallbackTex", "weather");
     private static final List<String> IRIS_ONLY_PREFIXES = List.of("scale.");
