@@ -100,7 +100,7 @@ tasks.withType(Test).configureEach {
 // Fixture tests: everything they read is in the repository.
 tasks.named('test', Test) {
     useJUnitPlatform {
-        excludeTags 'packs', 'evidence', 'sweep'
+        excludeTags 'packs', 'sweep'
     }
 }
 
@@ -126,18 +126,6 @@ tasks.register('optionSweep', Test) {
     outputs.upToDateWhen { false }
     useJUnitPlatform {
         includeTags 'sweep'
-    }
-}
-
-// Recorded runtime evidence (logs, captures, exact pack versions) for past parity milestones.
-// Not part of check: its baselines predate later planner work, and re-recording them is a review step.
-tasks.register('evidenceTest', Test) {
-    group = 'verification'
-    description = 'Checks recorded runtime evidence; each test names the -Pchimera.* values it needs.'
-    testClassesDirs = sourceSets.test.output.classesDirs
-    classpath = sourceSets.test.runtimeClasspath
-    useJUnitPlatform {
-        includeTags 'evidence'
     }
 }
 

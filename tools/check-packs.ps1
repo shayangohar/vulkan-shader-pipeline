@@ -5,9 +5,6 @@ The frozen Fabric 1.21.11 line (CHIMERA instance) runs from the fabric/1.21.11 b
   .\tools\check-packs.ps1                          the full gate: check build
   .\tools\check-packs.ps1 packTest                 one task
   .\tools\check-packs.ps1 -Corpus optionSweep      also the corpus packs in testpacks\corpus\packs
-  .\tools\check-packs.ps1 evidenceTest --tests '*ParityBaselineEvidenceTest' `
-      -ComplementaryVersion r5.9.3 -BslVersion v10.1.8 `
-      -Evidence @{ complementaryLog = 'logs\c.log'; complementaryCapture = 'captures\c.rdc' }
 
 Every value becomes a -Pchimera.* property, which build.gradle passes to the tests.
 The corpus zips are not committed: testpacks\corpus\pins holds their Modrinth pins.
@@ -17,9 +14,6 @@ The tests read the locked packs from copies in build\locked-packs, without the i
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [string]$PackRoot = (Join-Path $env:APPDATA 'PrismLauncher\instances\Chimera NeoForge 1.21.1\minecraft\shaderpacks'),
-    [string]$ComplementaryVersion = '',
-    [string]$BslVersion = '',
-    [hashtable]$Evidence = @{},
     [switch]$PrintBaselines,
     [switch]$Corpus,
     [Parameter(ValueFromRemainingArguments = $true)]
@@ -55,11 +49,6 @@ $properties = @(
     "-Pchimera.pack.extra=$extra",
     '-Pchimera.gpu=true'
 )
-if ($ComplementaryVersion) { $properties += "-Pchimera.pack.complementaryVersion=$ComplementaryVersion" }
-if ($BslVersion) { $properties += "-Pchimera.pack.bslVersion=$BslVersion" }
-foreach ($name in $Evidence.Keys) {
-    $properties += "-Pchimera.evidence.$name=$((Resolve-Path -LiteralPath $Evidence[$name]).Path)"
-}
 if ($PrintBaselines) { $properties += '-Pchimera.printBaselines=true' }
 if (-not $GradleArguments) { $GradleArguments = @('check', 'build') }
 
