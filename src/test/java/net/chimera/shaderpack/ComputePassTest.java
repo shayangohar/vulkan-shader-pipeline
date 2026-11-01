@@ -436,7 +436,7 @@ final class ComputePassTest {
         PassComputePlan.PassCompute compute = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
                 .compute("composite_a");
         assertTrue(compute.supported(), compute.deviations().toString());
-        assertEquals(List.of("fogEnd", "fogStart"),
+        assertEquals(List.of("iris_FogEnd", "iris_FogStart"),
                 compute.values().stream().map(ComputeValueBlock.Value::name).sorted().toList());
         Map<String, Integer> offsets = new LinkedHashMap<>();
         compute.values().forEach(value -> offsets.put(value.name(), value.offset()));

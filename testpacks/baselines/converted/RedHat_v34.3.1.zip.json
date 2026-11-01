@@ -53,7 +53,7 @@
   "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR].vsh": "03e83481313e3ba2 2b45f2abc4915129",
   "gbuffers_skybasic [sky input variant SKY_POSITION_COLOR_UV].vsh": "3522b71b969d2bda 44b8011eadd9e63a",
   "gbuffers_skybasic [sky input variant SKY_POSITION_UV].vsh": "6d96ee5425729c5d 654dbe7a27ddd460",
-  "gbuffers_skybasic.fsh": "3cebc1dc15531d45 c091fcdce64d2dc6",
+  "gbuffers_skybasic.fsh": "a6117cac6d6b4c67 e37f822d5a0caf62",
   "gbuffers_skybasic.vsh": "75c4a91f64e70a89 c632d38ffa5273b7",
   "gbuffers_skytextured [sky input variant SKY_POSITION].vsh": "f7353d13b8c8cd95 5072564db2bccfa8",
   "gbuffers_skytextured [sky input variant SKY_POSITION_COLOR].vsh": "80b528ddd1336894 5e448ac3e0f9b83c",

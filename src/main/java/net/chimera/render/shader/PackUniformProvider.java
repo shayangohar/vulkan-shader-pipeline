@@ -160,10 +160,12 @@ public final class PackUniformProvider {
         INSTANCE.rewrite(FOG_DENSITY_KEYS);
     }
 
-    /** Records the shape of the fog FogRenderer has set up (Iris fogShape) for the draws that follow. */
+    /**
+     * Records the shape of the fog FogRenderer has set up (Iris fogShape), which a program reads as
+     * it was at its first draw in the frame (latchProgramFog).
+     */
     public static void captureFogShape() {
         IrisWorldState.captureFogShape();
-        INSTANCE.rewrite(FOG_SHAPE_KEYS);
     }
 
     /**
@@ -186,12 +188,22 @@ public final class PackUniformProvider {
     }
 
     private static final List<UniformKey> FOG_COLOR_KEYS = List.of(new UniformKey("fogColor", "vec3"),
-            new UniformKey("fogColor", "vec4"), new UniformKey("FogColor", "vec4"));
-    private static final List<UniformKey> FOG_DENSITY_KEYS = List.of(
-            new UniformKey("fogMode", "int"), new UniformKey("fogDensity", "float"));
-    private static final List<UniformKey> FOG_SHAPE_KEYS = List.of(new UniformKey("fogShape", "int"));
+            new UniformKey("fogColor", "vec4"), new UniformKey("FogColor", "vec4"),
+            new UniformKey("iris_FogColor", "vec4"));
+    private static final List<UniformKey> FOG_DENSITY_KEYS = List.of(new UniformKey("fogMode", "int"),
+            new UniformKey("fogDensity", "float"), new UniformKey("iris_FogDensity", "float"));
     private static final List<UniformKey> FOG_RANGE_KEYS = List.of(new UniformKey("fogStart", "float"),
             new UniformKey("FogStart", "float"), new UniformKey("fogEnd", "float"), new UniformKey("FogEnd", "float"));
+    private static final List<UniformKey> PROGRAM_FOG_KEYS = List.of(new UniformKey("fogShape", "int"),
+            new UniformKey("iris_FogStart", "float"), new UniformKey("iris_FogEnd", "float"));
+
+    /**
+     * Serves the next draw of {@code program} its per-frame fog values (IrisWorldState.latchProgramFog);
+     * a null program, a compute dispatch, reads the current ones.
+     */
+    private void latchProgramFog(Pipeline program) {
+        if (IrisWorldState.latchProgramFog(program, frameState)) rewrite(PROGRAM_FOG_KEYS);
+    }
 
     /** Rewrites the bindings of the given names from the frame state. */
     private void rewrite(List<UniformKey> keys) {
@@ -254,11 +266,13 @@ public final class PackUniformProvider {
     /**
      * Serves the next draw Iris's per-draw texture and blend values (IrisDrawState): the size of
      * the texture on unit 0 and the draw's blend, the blend the program reports in place of the
-     * host's (PackPipelines.blendFuncOverride) or the host draw's. Only changed bindings are rewritten.
+     * host's (PackPipelines.blendFuncOverride) or the host draw's. It also serves the pipeline's
+     * per-frame fog values (latchProgramFog). Only changed bindings are rewritten.
      */
     public static void updateDrawState(Pipeline pipeline) {
         // Without a pack session no binding reads them.
         if (INSTANCE.bindings.isEmpty()) return;
+        INSTANCE.latchProgramFog(pipeline);
         VulkanImage unit0 = VTextureSelector.getBoundTexture(0);
         if (!INSTANCE.frameState.setDrawState(unit0 == null ? 0 : unit0.width, unit0 == null ? 0 : unit0.height,
                 IrisDrawState.programBlend(pipeline), PipelineState.blendInfo)) return;
@@ -334,6 +348,7 @@ public final class PackUniformProvider {
             ByteBuffer target
     ) {
         if (declarations == null || target == null) return;
+        INSTANCE.latchProgramFog(null);
         for (int index = 0; index < declarations.size(); index++) {
             if (offsets == null || sizes == null || index >= offsets.length || index >= sizes.length) {
                 break;
@@ -371,6 +386,7 @@ public final class PackUniformProvider {
                 ? 0.0f
                 : PackFrameState.quantizedFrameSecondsForTest(now - lastFrameNanos);
         lastFrameNanos = now;
+        IrisWorldState.beginFrame();
         frameState.begin(minecraft, camera, partialTick, modelView, projection, deltaSeconds);
         logDerivedValueFailures();
         // Iris ProgramUniforms.getCurrentTick: the level's game time, 0 without a level.

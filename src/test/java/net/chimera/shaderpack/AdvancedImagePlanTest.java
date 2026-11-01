@@ -657,8 +657,8 @@ final class AdvancedImagePlanTest {
         assertTrue(composite.convertedFragment() != null
                         && composite.stageSource("fragment") != null
                         && !composite.stageSource("fragment").contains("gl_Fog.")
-                        && composite.stageSource("fragment").contains("fogStart")
-                        && composite.stageSource("fragment").contains("fogEnd"),
+                        && composite.stageSource("fragment").contains("iris_FogStart")
+                        && composite.stageSource("fragment").contains("iris_FogEnd"),
                 "Complementary legacy fog normalization did not reach the plan");
         assertTrue(composite.interfacePlan().deviations().stream().noneMatch(value ->
                         value.equals("UNIFORM_IMPLICIT_DECLARATION:textureSize")),

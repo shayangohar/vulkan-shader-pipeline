@@ -149,6 +149,12 @@ final class UniformCatalog {
         addLive(specs, "fogMode", "int");
         addLive(specs, "fogShape", "int");
         addLive(specs, "fogDensity", "float");
+        // IrisInternalUniforms, which a legacy program's gl_Fog reads (LegacyShaderNormalizer): the
+        // range is latched per program and frame, the colour and density are fogColor's and fogDensity's.
+        addLive(specs, "iris_FogStart", "float");
+        addLive(specs, "iris_FogEnd", "float");
+        addLive(specs, "iris_FogColor", "vec4", "fogColor");
+        addLive(specs, "iris_FogDensity", "float", "fogDensity");
         addLive(specs, "cloudTime", "float");
         // CommonUniforms' per-draw unit-0 texture size and blend; a post program reads its
         // blendFunc as a constant (ServedUniforms.servePostValues). IrisExclusiveUniforms' selection.

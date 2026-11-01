@@ -16,8 +16,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Iris's fog uniforms (FogUniforms) and cloudTime (IrisExclusiveUniforms). RedHat's world
- * programs read fogMode and Shrimple's read fogShape and cloudTime; Chimera refused all three.
+ * Iris's fog uniforms (FogUniforms, and IrisInternalUniforms' for gl_Fog) and cloudTime
+ * (IrisExclusiveUniforms). RedHat's world programs read fogMode and Shrimple's read fogShape and
+ * cloudTime; Chimera refused all three.
  */
 final class IrisFogUniformsTest {
     /** Before any fog setup Iris's captured density is 0 (CapturedRenderingState): GL_EXP2, density 0. */
@@ -49,6 +50,42 @@ final class IrisFogUniformsTest {
         assertEquals(96.0F, buffer.getFloat(0));
     }
 
+    /**
+     * gl_Fog's range is PER_FRAME in Iris: each program reads it at its first draw in a frame. The
+     * horizon draws gbuffers_skybasic first, under the start setupNoFog left, and the sky disc it
+     * draws after setupFog(FOG_SKY) keeps that range; a program first drawn after the setup reads
+     * the sky fog, and a compute, run once a frame, reads the current range.
+     */
+    @Test
+    void eachProgramLatchesItsFirstFog() {
+        IrisWorldState.resetFog();
+        PackFrameState state = new PackFrameState();
+        Object skyBasic = new Object();
+        Object skyTextured = new Object();
+        IrisWorldState.beginFrame();
+        state.setFogRange(Float.MAX_VALUE, 192.0F);
+        assertTrue(IrisWorldState.latchProgramFog(skyBasic, state));
+        state.setFogRange(0.0F, 192.0F);
+        assertTrue(IrisWorldState.latchProgramFog(skyTextured, state));
+        assertEquals(0.0F, read(state, "iris_FogStart"));
+        assertTrue(IrisWorldState.latchProgramFog(skyBasic, state));
+        assertEquals(Float.MAX_VALUE, read(state, "iris_FogStart"), "the sky disc keeps the horizon's range");
+        assertEquals(192.0F, read(state, "iris_FogEnd"));
+        assertFalse(IrisWorldState.latchProgramFog(skyBasic, state), "an unchanged latch rewrites nothing");
+        IrisWorldState.beginFrame();
+        IrisWorldState.latchProgramFog(skyBasic, state);
+        assertEquals(0.0F, read(state, "iris_FogStart"), "the next frame latches afresh");
+        state.setFogRange(12.8F, 96.0F);
+        IrisWorldState.latchProgramFog(null, state);
+        assertEquals(12.8F, read(state, "iris_FogStart"), "a compute reads the current range");
+    }
+
+    private static float read(PackFrameState state, String name) {
+        MappedBuffer buffer = new MappedBuffer(4);
+        state.write(UniformRegistry.descriptor(name), "float", buffer);
+        return buffer.getFloat(0);
+    }
+
     /** The frame's fog colour, latched once setupColor has set it (Iris's per-frame fogColor). */
     @Test
     void theFogColourIsTheFramesOwn() {
@@ -59,6 +96,8 @@ final class IrisFogUniformsTest {
         assertFalse(state.setFogColor(water.clone()), "an unchanged colour rewrites nothing");
         state.write(UniformRegistry.descriptor("fogColor"), "vec3", buffer);
         assertEquals(0.6998F, buffer.getFloat(8));
+        state.write(UniformRegistry.descriptor("iris_FogColor"), "vec4", buffer);
+        assertEquals(1.0F, buffer.getFloat(12), "gl_Fog.color is the fog RGBA");
     }
 
     /** A world program plans the live values; a post program reads FogMode.OFF's constants. */

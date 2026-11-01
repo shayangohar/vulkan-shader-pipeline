@@ -532,17 +532,27 @@ final class PackFrontEndTest {
                 "with watershadow, shadow is the opaque casters: " + both.deviations());
     }
 
+    /**
+     * CommonTransformer: gl_Fog reads Iris's own iris_Fog uniforms, so the pack's fog names stay its
+     * own: a vec3 fogColor uniform, a const fogStart and a local fogDensity meet no declaration of Chimera's.
+     */
     @Test
-    void fogColor() {
-        // CommonTransformer: gl_Fog.color is iris_FogColor, the fog RGBA.
-        LegacyShaderNormalizer.Result undeclared = LegacyShaderNormalizer.normalize(
-                "#version 120\nvoid main() { gl_FragColor = gl_Fog.color; }", false);
-        assertTrue(undeclared.successful() && undeclared.source().contains("uniform vec4 fogColor;")
-                && undeclared.source().contains("gl_FragColor = fogColor;"), "gl_Fog.color:\n" + undeclared.source());
-        LegacyShaderNormalizer.Result vec3 = LegacyShaderNormalizer.normalize(
-                "#version 120\nuniform vec3 fogColor;\nvoid main() { gl_FragColor = gl_Fog.color; }", false);
-        assertTrue(vec3.successful() && vec3.source().contains("vec4(fogColor, 1.0)")
-                && !vec3.source().contains("uniform vec4 fogColor"), "vec3 fogColor kept:\n" + vec3.source());
+    void glFogReadsIrisUniforms() {
+        LegacyShaderNormalizer.Result fog = LegacyShaderNormalizer.normalize("""
+                #version 120
+                uniform vec3 fogColor;
+                const float fogStart = 4.0;
+                void main() {
+                    float fogDensity = gl_Fog.density;
+                    gl_FragColor = gl_Fog.color * (gl_Fog.start + fogStart) + vec4(fogColor, fogDensity);
+                }
+                """, false);
+        String source = fog.source();
+        assertTrue(fog.successful() && source.contains("float fogDensity = iris_FogDensity;")
+                && source.contains("gl_FragColor = iris_FogColor * (iris_FogStart + fogStart)")
+                && source.contains("uniform vec4 iris_FogColor;") && source.contains("uniform float iris_FogStart;")
+                && source.contains("uniform float iris_FogDensity;") && source.contains("uniform vec3 fogColor;")
+                && !source.contains("uniform float fogStart"), source);
     }
 
     @Test

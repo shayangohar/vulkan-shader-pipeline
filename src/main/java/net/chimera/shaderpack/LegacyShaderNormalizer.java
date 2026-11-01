@@ -13,7 +13,7 @@ import java.util.regex.Pattern;
 /**
  * Small token-safe normalization pass shared by planning and conversion.
  * It contains only legacy built-ins that Iris rewrites the same way in every
- * program: gl_Fog fields to Chimera's fog uniforms, and gl_FogFragCoord to
+ * program: gl_Fog fields to Iris's iris_Fog uniforms, and gl_FogFragCoord to
  * an ordinary varying. The legacy colour and texture-coordinate varyings
  * (gl_FrontColor and gl_Color, gl_TexCoord[n]) become ordinary varyings too,
  * which GL's compatibility profile gives packs and Vulkan does not. In the
@@ -155,7 +155,7 @@ final class LegacyShaderNormalizer {
             renameLateBuiltinDefinitions(split, tokens, version);
             endLineCommentsAtTheirLine(tokens, version);
             Map<String, String> required = new TreeMap<>();
-            String unsupportedField = rewriteFogFields(tokens, required, declaredUniformType(split, "fogColor"));
+            String unsupportedField = rewriteFogFields(tokens, required);
             if (unsupportedField != null) {
                 return unsupported(unsupportedField);
             }
@@ -199,11 +199,10 @@ final class LegacyShaderNormalizer {
     }
 
     /**
-     * Rewrites each {@code gl_Fog.<field>} to Chimera's fog uniforms and records the uniforms the
-     * rewrites read. Returns the first field it cannot serve, or null when it serves them all.
+     * Rewrites each {@code gl_Fog.<field>} to the iris_Fog uniform it reads and records the uniforms
+     * the rewrites read. Returns the first field it cannot serve, or null when it serves them all.
      */
-    private static String rewriteFogFields(List<GlslLexer.Token> tokens, Map<String, String> required,
-                                           String fogColorType) {
+    private static String rewriteFogFields(List<GlslLexer.Token> tokens, Map<String, String> required) {
         for (int index = 0; index < tokens.size(); index++) {
             if (!tokens.get(index).identifier("gl_Fog")) {
                 continue;
@@ -215,7 +214,7 @@ final class LegacyShaderNormalizer {
                 return "unknown";
             }
             String fieldName = tokens.get(field).text();
-            String replacement = fogFieldValue(fieldName, required, fogColorType);
+            String replacement = fogFieldValue(fieldName, required);
             if (replacement == null) {
                 return fieldName;
             }
@@ -227,40 +226,28 @@ final class LegacyShaderNormalizer {
     }
 
     /**
-     * The expression that serves one gl_Fog field, or null for a field Chimera does not serve;
-     * {@code fogColorType} is the type the pack declares fogColor as, null when it does not.
+     * The expression that serves one gl_Fog field, or null for a field Chimera does not serve. Iris's
+     * CommonTransformer builds iris_Fog from its own uniforms, iris_FogStart, iris_FogEnd,
+     * iris_FogDensity and iris_FogColor (the fog RGBA), with scale 1 / (end - start). Their names
+     * are Iris's, apart from the pack's fogStart and fogDensity: a pack's own identifier of that
+     * name neither hides nor clashes with them, and the range is latched per program and frame,
+     * where fogStart follows every fog setup (IrisWorldState).
      */
-    private static String fogFieldValue(String fieldName, Map<String, String> required, String fogColorType) {
+    private static String fogFieldValue(String fieldName, Map<String, String> required) {
         return switch (fieldName) {
-            case "start" -> {
-                required.put("fogStart", "float");
-                yield "fogStart";
-            }
-            case "end" -> {
-                required.put("fogEnd", "float");
-                yield "fogEnd";
-            }
-            // Iris's iris_FogDensity, which is fogDensity: both clamp the fog density at 0
-            // (IrisInternalUniforms, FogUniforms).
-            case "density" -> {
-                required.put("fogDensity", "float");
-                yield "fogDensity";
-            }
-            case "scale" -> {
-                required.put("fogStart", "float");
-                required.put("fogEnd", "float");
-                yield "(1.0 / (fogEnd - fogStart))";
-            }
-            // Iris's iris_FogParameters.color is the fog RGBA, iris_FogColor. Chimera's fogColor is
-            // the same value; a pack that already declares it vec3 keeps its declaration.
-            case "color" -> {
-                if (fogColorType == null) {
-                    required.put("fogColor", "vec4");
-                }
-                yield "vec3".equals(fogColorType) ? "vec4(fogColor, 1.0)" : "fogColor";
-            }
+            case "start" -> fogUniform(required, "iris_FogStart", "float");
+            case "end" -> fogUniform(required, "iris_FogEnd", "float");
+            case "density" -> fogUniform(required, "iris_FogDensity", "float");
+            case "color" -> fogUniform(required, "iris_FogColor", "vec4");
+            case "scale" -> "(1.0 / (" + fogUniform(required, "iris_FogEnd", "float") + " - "
+                    + fogUniform(required, "iris_FogStart", "float") + "))";
             default -> null;
         };
+    }
+
+    private static String fogUniform(Map<String, String> required, String name, String type) {
+        required.put(name, type);
+        return name;
     }
 
     /**

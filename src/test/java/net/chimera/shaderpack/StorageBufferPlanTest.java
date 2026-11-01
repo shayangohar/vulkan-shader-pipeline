@@ -830,17 +830,15 @@ final class StorageBufferPlanTest {
                 + " gl_FragColor = vec4(value); }\n";
         LegacyShaderNormalizer.Result normalizedFog = LegacyShaderNormalizer.normalize(fogSource, false);
         assertTrue(normalizedFog.successful()
-                        && normalizedFog.source().contains("fogStart")
-                        && normalizedFog.source().contains("fogEnd")
-                        && normalizedFog.source().contains("1.0 / (fogEnd - fogStart)")
-                        && normalizedFog.source().contains("uniform float fogStart;")
-                        && normalizedFog.source().contains("uniform float fogEnd;"),
+                        && normalizedFog.source().contains("1.0 / (iris_FogEnd - iris_FogStart)")
+                        && normalizedFog.source().contains("uniform float iris_FogStart;")
+                        && normalizedFog.source().contains("uniform float iris_FogEnd;"),
                 "legacy gl_Fog fields were not normalized");
         UniformRegistry.ProgramInterface fogPlan = UniformRegistry.planPreparedPost(
                 normalizedFog.source(),
                 PostTargetPlan.parse("composite", fogSource).plan());
-        assertTrue(fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("fogStart"))
-                        && fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("fogEnd"))
+        assertTrue(fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("iris_FogStart"))
+                        && fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("iris_FogEnd"))
                         && fogPlan.executable(),
                 "normalized fog values did not enter the live interface");
         // Division exposes a missing outer pair of parentheses; multiplication alone does not.
@@ -856,18 +854,12 @@ final class StorageBufferPlanTest {
                 "Normalized fog scale expression is not evaluable");
         PackRuntimeSettings.Session session = settings.newSession();
         settings.evaluate((name, component) -> switch (name) {
-            case "fogStart" -> 2.0;
-            case "fogEnd" -> 8.0;
+            case "iris_FogStart" -> 2.0;
+            case "iris_FogEnd" -> 8.0;
             default -> throw new AssertionError("Unexpected fog dependency: " + name);
         }, session, 0.05f);
         assertEquals(36.0f, session.values()[settings.indexOf("fogScaleProbe")],
                 "gl_Fog.scale reciprocal lost expression precedence");
-        // Iris's iris_FogParameters holds the fog colour, density, start, end and scale.
-        LegacyShaderNormalizer.Result density = LegacyShaderNormalizer.normalize(
-                "void main() { gl_FragColor = vec4(gl_Fog.density); }", false);
-        assertTrue(density.successful() && density.source().contains("vec4(fogDensity)")
-                        && density.source().contains("uniform float fogDensity;"),
-                "gl_Fog.density is fogDensity: " + density);
         LegacyShaderNormalizer.Result unsupportedFog = LegacyShaderNormalizer.normalize(
                 "void main() { gl_FragColor = vec4(gl_Fog.index); }", false);
         assertTrue(!unsupportedFog.successful()
