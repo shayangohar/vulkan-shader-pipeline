@@ -4,7 +4,6 @@ import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -103,36 +102,6 @@ final class CustomUniformInventoryTest {
         float actual = session.values()[index];
         assertTrue(Math.abs(actual - expected) < 1.0e-4,
                 "BSL timeAngle at noon is " + actual + ", expected " + expected);
-    }
-
-    /**
-     * OptiFine's documented functions evaluate, and a declaration that reads a refused one is
-     * refused with it instead of reading zero in its place.
-     */
-    @Test
-    void expressionFunctions() {
-        double[][] cases = {
-                {value("frac(-0.25)"), 0.75}, {value("fmod(-1.0, 4.0)"), 3.0},
-                {value("floor(1.5) + ceil(1.5)"), 3.0}, {value("pow(2.0, 3.0)"), 8.0},
-                {value("atan(1.0, 1.0)"), Math.PI / 4.0}, {value("todeg(torad(90.0))"), 90.0},
-                {value("if(0, 1.0, 1, 2.0, 3.0)"), 2.0}, {value("if(0, 1.0, 0, 2.0, 3.0)"), 3.0},
-                {value("between(0.5, 0.0, 1.0)"), 1.0}, {value("equals(1.0, 1.05, 0.1)"), 1.0},
-                {value("signum(-3.0) + abs(-1.0)"), 0.0}};
-        for (double[] entry : cases) {
-            assertTrue(Math.abs(entry[0] - entry[1]) < 1.0e-9,
-                    "custom expression function returned " + entry[0] + ", expected " + entry[1]);
-        }
-        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
-                PackRuntimeSettings.declaration(false, "float", "broken", "noSuchFunction(1.0)"),
-                PackRuntimeSettings.declaration(true, "float", "reader", "broken + 1.0")),
-                List.of());
-        assertTrue(settings.rejected().contains("reader") && settings.indexOf("reader") < 0,
-                "a value reading a refused declaration was not refused: " + settings.deviations());
-    }
-
-    private static double value(String expression) {
-        PackExpression.Program program = PackExpression.parse(expression, BiomeIds.constants());
-        return program.evaluate((name, component) -> 0.0, program.newState(), 0.0f);
     }
 
     /** Per name, the first executable program whose stages actually read it. */

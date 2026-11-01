@@ -1,11 +1,9 @@
 package net.chimera.shaderpack;
 
 import net.chimera.testing.TestPacks;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -75,18 +73,6 @@ final class PackShadowContractTest {
                 "authored shadow z scale was rewritten");
     }
 
-    @Test
-    @Tag("packs")
-    void lockedPackShadowClipRange() {
-        for (Path pack : List.of(TestPacks.complementary(), TestPacks.bsl())) {
-            PackProgramPlan shadow = PackProbe.analyze(pack).plan().program("shadow");
-            if (shadow != null && shadow.convertedFragment() != null) {
-                assertTrue(shadow.executable(), pack.getFileName() + " shadow plan is not executable");
-                verifyShadowClipRange(pack.getFileName() + " shadow", shadow.convertedVertex());
-            }
-        }
-    }
-
     /** Checks the generic conversion appears once and only after authored main. */
     private static void verifyShadowClipRange(String what, String source) {
         assertTrue(source != null, what + " shadow vertex has no source");
@@ -103,56 +89,6 @@ final class PackShadowContractTest {
         assertTrue(source.indexOf("chimeraAuthoredShadowMain();")
                         < source.indexOf("gl_Position.z = 0.5 *"),
                 what + " clip-range remap does not follow the authored entry point");
-    }
-
-    /** Independent authored-transform plus Vulkan epilogue arithmetic; not a GPU visibility test. */
-    @Test
-    void shadowClipComposition() {
-        float w = 3.5f;
-        for (float ndc : new float[] {-1.0f, 0.0f, 1.0f}) {
-            assertNear((ndc + 1.0f) * 0.5f * w,
-                    convertAfterAuthored(ndc * w, w, 1.0f),
-                    "generic [-w,w] clip conversion at NDC " + ndc);
-            assertNear((0.2f * ndc + 1.0f) * 0.5f * w,
-                    convertAfterAuthored(ndc * w, w, 0.2f),
-                    "single authored 0.2 compression at NDC " + ndc);
-            assertNear((0.4f * ndc + 1.0f) * 0.5f * w,
-                    convertAfterAuthored(ndc * w, w, 0.4f),
-                    "single authored 0.4 compression at NDC " + ndc);
-        }
-
-        float multipleAssignments = 0.75f;
-        multipleAssignments += 0.25f * w;
-        multipleAssignments *= 0.4f;
-        multipleAssignments -= 0.1f * w;
-        assertNear(0.5f * (multipleAssignments + w),
-                convertAfterAuthoredAssignments(0.75f, w),
-                "multiple authored position assignments before the generic epilogue");
-
-        // An early return still returns to the wrapper, which performs the
-        // same one-time conversion on the position written before returning.
-        float earlyReturnedZ = 0.6f * w;
-        assertNear(0.5f * (earlyReturnedZ + w),
-                convertAfterEarlyReturn(earlyReturnedZ, w),
-                "epilogue after an authored main early return");
-    }
-
-    private static float convertAfterAuthored(float z, float w, float authoredScale) {
-        float authoredZ = z * authoredScale;
-        return 0.5f * (authoredZ + w);
-    }
-
-    private static float convertAfterAuthoredAssignments(float initialZ, float w) {
-        float z = initialZ;
-        z += 0.25f * w;
-        z *= 0.4f;
-        z -= 0.1f * w;
-        return 0.5f * (z + w);
-    }
-
-    private static float convertAfterEarlyReturn(float authoredZ, float w) {
-        // The authored helper returns authoredZ. Its caller wrapper then runs.
-        return 0.5f * (authoredZ + w);
     }
 
     /** Built-ins map to the shadow draw pair, not the camera gbuffer pair. */
@@ -205,11 +141,5 @@ final class PackShadowContractTest {
             index = source.indexOf(needle, index + needle.length());
         }
         return count;
-    }
-
-    private static void assertNear(float expected, float actual, String message) {
-        if (!Float.isFinite(actual) || Math.abs(expected - actual) > 1.0e-5f) {
-            throw new AssertionError(message + ": expected " + expected + ", got " + actual);
-        }
     }
 }

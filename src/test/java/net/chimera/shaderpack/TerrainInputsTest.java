@@ -8,6 +8,8 @@ import org.joml.Vector4f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.lwjgl.util.shaderc.Shaderc;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
@@ -23,9 +25,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * What terrain programs read: legacy host vertex semantics, mid-block inputs, shading directives
- * and output targets.
+ * and output targets, and which list a section's block entities join.
  */
 final class TerrainInputsTest {
+    private static final String COMPILE_RESULT = "net/vulkanmod/render/chunk/build/task/CompileResult";
+
     @Test
     void legacyHostVertexSemantics() {
         String vertex = """
@@ -61,16 +65,6 @@ final class TerrainInputsTest {
         assertTrue(EntityVertexBridge.convertHandVertex(vertex.replace("void main() {",
                         "void main() { vec3 available = gl_Normal;"), null, fragment, Map.of()) != null,
                 "hand arm must serve its actual NEW_ENTITY normal");
-        // Nontrivial position and transforms distinguish a matrix product from the old vec4 product.
-        var position = new Vector4f(-3.5F, -1.5F, 0.7F, 1);
-        var modelView = new Matrix4f().translate(1, 2, -6).rotateY(0.4F);
-        var projection = new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128);
-        var sequential = projection.transform(modelView.transform(new Vector4f(position)));
-        var matrixProduct = new Matrix4f(projection).mul(modelView)
-                .transform(new Vector4f(position));
-        assertTrue(sequential.distance(matrixProduct) < 1.0e-5F
-                        && new Vector4f(sequential).mul(position).distance(matrixProduct) > 1,
-                "projection fixture must expose component-wise vertex multiplication");
     }
 
     /** The family's conversion of a legacy vertex stage; the particle family has no checked variant. */
@@ -280,42 +274,6 @@ final class TerrainInputsTest {
     }
 
     @Test
-    void terrainShadingHooks() throws IOException {
-        var shadeMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraClientLevelShadeMixin");
-        boolean shadeArgument = false;
-        for (var method : shadeMixin.methods) {
-            for (var annotation : MixinBytecode.annotations(method.visibleAnnotations, method.invisibleAnnotations)) {
-                if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/ModifyVariable;")) continue;
-                shadeArgument = MixinBytecode.annotationValue(annotation, "method") instanceof List<?> names
-                        && names.contains("getShade")
-                        && Boolean.TRUE.equals(MixinBytecode.annotationValue(annotation, "argsOnly"))
-                        && method.desc.equals("(Z)Z");
-            }
-        }
-        assertTrue(MixinBytecode.mixinTargets(shadeMixin, "net/minecraft/client/multiplayer/ClientLevel")
-                && shadeArgument,
-                "ClientLevel.getShade's shaded argument follows the pack's oldLighting");
-        var blockMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraBlockSeparateAoMixin");
-        assertTrue(MixinBytecode.mixinTargets(blockMixin, "net/vulkanmod/render/chunk/build/BlockRenderer")
-                        && MixinBytecode.injects(blockMixin,
-                                "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;",
-                                "putQuadData(Lnet/vulkanmod/render/vertex/TerrainBufferBuilder;Lorg/joml/Vector3f;"
-                                        + "Lnet/vulkanmod/render/model/quad/QuadView;"
-                                        + "Lnet/vulkanmod/render/chunk/build/light/data/QuadLightData;FFF)V",
-                                "Lnet/vulkanmod/vulkan/util/ColorUtil$RGBA;pack(FFFF)I"),
-                "block quads route VulkanMod's brightness through separateAo where it packs the colour");
-        var fluidMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLiquidRendererMixin");
-        assertTrue(MixinBytecode.mixinTargets(fluidMixin, "net/vulkanmod/render/chunk/build/LiquidRenderer")
-                        && MixinBytecode.injects(fluidMixin, "Lorg/spongepowered/asm/mixin/injection/Inject;",
-                                "updateColor", null),
-                "fluid colours apply separateAo after VulkanMod computes them");
-        for (String name : List.of("ChimeraClientLevelShadeMixin", "ChimeraBlockSeparateAoMixin",
-                "ChimeraLiquidRendererMixin")) {
-            MixinBytecode.assertMixinRegistered(name);
-        }
-    }
-
-    @Test
     void packSessionAppliesTerrainShading() throws IOException {
         var pass = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
         for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
@@ -329,6 +287,28 @@ final class TerrainInputsTest {
             }
             assertTrue(applies, "PackSessionLifecycle." + name + " applies the terrain shading state");
         }
+    }
+
+    /**
+     * ChimeraGlobalBlockEntityMixin keeps an off-screen block entity out of its section's list. The
+     * add it wraps is the first after handleBlockEntity reads CompileResult.blockEntities, which must be
+     * that list's own add: the global list's field is not read in between.
+     */
+    @Test
+    void theWrappedAddIsTheSectionListsOwn() throws IOException {
+        var task = MixinBytecode.nativeClass("net/vulkanmod/render/chunk/build/task/BuildTask");
+        var method = task.methods.stream().filter(m -> m.name.equals("handleBlockEntity")).findFirst().orElseThrow();
+        boolean afterSectionList = false;
+        for (AbstractInsnNode insn : method.instructions) {
+            if (insn instanceof FieldInsnNode field && field.owner.equals(COMPILE_RESULT)) {
+                if (field.name.equals("blockEntities")) afterSectionList = true;
+                if (field.name.equals("globalBlockEntities")) {
+                    assertTrue(!afterSectionList, "the global list is read between the section list and its add");
+                }
+            }
+            if (afterSectionList && insn instanceof MethodInsnNode call && call.name.equals("add")) return;
+        }
+        throw new AssertionError("handleBlockEntity never adds to CompileResult.blockEntities");
     }
 
     static boolean terrainShading(TerrainShadingDirectives directives, String key) {
@@ -378,8 +358,6 @@ final class TerrainInputsTest {
             MrtPipelineContext.begin(route.outputFormatsArray(), 8,
                     blends.attachments(route.targetSlots()));
             try {
-                assertEquals(count, MrtPipelineContext.attachmentCount(0),
-                        "native attachment count " + targets);
                 for (int location = 0; location < count; location++) {
                     int target = targets.charAt(location) - '0';
                     assertEquals(target, route.targetForOutput(location), "logical output mapping");

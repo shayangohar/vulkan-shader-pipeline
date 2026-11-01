@@ -3,7 +3,6 @@ package net.chimera.shaderpack;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ShadowCullingFrustum;
-import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.HostLayoutLane;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -245,23 +244,6 @@ final class ShadowPassTest {
                             && fragment.contains("(-1) / 100 == 155"),
                     key + " must read the per-draw entityId and blockEntityId -1: " + vertex + "\n" + fragment);
         }
-    }
-
-    /** Burning-entity fire draws through the entity family, its block-sheet cutout, with Iris's entity_flame id. */
-    @Test
-    void burningEntityFireDrawsThroughEntityFamily() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraEntityRenderDispatcherMixin");
-        assertTrue(MixinBytecode.injects(mixin, "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;",
-                        "render", "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;renderFlame("
-                                + "Lcom/mojang/blaze3d/vertex/PoseStack;"
-                                + "Lnet/minecraft/client/renderer/MultiBufferSource;"
-                                + "Lnet/minecraft/world/entity/Entity;Lorg/joml/Quaternionf;)V"),
-                "burning-entity fire must be wrapped where the dispatcher draws it");
-        assertTrue(MixinBytecode.instructionsThrough(mixin, "chimera$flameId").stream().anyMatch(instruction ->
-                        instruction instanceof MethodInsnNode call && call.name.equals("flameEntityId")),
-                "burning-entity fire must draw with Iris's entity_flame id");
-        assertEquals(ChimeraEntityBridge.Family.ENTITY, ChimeraEntityBridge.worldFamily("rendertype_entity_cutout",
-                DefaultVertexFormat.NEW_ENTITY, ChimeraEntityBridge.Family.ENTITY), "fire's cutout is an entity draw");
     }
 
     /** Iris ShadowRenderer.createShadowFrustum: the culling each shadow.culling state picks, with its distances. */

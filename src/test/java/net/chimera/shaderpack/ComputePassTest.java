@@ -23,10 +23,13 @@ final class ComputePassTest {
     /**
      * Solas declares its two floodfill images, and their samplers, each in one statement. The
      * plan and the runtime translator must see both names: Solas fell to vanilla in game with
-     * "unsupported compute image: floodfill_img_copy".
+     * "unsupported compute image: floodfill_img_copy". Solas also declares cameraPosition (vec3)
+     * before frameCounter. Dispatch wrote frameCounter after the vec3's padding word, implicit std140
+     * packed it into that word, so the compute read 0, wrote only floodfill_img_copy, and every light
+     * flickered as the gbuffers alternated images.
      */
     @Test
-    void computeDeclarationLists(@TempDir Path root) throws IOException {
+    void computeDeclarationListsAndUniformOffsets(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), """
                 iris.features.optional=CUSTOM_IMAGES
@@ -36,7 +39,11 @@ final class ComputePassTest {
         Files.writeString(shaders.resolve("shadowcomp.csh"), """
                 #version 430 compatibility
                 layout (local_size_x = 2, local_size_y = 2, local_size_z = 2) in;
+                uniform vec3 cameraPosition;
                 uniform int frameCounter;
+                uniform float frameTimeCounter;
+                uniform vec3 previousCameraPosition;
+                uniform float wetness;
                 writeonly uniform image3D floodfill_img, floodfill_img_copy;
                 uniform sampler3D floodfillSampler, floodfillSamplerCopy;
                 vec3 gather(sampler3D image, ivec3 pos) {
@@ -44,10 +51,12 @@ final class ComputePassTest {
                 }
                 void main() {
                     ivec3 pos = ivec3(gl_GlobalInvocationID);
+                    vec3 shift = cameraPosition - previousCameraPosition;
+                    vec4 value = vec4(shift, frameTimeCounter + wetness);
                     if ((frameCounter & 1) == 0) {
-                        imageStore(floodfill_img_copy, pos, vec4(gather(floodfillSampler, pos), 1.0));
+                        imageStore(floodfill_img_copy, pos, value + vec4(gather(floodfillSampler, pos), 1.0));
                     } else {
-                        imageStore(floodfill_img, pos, vec4(gather(floodfillSamplerCopy, pos), 1.0));
+                        imageStore(floodfill_img, pos, value + vec4(gather(floodfillSamplerCopy, pos), 1.0));
                     }
                 }
                 """);
@@ -66,44 +75,31 @@ final class ComputePassTest {
         assertTrue(symbols.containsAll(List.of("floodfill_img", "floodfill_img_copy", "floodfillSampler",
                 "floodfillSamplerCopy")) && symbols.size() == Set.copyOf(symbols).size(),
                 "each listed resource takes its own binding: " + compute.bindings());
+        assertTrue(compute.values().stream().map(ComputeValueBlock.Value::name).toList().containsAll(List.of(
+                        "cameraPosition", "frameCounter", "frameTimeCounter", "previousCameraPosition", "wetness")),
+                "every live value joins the uniform block: " + compute.values());
         Map<String, Integer> written = new LinkedHashMap<>();
         for (var value : compute.values()) written.put(value.name(), value.offset());
         String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, written);
-        assertTrue(error == null, "the translated shadowcomp compiles: " + error);
-    }
-
-    /**
-     * shadowcomp.csh is a pass compute like every other (ShadowCompositeRenderer.createComputes): one
-     * that writes a pack image runs here, and one the pack points at a buffer dispatches from it.
-     */
-    @Test
-    void shadowcompIsAPassCompute(@TempDir Path root) throws IOException {
-        Path shaders = Files.createDirectory(root.resolve("shaders"));
-        String properties = """
-                iris.features.optional=CUSTOM_IMAGES
-                image.voxels = voxelSampler rgba rgba16f half_float false false 8 4 8
-                bufferObject.0 = 16
-                """;
-        Files.writeString(shaders.resolve("shaders.properties"), properties);
-        Files.writeString(shaders.resolve("shadowcomp.csh"), """
-                #version 430
-                layout (local_size_x = 2, local_size_y = 2, local_size_z = 2) in;
-                writeonly uniform image3D voxels;
+        assertTrue(error == null, "the compiled block reads each value where dispatch writes it: " + error);
+        // The block as Chimera declared it before, with implicit offsets, against the offsets
+        // dispatch wrote then: frameCounter after the vec3's padding word, at 16.
+        String implicit = """
+                #version 450
+                layout(local_size_x = 1) in;
+                layout(std140, binding = 0) uniform ChimeraShadowComputeValues {
+                    vec3 cameraPosition;
+                    int frameCounter;
+                };
+                layout(rgba16f, binding = 1) uniform image3D target;
                 void main() {
-                    imageStore(voxels, ivec3(gl_GlobalInvocationID), vec4(1.0));
+                    imageStore(target, ivec3(0), vec4(cameraPosition, float(frameCounter)));
                 }
-                """);
-        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
-                + "void main() {\n gl_FragColor = texture2D(colortex0, vec2(0.5));\n}\n");
-        PassComputePlan.PassCompute direct = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
-                .compute("shadowcomp");
-        assertTrue(direct != null && direct.supported() && direct.indirect() == null,
-                direct == null ? "missing" : direct.deviations().toString());
-        Files.writeString(shaders.resolve("shaders.properties"), properties + "indirect.shadowcomp = 0 0\n");
-        PassComputePlan.PassCompute indirect = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
-                .compute("shadowcomp");
-        assertTrue(indirect != null && indirect.supported() && indirect.indirect() != null,
-                indirect == null ? "missing" : indirect.deviations().toString());
+                """;
+        String mismatch = PackCompileTest.compileComputeValues(implicit, "ChimeraShadowComputeValues",
+                Map.of("cameraPosition", 0, "frameCounter", 16));
+        assertTrue(mismatch != null && mismatch.contains("frameCounter"),
+                "the offset check reports the implicit layout's frameCounter: " + mismatch);
     }
 
     /**
@@ -134,76 +130,6 @@ final class ComputePassTest {
             }
         }
         return false;
-    }
-
-    /**
-     * Solas declares cameraPosition (vec3) before frameCounter. Dispatch wrote frameCounter after
-     * the vec3's padding word, implicit std140 packed it into that word, so the compute read 0,
-     * wrote only floodfill_img_copy, and every light flickered as the gbuffers alternated images.
-     */
-    @Test
-    void computeUniformOffsets(@TempDir Path root) throws IOException {
-        Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"), """
-                iris.features.optional=CUSTOM_IMAGES
-                image.floodfill_img = floodfillSampler rgba rgba16f half_float false false 8 4 8
-                image.floodfill_img_copy = floodfillSamplerCopy rgba rgba16f half_float false false 8 4 8
-                """);
-        Files.writeString(shaders.resolve("shadowcomp.csh"), """
-                #version 430 compatibility
-                layout (local_size_x = 2, local_size_y = 2, local_size_z = 2) in;
-                uniform vec3 cameraPosition;
-                uniform int frameCounter;
-                uniform float frameTimeCounter;
-                uniform vec3 previousCameraPosition;
-                uniform float wetness;
-                writeonly uniform image3D floodfill_img, floodfill_img_copy;
-                uniform sampler3D floodfillSampler, floodfillSamplerCopy;
-                void main() {
-                    ivec3 pos = ivec3(gl_GlobalInvocationID);
-                    vec3 shift = cameraPosition - previousCameraPosition;
-                    vec4 value = vec4(shift, frameTimeCounter + wetness);
-                    if ((frameCounter & 1) == 0) {
-                        imageStore(floodfill_img_copy, pos, value + texelFetch(floodfillSampler, pos, 0));
-                    } else {
-                        imageStore(floodfill_img, pos, value + texelFetch(floodfillSamplerCopy, pos, 0));
-                    }
-                }
-                """);
-        Files.writeString(shaders.resolve("final.fsh"), """
-                #version 120
-                uniform sampler2D colortex0;
-                void main() {
-                    gl_FragColor = texture2D(colortex0, vec2(0.5));
-                }
-                """);
-        PassComputePlan.PassCompute compute = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
-                .compute("shadowcomp");
-        assertTrue(compute.values().stream().map(ComputeValueBlock.Value::name).toList().containsAll(List.of(
-                        "cameraPosition", "frameCounter", "frameTimeCounter", "previousCameraPosition", "wetness")),
-                "every live value joins the uniform block: " + compute.values());
-        Map<String, Integer> written = new LinkedHashMap<>();
-        for (var value : compute.values()) written.put(value.name(), value.offset());
-        String error = PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK, written);
-        assertTrue(error == null, "the compiled block reads each value where dispatch writes it: " + error);
-        // The block as Chimera declared it before, with implicit offsets, against the offsets
-        // dispatch wrote then: frameCounter after the vec3's padding word, at 16.
-        String implicit = """
-                #version 450
-                layout(local_size_x = 1) in;
-                layout(std140, binding = 0) uniform ChimeraShadowComputeValues {
-                    vec3 cameraPosition;
-                    int frameCounter;
-                };
-                layout(rgba16f, binding = 1) uniform image3D target;
-                void main() {
-                    imageStore(target, ivec3(0), vec4(cameraPosition, float(frameCounter)));
-                }
-                """;
-        String mismatch = PackCompileTest.compileComputeValues(implicit, "ChimeraShadowComputeValues",
-                Map.of("cameraPosition", 0, "frameCounter", 16));
-        assertTrue(mismatch != null && mismatch.contains("frameCounter"),
-                "the offset check reports the implicit layout's frameCounter: " + mismatch);
     }
 
     /**
@@ -794,7 +720,8 @@ final class ComputePassTest {
      * Iris runs a shadowcomp pass's computes after the shadow pass (ShadowCompositeRenderer):
      * shadowcomp.csh, then shadowcomp_a..z, then shadowcomp1 and its own. They bind noise, custom
      * textures and images and the shadow maps, and no colour target, colorimg or depth texture
-     * (createComputes).
+     * (createComputes). shadowcomp.csh is a pass compute like every other: one that writes a pack
+     * image runs here, and one the pack points at a buffer dispatches from it.
      */
     @Test
     void shadowcompComputesRunAfterTheShadowPass(@TempDir Path root) throws IOException {
@@ -809,9 +736,21 @@ final class ComputePassTest {
                 layout(std430, binding = 0) buffer Counts { float total; };
                 void main() { total = texture(shadowcolor0, vec2(0.5)).r; }
                 """;
-        for (String name : List.of("shadowcomp", "shadowcomp_a", "shadowcomp1")) {
+        for (String name : List.of("shadowcomp_a", "shadowcomp1")) {
             Files.writeString(shaders.resolve(name + ".csh"), shadow);
         }
+        Files.writeString(shaders.resolve("shadowcomp.csh"), """
+                #version 430
+                layout(local_size_x = 1) in;
+                const ivec3 workGroups = ivec3(1, 1, 1);
+                uniform sampler2D shadowcolor0;
+                writeonly uniform image3D voxels;
+                layout(std430, binding = 0) buffer Counts { float total; };
+                void main() {
+                    total = texture(shadowcolor0, vec2(0.5)).r;
+                    imageStore(voxels, ivec3(0), vec4(total));
+                }
+                """);
         Files.writeString(shaders.resolve("shadowcomp1_a.csh"), """
                 #version 430
                 layout(local_size_x = 1) in;
@@ -819,12 +758,17 @@ final class ComputePassTest {
                 layout(rgba16f) uniform image2D colorimg2;
                 void main() { imageStore(colorimg2, ivec2(0), texture(colortex2, vec2(0.5))); }
                 """);
-        Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.0 = 16\n");
+        String properties = """
+                iris.features.optional=CUSTOM_IMAGES
+                image.voxels = voxelSampler rgba rgba16f half_float false false 8 4 8
+                bufferObject.0 = 16
+                """;
+        Files.writeString(shaders.resolve("shaders.properties"), properties);
         PackProbe.Analysis analysis = PackProbe.analyze(root);
         PassComputePlan computes = PassComputePlan.build(analysis.plan(), shaders);
         assertEquals(List.of("shadowcomp", "shadowcomp_a", "shadowcomp1", "shadowcomp1_a"),
                 computes.computes().stream().map(PassComputePlan.PassCompute::name).toList());
-        assertTrue(computes.compute("shadowcomp").supported()
+        assertTrue(computes.compute("shadowcomp").supported() && computes.compute("shadowcomp").indirect() == null
                 && analysis.report().program("shadowcomp").deviations().contains("PASS_COMPUTE_BRIDGE:shadowcomp"),
                 analysis.report().program("shadowcomp").deviations().toString());
         assertTrue(computes.compute("shadowcomp_a").supported() && PassComputePlan.isShadowcomp("shadowcomp1"),
@@ -834,6 +778,11 @@ final class ComputePassTest {
                 && unbound.deviations().contains("PASS_COMPUTE_SAMPLER_UNSUPPORTED:colortex2"),
                 unbound.deviations().toString());
         assertEquals(IrisSamplerOrder.SHADOWCOMP, IrisSamplerOrder.of("shadowcomp1", true));
+        Files.writeString(shaders.resolve("shaders.properties"), properties + "indirect.shadowcomp = 0 0\n");
+        PassComputePlan.PassCompute indirect = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .compute("shadowcomp");
+        assertTrue(indirect != null && indirect.supported() && indirect.indirect() != null,
+                indirect == null ? "missing" : indirect.deviations().toString());
     }
 
     /**
@@ -902,29 +851,22 @@ final class ComputePassTest {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
         Path vertex = shaders.resolve("composite1.vsh");
         Path fragment = shaders.resolve("composite1.fsh");
-        try {
-            Files.writeString(vertex, "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
-            Files.writeString(fragment, "#version 120\n" + harmless);
-            ConformanceReport report = PackProbe.probe(root);
-            assertTrue(report.shouldAttempt("composite1"),
-                    "MakeUp-style sampler helper must remain executable: "
-                            + report.program("composite1").deviations());
-            for (String declaration : List.of("layout(rgba8) uniform image2D resource;\n", storage)) {
-                Files.writeString(fragment, "#version 430\n" + declaration + "void main() { gl_FragColor = vec4(1.0);"
-                        + (declaration.contains("image2D") ? " imageStore(resource, ivec2(0), vec4(1.0));" : "")
-                        + " }\n");
-                report = PackProbe.probe(root);
-                assertTrue(report.program("composite1").deviations()
-                                .contains("ADVANCED_RESOURCE_UNSUPPORTED"),
-                        "unplanned real advanced resource was not flagged: " + declaration);
-                assertTrue(!report.shouldAttempt("composite1"),
-                        "unplanned real advanced resource was admitted");
-            }
-        } finally {
-            Files.deleteIfExists(fragment);
-            Files.deleteIfExists(vertex);
-            Files.deleteIfExists(shaders);
-            Files.deleteIfExists(root);
+        Files.writeString(vertex, "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+        Files.writeString(fragment, "#version 120\n" + harmless);
+        ConformanceReport report = PackProbe.probe(root);
+        assertTrue(report.shouldAttempt("composite1"),
+                "MakeUp-style sampler helper must remain executable: "
+                        + report.program("composite1").deviations());
+        for (String declaration : List.of("layout(rgba8) uniform image2D resource;\n", storage)) {
+            Files.writeString(fragment, "#version 430\n" + declaration + "void main() { gl_FragColor = vec4(1.0);"
+                    + (declaration.contains("image2D") ? " imageStore(resource, ivec2(0), vec4(1.0));" : "")
+                    + " }\n");
+            report = PackProbe.probe(root);
+            assertTrue(report.program("composite1").deviations()
+                            .contains("ADVANCED_RESOURCE_UNSUPPORTED"),
+                    "unplanned real advanced resource was not flagged: " + declaration);
+            assertTrue(!report.shouldAttempt("composite1"),
+                    "unplanned real advanced resource was admitted");
         }
     }
 }

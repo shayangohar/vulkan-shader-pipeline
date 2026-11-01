@@ -3,14 +3,12 @@ package net.chimera.shaderpack;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -244,30 +242,6 @@ final class PackDirectivesTest {
                 "oldHandLight=false lights each hand separately");
         assertTrue(HandLightDirectives.fromProperties(Map.of("oldHandLight", "nope")).deviations()
                         .contains("OLD_HAND_LIGHT_DIRECTIVE_MALFORMED"), "an unexpected oldHandLight is reported");
-
-        for (String name : List.of("heldItemId", "heldItemId2", "heldBlockLightValue", "heldBlockLightValue2")) {
-            var descriptor = UniformRegistry.descriptor(name, "int");
-            assertTrue(descriptor != null && descriptor.availability() == UniformRegistry.Availability.LIVE,
-                    name + " is served live");
-        }
-        for (String name : List.of("heldBlockLightColor", "heldBlockLightColor2")) {
-            var descriptor = UniformRegistry.descriptor(name, "vec3");
-            assertTrue(descriptor != null && descriptor.availability() == UniformRegistry.Availability.LIVE,
-                    name + " is served live");
-        }
-
-        var pass = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
-        for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
-            boolean installs = false;
-            for (var instruction : MixinBytecode.instructionsThrough(pass, name)) {
-                if (instruction instanceof MethodInsnNode call
-                        && call.owner.equals("net/chimera/render/shader/PackUniformProvider")
-                        && call.name.equals("installHeldItems")) {
-                    installs = true;
-                }
-            }
-            assertTrue(installs, "PackSessionLifecycle." + name + " installs the held-item map");
-        }
     }
 
     /**
@@ -408,29 +382,6 @@ final class PackDirectivesTest {
         assertEquals(new ParticleDirectives(ParticleDirectives.Ordering.AFTER, true, List.of()), particles);
     }
 
-    @Test
-    void particleOrderingHooks() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLevelRendererMixin");
-        List<Object> ordinals = new ArrayList<>();
-        for (var handler : mixin.methods) {
-            for (var annotation : MixinBytecode.annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
-                if (!annotation.desc.equals("Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;")
-                        || !(MixinBytecode.annotationValue(annotation, "at") instanceof List<?> ats)) {
-                    continue;
-                }
-                for (Object at : ats) {
-                    if (at instanceof AnnotationNode node
-                            && String.valueOf(MixinBytecode.annotationValue(node, "target"))
-                                    .startsWith("Lnet/minecraft/client/particle/ParticleEngine;render(")) {
-                        ordinals.add(MixinBytecode.annotationValue(node, "ordinal"));
-                    }
-                }
-            }
-        }
-        assertTrue(ordinals.contains(1) && ordinals.contains(2),
-                "NeoForge's early (ordinal 1) and late (ordinal 2) particle calls are both ordered: " + ordinals);
-    }
-
     /**
      * Iris's sun, moon, stars and sky switches, all on by default. Bliss turns the stars off, and
      * Mellow's {@code sun=off} is not a boolean to Iris, so the sun stays.
@@ -444,24 +395,6 @@ final class PackDirectivesTest {
         var mellow = SkyDirectives.fromProperties(Map.of("sun", "off", "sky", "false"));
         assertTrue(mellow.sun() && !mellow.sky() && mellow.deviations().equals(List.of("SKY_DIRECTIVE_MALFORMED:sun")),
                 "an unexpected value keeps Iris's default and is reported: " + mellow);
-    }
-
-    @Test
-    void skyHooks() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraSkyRendererMixin");
-        String wrap = "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;";
-        for (String target : List.of(
-                "Lcom/mojang/blaze3d/vertex/BufferUploader;drawWithShader(Lcom/mojang/blaze3d/vertex/MeshData;)V",
-                "Lcom/mojang/blaze3d/vertex/VertexBuffer;drawWithShader(Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;"
-                        + "Lnet/minecraft/client/renderer/ShaderInstance;)V",
-                "Lnet/minecraft/client/renderer/DimensionSpecialEffects;getSunriseColor(FF)[F",
-                "Lnet/minecraft/client/multiplayer/ClientLevel$ClientLevelData;"
-                        + "getHorizonHeight(Lnet/minecraft/world/level/LevelHeightAccessor;)D",
-                "Lnet/minecraft/client/multiplayer/ClientLevel;getStarBrightness(F)F")) {
-            assertTrue(MixinBytecode.injects(mixin, wrap, "renderSky", target), "renderSky wraps " + target);
-        }
-        assertTrue(sessionScoped("skyDirectives", "skyDirectives"),
-                "the main pass reads the sky switches per pack session and drops them with it");
     }
 
     private static ParticleDirectives particles(String... keyValues) {

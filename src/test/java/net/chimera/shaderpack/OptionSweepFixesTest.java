@@ -84,22 +84,6 @@ final class OptionSweepFixesTest {
     }
 
     /**
-     * Photon's sampler debug view declares {@code uniform sampler2D DEBUG_SAMPLER} with the macro
-     * defined as colortex1: the preprocessor expands the declaration, so it is colortex1.
-     */
-    @Test
-    void aSamplerDeclaredThroughAMacroIsTheSamplerItNames() {
-        String source = """
-                #define DEBUG_SAMPLER colortex1
-                uniform sampler2D DEBUG_SAMPLER;
-                void main() { gl_FragColor = texelFetch(DEBUG_SAMPLER, ivec2(0), 0); }
-                """;
-        String expanded = GlslMacroExpander.expand(source);
-        assertTrue(expanded.contains("uniform sampler2D colortex1;"), expanded);
-        assertTrue(expanded.contains("texelFetch(colortex1,"), expanded);
-    }
-
-    /**
      * Bliss RAYMARCH_CLOUDS_WITH_FOG: GetVolumetricFog samples the global {@code shadow} sampler,
      * then declares a {@code float shadow} in a later block. The local hides the sampler only
      * from its declaration to the end of that block.

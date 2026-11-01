@@ -50,13 +50,6 @@ final class TextureBindingStateTest {
     }
 
     @Test
-    void handBoundary() {
-        ChimeraMainPass.HandBoundaryPolicy handPolicy = ChimeraMainPass.handBoundaryPolicy();
-        assertTrue(handPolicy.loadColor() && handPolicy.clearDepth(),
-                "hand continuation must load color and clear depth");
-    }
-
-    @Test
     void shadowCompareSampler() {
         // The converted shadow image needs a compare-enabled sampler for
         // sampler2DShadow lookups, and only for those: a program that declares the
@@ -72,17 +65,5 @@ final class TextureBindingStateTest {
         assertEquals(GL_LEQUAL, compare.compareFunc(), "shadow sampler comparison operator");
         assertEquals(GL_CLAMP_TO_EDGE, compare.wrapS(), "shadow sampler wrap");
         assertEquals(GL_LINEAR, compare.minFilter(), "shadow sampler min filter");
-    }
-
-    @Test
-    void depthViewOverride() {
-        // A depth-only override is scoped to one image identity and cleared after
-        // the conversion draw; the host image keeps its own view.
-        ChimeraDepthViewOverride.bind(null, 4242L);
-        assertEquals(4242L, ChimeraDepthViewOverride.viewFor(null),
-                "bound depth view was not visible");
-        ChimeraDepthViewOverride.clear();
-        assertEquals(0L, ChimeraDepthViewOverride.viewFor(null),
-                "cleared depth view was still visible");
     }
 }

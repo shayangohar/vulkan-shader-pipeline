@@ -4,7 +4,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
 
@@ -35,64 +34,6 @@ final class WorldFamilyAdapterTest {
             printBaseline("families", PackProbe.analyze(supported).report());
             printBaseline("unsupported_families", PackProbe.analyze(unsupported).report());
         }
-    }
-
-    @Test
-    void registry() {
-        List<String> executable = List.of(
-                "gbuffers_entities_translucent",
-                "gbuffers_spidereyes",
-                "gbuffers_damagedblock",
-                "gbuffers_hand_water",
-                "gbuffers_particles_translucent",
-                "gbuffers_weather");
-        for (String name : executable) {
-            assertTrue(FamilyAdapterRegistry.isExecutableFamily(name),
-                    "family is not executable: " + name);
-        }
-        assertEquals(UniformRegistry.Stage.ENTITY,
-                FamilyAdapterRegistry.stageFor("gbuffers_entities_translucent"),
-                "translucent entity stage");
-        assertEquals(UniformRegistry.Stage.ENTITY,
-                FamilyAdapterRegistry.stageFor("gbuffers_spidereyes"),
-                "spider-eyes entity stage");
-        assertEquals(UniformRegistry.Stage.BLOCK,
-                FamilyAdapterRegistry.stageFor("gbuffers_damagedblock"),
-                "damaged block stage");
-        assertEquals(UniformRegistry.Stage.HAND,
-                FamilyAdapterRegistry.stageFor("gbuffers_hand_water"),
-                "water hand stage");
-        assertEquals(UniformRegistry.Stage.PARTICLE,
-                FamilyAdapterRegistry.stageFor("gbuffers_particles_translucent"),
-                "translucent particle stage");
-        assertEquals(UniformRegistry.Stage.PARTICLE,
-                FamilyAdapterRegistry.stageFor("gbuffers_weather"),
-                "weather stage");
-        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
-                FamilyAdapterRegistry.forProgram("gbuffers_entities_translucent").vertexContract(),
-                "translucent entity contract");
-        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
-                FamilyAdapterRegistry.forProgram("gbuffers_hand_water").vertexContract(),
-                "water hand contract");
-        assertEquals(FamilyAdapterPlan.VertexContract.HOST_PARTICLE,
-                FamilyAdapterRegistry.forProgram("gbuffers_weather").vertexContract(),
-                "weather contract");
-        assertEquals(56, ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
-                "entity stride");
-        assertEquals(48, ChimeraVertexFormats.EXTENDED_PARTICLE.getVertexSize(),
-                "particle stride");
-    }
-
-    @Test
-    void hostShadowDepthContract() throws IOException {
-        Path shader = Path.of("src/main/resources/assets/chimera/shaders/chimera_terrain/chimera_terrain.fsh");
-        String source = Files.readString(shader, StandardCharsets.UTF_8);
-        assertTrue(source.contains("projCoords.xy = projCoords.xy * 0.5 + 0.5"),
-                "host shadow must keep Vulkan zero-to-one Z");
-        assertTrue(source.contains("float storedDepth = 1.0 - texture(ShadowMap"),
-                "host shadow must convert reversed depth");
-        assertTrue(!source.contains("projCoords = projCoords * 0.5 + 0.5"),
-                "host shadow must not remap Z as OpenGL depth");
     }
 
     private static void verifySupported(Path fixture, Path baseline) throws IOException {

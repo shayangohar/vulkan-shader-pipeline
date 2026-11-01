@@ -46,8 +46,6 @@ final class SkyCloudAdapterTest {
                         .contains("layout(binding = 3)"),
                 "textured sky sampler did not use the geometry binding lane");
         assertNoUnstable(first.report().toJson(), fixture);
-        assertTrue(Files.isRegularFile(root.resolve("baselines/m8_5b.json")),
-                "baseline is missing");
     }
 
     /**

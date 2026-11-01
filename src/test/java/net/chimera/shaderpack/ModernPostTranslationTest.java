@@ -265,20 +265,8 @@ final class ModernPostTranslationTest {
         verifyMipmapDirectives(root);
     }
 
-    /** Iris ProgramDirectives: per program, in source order, legacy names included. */
+    /** A mipmap directive gives an allocated target a full chain, which its program regenerates. */
     private static void verifyMipmapDirectives(Path root) {
-        PostTargetPlan directives = PostTargetPlan.parse("composite", """
-                const bool colortex0MipmapEnabled = true;
-                const bool gaux2MipmapEnabled = true;
-                const bool colortex3MipmapEnabled = true;
-                const bool colortex3MipmapEnabled = false;
-                const bool colortex16MipmapEnabled = true;
-                // const bool colortex7MipmapEnabled = true;
-                /* RENDERTARGETS: 0 */
-                """).plan();
-        assertTrue(directives.mipmappedTargets().equals(List.of(0, 5)),
-                "mipmap directives: " + directives.mipmappedTargets());
-
         PackProbe.Analysis targetGraph = PackProbe.analyze(root.resolve("m7_4/target_graph"));
         String source = readFixture(
                 root.resolve("m7_4/target_graph/shaders/composite1.fsh"));

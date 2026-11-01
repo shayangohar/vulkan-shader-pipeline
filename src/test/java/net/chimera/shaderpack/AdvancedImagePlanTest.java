@@ -454,17 +454,6 @@ final class AdvancedImagePlanTest {
 
     @Test
     void advancedSamplerSourceRules() {
-        String boundedFetch = GlslTokenRewriter.rewriteTexelFetchBounds(
-                "vec4 value = texelFetch(lighttex, pos + ivec3(1, 0, 0), 0);",
-                Set.of("lighttex"));
-        assertTrue(boundedFetch.contains("clamp(pos + ivec3(1, 0, 0), ivec3(0)"),
-                "3D texelFetch was not bounded");
-        String boundedHelperFetch = GlslTokenRewriter.rewriteTexelFetchBounds(
-                "vec4 sample(sampler3D lighttex, ivec3 pos) {"
-                        + " return texelFetch(lighttex, pos, 0); }",
-                Set.of("lighttex"));
-        assertTrue(boundedHelperFetch.contains("textureSize(lighttex, 0) - ivec3(1)"),
-                "helper-function 3D texelFetch was not bounded");
         UniformRegistry.ProgramInterface shadowedSampler = UniformRegistry.planPrepared(
                 "uniform sampler2D specular;"
                         + "float readValue() { float specular = 1.0; return specular; }",
@@ -496,91 +485,6 @@ final class AdvancedImagePlanTest {
     }
 
     @Test
-    void packFinalHandSchedule() throws Exception {
-        Path mainSource = sourcePath("src/main/java/net/chimera/render/ChimeraMainPass.java");
-        Path handSource = sourcePath("src/main/java/net/chimera/mixin/ChimeraItemInHandRendererMixin.java");
-        Path depthSource = sourcePath("src/main/java/net/chimera/mixin/GameRendererDepthMixin.java");
-        String main = Files.readString(mainSource);
-        String hand = Files.readString(handSource);
-        String depth = Files.readString(depthSource);
-
-        assertTrue(!main.contains("finishPackFinalAfterHand"),
-                "final still has a late hand-return hook");
-        assertTrue(!main.contains("seedFinalPackInput")
-                        && !main.contains("nextFinalInputTarget")
-                        && !main.contains("commitFinalInput")
-                        && !main.contains("finalSeedPipeline"),
-                "obsolete host-composition seed path remains");
-        assertTrue(!hand.contains("finishPackFinalAfterHand"),
-                "hand mixin still owns pack final");
-        assertTrue(!depth.contains("finishPackFinalAfterHand"),
-                "depth mixin still owns pack final");
-        String schedule = Files.readString(sourcePath("src/main/java/net/chimera/render/ChimeraHandRenderer.java"));
-        String level = Files.readString(sourcePath("src/main/java/net/chimera/mixin/ChimeraLevelRendererMixin.java"));
-        assertTrue(schedule.contains("!pass.hasPackHandSchedule()")
-                        && depth.contains("if (!ChimeraHandRenderer.diverted()) renderer.renderHandsWithItems"),
-                "hand fallback must remain vanilla unless both pack phases are installed");
-        assertTrue(level.contains("stringValue=translucent") && level.contains("ChimeraHandRenderer.drawSolid();"),
-                "opaque pack hand must run before translucent terrain");
-        assertTrue(level.indexOf("ChimeraHandRenderer.drawTranslucent();")
-                        < level.indexOf("pass.finishLevelSegment();"),
-                "translucent pack hand must run before pack final");
-        // Hand models, items and maps flush in their family lanes, then glint in its own, all
-        // inside the hand scope that selects the hand lanes.
-        assertTrue(schedule.indexOf("renderHandsWithItems(") < schedule.indexOf("buffers.endFamilyBatches();")
-                        && schedule.indexOf("buffers.endFamilyBatches();") < schedule.indexOf("buffers.endBatch();")
-                        && schedule.indexOf("buffers.endBatch();") < schedule.indexOf("translucentPhase = null;"),
-                "hand submission and both flushes must share the hand scope");
-
-        int resolve = main.indexOf("resolvePackWorldToOutput(commandBuffer, hdrColor);");
-        int finalCall = main.indexOf("finishPackFinalBeforeHand();", resolve);
-        int returnIndex = main.indexOf("return;", finalCall);
-        assertTrue(resolve >= 0 && finalCall > resolve && returnIndex > finalCall,
-                "pack final is not ordered after world resolve and before hand");
-        assertEquals(1, count(main, "finishPackFinalBeforeHand();"),
-                "pack final must have one authoritative call site");
-    }
-
-    @Test
-    void legacyLavaFog() {
-        String source = "#version 120\nuniform vec3 fogColor;\n"
-                + "void DoLavaFog(inout vec4 color, float lViewPos) {\n"
-                + " float fog = (lViewPos * 3.0 - gl_Fog.start) * gl_Fog.scale;\n"
-                + " fog = clamp(1.0 - exp(-fog), 0.0, 1.0);\n"
-                + " color = mix(color, vec4(fogColor * 5.0, 0.0), fog);\n}\n"
-                + "void main() { vec4 color = vec4(1.0);"
-                + " DoLavaFog(color, 4.0); gl_FragColor = color; }\n";
-        LegacyShaderNormalizer.Result normalized = LegacyShaderNormalizer.normalize(source, false);
-        assertTrue(normalized.successful(), "DoLavaFog normalization failed");
-        UniformRegistry.ProgramInterface plan = UniformRegistry.planPreparedPost(
-                normalized.source(), PostTargetPlan.parse("composite", source).plan());
-        assertTrue(plan.executable()
-                        && plan.uniforms().contains(new UniformRegistry.UniformDeclaration("fogStart", "float"))
-                        && plan.uniforms().contains(new UniformRegistry.UniformDeclaration("fogEnd", "float")),
-                "DoLavaFog must retain both live environmental fog uniforms");
-
-        // Division exposes a missing outer pair of parentheses; multiplication alone does not.
-        LegacyShaderNormalizer.Result division = LegacyShaderNormalizer.normalize(
-                "float probe = 6.0 / gl_Fog.scale;", false);
-        assertTrue(division.successful(), "Fog scale division normalization failed");
-        String expression = division.source().substring(division.source().indexOf("=") + 1,
-                division.source().lastIndexOf(';')).trim();
-        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
-                PackRuntimeSettings.declaration(true, "float", "fogScaleProbe", expression)),
-                List.of());
-        assertTrue(settings.indexOf("fogScaleProbe") >= 0,
-                "Normalized fog scale expression is not evaluable");
-        PackRuntimeSettings.Session session = settings.newSession();
-        settings.evaluate((name, component) -> switch (name) {
-            case "fogStart" -> 2.0;
-            case "fogEnd" -> 8.0;
-            default -> throw new AssertionError("Unexpected fog dependency: " + name);
-        }, session, 0.05f);
-        assertEquals(36.0f, session.values()[settings.indexOf("fogScaleProbe")],
-                "gl_Fog.scale reciprocal lost expression precedence");
-    }
-
-    @Test
     void engineDefines() {
         String predicate = "#version 430 compatibility\n"
                 + "#if COLORED_LIGHTING > 0 && (!defined IS_IRIS || !defined IRIS_FEATURE_CUSTOM_IMAGES)\n"
@@ -602,22 +506,6 @@ final class AdvancedImagePlanTest {
                 Map.of("COLORED_LIGHTING", "128"), Set.of());
         assertTrue(noEngine.successful() && noEngine.source().contains("beginTextM"),
                 "negative engine-define predicate case is invalid");
-    }
-
-    private static Path sourcePath(String relative) {
-        Path direct = Path.of(relative);
-        if (Files.isRegularFile(direct)) return direct;
-        return Path.of("vulkan-shader-pipeline").resolve(relative);
-    }
-
-    private static int count(String value, String needle) {
-        int count = 0;
-        int offset = 0;
-        while ((offset = value.indexOf(needle, offset)) >= 0) {
-            count++;
-            offset += needle.length();
-        }
-        return count;
     }
 
     private static void assertNoAbsolutePaths(String value) {

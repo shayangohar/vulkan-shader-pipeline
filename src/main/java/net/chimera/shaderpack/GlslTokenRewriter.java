@@ -157,47 +157,6 @@ public final class GlslTokenRewriter {
     }
 
     /**
-     * Keeps legacy 3D texture reads inside the declared image volume. Iris
-     * packs commonly use camera-relative coordinates for these reads. Vulkan
-     * does not guarantee a safe result for an out-of-range texelFetch, so the
-     * bounded compute bridge makes the access explicit before shaderc sees it.
-     */
-    public static String rewriteTexelFetchBounds(String source, Set<String> samplerNames) {
-        if (source == null || source.isBlank() || samplerNames == null || samplerNames.isEmpty()) {
-            return source;
-        }
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        for (int index = tokens.size() - 1; index >= 0; index--) {
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.identifier("texelFetch")) {
-                continue;
-            }
-            int open = GlslLexer.nextSignificant(tokens, index);
-            int close = open < 0 ? -1 : GlslLexer.matching(tokens, open, "(", ")");
-            if (open < 0 || close < 0) {
-                throw new IllegalArgumentException("unbalanced texelFetch call");
-            }
-            List<int[]> arguments = argumentRanges(tokens, open + 1, close);
-            if (arguments.size() != 3) {
-                continue;
-            }
-            String sampler = singleIdentifier(tokens, arguments.get(0));
-            if (!samplerNames.contains(sampler)) {
-                continue;
-            }
-            String coordinate = argumentText(tokens, arguments.get(1));
-            String lod = argumentText(tokens, arguments.get(2));
-            String expression = "texelFetch(" + sampler + ", clamp(" + coordinate
-                    + ", ivec3(0), textureSize(" + sampler + ", 0) - ivec3(1)), " + lod + ")";
-            tokens.set(index, raw(expression));
-            for (int clear = index + 1; clear <= close; clear++) {
-                tokens.set(clear, raw(""));
-            }
-        }
-        return GlslLexer.render(tokens);
-    }
-
-    /**
      * Converts legacy shadow lookups to expressions using the declared sampler.
      * GLSL opaque sampler types cannot be function parameters, so this rewrite
      * deliberately emits an inline expression instead of a generated helper.

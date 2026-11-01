@@ -3,7 +3,6 @@ package net.chimera.shaderpack;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -20,7 +19,7 @@ import java.util.TreeMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The core family adapter registry. */
+/** The core family adapters. */
 final class CoreFamilyAdapterTest {
     @Test
     void coreFamilyAdapters() throws Exception {
@@ -31,45 +30,6 @@ final class CoreFamilyAdapterTest {
 
         verifySupported(supported, baseline);
         verifyUnsupported(unsupported, baseline);
-    }
-
-    @Test
-    void registry() {
-        assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_block"),
-                "block family is not executable");
-        assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_hand"),
-                "hand family is not executable");
-        assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_particles"),
-                "particle family is not executable");
-        // The sky family has its own bounded adapter rather than host fallback.
-        assertEquals(UniformRegistry.Stage.SKY,
-                FamilyAdapterRegistry.stageFor("gbuffers_skybasic"),
-                "sky stage");
-        assertEquals(UniformRegistry.Stage.BLOCK,
-                FamilyAdapterRegistry.stageFor("gbuffers_block"), "block stage");
-        // Iris TEXT_BE: a block entity's text draws with ProgramId.BlockTrans.
-        assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_block_translucent")
-                        && FamilyAdapterRegistry.isBlockFamily("gbuffers_block_translucent"),
-                "block-entity text program is not an executable block family");
-        assertEquals(UniformRegistry.Stage.BLOCK,
-                FamilyAdapterRegistry.stageFor("gbuffers_block_translucent"), "block-translucent stage");
-        assertEquals(UniformRegistry.Stage.HAND,
-                FamilyAdapterRegistry.stageFor("gbuffers_hand"), "hand stage");
-        assertEquals(UniformRegistry.Stage.PARTICLE,
-                FamilyAdapterRegistry.stageFor("gbuffers_particles"), "particle stage");
-        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
-                FamilyAdapterRegistry.forProgram("gbuffers_hand").vertexContract(),
-                "hand contract");
-        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
-                FamilyAdapterRegistry.forProgram("gbuffers_block").vertexContract(),
-                "block contract");
-        assertEquals(FamilyAdapterPlan.VertexContract.HOST_PARTICLE,
-                FamilyAdapterRegistry.forProgram("gbuffers_particles").vertexContract(),
-                "particle contract");
-        assertEquals(48, ChimeraVertexFormats.EXTENDED_PARTICLE.getVertexSize(),
-                "hand format stride");
-        assertEquals(56, ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
-                "entity format stride");
     }
 
     /** A pack's own gbuffers_block_translucent plans from its own file, into its own targets. */

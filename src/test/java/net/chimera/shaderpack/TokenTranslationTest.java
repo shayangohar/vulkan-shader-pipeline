@@ -2,8 +2,6 @@ package net.chimera.shaderpack;
 
 import org.junit.jupiter.api.Test;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -144,13 +142,6 @@ final class TokenTranslationTest {
         assertTrue(converted.indexOf("layout(location = 0) out") < converted.indexOf("void main"),
                 "generated output declaration follows its first use");
         assertTrue(!converted.contains("unusedUv"), "unused varying was retained");
-    }
-
-    @Test
-    void fixtureSources() throws Exception {
-        Path root = Path.of("testpacks/m7_2/translation");
-        assertTrue(Files.isRegularFile(root.resolve("composite.fsh")), "fixture is missing");
-        assertTrue(Files.isRegularFile(root.resolve("unsupported.fsh")), "fallback fixture is missing");
     }
 
     private static int count(String value, String needle) {

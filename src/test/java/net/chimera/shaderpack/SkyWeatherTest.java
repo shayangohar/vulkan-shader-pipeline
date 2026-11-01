@@ -16,7 +16,6 @@ import org.objectweb.asm.tree.MethodNode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Sky, weather and rain programs, the horizon, and the end portal hooks. */
+/** Sky, weather and rain programs, the horizon, the frame's fog colour, and the end portal hooks. */
 final class SkyWeatherTest {
     /**
      * Without a gbuffers_skybasic Iris draws the sky disc with its SKY_BASIC fallback, the sky colour
@@ -60,6 +59,19 @@ final class SkyWeatherTest {
     private static boolean callsDrawPackHorizon(String owner, String method) throws IOException {
         return MixinBytecode.instructionsThrough(MixinBytecode.nativeClass(owner), method).stream()
                 .anyMatch(insn -> insn instanceof MethodInsnNode call && call.name.equals("drawPackHorizon"));
+    }
+
+    /**
+     * Chimera's per-frame fogColor is this frame's, as the world clear finds it. The colour is latched
+     * before openLevelSegment, whose begin passes are a frame's first programs.
+     */
+    @Test
+    void theWorldClearLatchesTheFogColourFirst() throws IOException {
+        var calls = MixinBytecode.instructionsThrough(
+                MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLevelRendererMixin"), "chimera$openWorld").stream()
+                .filter(MethodInsnNode.class::isInstance).map(call -> ((MethodInsnNode) call).name).toList();
+        assertTrue(calls.contains("latchFogColor")
+                && calls.indexOf("latchFogColor") < calls.indexOf("openLevelSegment"), calls.toString());
     }
 
     /** The shadow pass hands renderSky back the shader vanilla set for the sky disc (Iris iris$beginSky). */
@@ -97,44 +109,38 @@ final class SkyWeatherTest {
         }
 
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        try {
-            String vertex = "#version 130\nflat out vec4 tint;\nout vec2 uv;\n"
-                    + "void main(){ tint=gl_Color; uv=gl_MultiTexCoord0.xy; gl_Position=ftransform(); }";
-            String fragment = "#version 130\nflat in vec4 tint;\nin vec2 uv;\n"
-                    + "void main(){gl_FragData[0]=tint+vec4(uv,0,0);}";
-            for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured")) {
-                Files.writeString(shaders.resolve(name + ".vsh"), vertex);
-                Files.writeString(shaders.resolve(name + ".fsh"), fragment);
-            }
-            Files.writeString(shaders.resolve("gbuffers_weather.vsh"), vertex);
-            Files.writeString(shaders.resolve("gbuffers_weather.fsh"), "/* RENDERTARGETS:12 */\n" + fragment);
-            Files.writeString(shaders.resolve("shaders.properties"), "blend.gbuffers_weather.colortex12=off\n");
-            var analysis = PackProbe.analyze(root);
-            for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_weather")) {
-                var plan = analysis.plan().program(name);
-                assertTrue(analysis.plan().shouldAttempt(name), name + " plan rejected: " + plan.deviations());
-                assertTrue(analysis.report().shouldAttempt(name),
-                        name + " report rejected: " + analysis.report().program(name).deviations());
-                assertTrue(PackCompileTest.compile(plan.convertedVertex(), true) == null, name + " vertex compile");
-                assertTrue(PackCompileTest.compile(plan.convertedFragment(), false) == null,
-                        name + " fragment compile");
-                assertTrue(plan.convertedFragment().matches("(?s).*\\b(?:flat\\s+in|in\\s+flat)\\s+vec4\\b.*"),
-                        name + " flat interpolation lost");
-            }
-            var weather = analysis.plan().program("gbuffers_weather");
-            assertEquals(List.of(12), weather.geometryOutputPlan().targetSlots(), "rain data route");
-            assertEquals(PackBlendPlan.Mode.OFF, weather.blendPlan().attachments(List.of(12))[0],
-                    "rain data blend override");
-            Files.writeString(shaders.resolve("gbuffers_skybasic.fsh"), "#version 130\n"
-                    + "uniform samplerCube unsupportedCube; void main(){gl_FragColor=texture(unsupportedCube,vec3(1));"
-                            + "}");
-            assertTrue(!PackProbe.analyze(root).plan().shouldAttempt("gbuffers_skybasic"),
-                    "sky admission bypassed resource validation");
-        } finally {
-            try (var files = Files.walk(root)) {
-                for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.delete(file);
-            }
+        String vertex = "#version 130\nflat out vec4 tint;\nout vec2 uv;\n"
+                + "void main(){ tint=gl_Color; uv=gl_MultiTexCoord0.xy; gl_Position=ftransform(); }";
+        String fragment = "#version 130\nflat in vec4 tint;\nin vec2 uv;\n"
+                + "void main(){gl_FragData[0]=tint+vec4(uv,0,0);}";
+        for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured")) {
+            Files.writeString(shaders.resolve(name + ".vsh"), vertex);
+            Files.writeString(shaders.resolve(name + ".fsh"), fragment);
         }
+        Files.writeString(shaders.resolve("gbuffers_weather.vsh"), vertex);
+        Files.writeString(shaders.resolve("gbuffers_weather.fsh"), "/* RENDERTARGETS:12 */\n" + fragment);
+        Files.writeString(shaders.resolve("shaders.properties"), "blend.gbuffers_weather.colortex12=off\n");
+        var analysis = PackProbe.analyze(root);
+        for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_weather")) {
+            var plan = analysis.plan().program(name);
+            assertTrue(analysis.plan().shouldAttempt(name), name + " plan rejected: " + plan.deviations());
+            assertTrue(analysis.report().shouldAttempt(name),
+                    name + " report rejected: " + analysis.report().program(name).deviations());
+            assertTrue(PackCompileTest.compile(plan.convertedVertex(), true) == null, name + " vertex compile");
+            assertTrue(PackCompileTest.compile(plan.convertedFragment(), false) == null,
+                    name + " fragment compile");
+            assertTrue(plan.convertedFragment().matches("(?s).*\\b(?:flat\\s+in|in\\s+flat)\\s+vec4\\b.*"),
+                    name + " flat interpolation lost");
+        }
+        var weather = analysis.plan().program("gbuffers_weather");
+        assertEquals(List.of(12), weather.geometryOutputPlan().targetSlots(), "rain data route");
+        assertEquals(PackBlendPlan.Mode.OFF, weather.blendPlan().attachments(List.of(12))[0],
+                "rain data blend override");
+        Files.writeString(shaders.resolve("gbuffers_skybasic.fsh"), "#version 130\n"
+                + "uniform samplerCube unsupportedCube; void main(){gl_FragColor=texture(unsupportedCube,vec3(1));"
+                        + "}");
+        assertTrue(!PackProbe.analyze(root).plan().shouldAttempt("gbuffers_skybasic"),
+                "sky admission bypassed resource validation");
     }
 
     /**
@@ -394,14 +400,6 @@ final class SkyWeatherTest {
         var sky = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer").methods.stream()
                 .filter(method -> method.name.equals("renderSky")).findFirst().orElseThrow();
         assertTrue(sunPathSeamPrecedesTimeTurn(sky), "re-audit the Iris celestial sun-path rotation seam");
-        float previousRotation = PackUniformProvider.currentSunPathRotation();
-        try {
-            PackUniformProvider.installSunPath(17.5F, 0.0F);
-            assertTrue(PackUniformProvider.currentSunPathRotation() == 17.5F,
-                    "native celestial geometry must use the pack sun-path rotation");
-        } finally {
-            PackUniformProvider.installSunPath(previousRotation, 0.0F);
-        }
     }
 
     /** True when the first pose rotation after the Y axis is read comes before the X axis is read. */

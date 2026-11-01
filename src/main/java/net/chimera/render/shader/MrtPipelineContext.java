@@ -156,11 +156,6 @@ public final class MrtPipelineContext {
         return locations == null ? SpirvOutputWrites.ALL : locations;
     }
 
-    public static int attachmentCount(int fallback) {
-        Contract contract = CURRENT.get();
-        return contract == null ? fallback : contract.formats().length;
-    }
-
     public static String describe() {
         int[] formats = colorFormats();
         return formats == null ? "inactive" : Arrays.toString(formats);

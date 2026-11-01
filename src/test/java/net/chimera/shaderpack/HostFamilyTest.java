@@ -4,6 +4,8 @@ import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.ChimeraEntityBridge.Family;
+import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.HostAlphaTest;
 import net.chimera.render.shader.HostLayoutLane;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -25,6 +27,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UINT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_SINT;
@@ -33,7 +36,10 @@ import static org.lwjgl.vulkan.VK10.VK_FORMAT_R32G32_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_SNORM;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
 
-/** Host program families: requested-family fallback, particles, lines, glint, host-layout lanes and hands. */
+/**
+ * Host program families: requested-family fallback, particles, lines, glint, host-layout lanes and hands,
+ * and the level samplers each draw reads.
+ */
 final class HostFamilyTest {
     /** The line lane's fragment stage, shared by the gbuffers_basic fallback and an authored gbuffers_line. */
     private static final String LINE_FRAGMENT = """
@@ -439,14 +445,6 @@ final class HostFamilyTest {
      * both segment ends, VIEW_SHRINK, +Z normal). Both compile on the host line layout.
      */
     @Test
-    void lineLane() {
-        assertTrue(HostLayoutLane.forDraw("rendertype_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL,
-                        HostLayoutLane.Pass.WORLD) == HostLayoutLane.LINE,
-                "lines and line strips (rendertype_lines) must route to gbuffers_line");
-        assertEquals(0.0F, HostLayoutLane.LINE.alphaReference(), "Iris LINES uses AlphaTests.OFF");
-    }
-
-    @Test
     void basicFallbackLine(@TempDir Path fallback) throws IOException {
         Path shaders = Files.createDirectory(fallback.resolve("shaders"));
         Files.writeString(shaders.resolve("gbuffers_basic.vsh"), """
@@ -627,8 +625,8 @@ final class HostFamilyTest {
         assertTrue(HostLayoutLane.forDraw("rendertype_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL,
                         HostLayoutLane.Pass.HAND) == null,
                 "a world-only lane must not take a first-person draw");
-        for (var lane : List.of(HostLayoutLane.LIGHTNING, HostLayoutLane.LEASH)) {
-            assertEquals(0.0F, lane.alphaReference(), "Iris LIGHTNING and LEASH use AlphaTests.OFF");
+        for (var lane : List.of(HostLayoutLane.LINE, HostLayoutLane.LIGHTNING, HostLayoutLane.LEASH)) {
+            assertEquals(0.0F, lane.alphaReference(), "Iris LINES, LIGHTNING and LEASH use AlphaTests.OFF");
         }
         assertEquals(0.0F, HostAlphaTest.reference("rendertype_beacon_beam", ChimeraEntityBridge.Family.BEACON_BEAM,
                 false), "Iris BEACON uses AlphaTests.OFF");
@@ -639,6 +637,50 @@ final class HostFamilyTest {
                 && !HostLayoutLane.TEXTURED.whiteAlbedo() && !HostLayoutLane.TEXTURED_COLOR.whiteAlbedo());
         assertTrue(HostLayoutLane.forDraw("position_tex", DefaultVertexFormat.POSITION_TEX,
                 HostLayoutLane.Pass.SHADOW) == HostLayoutLane.SHADOW_TEX, "Iris SHADOW_TEX in the shadow pass");
+    }
+
+    /**
+     * Iris registers its white pixel under lightmap where a draw's ShaderKey has no light input: a
+     * format without UV2, or a FULLBRIGHT key (IrisSamplers.addLevelSamplers, ShaderAttributeInputs).
+     * Miniature lights its lightning bolt by lightmap; on the real night lightmap the bolt drew purple.
+     */
+    @Test
+    void lanesReadTheLightmapExactlyWithLightCoordinates() {
+        for (var lane : List.of(HostLayoutLane.LIGHTNING, HostLayoutLane.LINE, HostLayoutLane.GLINT,
+                HostLayoutLane.HAND_GLINT, HostLayoutLane.TEXTURED, HostLayoutLane.TEXTURED_COLOR,
+                HostLayoutLane.SHADOW_LIGHTNING, HostLayoutLane.SHADOW_BASIC)) {
+            assertTrue(lane.whiteLightmap(), lane.name());
+        }
+        for (var lane : List.of(HostLayoutLane.WEATHER, HostLayoutLane.LEASH, HostLayoutLane.TEXT_BG,
+                HostLayoutLane.SHADOW_LEASH, HostLayoutLane.SHADOW_TEXT, HostLayoutLane.SHADOW_TEXT_BG)) {
+            assertFalse(lane.whiteLightmap(), lane.name());
+        }
+    }
+
+    /** The FULLBRIGHT keys Iris 1.21.1 picks: ENTITIES_EYES and _TRANS, BEACON and CRUMBLING. */
+    @Test
+    void fullbrightFamiliesReadWhite() {
+        for (Family family : List.of(Family.SPIDER_EYES, Family.BEACON_BEAM, Family.DAMAGED_BLOCK, Family.LIGHTNING)) {
+            assertTrue(ChimeraEntityBridge.whiteLightmap(family), family.name());
+        }
+        for (Family family : List.of(Family.ENTITY, Family.BLOCK, Family.HAND, Family.PARTICLE,
+                Family.SHADOW_ENTITIES)) {
+            assertFalse(ChimeraEntityBridge.whiteLightmap(family), family.name());
+        }
+    }
+
+    @Test
+    void skyAndCloudKeysHaveNoLight() {
+        for (VertexFormat format : List.of(DefaultVertexFormat.POSITION, DefaultVertexFormat.POSITION_COLOR,
+                DefaultVertexFormat.POSITION_TEX, DefaultVertexFormat.POSITION_TEX_COLOR,
+                DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL)) {
+            assertTrue(ChimeraSkyBridge.whiteLightmap(format), format.toString());
+        }
+        assertTrue(ChimeraSkyBridge.whiteAlbedo(DefaultVertexFormat.POSITION)
+                && ChimeraSkyBridge.whiteAlbedo(DefaultVertexFormat.POSITION_COLOR)
+                && !ChimeraSkyBridge.whiteAlbedo(DefaultVertexFormat.POSITION_TEX)
+                && !ChimeraSkyBridge.whiteAlbedo(DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL),
+                "SKY_BASIC reads a white albedo; SKY_TEXTURED and CLOUDS their texture");
     }
 
     /**

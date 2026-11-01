@@ -673,28 +673,6 @@ public final class PackPostTargets {
         Arrays.fill(this.previousSide, 0);
     }
 
-    static boolean isTargetAvailable(int target, boolean hdrIdentity, boolean[] written) {
-        return written != null && target >= 0 && target < TARGET_COUNT && target < written.length
-                && (target == 0 ? hdrIdentity || written[target] : written[target]);
-    }
-
-    static boolean areTargetsAvailable(List<Integer> targets, boolean hdrIdentity, boolean[] written) {
-        if (targets == null) return true;
-        for (int target : targets) if (!isTargetAvailable(target, hdrIdentity, written)) return false;
-        return true;
-    }
-
-    /** {@link #invalidateOutputs} over written flags: colortex0 keeps its last write. */
-    static void invalidateWrittenTargets(boolean[] written, List<Integer> targets) {
-        if (written == null || targets == null) return;
-        for (int target : targets) if (target > 0 && target < TARGET_COUNT
-                && target < written.length) written[target] = false;
-    }
-
-    static int bankAfterFinish(int activeBank, int destinationBank, boolean committed) {
-        return committed ? destinationBank : activeBank;
-    }
-
     static boolean deviceSupportsMrt(int attachments, int maxColorAttachments) {
         return attachments > 0 && maxColorAttachments > 0
                 && attachments <= Math.min(PackTargetGraphPlan.LOGICAL_ATTACHMENT_LIMIT, maxColorAttachments);

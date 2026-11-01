@@ -132,7 +132,7 @@ final class GlslDeclarationsTest {
     /**
      * Mipmap directives are Iris's line-based const directives (ConstDirectiveParser): one inside a
      * block comment counts, as Photon declares them, and one behind // does not. A later false
-     * removes an earlier true, in source order.
+     * removes an earlier true, in source order. colortex16 is past Iris's targets and is dropped.
      */
     @Test
     void mipmapDirectivesAreConstDeclarations() {
@@ -141,6 +141,7 @@ final class GlslDeclarationsTest {
                 const bool colortex3MipmapEnabled = true; // bloom
                 const bool gaux1MipmapEnabled = true;
                 const bool colortex3MipmapEnabled = false;
+                const bool colortex16MipmapEnabled = true;
                 /*
                 const bool colortex5MipmapEnabled = true;
                 */
@@ -243,6 +244,12 @@ final class GlslDeclarationsTest {
                 EntityDeclarations.removeEntityAttributes(
                         "in vec4 at_tangent; \n\n  attribute vec2 mc_Entity;\nin vec3 vaNormal;\n"));
         assertEquals("vec4(MidTexCoord, 0.0, 1.0)", EntityDeclarations.midTexCoordValue("in vec4 mc_midTexCoord;\n"));
+        // Iris's entity vertex format has no mc_Entity: GL reads the unbound default (0, 0, 0, 1).
+        String entity = EntityDeclarations.removeEntityAttributes(
+                "attribute vec4 mc_Entity;\nattribute vec2 mc_midTexCoord;\nvoid main() {}\n");
+        assertTrue(entity.contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);")
+                        && !entity.contains("mc_midTexCoord"),
+                "entity mc_Entity default:\n" + entity);
     }
 
     /**

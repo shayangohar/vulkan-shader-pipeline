@@ -1,11 +1,9 @@
 package net.chimera.shaderpack;
 
-import net.chimera.render.MaterialMapOwner;
 import net.chimera.render.PackResourceOwner;
 import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.testing.TestPacks;
 import net.vulkanmod.vulkan.shader.descriptor.UBO;
-import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.util.shaderc.Shaderc;
 
@@ -179,39 +177,6 @@ final class MaterialPlanTest {
         manifest.verify(new ArrayList<>(ordinary.descriptors()));
     }
 
-    @Test
-    void fallbackDispatch() throws Exception {
-        assertEquals("normals", MaterialMapOwner.MaterialMapKind.NORMALS.sampler(), "normals name");
-        assertEquals("_n", MaterialMapOwner.MaterialMapKind.NORMALS.suffix(), "normals suffix");
-        assertEquals(0xFFFF7F7F, MaterialMapOwner.MaterialMapKind.NORMALS.fallbackAbgr(),
-                "normals flat texel");
-        assertEquals("specular", MaterialMapOwner.MaterialMapKind.SPECULAR.sampler(), "specular name");
-        assertEquals("_s", MaterialMapOwner.MaterialMapKind.SPECULAR.suffix(), "specular suffix");
-        assertEquals(0x00000000, MaterialMapOwner.MaterialMapKind.SPECULAR.fallbackAbgr(),
-                "specular flat texel");
-        var constructor = VulkanImage.class.getDeclaredConstructor(
-                VulkanImage.Builder.class);
-        constructor.setAccessible(true);
-        VulkanImage normals = constructor.newInstance(
-                VulkanImage.builder(1, 1));
-        VulkanImage specular = constructor.newInstance(
-                VulkanImage.builder(1, 1));
-        MaterialMapOwner owner = MaterialMapOwner.withImages(normals, specular);
-        try {
-            assertTrue(owner.snapshot("normals").image() == normals, "normals resolved elsewhere");
-            assertTrue(owner.snapshot("specular").image() == specular, "specular resolved elsewhere");
-            boolean rejected = false;
-            try {
-                owner.snapshot("colortex0");
-            } catch (IllegalArgumentException expected) {
-                rejected = true;
-            }
-            assertTrue(rejected, "unknown material name did not fail loudly");
-        } finally {
-            owner.close();
-        }
-    }
-
     private static void verifyOwnerIgnoresMaterial(PackProbe.Analysis analysis) {
         PackResourceOwner owner = PackResourceOwner.load(analysis.plan().resources(), null, () -> null);
         try {
@@ -274,28 +239,38 @@ final class MaterialPlanTest {
         assertEquals(List.of(0, 3, 6), post.targetSlots(), "post compact digits");
     }
 
+    /**
+     * The m87_entity fixture's gbuffers_entities plans its material maps as servable bindings and
+     * keeps the executable single-target shape. Descriptor identity: the guarded family contract
+     * must carry the host transform blocks at bindings 0/1 with the converted preambles' fields,
+     * which the host fills by name, at the preambles' std140 sizes.
+     */
     @Test
-    void entityFamilyOutputPlans() throws Exception {
-        Path root = TestPacks.fixtures();
-        PackProbe.Analysis entities = PackProbe.analyze(root.resolve("m87_entity"));
-        PackProgramPlan plan = entities.plan().program("gbuffers_entities");
+    void entityFixturePlan() throws Exception {
+        PackProbe.Analysis analysis = PackProbe.analyze(TestPacks.fixtures().resolve("m87_entity"));
+        PackProgramPlan plan = analysis.plan().program("gbuffers_entities");
+        assertTrue(plan != null, "entity fixture program is missing");
         assertTrue(plan.executable(), "entity fixture not executable: " + plan.deviations());
+        Map<String, Integer> slots = new TreeMap<>();
+        plan.interfacePlan().effective(UniformRegistry.Stage.ENTITY).samplers()
+                .forEach(value -> slots.put(value.name(), value.slot()));
+        assertEquals(25, slots.get("normals"), "entity fixture normals slot");
+        assertEquals(26, slots.get("specular"), "entity fixture specular slot");
+        List<PackResourceBinding> bindings = analysis.plan().resources().bindings("gbuffers_entities");
+        for (String sampler : List.of("normals", "specular")) {
+            PackResourceBinding material = binding(bindings, sampler);
+            assertTrue(material.kind() == PackResourceKind.MATERIAL_MAP
+                    && material.status() == PackResourceStatus.MATERIAL_MAP
+                    && material.available(), "entity binding is not servable: " + sampler);
+        }
+        assertTrue(plan.deviations().stream().noneMatch(value ->
+                        value.contains("MATERIAL_MAP_DEFERRED") || value.contains("NOT_MAPPED")),
+                "entity material deviations: " + plan.deviations());
         // Single-output family plan keeps the executable single-target shape.
         assertTrue(plan.geometryOutputPlan() != null
                         && plan.geometryOutputPlan().targetSlots().equals(List.of(0)),
                 "entity single-target plan missing");
-    }
 
-    /**
-     * Descriptor identity: the guarded family contract must carry the
-     * host transform blocks at bindings 0/1 with the converted preambles'
-     * fields, which the host fills by name, at the preambles' std140 sizes.
-     */
-    @Test
-    void ordinaryTransformBlocks() throws Exception {
-        Path root = TestPacks.fixtures();
-        PackProgramPlan plan = PackProbe.analyze(root.resolve("m87_entity"))
-                .plan().program("gbuffers_entities");
         OrdinaryDescriptorContract ordinary = PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
         PackDescriptorLayout.UniformBlock dynamic = blockAt(ordinary, UniformRegistry.DYNAMIC_TRANSFORMS_BINDING);
         PackDescriptorLayout.UniformBlock projection = blockAt(ordinary, UniformRegistry.PROJECTION_BINDING);
@@ -332,15 +307,6 @@ final class MaterialPlanTest {
     private static int sizeOf(List<UBO> blocks, int binding) {
         return blocks.stream().filter(block -> block.getBinding() == binding).findFirst()
                 .orElseThrow(() -> new AssertionError("no built block at binding " + binding)).getSize();
-    }
-
-    @Test
-    void entitySamplerSlots() {
-        assertEquals(0, UniformRegistry.ENTITY_NAME_TO_SLOT.get("tex"), "tex alias slot");
-        assertEquals(SelectorNamespace.SHADOW_TEX1_SLOT,
-                UniformRegistry.ENTITY_NAME_TO_SLOT.get("shadowtex1"), "shadowtex1 slot");
-        assertEquals(SelectorNamespace.SHADOW_COLOR0_SLOT,
-                UniformRegistry.ENTITY_NAME_TO_SLOT.get("shadowcolor0"), "shadowcolor0 slot");
     }
 
     @Test

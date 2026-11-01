@@ -16,8 +16,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * with depth test EQUAL over the item: the two lanes must place each vertex bit for bit, which a
  * GPU inverse of ModelViewMat in one lane and the uniform in the other did not. The same expression
  * must also evaluate the same in both programs, which GLSL promises only for an invariant position.
+ * A stage that projects with the pack's gbufferProjection writes GL's clip range.
  */
 final class WorldMatrixLaneTest {
+    private static final String CONVERSION = "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);";
     private static final String POSITION = "vec3 world = mat3(gbufferModelViewInverse) * (ModelViewMat * ";
     private static final String VERTEX = """
             #version 330 compatibility
@@ -96,6 +98,84 @@ final class WorldMatrixLaneTest {
                 "clouds' ModelViewMat carries their scale, never gbufferModelView");
         var compiled = PackCompileTest.run(root, analysis);
         assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
+    }
+
+    /**
+     * A world stage that projects with the pack's gbufferProjection (Ebin's and Glimmer's
+     * gbuffers_main) writes GL's clip range and converts it once, after its authored entry point,
+     * with the host built-ins it reads taken into GL's range too. A stage that reads no pack
+     * projection keeps the host's matrices and depth.
+     */
+    @Test
+    void packProjectionStages(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        String projected = """
+                #version 330 compatibility
+                uniform mat4 gbufferProjection;
+                out vec4 color;
+                void main() {
+                    color = gl_Color;
+                    gl_Position = gbufferProjection * (gl_ModelViewMatrix * gl_Vertex);
+                }
+                """;
+        for (String program : new String[] {"gbuffers_terrain", "gbuffers_entities", "gbuffers_armor_glint"}) {
+            Files.writeString(shaders.resolve(program + ".vsh"), projected);
+            Files.writeString(shaders.resolve(program + ".fsh"), FRAGMENT);
+        }
+        // Reads the pack projection beside ftransform(): the host built-ins take GL's range too.
+        Files.writeString(shaders.resolve("gbuffers_block.vsh"), """
+                #version 330 compatibility
+                uniform mat4 gbufferProjection;
+                out vec4 color;
+                void main() {
+                    color = gl_Color * gbufferProjection[1][1] + gl_ProjectionMatrix[2];
+                    gl_Position = ftransform();
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_block.fsh"), FRAGMENT);
+        // Declares the pack projection and never reads it: the host's range, unchanged.
+        Files.writeString(shaders.resolve("gbuffers_textured.vsh"), """
+                #version 330 compatibility
+                uniform mat4 gbufferProjection;
+                out vec4 color;
+                void main() {
+                    color = gl_Color;
+                    gl_Position = ftransform();
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_textured.fsh"), FRAGMENT);
+
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        for (String program : new String[] {"gbuffers_terrain", "gbuffers_entities", "gbuffers_armor_glint"}) {
+            String vertex = convertedVertex(analysis, program);
+            assertTrue(vertex.contains("void " + WorldClipRange.AUTHORED_ENTRY + "()")
+                            && vertex.contains(WorldClipRange.AUTHORED_ENTRY + "();\n    " + CONVERSION)
+                            && occurrences(vertex, "gl_Position.z = ") == 1,
+                    program + " must convert GL's clip depth once, after its entry point: " + vertex);
+        }
+        String block = convertedVertex(analysis, "gbuffers_block");
+        assertTrue(block.contains("gl_Position = chimeraGlClip(chimeraEntityFtransform());")
+                        && block.contains("chimeraGlClip(ProjMat)[2]"),
+                "the host built-ins of a stage in GL's range must take GL's range: " + block);
+        String textured = convertedVertex(analysis, "gbuffers_textured");
+        assertTrue(!textured.contains("chimeraGlClip") && !textured.contains(WorldClipRange.AUTHORED_ENTRY),
+                "a stage that never reads a pack projection keeps the host's range: " + textured);
+
+        // Held glint keeps its one conversion and takes the hand family's ftransform().
+        String glint = convertedVertex(analysis, "gbuffers_armor_glint");
+        String hand = EntityVertexBridge.handGlintVertex(glint);
+        assertTrue(hand.contains("chimeraHandProjection() * ModelViewMat")
+                        && occurrences(hand, "gl_Position.z = ") == 1
+                        && !hand.contains("chimeraGlClip(chimeraEntityFtransform())"),
+                "hand glint in GL's range must not convert twice: " + hand);
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
+    }
+
+    private static int occurrences(String text, String part) {
+        int count = 0;
+        for (int at = text.indexOf(part); at >= 0; at = text.indexOf(part, at + part.length())) count++;
+        return count;
     }
 
     private static String convertedVertex(PackProbe.Analysis analysis, String name) {

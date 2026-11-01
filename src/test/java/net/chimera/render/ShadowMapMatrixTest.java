@@ -6,9 +6,6 @@ import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
-import java.util.Map;
-
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Matrix and snapshot-state checks for the pack shadow contract. */
@@ -51,10 +48,6 @@ final class ShadowMapMatrixTest {
         assertNear(-1.0F, projection.m23(), "w from -z");
         assertNear(121.91213F, projection.m32(), "depth offset for NEAR -100.05, FAR 156");
         assertNear(1.0F, projection.m33(), "Iris's w term");
-        var settings = new PackConfig.ShadowSettings(1024, 128.0F, Map.of("shadowMapFov", "70.0"), List.of());
-        assertTrue(settings.fieldOfView() != null && settings.fieldOfView() == 70.0F);
-        assertTrue(new PackConfig.ShadowSettings(1024, 128.0F, Map.of(), List.of()).fieldOfView() == null,
-                "orthographic without the directive");
     }
 
     /** Iris's ShadowMatrices baseline rotation, built independently of CelestialSnapshot. */

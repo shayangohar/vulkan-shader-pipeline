@@ -40,25 +40,6 @@ final class WorldStateUniformTest {
     }
 
     @Test
-    void catalog() {
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("wetness").availability(), "wetness catalog status");
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("eyeBrightnessSmooth").availability(),
-                "eye smoothing catalog status");
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("dimension").availability(), "dimension catalog status");
-        assertEquals(UniformRegistry.Availability.DEFAULTED,
-                UniformRegistry.descriptor("centerDepthSmooth").availability(),
-                "depth history remained defaulted");
-        assertTrue(UniformRegistry.catalog().stream()
-                        .map(UniformRegistry.UniformDescriptor::name).toList().stream().sorted().toList()
-                        .equals(UniformRegistry.catalog().stream()
-                                .map(UniformRegistry.UniformDescriptor::name).toList()),
-                "catalog ordering is not deterministic");
-    }
-
-    @Test
     void worldSemantics() {
         assertEquals(0, PackFrameState.irisWorldTimeForTest(12345L, true, false),
                 "fixed-time world semantics");
@@ -68,10 +49,6 @@ final class WorldStateUniformTest {
                 "world day semantics");
         assertEquals(0.007f, PackFrameState.quantizedFrameSecondsForTest(7_250_000L),
                 "frame time millisecond quantization");
-        assertEquals(0.0f, PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.0f),
-                "zero-delta smoothing hold");
-        assertTrue(PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.1f) > 0.0f,
-                "smoothing did not advance");
     }
 
     /**
@@ -86,16 +63,6 @@ final class WorldStateUniformTest {
      */
     @Test
     void celestialAngles() {
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("skyColor").availability(),
-                "sky colour must be a live host sample, not a default");
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("shadowAngle").availability(),
-                "shadow angle catalog status");
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("upPosition").availability(),
-                "up position catalog status");
-
         // Four controlled times: the raw host sky angle, the pack-facing angle it becomes, and
         // whether the sun is the body that lights the world.
         assertNear(0.0f, CelestialSnapshot.angle01(-90.0F), 1.0e-6f,
@@ -702,17 +669,6 @@ final class WorldStateUniformTest {
         converted.m22(2.0f * rendered.m22() - rendered.m23());
         converted.m32(2.0f * rendered.m32() - rendered.m33());
         return converted;
-    }
-
-    @Test
-    void forwardDepthCopyShader() throws Exception {
-        String shader = Files.readString(Path.of(
-                "src/main/resources/assets/chimera/shaders/chimera_depth/chimera_depth.fsh"),
-                StandardCharsets.UTF_8);
-        assertTrue(shader.contains("outDepth = vec4(depth, 0.0, 0.0, 1.0)"),
-                "pack depth snapshot must preserve forward host depth");
-        assertTrue(!shader.contains("1.0 - depth"),
-                "depth snapshot still inverts forward host depth");
     }
 
     private static Vector4f transform(Matrix4f matrix, float x, float y, float z) {

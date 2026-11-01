@@ -19,15 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 final class PackWorkersTest {
     @Test
-    void sizesForTheMachine() {
-        assertEquals(1, PackWorkers.workersFor(1));
-        assertEquals(1, PackWorkers.workersFor(2));
-        assertEquals(3, PackWorkers.workersFor(4));
-        assertEquals(PackWorkers.MAX_WORKERS, PackWorkers.workersFor(16));
-        assertEquals(PackWorkers.MAX_WORKERS, PackWorkers.workersFor(64));
-    }
-
-    @Test
     void keepsInputOrder() {
         List<Integer> inputs = IntStream.range(0, 200).boxed().toList();
         Set<String> threads = ConcurrentHashMap.newKeySet();

@@ -4,8 +4,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.mojang.blaze3d.vertex.VertexFormatElement;
-import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -20,6 +18,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -216,7 +215,6 @@ final class FixturePackTest {
         assertTrue(convertedFragment != null && convertedFragment.contains("layout(location = 0) in"),
                 "material fragment varying bridge failed");
 
-        assertExtendedFormat();
         // The version number no longer gates (GlslVersion); the legacy converter still refuses
         // modern syntax, which the modern terrain path converts, and GLSL ES.
         assertTrue(TerrainVertexBridge.convertTerrainVertex(
@@ -571,7 +569,6 @@ final class FixturePackTest {
                         + ") in float renderType"),
                 "water varying location was not shared");
 
-        assertExtendedFormat();
         verifyFixtureBaseline(report, baselinePath, "water");
     }
 
@@ -800,18 +797,28 @@ final class FixturePackTest {
         assertTrue(!config.colortexFormats().containsKey(9), "a shaders.properties format applied");
     }
 
-    private static void assertExtendedFormat() {
-        var format = ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
-        assertEquals(24, format.getVertexSize(), "terrain stride");
-        assertEquals(5, format.getElements().size(), "terrain attribute count");
-        for (int i = 3; i < 5; i++) {
-            var element = format.getElements().get(i);
-            assertEquals(VertexFormatElement.Type.INT,
-                    element.type(), "generic attribute type " + i);
-            assertEquals(VertexFormatElement.Usage.GENERIC,
-                    element.usage(), "generic attribute usage " + i);
-            assertEquals(1, element.count(), "generic attribute count " + i);
-        }
+    /** The report marks a compute-only program installed; a program that also draws waits for its own install. */
+    @Test
+    void passComputesLeaveADrawingProgramToItsInstall() {
+        ConformanceReport report = new ConformanceReport("fixture", false, List.of(), Map.of(), List.of(), List.of());
+        report.addProgram(program("composite4", List.of("compute", "fragment", "vertex")));
+        report.addProgram(program("setup", List.of("compute")));
+
+        report.markPassComputeInstalled("composite4");
+        report.markPassComputeInstalled("setup");
+
+        // Glimmer's composite4 runs its fog compute and then draws; the compute must not stand for the draw.
+        assertTrue(report.shouldAttempt("composite4"));
+        assertEquals(ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, report.program("composite4").runtime());
+        assertTrue(report.program("composite4").deviations().contains("PASS_COMPUTE_INSTALLED"));
+        assertFalse(report.shouldAttempt("setup"));
+        assertEquals(ConformanceReport.RuntimeDisposition.INSTALLED, report.program("setup").runtime());
+    }
+
+    private static ConformanceReport.ProgramReport program(String name, List<String> stages) {
+        return new ConformanceReport.ProgramReport(name, "post", "glsl", stages, Map.of(), List.of(), List.of(),
+                List.of(0), ConformanceReport.SupportStatus.SUPPORTED,
+                ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.of());
     }
 
     static ConformanceReport probe(Path pack) {

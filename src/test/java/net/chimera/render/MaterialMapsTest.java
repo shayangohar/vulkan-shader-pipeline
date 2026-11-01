@@ -1,23 +1,14 @@
 package net.chimera.render;
 
-import net.chimera.shaderpack.PackProbe;
-import net.chimera.shaderpack.PackProgramPlan;
-import net.chimera.shaderpack.PackResourceBinding;
-import net.chimera.shaderpack.PackResourceKind;
-import net.chimera.shaderpack.PackResourceStatus;
-import net.chimera.shaderpack.UniformRegistry;
-import net.chimera.testing.TestPacks;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeMap;
 
 import static net.chimera.render.MaterialMapFixtures.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -33,40 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * companions land in a recording fake factory.
  */
 final class MaterialMapsTest {
-    // ------------------------------------------------------------------
-    // Entity fixture: a supported gbuffers_entities program plans material maps
-    // ------------------------------------------------------------------
-
-    @Test
-    void entityFixturePlan() throws Exception {
-        Path root = TestPacks.fixtures();
-        PackProbe.Analysis analysis =
-                PackProbe.analyze(root.resolve("m87_entity"));
-        PackProgramPlan entities =
-                analysis.plan().program("gbuffers_entities");
-        assertTrue(entities != null, "entity fixture program is missing");
-        Map<String, Integer> slots = new TreeMap<>();
-        entities.interfacePlan()
-                .effective(UniformRegistry.Stage.ENTITY).samplers()
-                .forEach(value -> slots.put(value.name(), value.slot()));
-        assertEquals(25, slots.get("normals"), "entity fixture normals slot");
-        assertEquals(26, slots.get("specular"), "entity fixture specular slot");
-
-        List<PackResourceBinding> bindings =
-                analysis.plan().resources().bindings("gbuffers_entities");
-        for (String sampler : List.of("normals", "specular")) {
-            var binding = bindings.stream().filter(value -> value.sampler().equals(sampler))
-                    .findFirst()
-                    .orElseThrow(() -> new AssertionError("missing entity binding " + sampler));
-            assertTrue(binding.kind() == PackResourceKind.MATERIAL_MAP
-                    && binding.status() == PackResourceStatus.MATERIAL_MAP
-                    && binding.available(), "entity binding is not servable: " + sampler);
-        }
-        assertTrue(entities.deviations().stream().noneMatch(value ->
-                        value.contains("MATERIAL_MAP_DEFERRED") || value.contains("NOT_MAPPED")),
-                "entity material deviations: " + entities.deviations());
-    }
-
     // ------------------------------------------------------------------
     // Pixel policies
     // ------------------------------------------------------------------

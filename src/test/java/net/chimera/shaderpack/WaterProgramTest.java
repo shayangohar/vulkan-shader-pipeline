@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -84,17 +83,6 @@ final class WaterProgramTest {
         verifyRealPack(TestPacks.bsl(), "bsl");
     }
 
-    /** Structural check for the shared Vulkan builder; runtime captures verify its sampler. */
-    @Test
-    void depthSamplingContract() throws IOException {
-        String source = Files.readString(Path.of(
-                "src/main/java/net/chimera/render/PackDepthTargets.java"));
-        assertTrue(source.contains(".setLinearFiltering(false)")
-                        && !source.contains(".setLinearFiltering(true)")
-                        && source.contains(".setClamp(true)"),
-                "depthtex0/1/2 snapshots must use Iris nearest/clamp sampling");
-    }
-
     /** The water stage serves the terrain uniforms and its translucent inputs. */
     @Test
     void liveInterface() {
@@ -103,8 +91,6 @@ final class WaterProgramTest {
         assertTrue(water.executable(), "water interface is not executable: " + water.deviations());
         assertTrue(water.deviations().contains("LIVE_UNIFORM_BRIDGE"),
                 "water uniforms do not use the live bridge: " + water.deviations());
-        assertTrue(water.deviations().stream().noneMatch(value -> value.startsWith("TRANSLUCENT_FIXED")),
-                "water still reports the retired fixed uniform bridge: " + water.deviations());
         Map<String, Integer> expected = Map.of(
                 "texture", 0, "lightmap", 2, "shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT, "noisetex", 7,
                 "depthtex1", 12, "gaux2", 9);

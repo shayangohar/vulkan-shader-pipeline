@@ -279,9 +279,9 @@ final class EntityRealPackTest {
             String converted = prepared.vertex();
             assertTrue(converted.contains("chimeraAuthoredShadowMain();"),
                     pack + " shadow vertex has no clip-range wrapper");
-            assertTrue(converted.contains(
-                            "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);"),
-                    pack + " shadow vertex has no clip-range remap");
+            String remap = "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);";
+            assertTrue(converted.contains(remap) && converted.indexOf(remap) == converted.lastIndexOf(remap),
+                    pack + " shadow vertex must remap its clip range exactly once");
             assertTrue(!converted.contains("0.2 * gl_Position.z"),
                     pack + " converter duplicated the pack-authored shadow depth compression");
             assertTrue(converted.indexOf("chimeraAuthoredShadowMain();")

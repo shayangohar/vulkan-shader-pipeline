@@ -18,9 +18,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The translation defects the widened pack corpus found, each in the pack that showed it. */
 final class CorpusCompileFixesTest {
-    /** Kappa names a parameter after its lightDir uniform; the parameter and a local hide the uniform. */
+    /**
+     * Kappa names a parameter after its lightDir uniform; the parameter and a local hide the uniform.
+     * A struct member and a prototype's parameter are declarations, never references to the global.
+     */
     @Test
-    void aParameterOrLocalNamedLikeAUniformHidesIt() {
+    void aDeclarationNamedLikeAUniformHidesIt() {
         String source = """
                 float f(vec3 lightDir) { return lightDir.x; }
                 void main() { vec3 a = lightDir; { vec3 lightDir = a; a = lightDir; } a += lightDir + a.lightDir; }
@@ -29,12 +32,7 @@ final class CorpusCompileFixesTest {
                 float f(vec3 lightDir) { return lightDir.x; }
                 void main() { vec3 a = u.lightDir; { vec3 lightDir = a; a = lightDir; } a += u.lightDir + a.lightDir; }
                 """, GlslScopedReferences.replace(source, Map.of("lightDir", "u.lightDir")));
-    }
-
-    /** A struct member and a prototype's parameter are declarations, never references to the global. */
-    @Test
-    void membersAndPrototypeParametersKeepTheirNames() {
-        String source = """
+        String members = """
                 struct Light { vec3 lightDir; };
                 float f(vec3 lightDir);
                 void main() { for (int lightDir = 0; lightDir < 1; lightDir++) {} vec3 a = lightDir; }
@@ -43,7 +41,7 @@ final class CorpusCompileFixesTest {
                 struct Light { vec3 lightDir; };
                 float f(vec3 lightDir);
                 void main() { for (int lightDir = 0; lightDir < 1; lightDir++) {} vec3 a = u.lightDir; }
-                """, GlslScopedReferences.replace(source, Map.of("lightDir", "u.lightDir")));
+                """, GlslScopedReferences.replace(members, Map.of("lightDir", "u.lightDir")));
     }
 
     /** RedHat writes gl_FrontColor and gl_TexCoord[0]; Vulkan has no such built-in varyings. */
@@ -193,24 +191,11 @@ final class CorpusCompileFixesTest {
         assertEquals(List.of(3), parsed.plan().targetSlots(), parsed.deviations().toString());
     }
 
-    /** Insanity's RGB16 and Bloop's R16 targets have Vulkan images: RGB16 pads its alpha. */
-    @Test
-    void sixteenBitNormalizedTargetsAllocate(@TempDir Path root) throws IOException {
-        Path shaders = Files.createDirectories(root.resolve("shaders"));
-        PackConfig.PackConfigData config = PackConfig.parse(List.of(new PackProgram("deferred1",
-                "#version 120\nconst int colortex3Format = R16;\nconst int colortex4Format = RG16;\n"
-                        + "const int colortex6Format = RGB16;",
-                shaders.resolve("deferred1.fsh"), null, null)), shaders);
-        assertEquals(Map.of(3, 70, 4, 77, 6, 91), config.colortexFormats(), "R16, RG16 and RGBA16 UNORM");
-        assertEquals(Set.of(6), config.paddedAlphaTargets());
-        assertTrue(config.deviations().stream().noneMatch(value -> value.startsWith("POST_TARGET_FORMAT_UNSUPPORTED")),
-                config.deviations().toString());
-    }
-
     /**
      * Every format in Iris's InternalTextureFormat list has a target image, the integer ones too.
      * superDuperVanilla's RGB16_SNORM colortex1 had none, and every program writing it fell back;
-     * so did every program writing Noble's RGBA32UI colortex1.
+     * so did every program writing Noble's RGBA32UI colortex1. Insanity's RGB16 and Bloop's R16 are
+     * 16-bit UNORM images, and RGB16 pads its alpha.
      */
     @Test
     void everyIrisColourFormatHasATarget(@TempDir Path root) throws IOException {
@@ -219,7 +204,8 @@ final class CorpusCompileFixesTest {
                 Map.entry("RGBA16_SNORM", 109), Map.entry("R16_SNORM", 100), Map.entry("RG8_SNORM", 83),
                 Map.entry("RGB32F", 109), Map.entry("RGB565", 37), Map.entry("RGB9_E5", 97),
                 Map.entry("RGBA32UI", 107), Map.entry("R32UI", 98), Map.entry("RG16I", 82),
-                Map.entry("RGB8UI", 41), Map.entry("RGB10_A2UI", 68), Map.entry("R11F_G11F_B10F", 122));
+                Map.entry("RGB8UI", 41), Map.entry("RGB10_A2UI", 68), Map.entry("R11F_G11F_B10F", 122),
+                Map.entry("R16", 70), Map.entry("RG16", 77), Map.entry("RGB16", 91));
         Set<String> padded = Set.of("RGB8", "RGB8_SNORM", "RGB16", "RGB16_SNORM", "RGB16F", "RGB32F", "R3_G3_B2",
                 "RGB565", "RGB9_E5", "RGB8UI", "RGB8I", "RGB16UI", "RGB16I", "RGB32UI", "RGB32I");
         List<String> tokens = List.of("RGBA", "R8", "RG8", "RGB8", "RGBA8", "R8_SNORM", "RG8_SNORM", "RGB8_SNORM",

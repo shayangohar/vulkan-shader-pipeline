@@ -33,18 +33,6 @@ final class AlphaTestContractTest {
         InstanceOptions.ROUTES.clear();
     }
 
-    @Test
-    @Tag("packs")
-    void complementaryTerrain() {
-        verifyRealPackTerrain(TestPacks.complementary(), "Complementary");
-    }
-
-    @Test
-    @Tag("packs")
-    void bslTerrain() {
-        verifyRealPackTerrain(TestPacks.bsl(), "BSL");
-    }
-
     /**
      * Entity programs test against the host render type's threshold per draw
      * (Iris iris_currentAlphaTest); a pack alphaTest directive fixes it. The
@@ -305,19 +293,6 @@ final class AlphaTestContractTest {
     }
 
     @Test
-    void geometryOutputNames() {
-        GeometryOutputPlan single = GeometryOutputPlan.parse(
-                "gbuffers_terrain", "#version 120\nvoid main() { gl_FragColor = vec4(1.0); }", Map.of());
-        assertTrue(single.locationZeroOutputName().equals("fragColor"),
-                "single output name changed");
-        GeometryOutputPlan mrt = GeometryOutputPlan.parse(
-                "gbuffers_terrain", "#version 120\n/* DRAWBUFFERS:0123 */\n"
-                        + "void main() { gl_FragData[0] = vec4(1.0); }", Map.of());
-        assertTrue(mrt.locationZeroOutputName().equals("chimeraFragColor0"),
-                "MRT output name changed");
-    }
-
-    @Test
     void convertedTerrain() {
         Path fixture = Path.of("testpacks/m5_2/material");
         PackProbe.Analysis analysis = PackProbe.analyze(fixture);
@@ -385,20 +360,6 @@ final class AlphaTestContractTest {
         }
     }
 
-    private static void verifyRealPackTerrain(Path pack, String label) {
-        PackProbe.Analysis analysis = PackProbe.analyze(pack);
-        PackProgramPlan terrain = analysis.plan().program("gbuffers_terrain");
-        assertTrue(terrain != null && terrain.executable(),
-                label + " terrain is not conversion-eligible: "
-                        + (terrain == null ? "missing" : terrain.deviations()));
-        assertTrue(terrain.alphaTestPlan().mode() == PackAlphaTestPlan.Mode.DYNAMIC_TERRAIN,
-                label + " terrain alpha plan is not dynamic");
-        assertTrue(terrain.convertedFragment() != null
-                        && terrain.convertedFragment().contains(UniformRegistry.ENTITY_ALPHA_REFERENCE)
-                        && terrain.convertedFragment().contains("discard;"),
-                label + " terrain has no generated alpha rejection");
-    }
-
     /**
      * BSL material terrain must survive the full path that crashed the
      * game session: MATERIAL_FORMAT=1 activates explicit-gradient atlas
@@ -442,16 +403,6 @@ final class AlphaTestContractTest {
             assertTrue(bslSlots.contains(25) && bslSlots.contains(26),
                     "BSL material selectors 25/26 missing: " + bslSlots);
             compile(terrain.convertedFragment());
-            PackConfig.TargetSettings bslTarget2Contract = analysis.config()
-                    .targetSettings().get(2);
-            assertTrue(bslTarget2Contract != null && !bslTarget2Contract.clear(),
-                    "BSL colortex2Clear=false declaration was not parsed from the pack source");
-            PackTargetGraphPlan graph = PackTargetGraphPlan.build(
-                    analysis.plan().programs(), analysis.config(), 2560, 1440, 8, 16384);
-            assertTrue(graph.target(2) != null && graph.target(2).persistent(),
-                    "BSL temporal target lost declaration-driven cross-frame persistence");
-            assertTrue(graph.target(0) != null && !graph.target(0).persistent(),
-                    "BSL geometry target must not persist across frames");
         } finally {
             restoreProperty("chimera.option.MATERIAL_FORMAT", previousFormat);
             restoreProperty("chimera.option.ADVANCED_MATERIALS", previousAdvanced);

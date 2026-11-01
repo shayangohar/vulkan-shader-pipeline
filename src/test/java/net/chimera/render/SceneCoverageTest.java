@@ -25,11 +25,6 @@ final class SceneCoverageTest {
         state.beginPackWrite();
         state.abortPackWrite();
         assertTrue(state.writeCount() == 0, "aborted pack write must not commit");
-        assertTrue(PackCoverageState.seedPreservesCoverage(0.5f,
-                PackCoverageOwner.EMPTY_SENTINEL), "written coverage must be preserved");
-        assertTrue(!PackCoverageState.seedPreservesCoverage(
-                PackCoverageOwner.EMPTY_SENTINEL, PackCoverageOwner.EMPTY_SENTINEL),
-                "empty coverage must be seedable");
         String converted = FragmentConverter.withCoverageOutput(
                 "#version 460\nlayout(location = 0) out vec4 color;\n"
                         + "void main() { color = vec4(1.0); }\n");

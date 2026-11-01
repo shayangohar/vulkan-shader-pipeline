@@ -86,13 +86,9 @@ public final class ChimeraMainPass implements MainPass {
     final MaterialMapRuntime materials = new MaterialMapRuntime(this);
     final PackFamilyWindows windows = new PackFamilyWindows(this);
 
+    /** The host hand continues from loaded color with a fresh cleared depth. */
     private static final HandBoundaryPolicy HAND_BOUNDARY_POLICY =
             new HandBoundaryPolicy(true, true);
-
-    /** The host hand continues from loaded color with a fresh cleared depth. */
-    static HandBoundaryPolicy handBoundaryPolicy() {
-        return HAND_BOUNDARY_POLICY;
-    }
 
     static record HandBoundaryPolicy(boolean loadColor, boolean clearDepth) {}
 

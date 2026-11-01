@@ -240,15 +240,6 @@ final class SampledResourcePlanTest {
             PackProbe.Analysis unsupported
     ) throws IOException {
         String expected = Files.readString(baseline, StandardCharsets.UTF_8).trim();
-        if (expected.contains("TO_BE_FILLED")) {
-            System.out.println("[chimera] M7.5 supportedReport=" + supported.report().sha256());
-            System.out.println("[chimera] M7.5 supportedResource="
-                    + supported.plan().resources().fingerprint());
-            System.out.println("[chimera] M7.5 unsupportedReport=" + unsupported.report().sha256());
-            System.out.println("[chimera] M7.5 unsupportedResource="
-                    + unsupported.plan().resources().fingerprint());
-            return;
-        }
         assertTrue(expected.contains(supported.report().sha256()),
                 "supported report baseline mismatch");
         assertTrue(expected.contains(supported.plan().resources().fingerprint()),

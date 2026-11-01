@@ -11,6 +11,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
@@ -842,6 +843,25 @@ final class StorageBufferPlanTest {
                         && fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("fogEnd"))
                         && fogPlan.executable(),
                 "normalized fog values did not enter the live interface");
+        // Division exposes a missing outer pair of parentheses; multiplication alone does not.
+        LegacyShaderNormalizer.Result division = LegacyShaderNormalizer.normalize(
+                "float probe = 6.0 / gl_Fog.scale;", false);
+        assertTrue(division.successful(), "Fog scale division normalization failed");
+        String expression = division.source().substring(division.source().indexOf("=") + 1,
+                division.source().lastIndexOf(';')).trim();
+        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(true, "float", "fogScaleProbe", expression)),
+                List.of());
+        assertTrue(settings.indexOf("fogScaleProbe") >= 0,
+                "Normalized fog scale expression is not evaluable");
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> switch (name) {
+            case "fogStart" -> 2.0;
+            case "fogEnd" -> 8.0;
+            default -> throw new AssertionError("Unexpected fog dependency: " + name);
+        }, session, 0.05f);
+        assertEquals(36.0f, session.values()[settings.indexOf("fogScaleProbe")],
+                "gl_Fog.scale reciprocal lost expression precedence");
         // Iris's iris_FogParameters holds the fog colour, density, start, end and scale.
         LegacyShaderNormalizer.Result density = LegacyShaderNormalizer.normalize(
                 "void main() { gl_FragColor = vec4(gl_Fog.density); }", false);
@@ -879,8 +899,7 @@ final class StorageBufferPlanTest {
      * that is no number), as it skips a reserved index: Iris creates no buffer under that index.
      */
     @Test
-    void malformedDeclarationsCreateNoBuffer() throws IOException {
-        Path root = Files.createTempDirectory("chimera-malformed-buffer-");
+    void malformedDeclarationsCreateNoBuffer(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"),
                 "bufferObject.1=4 true 1.0\nbufferObject.2=big\nbufferObject.3=64 true wide 1.0\nbufferObject.4=64\n");
@@ -905,7 +924,7 @@ final class StorageBufferPlanTest {
      * screen (ShaderStorageBuffer.resizeIfRelative). Alpha Piscium declares bufferObject.1=4 true 1.0 1.0.
      */
     @Test
-    void relativeBuffersFollowTheScreen() throws IOException {
+    void relativeBuffersFollowTheScreen(@TempDir Path root) throws IOException {
         PackAdvancedResourcePlan.BufferSpec screen = StorageBufferDeclarations.parseBuffer(1, "4 true 1.0 1.0");
         PackAdvancedResourcePlan.BufferSpec tiles = StorageBufferDeclarations.parseBuffer(5, "16384 true 0.033 0.033");
         PackAdvancedResourcePlan.BufferSpec fixed = StorageBufferDeclarations.parseBuffer(2, "64 false 0.5 0.5 x");
@@ -937,7 +956,6 @@ final class StorageBufferPlanTest {
         assertTrue(StorageBufferDeclarations.parseBuffer(0, "6").supported()
                 && StorageBufferDeclarations.parseBuffer(1, "2 true 1.0 1.0").supported());
 
-        Path root = Files.createTempDirectory("chimera-relative-buffer-");
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.1=4 true 1.0 1.0\n");
         Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """

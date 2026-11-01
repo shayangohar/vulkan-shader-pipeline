@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.TargetSpec;
 import net.chimera.shaderpack.TargetStep;
 import org.junit.jupiter.api.Test;
@@ -17,58 +18,29 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Which pack post targets a pass may sample, and which persist across frames. */
 final class PackPostTargetsTest {
+    /** The bounded post target bridge: target directives, device MRT limits and output formats. */
     @Test
-    void availability() {
-        boolean[] unwritten = new boolean[4];
-        assertTrue(PackPostTargets.isTargetAvailable(0, true, unwritten),
-                "target 0 must use HDR identity before a pack write");
-        assertTrue(!PackPostTargets.isTargetAvailable(1, true, unwritten),
-                "target 1 must be unavailable before a pack write");
-        assertTrue(!PackPostTargets.isTargetAvailable(2, true, unwritten),
-                "target 2 must be unavailable before a pack write");
-        assertTrue(!PackPostTargets.isTargetAvailable(3, true, unwritten),
-                "target 3 must be unavailable before a pack write");
-        boolean[] targetZeroWritten = unwritten.clone();
-        targetZeroWritten[0] = true;
-        assertTrue(PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
-                "target 0 must become pack-owned after a successful write");
-        PackPostTargets.invalidateWrittenTargets(targetZeroWritten, List.of(0));
-        assertTrue(PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
-                "a skipped target 0 writer must leave the last pass's scene, not the pre-post HDR");
+    void targetBridge() {
+        PostTargetPlan.ParseResult route = PostTargetPlan.parse(
+                "composite", "#version 120\n/* RENDERTARGETS: 0,4,7 */\n"
+                        + "gl_FragData[0] = vec4(1.0);\n"
+                        + "gl_FragData[1] = vec4(0.5);\n"
+                        + "gl_FragData[2] = vec4(0.25);\n");
+        assert route.executable() : route.deviations();
+        assert route.plan().targetSlots().equals(List.of(0, 4, 7));
+        assert route.plan().targetForOutput(2) == 7;
 
-        boolean[] targetOneWritten = unwritten.clone();
-        targetOneWritten[1] = true;
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 1), true, targetOneWritten),
-                "written target 1 must remain available with HDR target 0");
-        assertTrue(!PackPostTargets.areTargetsAvailable(List.of(0, 2), true, targetOneWritten),
-                "target 2 must remain unavailable until written");
+        PostTargetPlan.ParseResult duplicate = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0,4,4 */");
+        assert duplicate.deviations().contains("POST_TARGET_DIRECTIVE_DUPLICATE:4");
 
-        boolean[] targetThreeWritten = targetOneWritten.clone();
-        targetThreeWritten[3] = true;
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 3), true, targetThreeWritten),
-                "a successful target 3 writer must make target 3 available");
-        PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(3));
-        assertTrue(!PackPostTargets.areTargetsAvailable(List.of(0, 3), true, targetThreeWritten),
-                "a skipped target 3 writer must invalidate target 3");
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, targetThreeWritten),
-                "an unrelated target 0 consumer must remain executable");
-        PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(1));
-        assertTrue(!PackPostTargets.isTargetAvailable(1, true, targetThreeWritten),
-                "invalidated auxiliary targets must remain unavailable until rewritten");
-        targetThreeWritten[3] = true;
-        assertTrue(PackPostTargets.isTargetAvailable(3, true, targetThreeWritten),
-                "a later successful write must restore target availability");
+        assert PackPostTargets.deviceSupportsMrt(4, 4);
+        assert !PackPostTargets.deviceSupportsMrt(5, 4);
 
-        // A failed destination bank does not change the committed source set.
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 1), true, targetOneWritten),
-                "failed destination bank must preserve committed targets");
-        assertTrue(PackPostTargets.bankAfterFinish(0, 1, false) == 0,
-                "runtime failure must not swap the destination bank");
-        assertTrue(PackPostTargets.bankAfterFinish(0, 1, true) == 1,
-                "successful finish must commit the destination bank");
-        PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(3));
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, targetThreeWritten),
-                "final fallback must resolve through target 0 when target 3 is unavailable");
+        Map<Integer, Integer> formats = Map.of(4, 37, 7, 109);
+        PostTargetPlan formatted = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0,4,7 */", formats).plan();
+        assert formatted.outputFormats().equals(List.of(37, 37, 109)); // colortex0 undeclared: RGBA8, as Iris
     }
 
     @Test

@@ -149,23 +149,6 @@ final class FrameScheduleTest {
                 "reloaded session exposed stale temporal state");
     }
 
-    @Test
-    void staticAvailability() {
-        boolean[] written = new boolean[PackTargetGraphPlan.MAX_TARGET + 1];
-        assertTrue(PackPostTargets.isTargetAvailable(0, true, written),
-                "target 0 HDR identity is unavailable");
-        assertTrue(!PackPostTargets.isTargetAvailable(1, true, written),
-                "target 1 is available before a write");
-        written[1] = true;
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 1), true, written),
-                "committed target set was rejected");
-        PackPostTargets.invalidateWrittenTargets(written, List.of(1));
-        assertTrue(!PackPostTargets.areTargetsAvailable(List.of(1), true, written),
-                "invalidated target remained available");
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, written),
-                "HDR identity was lost after target invalidation");
-    }
-
     private static void verifyUnsupported(Path path) {
         PackProbe.Analysis analysis = PackProbe.analyze(path);
         PackProgramPlan composite = analysis.plan().program("composite");
@@ -190,17 +173,8 @@ final class FrameScheduleTest {
     ) throws Exception {
         JsonObject baseline = JsonParser.parseString(
                 Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
-        String report = baseline.get("reportSha256").getAsString();
-        String scheduleHash = baseline.get("scheduleFingerprint").getAsString();
-        if ("TO_BE_FILLED".equals(report) || "TO_BE_FILLED".equals(scheduleHash)) {
-            System.out.println("[chimera] M7.7 reportSha256=" + analysis.report().sha256());
-            System.out.println("[chimera] M7.7 scheduleFingerprint=" + schedule.fingerprint());
-        }
-        if (!"TO_BE_FILLED".equals(report)) {
-            assertEquals(report, analysis.report().sha256(), "report baseline");
-        }
-        if (!"TO_BE_FILLED".equals(scheduleHash)) {
-            assertEquals(scheduleHash, schedule.fingerprint(), "schedule baseline");
-        }
+        assertEquals(baseline.get("reportSha256").getAsString(), analysis.report().sha256(), "report baseline");
+        assertEquals(baseline.get("scheduleFingerprint").getAsString(), schedule.fingerprint(),
+                "schedule baseline");
     }
 }

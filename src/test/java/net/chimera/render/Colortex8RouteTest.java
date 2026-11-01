@@ -2,7 +2,6 @@ package net.chimera.render;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackProbe;
@@ -86,24 +85,8 @@ final class Colortex8RouteTest {
         assertTrue(step != null && step.executable() && step.readTargets().contains(8)
                         && step.outputTargets().equals(List.of(0, 5)),
                 "colortex8 producer-chain step was not preserved");
-        assertEquals(8, PackResourcePlan.targetIndex("colortex8"),
-                "colortex8 logical identity changed");
         assertEquals(9, PackResourcePlan.targetIndex("colortex9"),
                 "colortex9 parser identity changed");
-
-        PackTemporalState temporal = new PackTemporalState();
-        temporal.beginFrame(true);
-        assertTrue(!temporal.currentAvailable(8),
-                "unwritten colortex8 became available before a producer");
-        temporal.seedCurrent(8);
-        assertTrue(temporal.currentAvailable(8),
-                "logical colortex8 validity state is not addressable");
-        temporal.abort();
-
-        boolean[] written = new boolean[PostTargetPlan.MAX_TARGET + 1];
-        written[8] = true;
-        assertTrue(PackPostTargets.isTargetAvailable(8, true, written),
-                "colortex8 availability helper rejected a committed target");
         assertEquals(first.report().toJson(), second.report().toJson(),
                 "Post-target-8 fixture report is not deterministic");
         assertEquals(graph.fingerprint(), PackTargetGraphPlan.build(
@@ -152,18 +135,6 @@ final class Colortex8RouteTest {
         PackConfig.FMT_TO_VK.forEach((token, format) ->
                 assertTrue(PackConfig.formatBytes(format) > 0,
                         "exact target format " + token + " has no texel size"));
-
-        MrtPipelineContext.begin(new int[8], 8);
-        MrtPipelineContext.end();
-        boolean rejectedNine = false;
-        try {
-            MrtPipelineContext.begin(new int[9], 8);
-        } catch (IllegalArgumentException expected) {
-            rejectedNine = true;
-        } finally {
-            MrtPipelineContext.end();
-        }
-        assertTrue(rejectedNine, "logical target growth changed the eight-attachment cap");
     }
 
     private static void verifyRealPack(Path path, String label, boolean requireComposite1) throws Exception {
@@ -263,16 +234,6 @@ final class Colortex8RouteTest {
     private static void verifyBaseline(Path path, PackProbe.Analysis analysis) throws Exception {
         JsonObject baseline = JsonParser.parseString(
                 Files.readString(path, StandardCharsets.UTF_8)).getAsJsonObject();
-        if ("TO_BE_FILLED".equals(baseline.get("reportSha256").getAsString())) {
-            PackTargetGraphPlan graph = PackTargetGraphPlan.build(
-                    analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
-                    1920, 1080, 8, 16384);
-            System.out.println("[chimera] Post-target-8 reportSha256=" + analysis.report().sha256());
-            System.out.println("[chimera] Post-target-8 graphFingerprint=" + graph.fingerprint());
-            System.out.println("[chimera] Post-target-8 resourceFingerprint="
-                    + analysis.plan().resources().fingerprint());
-            return;
-        }
         PackTargetGraphPlan graph = PackTargetGraphPlan.build(
                 analysis.plan().programs(), analysis.config(), analysis.plan().resources(),
                 1920, 1080, 8, 16384);

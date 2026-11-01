@@ -1,14 +1,17 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.PackRenderingPhase;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * The pack shadow pass draws each terrain layer with the program Iris's SodiumPrograms pick:
  * shadow_cutout for the cutout layers (SHADOW_CUTOUT) and shadow_water for the translucent layer
- * (SHADOW_TRANS) where the pack has them, shadow otherwise.
+ * (SHADOW_TRANS) where the pack has them, shadow otherwise. Each layer also reads its render stage.
  */
 final class ShadowTerrainProgramTest {
     @Test
@@ -36,5 +39,15 @@ final class ShadowTerrainProgramTest {
             assertEquals("shadow", PackShadowPass.shadowTerrainProgram(layer, "shadow", "shadow_cutout",
                     "shadow_water"), layer.name());
         }
+    }
+
+    @Test
+    void opaqueLayersReadTheSolidStage() {
+        // Sodium draws Iris's cutout pass in the solid layer call; VulkanMod merges solid blocks into cutout_mipped.
+        for (TerrainRenderType type : List.of(TerrainRenderType.SOLID, TerrainRenderType.CUTOUT_MIPPED,
+                TerrainRenderType.CUTOUT)) {
+            assertEquals(PackRenderingPhase.TERRAIN_SOLID, TerrainLayers.phase(type), type.name());
+        }
+        assertEquals(PackRenderingPhase.TERRAIN_TRANSLUCENT, TerrainLayers.phase(TerrainRenderType.TRANSLUCENT));
     }
 }

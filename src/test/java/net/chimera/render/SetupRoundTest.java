@@ -1,16 +1,24 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.PassComputePlan;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Device-free checks of a round of setup computes: order, held frames, the bound, and the next round. */
+/**
+ * Device-free checks of pass computes: when one skips a frame rather than dispatching, and a round of
+ * setup computes: order, held frames, the bound, and the next round.
+ */
 final class SetupRoundTest {
     private static final List<String> NAMES = List.of("setup", "setup1", "setup2");
+    private static final List<PassComputePlan.Binding> BINDINGS = List.of(
+            new PassComputePlan.Binding("colorimg3", 0, PassComputePlan.Kind.TARGET_IMAGE, 3, "rgba16f", null),
+            new PassComputePlan.Binding("counts", 1, PassComputePlan.Kind.STORAGE_BUFFER, 2, null, null));
 
     /**
      * Iris runs setup computes in order, in one batch: one that skips a frame holds the ones after
@@ -43,5 +51,31 @@ final class SetupRoundTest {
         List<String> ran = new ArrayList<>();
         assertEquals(List.of(), round.advance(NAMES, name -> ran.add(name)));
         assertEquals(NAMES, ran);
+    }
+
+    /** An image missing this frame skips the frame; a storage buffer has no image to miss. */
+    @Test
+    void aMissingImageSkipsTheFrame() {
+        PassComputePlan.PassCompute compute = compute(null);
+        assertEquals("colorimg3 has no image this frame",
+                PackPassComputes.frameGap(compute, binding -> binding != 0, 0L));
+        assertNull(PackPassComputes.frameGap(compute, binding -> binding == 0, 0L));
+    }
+
+    /**
+     * Counts past the buffer's end skip the frame, as glDispatchComputeIndirect dispatches nothing
+     * then; a relative buffer can be that small at one screen size and not another.
+     */
+    @Test
+    void indirectCountsPastTheBufferSkipTheFrame() {
+        PassComputePlan.PassCompute compute = compute(new PassComputePlan.Indirect(2, 20L));
+        assertEquals("indirect counts at 20 lie past bufferObject.2",
+                PackPassComputes.frameGap(compute, binding -> true, 31L));
+        assertNull(PackPassComputes.frameGap(compute, binding -> true, 20L + PassComputePlan.INDIRECT_COUNTS_BYTES));
+    }
+
+    private static PassComputePlan.PassCompute compute(PassComputePlan.Indirect indirect) {
+        return new PassComputePlan.PassCompute("composite_a", "composite", "void main() {}", new int[] {8, 8, 1},
+                null, null, indirect, BINDINGS, List.of(), List.of(), List.of());
     }
 }

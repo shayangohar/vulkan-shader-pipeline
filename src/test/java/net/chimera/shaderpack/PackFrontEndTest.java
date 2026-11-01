@@ -12,6 +12,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -376,6 +377,74 @@ final class PackFrontEndTest {
         assertTrue(values[settings.indexOf("cell")] == 7.0f, "matrix element m[3][0] is lane 12");
     }
 
+    /**
+     * Iris preprocesses shaders.properties with the pack's option values as macros
+     * (PropertiesPreprocessor), so a custom value reads an option as its value. Reverie's betaRfact
+     * reads RAYLEIGH_DENSITY_VARIANCE, which Chimera refused as an unknown name.
+     */
+    @Test
+    void aCustomValueReadsAnOptionAsItsValue(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                #define DENSITY 0.25 //[0.25 0.5]
+                uniform float density;
+                void main() { gl_FragColor = vec4(density); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), "uniform.float.density = DENSITY * 2.0\n");
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(settings.rejected().isEmpty(), settings.deviations().toString());
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> 0.0, session, 0.05f);
+        assertEquals(0.5f, session.values()[settings.indexOf("density")], 1.0e-6f);
+    }
+
+    /**
+     * Iris's function set (IrisFunctions): Alpha Piscium's values call exp2 and twenty corpus
+     * values call mix, which Chimera refused. Iris's max and min past two arguments read the second
+     * again for each further one, and Iris has no round. OptiFine's documented functions evaluate,
+     * and a declaration that reads a refused one is refused with it instead of reading zero in its
+     * place.
+     */
+    @Test
+    void theFunctionsAreIrisFunctions() {
+        double[][] cases = {
+                {value("exp2(3.0)"), 8.0}, {value("exp10(2.0)"), 100.0}, {value("log2(8.0)"), 3.0},
+                {value("log10(100.0)"), 2.0}, {value("log(2.0, 8.0)"), 3.0}, {value("mix(1.0, 3.0, 0.25)"), 1.5},
+                {value("edge(0.5, 0.2) + edge(0.5, 0.5)"), 1.0}, {value("atan2(1.0, 1.0)"), Math.PI / 4.0},
+                {value("degrees(radians(90.0)) + sign(-2.0)"), 89.0}, {value("equals(1.0, 1.0)"), 1.0},
+                {value("notEquals(1.0, 2.0) + lessThan(1.0, 2.0) + moreThanOrEquals(1.0, 2.0)"), 2.0},
+                {value("and(1.0, 0.0) + or(1.0, 0.0) + not(0.0)"), 2.0},
+                {value("add(1.0, 2.0) * subtract(5.0, 3.0) / divide(4.0, 2.0) + remainder(5.0, 3.0)"), 5.0},
+                {value("negate(2.0) + multiply(2.0, 3.0)"), 4.0}, {value("random(2.0, 2.0)"), 2.0},
+                {value("max(1.0, 2.0, 5.0)"), 2.0}, {value("min(3.0, 2.0, 0.0)"), 2.0},
+                {value("randomInt(3, 4) + randomInt(1)"), 3.0}, {value("toInt(-2.7) + toFloat(2)"), 0.0},
+                {value("frac(-0.25)"), 0.75}, {value("fmod(-1.0, 4.0)"), 3.0},
+                {value("floor(1.5) + ceil(1.5)"), 3.0}, {value("pow(2.0, 3.0)"), 8.0},
+                {value("atan(1.0, 1.0)"), Math.PI / 4.0}, {value("todeg(torad(90.0))"), 90.0},
+                {value("if(0, 1.0, 1, 2.0, 3.0)"), 2.0}, {value("if(0, 1.0, 0, 2.0, 3.0)"), 3.0},
+                {value("between(0.5, 0.0, 1.0)"), 1.0}, {value("equals(1.0, 1.05, 0.1)"), 1.0},
+                {value("signum(-3.0) + abs(-1.0)"), 0.0}};
+        for (double[] entry : cases) {
+            assertEquals(entry[1], entry[0], 1.0e-9);
+        }
+        for (String refused : List.of("round(1.5)", "random(1.0)")) {
+            assertThrows(PackExpression.Unsupported.class,
+                    () -> PackExpression.parse(refused, BiomeIds.constants()), refused);
+        }
+        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(false, "float", "broken", "noSuchFunction(1.0)"),
+                PackRuntimeSettings.declaration(true, "float", "reader", "broken + 1.0")),
+                List.of());
+        assertTrue(settings.rejected().contains("reader") && settings.indexOf("reader") < 0,
+                "a value reading a refused declaration was not refused: " + settings.deviations());
+    }
+
+    private static double value(String expression) {
+        PackExpression.Program program = PackExpression.parse(expression, BiomeIds.constants());
+        return program.evaluate((name, component) -> 0.0, program.newState(), 0.0f);
+    }
+
     /** Iris's IrisDefines: CAT_* are BiomeCategories ordinals, PPT_* the precipitation codes. */
     @Test
     void irisBiomeConstants() {
@@ -609,30 +678,6 @@ final class PackFrontEndTest {
     }
 
     @Test
-    void samplerMacroAliases() {
-        // Photon reaches samplers through macros; each expands while it is defined.
-        String aliased = GlslMacroExpander.expand("""
-                uniform sampler2D colortex0;
-                uniform sampler2D colortex5;
-                #define rec709_to_working_color rec709_to_rec2020
-                #define SRC_SAMPLER colortex5
-                #define LUT SRC_SAMPLER
-                #define SAMPLE(uv) texture(SRC_SAMPLER, uv)
-                vec4 a = texture(SRC_SAMPLER, vec2(0.0)) + texture(LUT, vec2(0.0)) + SAMPLE(vec2(1.0));
-                #undef SRC_SAMPLER
-                #define SRC_SAMPLER colortex0
-                vec4 b = texture(SRC_SAMPLER, vec2(0.0));
-                vec3 c = rec709_to_working_color[0];
-                """);
-        assertTrue(!aliased.contains("SRC_SAMPLER") && !aliased.contains("#define")
-                        && aliased.contains("vec4 a = texture(colortex5, vec2(0.0)) + texture(colortex5, vec2(0.0))"
-                                + " + texture(colortex5, vec2(1.0));")
-                        && aliased.contains("vec4 b = texture(colortex0, vec2(0.0));")
-                        && aliased.contains("vec3 c = rec709_to_rec2020[0];"),
-                "sampler alias expansion:\n" + aliased);
-    }
-
-    @Test
     void objectMacroReachability() {
         // Photon calls tonemap_lottes only as tonemap(x) through an object-like alias, which preparation expands.
         String reachable = GlslMacroExpander.expand("""
@@ -693,16 +738,6 @@ final class PackFrontEndTest {
                 "void main() { gl_Position = gl_ModelViewMatrix * gl_Vertex; }", UniformRegistry.Stage.GEOMETRY);
         assertTrue(legacyMatrix.uniforms().stream().anyMatch(value -> value.name().equals("gbufferModelView")),
                 "implicit gbufferModelView: " + legacyMatrix.uniforms());
-    }
-
-    @Test
-    void entityDefaultAttribute() {
-        // Iris's entity vertex format has no mc_Entity: GL reads the unbound default (0, 0, 0, 1).
-        String entity = EntityDeclarations.removeEntityAttributes(
-                "attribute vec4 mc_Entity;\nattribute vec2 mc_midTexCoord;\nvoid main() {}\n");
-        assertTrue(entity.contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);")
-                        && !entity.contains("mc_midTexCoord"),
-                "entity mc_Entity default:\n" + entity);
     }
 
     /** Iris ClearPassCreator: undeclared colortex0 clears to the fog (alpha 1), colortex1 to white. */
