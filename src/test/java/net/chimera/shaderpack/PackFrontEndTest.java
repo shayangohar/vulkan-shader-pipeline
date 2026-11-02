@@ -246,6 +246,21 @@ final class PackFrontEndTest {
                 "the 2D colortex6 must stay the target: " + target);
     }
 
+    /** Iris's clouds directive, with RedHat's clouds=false read as the "off" it means. */
+    @Test
+    void cloudsDirective(@TempDir Path root) throws IOException {
+        String[][] cases = {{"off", "off"}, {"false", "off"}, {"fast", "fast"}, {"fancy", "fancy"},
+                {"on", null}, {"true", null}};
+        for (int index = 0; index < cases.length; index++) {
+            Path shaders = Files.createDirectories(root.resolve("pack" + index).resolve("shaders"));
+            Files.writeString(shaders.resolve("composite.fsh"),
+                    "#version 130\nvoid main() { gl_FragData[0] = vec4(1.0); }\n");
+            Files.writeString(shaders.resolve("shaders.properties"), "clouds = " + cases[index][0] + "\n");
+            assertEquals(cases[index][1], PackProbe.analyze(shaders.getParent()).plan().cloudSetting(),
+                    "clouds=" + cases[index][0]);
+        }
+    }
+
     private static void assertSampling(Path root, String sampler, String filter, String wrap) {
         PackResourceBinding binding = PackProbe.analyze(root).plan().resources().binding("deferred", sampler);
         assertTrue(binding != null && binding.status() == PackResourceStatus.PACK_FILE

@@ -169,11 +169,14 @@ public record PackPlan(
     /**
      * Iris's {@code clouds} directive: "off", "fast" or "fancy", or null when
      * the pack leaves the player's setting alone (Iris logs and ignores other values).
+     * "false" also means "off": Iris and OptiFine ignore it, but RedHat v34 writes it to turn the
+     * vanilla clouds off, as it draws its own.
      */
     public String cloudSetting() {
         String value = settings.propertyValues().get("clouds");
         if (value == null) return null;
         String trimmed = value.trim();
+        if (trimmed.equals("false")) return "off";
         return trimmed.equals("off") || trimmed.equals("fast") || trimmed.equals("fancy") ? trimmed : null;
     }
 
