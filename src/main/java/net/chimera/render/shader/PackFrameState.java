@@ -462,14 +462,6 @@ final class PackFrameState {
         this.frameTimeCounter = wrapFrameTimeCounter(this.frameTimeCounter + this.frameTime);
     }
 
-    static int irisWorldTimeForTest(long dayTime, boolean fixedTime, boolean netherOrEnd) {
-        return fixedTime && !netherOrEnd ? 0 : (int) Math.floorMod(dayTime, 24000L);
-    }
-
-    static int irisWorldDayForTest(long dayTime) {
-        return (int) Math.floorDiv(dayTime, 24000L);
-    }
-
     static float quantizedFrameSecondsForTest(long elapsedNanos) {
         return (float) (Math.max(elapsedNanos, 0L) / 1_000_000L) / 1000.0f;
     }
@@ -646,12 +638,8 @@ final class PackFrameState {
             clearWorldState();
             return;
         }
-        long dayTime = level.getDayTime();
-        boolean netherOrEnd = level.dimension() == Level.NETHER
-                || level.dimension() == Level.END;
-        boolean fixedTime = level.dimensionType().hasFixedTime();
-        worldTime = irisWorldTimeForTest(dayTime, fixedTime, netherOrEnd);
-        worldDay = irisWorldDayForTest(dayTime);
+        worldTime = WorldClock.worldTime(level);
+        worldDay = WorldClock.worldDay(level.getDayTime());
         moonPhase = Math.floorMod(worldDay, 8);
         rainStrength = clamp(level.getRainLevel(partialTick), 0.0f, 1.0f);
         thunderStrength = clamp(level.getThunderLevel(partialTick), 0.0f, 1.0f);

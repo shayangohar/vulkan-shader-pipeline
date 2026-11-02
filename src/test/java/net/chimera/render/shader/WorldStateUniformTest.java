@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -41,11 +42,13 @@ final class WorldStateUniformTest {
 
     @Test
     void worldSemantics() {
-        assertEquals(0, PackFrameState.irisWorldTimeForTest(12345L, true, false),
-                "fixed-time world semantics");
-        assertEquals(12345, PackFrameState.irisWorldTimeForTest(12345L, true, true),
-                "Nether/End time semantics");
-        assertEquals(3, PackFrameState.irisWorldDayForTest(72000L),
+        assertEquals(6000, WorldClock.worldTime(25000L, OptionalLong.of(6000L), false),
+                "a fixed-time dimension reads its fixed time");
+        assertEquals(1000, WorldClock.worldTime(25000L, OptionalLong.of(18000L), true),
+                "the Nether and End read the day time");
+        assertEquals(1000, WorldClock.worldTime(25000L, OptionalLong.empty(), false),
+                "a dimension without fixed time reads the day time");
+        assertEquals(3, WorldClock.worldDay(72000L),
                 "world day semantics");
         assertEquals(0.007f, PackFrameState.quantizedFrameSecondsForTest(7_250_000L),
                 "frame time millisecond quantization");
