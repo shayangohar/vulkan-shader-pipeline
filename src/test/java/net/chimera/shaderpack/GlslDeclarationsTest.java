@@ -290,4 +290,21 @@ final class GlslDeclarationsTest {
                 void main() { gl_Position = vec4(vec2(0.0), vec4(0.0, 0.0, 0.0, 1.0).w, 1.0); }
                 """, converted);
     }
+
+    /** A parameter named after the attribute hides it, as Bloop's computeTBNMatrix(..., vec4 at_tangent) does. */
+    @Test
+    void unboundMaterialAttributesKeepParametersOfTheSameName() {
+        String converted = HostLayoutVertexBridge.unboundMaterialAttributes("""
+                #version 140
+                in vec4 at_tangent;
+                vec3 tangentOf(vec4 at_tangent) { return at_tangent.xyz; }
+                void main() { gl_Position = vec4(tangentOf(at_tangent), 1.0); }
+                """);
+        assertEquals("""
+                #version 140
+
+                vec3 tangentOf(vec4 at_tangent) { return at_tangent.xyz; }
+                void main() { gl_Position = vec4(tangentOf(vec4(0.0, 0.0, 0.0, 1.0)), 1.0); }
+                """, converted);
+    }
 }

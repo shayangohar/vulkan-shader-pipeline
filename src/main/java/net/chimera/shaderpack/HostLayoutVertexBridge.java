@@ -186,7 +186,8 @@ final class HostLayoutVertexBridge {
     /**
      * A host layout without mid-coordinates or tangents leaves those attributes unbound in
      * Iris, so GL reads its default (0, 0, 0, 1) cut to the declared type. The entity bridge maps
-     * both names onto its own inputs, so each reference becomes the value, not a constant.
+     * both names onto its own inputs, so each reference becomes the value, not a constant. A
+     * parameter or local of the same name keeps its own (Bloop's computeTBNMatrix(..., vec4 at_tangent)).
      */
     static String unboundMaterialAttributes(String source) {
         GlslTree tree = GlslTree.parse(source);
@@ -202,7 +203,7 @@ final class HostLayoutVertexBridge {
             removals.add(GlslDeclarations.remove(tree, variable.declaration()));
         }
         if (defaults.isEmpty()) return source;
-        return GlslTokenRewriter.replaceIdentifiers(GlslDeclarations.apply(source, removals), defaults);
+        return GlslScopedReferences.replace(GlslDeclarations.apply(source, removals), defaults);
     }
 
     public static final List<FamilyAdapterPlan.VertexContract> SKY_CONTRACTS = List.of(
