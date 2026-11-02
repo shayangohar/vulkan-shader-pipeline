@@ -86,6 +86,7 @@
     "ChimeraRenderTargetBlitMixin",
     "ChimeraNativeImageDownloadMixin",
     "ChimeraNativeImageClampMixin",
+    "ChimeraSpriteTransparentTexelsMixin",
     "ChimeraEmitterOcclusionMixin",
     "ChimeraModelCubeColorMixin",
     "ChimeraBulkNormalMixin",
