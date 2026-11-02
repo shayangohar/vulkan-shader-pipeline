@@ -19,6 +19,9 @@ import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_UNORM;
  * the albedo atlas layout, builds its mip chain by the map's own reduction, and makes the GPU images.
  */
 final class MaterialCompanionPixels {
+    /** The uploads of one material pump (MaterialMapRuntime.pumpMaterialMapBuilds), recorded together. */
+    static final TextureUploadBatch<VulkanImage> UPLOADS = new TextureUploadBatch<>(TextureUploadBatch.GRAPHICS_QUEUE);
+
     private MaterialCompanionPixels() {}
 
     static boolean detectLabPbr(MaterialMapOwner.ResourceLookup lookup) {
@@ -230,13 +233,15 @@ final class MaterialCompanionPixels {
     }
 
     /**
-     * Writes ABGR texels (RGBA bytes in memory) into one level region. VulkanMod copies them into
-     * its staging buffer during the call, so the buffer is freed as soon as it returns.
+     * Writes ABGR texels (RGBA bytes in memory) into one level region, inside the pump's batch when
+     * one is open. VulkanMod copies them into its staging buffer during the call, so the buffer is
+     * freed as soon as it returns.
      */
     private static void upload(VulkanImage image, int level, int x, int y, int width, int height, int[] pixels) {
         ByteBuffer buffer = MemoryUtil.memAlloc(pixels.length * Integer.BYTES);
         try {
             buffer.asIntBuffer().put(pixels);
+            UPLOADS.beforeUpload(image);
             image.uploadSubTextureAsync(level, width, height, x, y, 0, 0, width, buffer);
         } finally {
             MemoryUtil.memFree(buffer);
