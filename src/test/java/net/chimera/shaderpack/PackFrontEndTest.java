@@ -222,6 +222,30 @@ final class PackFrontEndTest {
                 "a short file must not upload: " + truncated);
     }
 
+    /**
+     * Photon's cloud noise: Iris keeps only the sampler name of {@code texture.deferred.colortex6.1},
+     * so the deferred stage's {@code sampler3D colortex6} reads the volume while the 2D colortex6
+     * stays the render target.
+     */
+    @Test
+    void aSuffixedRawTextureKeyNamesItsSampler(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("deferred.fsh"), "#version 130\nuniform sampler3D colortex6;\n"
+                + "in vec2 texcoord;\nvoid main() { gl_FragData[0] = texture(colortex6, vec3(texcoord, 0.5)); }\n");
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 130\nuniform sampler2D colortex6;\n"
+                + "in vec2 texcoord;\nvoid main() { gl_FragData[0] = texture(colortex6, texcoord); }\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "texture.deferred.colortex6.1 = image/worley.dat TEXTURE_3D R8 4 4 4 RED UNSIGNED_BYTE\n");
+        Files.write(Files.createDirectories(shaders.resolve("image")).resolve("worley.dat"), new byte[64]);
+        PackResourcePlan resources = PackProbe.analyze(root).plan().resources();
+        PackResourceBinding volume = resources.binding("deferred", "colortex6");
+        assertTrue(volume != null && volume.kind() == PackResourceKind.RAW_TEXTURE
+                && volume.status() == PackResourceStatus.PACK_FILE, "suffixed raw volume: " + volume);
+        PackResourceBinding target = resources.binding("composite", "colortex6");
+        assertTrue(target == null || target.kind() != PackResourceKind.RAW_TEXTURE,
+                "the 2D colortex6 must stay the target: " + target);
+    }
+
     private static void assertSampling(Path root, String sampler, String filter, String wrap) {
         PackResourceBinding binding = PackProbe.analyze(root).plan().resources().binding("deferred", sampler);
         assertTrue(binding != null && binding.status() == PackResourceStatus.PACK_FILE

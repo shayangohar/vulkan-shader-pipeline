@@ -312,14 +312,23 @@ public final class PackResourcePlan {
         return appliesTo(declaration, sampler.glslType()) ? declaration : null;
     }
 
-    /** The program stage's raw {@code texture.<stage>.<sampler>} entry for exactly this name and type. */
+    /**
+     * The program stage's raw {@code texture.<stage>.<sampler>} entry for exactly this name and type.
+     * Iris keeps only the sampler name of the key, so {@code texture.deferred.colortex6.1} is a
+     * volume for {@code sampler3D colortex6} beside the 2D target (Photon's cloud noise). The
+     * unsuffixed key sorts first.
+     */
     private static PackResourceDeclaration rawStageTexture(String program, UniformRegistry.SamplerBinding sampler,
                                                            Map<String, PackResourceDeclaration> declarations) {
         String stage = textureStage(program);
-        PackResourceDeclaration declaration = stage == null ? null
-                : declarations.get("texture." + stage + "." + sampler.name());
-        return declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE
-                && appliesTo(declaration, sampler.glslType()) ? declaration : null;
+        if (stage == null) return null;
+        for (PackResourceDeclaration declaration : declarations.values()) {
+            if (declaration.kind() == PackResourceKind.RAW_TEXTURE && declaration.stage().equals(stage)
+                    && declaration.sampler().equals(sampler.name()) && appliesTo(declaration, sampler.glslType())) {
+                return declaration;
+            }
+        }
+        return null;
     }
 
     /** A sampler the pack declares a texture for. */
