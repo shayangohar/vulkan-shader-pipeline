@@ -129,6 +129,31 @@ final class CorpusCompileFixesTest {
                 && renderPearl.contains("= chimera_unpackFloat2x16(0u)"), renderPearl);
     }
 
+    /** RedHat v34's final names a variable sample under DOF; GLSL reserves the word from 4.00. */
+    @Test
+    void laterKeywordsUsedAsNamesAreRenamedByVersion() {
+        String redHat = LegacyShaderNormalizer.normalize("""
+                #version 130
+                void main() { vec4 sample = vec4(0.0); sample += 1.0; gl_FragData[0] = sample; }
+                """, false).source();
+        assertTrue(redHat.contains("vec4 chimera_sample = vec4(0.0)") && redHat.contains("chimera_sample += 1.0")
+                && redHat.contains("= chimera_sample;"), redHat);
+        String qualifier = LegacyShaderNormalizer.normalize(
+                "#version 400\nsample in vec4 color;\nvoid main() {}\n", false).source();
+        assertTrue(qualifier.contains("sample in vec4 color;") && !qualifier.contains("chimera_"),
+                "a keyword the authored version has stays as written: " + qualifier);
+        // Glimmer writes storage blocks at #version 330: a keyword use stays as written.
+        String glimmer = LegacyShaderNormalizer.normalize("""
+                #version 330
+                layout(std430) buffer;
+                layout(std430) buffer Data { float value; };
+                layout(rgba8) uniform restrict writeonly image2D target;
+                void main() {}
+                """, false).source();
+        assertTrue(glimmer.contains("layout(std430) buffer;") && glimmer.contains("layout(std430) buffer Data")
+                && glimmer.contains("restrict writeonly image2D") && !glimmer.contains("chimera_"), glimmer);
+    }
+
     /** Escheridia's SSAO calls any(isnan(occlusion)) on a float; GLSL's any takes only a bvecN. */
     @Test
     void reductionsOverAScalarGetScalarOverloads() {

@@ -45,6 +45,18 @@ final class LegacyShaderNormalizer {
      * pack's copy is renamed.
      */
     private static final Map<String, Integer> LATE_BUILTINS = lateBuiltins();
+
+    /**
+     * Keywords GLSL 4.x added, each with its version. Before that version the word is an ordinary
+     * name, and a pack may use one (RedHat v34's final under DOF: {@code vec4 sample}). Iris
+     * compiles that source at #version 330, where the name is still free; the #version 460
+     * Chimera compiles at reserves it, so the pack's name is renamed. Packs below those versions
+     * also write the words as keywords (Glimmer's 330 {@code layout(std430) buffer} blocks), so
+     * only a use as a name is renamed ({@link #usedAsName}).
+     */
+    private static final Map<String, Integer> LATE_KEYWORDS = Map.of("sample", 400, "patch", 400,
+            "precise", 400, "coherent", 420, "restrict", 420, "readonly", 420, "writeonly", 420,
+            "atomic_uint", 420, "buffer", 430, "shared", 430);
     /** Interface types whose {@code T(0)} constructor is zero: scalars, vectors and matrices. */
     private static final Pattern ZEROABLE_TYPE = Pattern.compile(
             "(?:float|double|int|uint|bool|[biud]?vec[234]|d?mat[234](?:x[234])?)");
@@ -132,6 +144,30 @@ final class LegacyShaderNormalizer {
         }
     }
 
+    /** Renames each use as a name of a later keyword (LATE_KEYWORDS) that the authored version leaves free. */
+    private static void renameLateKeywords(List<GlslLexer.Token> tokens, int version) {
+        for (int index = 0; index < tokens.size(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.kind() == GlslLexer.Kind.IDENTIFIER && version < LATE_KEYWORDS.getOrDefault(token.text(), 0)
+                    && usedAsName(tokens, index)) {
+                tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, "chimera_" + token.text()));
+            }
+        }
+    }
+
+    /**
+     * Whether a word stands as a name: a symbol follows it ({@code sample = }, {@code sample;},
+     * {@code sample.rgb}, {@code f(sample)}). A keyword is followed by a word ({@code sample in},
+     * {@code buffer Block}, {@code restrict writeonly uniform}), apart from a struct or block
+     * brace and the default-layout declaration {@code layout(std430) buffer;}.
+     */
+    private static boolean usedAsName(List<GlslLexer.Token> tokens, int index) {
+        int next = GlslLexer.nextSignificant(tokens, index);
+        if (next < 0 || tokens.get(next).kind() != GlslLexer.Kind.SYMBOL || tokens.get(next).symbol("{")) return false;
+        int previous = GlslLexer.previousSignificant(tokens, index);
+        return !(tokens.get(next).symbol(";") && previous >= 0 && tokens.get(previous).symbol(")"));
+    }
+
     static Result normalize(String source, boolean vertexStage) {
         return normalize(source, vertexStage, false);
     }
@@ -154,6 +190,7 @@ final class LegacyShaderNormalizer {
             List<GlslLexer.Token> tokens = new ArrayList<>(split.tokens());
             int version = authoredVersion(split);
             renameLateBuiltinDefinitions(split, tokens, version);
+            renameLateKeywords(tokens, version);
             endLineCommentsAtTheirLine(tokens, version);
             Map<String, String> required = new TreeMap<>();
             String unsupportedField = rewriteFogFields(tokens, required);
