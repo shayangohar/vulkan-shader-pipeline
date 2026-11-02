@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -49,15 +50,15 @@ final class GlslDeclarationsTest {
         String main = "\nvoid main() { gl_Position = vec4(strength); }\n";
         IllegalArgumentException custom = assertThrows(IllegalArgumentException.class,
                 () -> EntityVertexFeatureCheck.rejectEntityVertexFeatures(
-                        "uniform highp float strength;" + main, false, false));
+                        "uniform highp float strength;" + main, false, false, Set.of()));
         assertEquals("unsupported entity vertex uniform: strength", custom.getMessage());
         IllegalArgumentException attribute = assertThrows(IllegalArgumentException.class,
                 () -> EntityVertexFeatureCheck.rejectEntityVertexFeatures(
                         "in highp vec3 mc_midTexCoord;\nvoid main() { gl_Position = vec4(mc_midTexCoord, 1.0); }\n",
-                        false, false));
+                        false, false, Set.of()));
         assertEquals("unsupported entity attribute: mc_midTexCoord", attribute.getMessage());
         EntityVertexFeatureCheck.rejectEntityVertexFeatures("uniform float unread;\nin vec2 mc_midTexCoord;\n"
-                + "void main() { gl_Position = vec4(mc_midTexCoord, 0.0, 1.0); }\n", false, false);
+                + "void main() { gl_Position = vec4(mc_midTexCoord, 0.0, 1.0); }\n", false, false, Set.of());
     }
 
     /** Core-profile names are read from the tree: a precision qualifier or trailing comment no longer hides one. */

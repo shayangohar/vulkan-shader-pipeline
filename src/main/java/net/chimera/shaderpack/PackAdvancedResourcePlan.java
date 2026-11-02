@@ -638,6 +638,12 @@ public final class PackAdvancedResourcePlan {
     public List<GraphicsImageBinding> graphicsImages(String program) {
         return graphicsImages.getOrDefault(program, List.of());
     }
+    /** The names {@code program}'s {@code stage} ("vertex", ...) declares the images it may store to under. */
+    public Set<String> storedImages(String program, String stage) {
+        int mask = StorageBufferDeclarations.stageMask(stage);
+        return graphicsImages(program).stream().filter(binding -> (binding.stageMask() & mask) != 0)
+                .map(GraphicsImageBinding::symbol).collect(Collectors.toUnmodifiableSet());
+    }
     public Map<String, List<GraphicsImageBinding>> graphicsImageReaders() {
         return graphicsImageReaders;
     }

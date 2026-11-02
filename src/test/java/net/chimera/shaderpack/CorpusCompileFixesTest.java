@@ -545,11 +545,11 @@ final class CorpusCompileFixesTest {
                 uniform sampler2D image0Sampler;
                 void main() { gl_Position = environment.sky; }
                 """;
-        EntityVertexFeatureCheck.rejectEntityVertexFeatures(vertex, true, true);
+        EntityVertexFeatureCheck.rejectEntityVertexFeatures(vertex, true, true, Set.of());
         IllegalArgumentException refused = assertThrows(
                 IllegalArgumentException.class, () -> EntityVertexFeatureCheck.rejectEntityVertexFeatures(
                         vertex.replace("uniform sampler2D image0Sampler;", "layout(rgba8) uniform image2D img;")
-                                .replace("environment.sky", "imageLoad(img, ivec2(0))"), true, true));
+                                .replace("environment.sky", "imageLoad(img, ivec2(0))"), true, true, Set.of()));
         assertTrue(refused.getMessage().contains("unsupported entity vertex"), refused.getMessage());
     }
 

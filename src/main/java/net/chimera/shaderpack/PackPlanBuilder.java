@@ -4,6 +4,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.function.Supplier;
 
@@ -914,6 +915,15 @@ public final class PackPlanBuilder {
             deviations.addAll(blendPlan.deviations());
             return blendPlan;
         }
+
+        /** The program's samplers as its vertex stage declares them, at the fragment's bindings, and its images. */
+        private EntityVertexBridge.VertexSamplerPlan vertexSamplerPlan(
+                UniformRegistry.ProgramInterfacePlan plan, UniformRegistry.Stage stage, String vertex) {
+            if (vertex == null) return null;
+            return new EntityVertexBridge.VertexSamplerPlan(plan.project("vertex", stage),
+                    PackPipelines.entitySamplerSlots(interfaceSlots(plan, stage)),
+                    advancedResources == null ? Set.of() : advancedResources.storedImages(name, "vertex"));
+        }
     }
 
     private static Map<String, Integer> postVaryingLocations(
@@ -972,18 +982,6 @@ public final class PackPlanBuilder {
                 || FamilyAdapterRegistry.isCloudFamily(name)
                 || name.equals("gbuffers_terrain")
                 || name.equals("gbuffers_water");
-    }
-
-
-    /** The program's samplers as its vertex stage declares them, at the fragment stage's bindings. */
-    private static EntityVertexBridge.VertexSamplerPlan vertexSamplerPlan(
-            UniformRegistry.ProgramInterfacePlan plan,
-            UniformRegistry.Stage stage,
-            String vertex
-    ) {
-        if (vertex == null) return null;
-        return new EntityVertexBridge.VertexSamplerPlan(plan.project("vertex", stage),
-                PackPipelines.entitySamplerSlots(interfaceSlots(plan, stage)));
     }
 
     private static int[] interfaceSlots(

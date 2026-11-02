@@ -335,7 +335,7 @@ public final class EntityVertexBridge {
         String beforeFeatures = EntityDeclarations.removeEntityIdDeclarations(stripped);
         EntityVertexFeatureCheck.rejectEntityVertexFeatures(
                 LegacyGlslConverter.stripUnusableUniformDeclarations(beforeFeatures, fragmentUniforms),
-                allowStorageBuffers, samplerPlan != null);
+                allowStorageBuffers, samplerPlan != null, samplerPlan == null ? Set.of() : samplerPlan.storageImages());
 
         EntityVaryingDeclarations vertexVaryings = parseEntityVaryingDeclarations(stripped, true);
         requireMatchingFragmentVaryings(vertexVaryings, fragmentSource);
@@ -756,9 +756,16 @@ public final class EntityVertexBridge {
 
     /**
      * The program's samplers as the vertex stage sees them: the stage projection and the
-     * program's ordered sampler slots, which fix each sampler's shared descriptor binding.
+     * program's ordered sampler slots, which fix each sampler's shared descriptor binding; and the
+     * pack images the vertex stage declares that the plan binds, which keep their declarations
+     * for the program's image binding (PackDescriptorContracts.bindStorageImages).
      */
-    public record VertexSamplerPlan(UniformRegistry.ProgramInterface vertexInterface, int[] slots) {}
+    public record VertexSamplerPlan(UniformRegistry.ProgramInterface vertexInterface, int[] slots,
+                                    Set<String> storageImages) {
+        public VertexSamplerPlan {
+            storageImages = Set.copyOf(storageImages);
+        }
+    }
 
     /**
      * Declares the vertex stage's samplers at the bindings the fragment stage uses for
