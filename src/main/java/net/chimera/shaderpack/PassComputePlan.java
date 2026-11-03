@@ -33,9 +33,11 @@ public final class PassComputePlan {
     /** Iris's setup computes, setup.csh and setup1..99.csh, each alone (ProgramSet: readProgramArray). */
     private static final Pattern SETUP_NAME = Pattern.compile("setup(?:[1-9]\\d?)?");
     private static final Pattern SHADOWCOMP_NAME = Pattern.compile("shadowcomp(?:[1-9]\\d?)?");
+    /** A work group size layout; its arguments may call a function, as min(gl_MaxComputeWorkGroupSize.x, N). */
     private static final Pattern LOCAL_SIZE = Pattern.compile(
-            "layout\\s*\\(([^)]*\\blocal_size_[xyz][^)]*)\\)\\s*in\\s*;");
-    private static final Pattern LOCAL_SIZE_AXIS = Pattern.compile("local_size_([xyz])\\s*=\\s*(\\d+)");
+            "layout\\s*\\(((?:[^()]|\\([^()]*\\))*\\blocal_size_[xyz](?:[^()]|\\([^()]*\\))*)\\)\\s*in\\s*;");
+    private static final Pattern LOCAL_SIZE_AXIS = Pattern.compile(
+            "local_size_([xyz])\\s*=\\s*((?:[^,()]|\\([^()]*\\))+)");
     private static final Pattern WORK_GROUPS = Pattern.compile("\\bconst\\s+ivec3\\s+workGroups\\s*=\\s*"
             + "ivec3\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)");
     private static final Pattern WORK_GROUPS_RENDER = Pattern.compile("\\bconst\\s+vec2\\s+workGroupsRender"
@@ -118,11 +120,16 @@ public final class PassComputePlan {
 
         /** Iris ComputeProgram.getWorkGroups for a screen of this size. */
         public int[] groups(int width, int height) {
+            return groups(width, height, localSize);
+        }
+
+        /** {@link #groups(int, int)} with the work group size the compiled module declares. */
+        public int[] groups(int width, int height, int[] moduleLocalSize) {
             if (workGroups != null) return workGroups.clone();
             float scaleX = workGroupsRender == null ? 1.0F : workGroupsRender[0];
             float scaleY = workGroupsRender == null ? 1.0F : workGroupsRender[1];
-            return new int[] {(int) Math.ceil(Math.ceil(width * scaleX) / localSize[0]),
-                    (int) Math.ceil(Math.ceil(height * scaleY) / localSize[1]), 1};
+            return new int[] {(int) Math.ceil(Math.ceil(width * scaleX) / moduleLocalSize[0]),
+                    (int) Math.ceil(Math.ceil(height * scaleY) / moduleLocalSize[1]), 1};
         }
     }
 
@@ -722,7 +729,11 @@ public final class PassComputePlan {
                     + work.declarations + LegacyGlslConverter.convertTextureCalls(text);
         }
 
-        /** The declared local size, unspecified axes 1; null with a deviation when there is none. */
+        /**
+         * The declared local size, unspecified axes 1, and 0 for an axis a constant expression
+         * sizes: the compiler folds it, and the module gives it (SpirvLocalSize). Null with a
+         * deviation when there is no size layout.
+         */
         private static int[] localSize(String text, Work work) {
             Matcher layout = LOCAL_SIZE.matcher(text);
             if (!layout.find()) {
@@ -731,7 +742,10 @@ public final class PassComputePlan {
             }
             int[] size = {1, 1, 1};
             Matcher axis = LOCAL_SIZE_AXIS.matcher(layout.group(1));
-            while (axis.find()) size[axis.group(1).charAt(0) - 'x'] = Integer.parseInt(axis.group(2));
+            while (axis.find()) {
+                String value = axis.group(2).strip();
+                size[axis.group(1).charAt(0) - 'x'] = value.matches("\\d+") ? Integer.parseInt(value) : 0;
+            }
             return size;
         }
 

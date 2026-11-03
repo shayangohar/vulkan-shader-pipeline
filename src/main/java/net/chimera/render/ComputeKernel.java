@@ -4,9 +4,11 @@ import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.SpirvLocalInitializer;
+import net.chimera.shaderpack.SpirvLocalSize;
 import net.chimera.shaderpack.UniformRegistry;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.Vulkan;
+import net.vulkanmod.vulkan.device.DeviceManager;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -33,6 +35,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.List;
 import java.util.Map;
@@ -77,6 +80,7 @@ final class ComputeKernel implements AutoCloseable {
     private long descriptorPool;
     private long pipelineLayout;
     private long pipeline;
+    private int[] localSize;
     private FrameSlot[] frames = new FrameSlot[0];
 
     /** One frame in flight's descriptor set and uniform block. */
@@ -99,6 +103,7 @@ final class ComputeKernel implements AutoCloseable {
         ByteBuffer code = compileSpirv(label, source);
         if (code == null) return null;
         ComputeKernel kernel = new ComputeKernel(label, descriptorTypes, uniformBufferSize);
+        kernel.localSize = SpirvLocalSize.of(code);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             if (kernel.build(stack, SpirvLocalInitializer.apply(code))) return kernel;
             LOGGER.warn("[chimera] {} pipeline build failed", label);
@@ -128,6 +133,9 @@ final class ComputeKernel implements AutoCloseable {
     }
 
     int frameCount() { return frames.length; }
+
+    /** The work group size the compiled module declares, as Iris reads it from GL; null when it declares none. */
+    int[] localSize() { return localSize == null ? null : localSize.clone(); }
 
     FrameSlot frame(int index) { return frames[index]; }
 
@@ -288,17 +296,33 @@ final class ComputeKernel implements AutoCloseable {
         return true;
     }
 
-    /** The module, freed by the caller; null, with the error logged, when compilation fails. */
+    /**
+     * The module, freed by the caller; null, with the error logged, when compilation fails.
+     * gl_MaxComputeWorkGroupSize is the device's limit, as a GL driver on it reports.
+     */
     private static ByteBuffer compileSpirv(String label, String source) {
         try {
             return GlslCompiler.compile(label, source, Shaderc.shaderc_glsl_compute_shader, options -> {
                 Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true);
                 Shaderc.shaderc_compile_options_set_auto_map_locations(options, true);
+                setWorkGroupLimits(options);
             });
         } catch (IllegalStateException failure) {
             LOGGER.warn("[chimera] {} shaderc compile failed: {}", label, failure.getMessage());
             return null;
         }
+    }
+
+    /** The device's maxComputeWorkGroupSize as shaderc's limits; shaderc's defaults before a device. */
+    private static void setWorkGroupLimits(long options) {
+        if (DeviceManager.deviceProperties == null) return;
+        IntBuffer size = DeviceManager.deviceProperties.limits().maxComputeWorkGroupSize();
+        Shaderc.shaderc_compile_options_set_limit(options, Shaderc.shaderc_limit_max_compute_work_group_size_x,
+                size.get(0));
+        Shaderc.shaderc_compile_options_set_limit(options, Shaderc.shaderc_limit_max_compute_work_group_size_y,
+                size.get(1));
+        Shaderc.shaderc_compile_options_set_limit(options, Shaderc.shaderc_limit_max_compute_work_group_size_z,
+                size.get(2));
     }
 
     @Override

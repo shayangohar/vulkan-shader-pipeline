@@ -325,7 +325,7 @@ final class PackPassComputes implements AutoCloseable {
         }
         PackVulkanBarriers.beforeCompute(commandBuffer, stack);
         compute.kernel().bind(commandBuffer, stack, frame, compute.plan().values());
-        dispatchGroups(commandBuffer, stack, compute.plan(), width, height);
+        dispatchGroups(commandBuffer, stack, compute, width, height);
         PackVulkanBarriers.afterCompute(commandBuffer, stack);
         for (VulkanImage image : written.keySet()) {
             VulkanImage.transitionLayout(stack, commandBuffer, image, VK_IMAGE_LAYOUT_GENERAL,
@@ -361,13 +361,16 @@ final class PackPassComputes implements AutoCloseable {
 
     /**
      * Dispatches the work groups the pack's indirect buffer holds, once earlier writes to it are
-     * visible, or Iris's work groups for this screen (ComputeProgram.dispatch).
+     * visible, or Iris's work groups for this screen (ComputeProgram.dispatch), over the work group
+     * size the compiled module declares.
      */
-    private void dispatchGroups(VkCommandBuffer commandBuffer, MemoryStack stack, PassComputePlan.PassCompute plan,
+    private void dispatchGroups(VkCommandBuffer commandBuffer, MemoryStack stack, Loaded compute,
                                 int width, int height) {
+        PassComputePlan.PassCompute plan = compute.plan();
         PassComputePlan.Indirect indirect = plan.indirect();
         if (indirect == null) {
-            int[] groups = plan.groups(width, height);
+            int[] moduleSize = compute.kernel().localSize();
+            int[] groups = plan.groups(width, height, moduleSize != null ? moduleSize : plan.localSize());
             vkCmdDispatch(commandBuffer, groups[0], groups[1], groups[2]);
             return;
         }

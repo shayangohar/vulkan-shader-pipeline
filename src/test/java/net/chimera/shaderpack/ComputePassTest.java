@@ -1,11 +1,15 @@
 package net.chimera.shaderpack;
 
+import net.chimera.render.shader.GlslCompiler;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.util.shaderc.Shaderc;
 import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -632,6 +636,43 @@ final class ComputePassTest {
         assertTrue(analysis.report().program("composite4").deviations().stream()
                 .noneMatch(deviation -> deviation.startsWith("PASS_COMPUTE_")),
                 analysis.report().program("composite4").deviations().toString());
+    }
+
+    /**
+     * RenderPearl 2.8's composite3_b sizes its work group with a constant expression,
+     * {@code min(gl_MaxComputeWorkGroupSize.x, LL_CAPACITY)}. Iris reads the size GL folds from it;
+     * the compute runs, and its module declares the folded size.
+     */
+    @Test
+    void aWorkGroupSizedByAnExpressionRuns(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst int colortex2Format = RGBA16F;\n"
+                + "uniform sampler2D colortex0;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = texture2D(colortex0, vec2(0.5));\n}\n");
+        Files.writeString(shaders.resolve("composite3.csh"), """
+                #version 430
+                #define LL_CAPACITY 5120
+                layout(local_size_x = min(gl_MaxComputeWorkGroupSize.x, LL_CAPACITY), local_size_y = 1) in;
+                const ivec3 workGroups = ivec3(1, 1, 1);
+                layout(rgba16f) uniform image2D colorimg2;
+                void main() { imageStore(colorimg2, ivec2(gl_LocalInvocationID.xy), vec4(1.0)); }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PassComputePlan.PassCompute compute = PassComputePlan.build(analysis.plan(), shaders).compute("composite3");
+        assertTrue(compute.supported(), compute.deviations().toString());
+        assertTrue(Arrays.equals(new int[] {0, 1, 1}, compute.localSize()), Arrays.toString(compute.localSize()));
+        assertTrue(Arrays.equals(new int[] {1, 1, 1}, compute.groups(2560, 1440)));
+        ByteBuffer module = GlslCompiler.compile("composite3.csh", compute.source(),
+                Shaderc.shaderc_glsl_compute_shader, options -> {
+                    Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true);
+                    Shaderc.shaderc_compile_options_set_auto_map_locations(options, true);
+                });
+        try {
+            assertTrue(Arrays.equals(new int[] {1024, 1, 1}, SpirvLocalSize.of(module)),
+                    Arrays.toString(SpirvLocalSize.of(module)));
+        } finally {
+            MemoryUtil.memFree(module);
+        }
     }
 
     /**
