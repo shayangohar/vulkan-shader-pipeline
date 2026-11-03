@@ -58,8 +58,8 @@ public final class GlslInterfaceScanner {
 
         /** Whether the variable holds integers, which a fragment input must take {@code flat}. */
         public boolean integral() {
-            return type.equals("int") || type.equals("uint")
-                    || type.startsWith("ivec") || type.startsWith("uvec");
+            return type.equals("int") || type.equals("uint") || type.startsWith("ivec") || type.startsWith("uvec")
+                    || type.matches("u?int16_t|[iu]16vec[234]");
         }
 
         /** {@code name} or {@code name[N]}, as the declarator is written; a per-vertex input keeps its {@code []}. */
@@ -462,16 +462,19 @@ public final class GlslInterfaceScanner {
 
     private static Map<String, Integer> builtinSlots() {
         Map<String, Integer> slots = new HashMap<>();
-        for (String scalar : List.of("float", "int", "uint")) {
+        // 16-bit types take the locations of the 32-bit types they widen to (GlslVendorExtensions).
+        for (String scalar : List.of("float", "int", "uint", "float16_t", "int16_t", "uint16_t")) {
             slots.put(scalar, 1);
         }
         for (int size = 2; size <= 4; size++) {
-            slots.put("vec" + size, 1);
-            slots.put("ivec" + size, 1);
-            slots.put("uvec" + size, 1);
+            for (String vector : List.of("vec", "ivec", "uvec", "f16vec", "i16vec", "u16vec")) {
+                slots.put(vector + size, 1);
+            }
             slots.put("mat" + size, size);
+            slots.put("f16mat" + size, size);
             for (int rows = 2; rows <= 4; rows++) {
                 slots.put("mat" + size + "x" + rows, size);
+                slots.put("f16mat" + size + "x" + rows, size);
             }
         }
         return Map.copyOf(slots);

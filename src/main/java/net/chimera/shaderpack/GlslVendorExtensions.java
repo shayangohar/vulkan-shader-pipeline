@@ -1,6 +1,9 @@
 package net.chimera.shaderpack;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -82,5 +85,72 @@ public final class GlslVendorExtensions {
         }
         line.appendTail(result);
         return result.toString();
+    }
+
+    /**
+     * {@code source} as the {@code device} compiles it: GL_NV_gpu_shader5 as its Vulkan extensions,
+     * GL_AMD_shader_trinary_minmax as min and max without the device extension, and 16-bit stage
+     * inputs and outputs as their 32-bit types without storageInputOutput16 ({@link #widenInterfaces}).
+     */
+    public static String forVulkan(String source, PackDevice device) {
+        String result = forVulkan(source, device.sizedTypes(), device.trinaryMinmax());
+        return device.features().contains("storageInputOutput16") ? result : widenInterfaces(result);
+    }
+
+    /**
+     * {@code source} with its 16-bit stage inputs and outputs declared as their 32-bit types. A
+     * Vulkan stage interface of a 16-bit type needs storageInputOutput16, which NVIDIA's GPUs lack,
+     * while their GL driver takes RenderPearl's {@code out f16vec4 colortex1}. A 16-bit value written
+     * to the output widens implicitly, and the target stores it in its own format; an input reads
+     * as the wider type.
+     */
+    static String widenInterfaces(String source) {
+        if (source == null || WIDENED.keySet().stream().noneMatch(source::contains)) return source;
+        GlslTree tree;
+        try {
+            tree = GlslTree.parse(source);
+        } catch (GlslParser.ParseFailure failure) {
+            return source;
+        }
+        List<GlslTree.Edit> edits = new ArrayList<>();
+        for (GlslTree.External external : tree.externals()) {
+            if (external instanceof GlslTree.Declaration declaration
+                    && stageInterface(tree, declaration.qualifiers())) {
+                widen(tree, declaration, edits);
+            } else if (external instanceof GlslTree.InterfaceBlock block
+                    && stageInterface(tree, block.qualifiers())) {
+                block.members().forEach(member -> widen(tree, member, edits));
+            }
+        }
+        return edits.isEmpty() ? source : tree.print(edits);
+    }
+
+    /** The 16-bit types a stage interface can declare, and the 32-bit type each widens to. */
+    private static final Map<String, String> WIDENED = widened();
+
+    private static Map<String, String> widened() {
+        Map<String, String> result = new HashMap<>(Map.of("float16_t", "float", "int16_t", "int",
+                "uint16_t", "uint"));
+        for (int size = 2; size <= 4; size++) {
+            result.put("f16vec" + size, "vec" + size);
+            result.put("i16vec" + size, "ivec" + size);
+            result.put("u16vec" + size, "uvec" + size);
+            result.put("f16mat" + size, "mat" + size);
+            for (int rows = 2; rows <= 4; rows++) result.put("f16mat" + size + "x" + rows, "mat" + size + "x" + rows);
+        }
+        return Map.copyOf(result);
+    }
+
+    private static boolean stageInterface(GlslTree tree, List<GlslTree.Qualifier> qualifiers) {
+        return qualifiers.stream().map(qualifier -> tree.text(qualifier.keyword()))
+                .anyMatch(keyword -> keyword.equals("in") || keyword.equals("out") || keyword.equals("varying")
+                        || keyword.equals("attribute"));
+    }
+
+    private static void widen(GlslTree tree, GlslTree.Declaration declaration, List<GlslTree.Edit> edits) {
+        if (declaration.type() == null || declaration.type().struct() != null) return;
+        int name = declaration.type().name();
+        String wide = WIDENED.get(tree.text(name));
+        if (wide != null) edits.add(new GlslTree.Edit(new GlslTree.Range(name, name + 1), wide));
     }
 }

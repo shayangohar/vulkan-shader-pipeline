@@ -62,6 +62,43 @@ final class GlslVendorExtensionsTest {
         assertEquals(COMPUTE, GlslVendorExtensions.forVulkan(COMPUTE, GlslVendorExtensions.SizedTypes.NONE));
     }
 
+    /**
+     * RenderPearl's NVIDIA path writes {@code out f16vec4 colortex1}, which a Vulkan device without
+     * storageInputOutput16, like the RTX 5080, cannot take. Stage inputs and outputs widen to their
+     * 32-bit types; parameters, locals and uniforms keep theirs.
+     */
+    @Test
+    void sixteenBitStageInterfacesWidenWithoutStorageInputOutput16() {
+        String fragment = """
+                #version 460
+                #extension GL_AMD_gpu_shader_half_float : require
+                #extension GL_AMD_gpu_shader_int16 : require
+                layout(location = 0) out f16vec4 colortex1;
+                layout(location = 1) flat in u16vec2 packedLight;
+                in Data { layout(location = 2) f16vec3 normal; } v;
+                layout(std140, binding = 0) uniform Exposure { vec4 scale; };
+                f16vec4 shade(in f16vec3 color, out float16_t weight) {
+                    weight = float16_t(0.5);
+                    return f16vec4(color * v.normal, weight);
+                }
+                void main() {
+                    float16_t weight;
+                    f16vec4 color = shade(f16vec3(scale.rgb) + float16_t(packedLight.x), weight);
+                    colortex1 = color * weight;
+                }
+                """;
+        String widened = GlslVendorExtensions.forVulkan(fragment, PackDevice.offline("nvidia"));
+        assertTrue(widened.contains("layout(location = 0) out vec4 colortex1;")
+                        && widened.contains("layout(location = 1) flat in uvec2 packedLight;")
+                        && widened.contains("in Data { layout(location = 2) vec3 normal; } v;")
+                        && widened.contains("f16vec4 shade(in f16vec3 color, out float16_t weight)")
+                        && widened.contains("float16_t weight;"),
+                widened);
+        assertEquals("", compile(widened, Shaderc.shaderc_glsl_fragment_shader));
+        assertEquals(fragment, GlslVendorExtensions.forVulkan(fragment, PackDevice.offline("amd")),
+                "AMD's GPU takes 16-bit stage interfaces");
+    }
+
     /** shaderc's report, or empty when the source compiles for Vulkan 1.2. */
     private static String compile(String source, int kind) {
         long compiler = Shaderc.shaderc_compiler_initialize();

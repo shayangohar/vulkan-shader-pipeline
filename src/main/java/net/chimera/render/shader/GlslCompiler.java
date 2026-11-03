@@ -40,8 +40,7 @@ public final class GlslCompiler {
         PackDevice device = PackDevice.current();
         long compiler = Shaderc.shaderc_compiler_initialize();
         long options = Shaderc.shaderc_compile_options_initialize();
-        ByteBuffer text = MemoryUtil.memUTF8(GlslVendorExtensions.forVulkan(source, device.sizedTypes(),
-                device.trinaryMinmax()), false);
+        ByteBuffer text = MemoryUtil.memUTF8(GlslVendorExtensions.forVulkan(source, device), false);
         long result = 0L;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             Shaderc.shaderc_compile_options_set_target_env(options,
