@@ -199,6 +199,35 @@ final class ComputePassTest {
     }
 
     /**
+     * A pass compute keeps its own extensions ahead of Chimera's declarations, and an extension line
+     * in a comment is none: photon comments out its subgroup and half-float extensions, which the
+     * module enabled.
+     */
+    @Test
+    void passComputesKeepOnlyTheirLiveExtensions(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("deferred.fsh"), "#version 120\nconst int colortex4Format = RGBA16F;\n"
+                + "void main() {\n/* RENDERTARGETS: 4 */\n gl_FragData[0] = vec4(1.0);\n}\n");
+        Files.writeString(shaders.resolve("deferred_a.csh"), """
+                #version 430
+                #extension GL_KHR_shader_subgroup_basic : enable
+                /*
+                #extension GL_NV_gpu_shader5 : enable
+                */
+                // #extension GL_AMD_gpu_shader_half_float : enable
+                layout(local_size_x = 8, local_size_y = 8) in;
+                layout(rgba16f) writeonly uniform image2D colorimg4;
+                void main() { imageStore(colorimg4, ivec2(gl_GlobalInvocationID.xy), vec4(subgroupElect())); }
+                """);
+        PassComputePlan.PassCompute compute = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders)
+                .computes().get(0);
+        assertEquals(List.of("#extension GL_KHR_shader_subgroup_basic : enable"),
+                compute.source().lines().filter(line -> line.startsWith("#extension")).toList(), compute.source());
+        assertEquals(null, PackCompileTest.compileComputeValues(compute.source(), PassComputePlan.VALUES_BLOCK,
+                Map.of()));
+    }
+
+    /**
      * colorimgN binds the target in its own format, so an integer target is an integer image:
      * Rethinking Voxels' prepare4 compute writes its RGBA16I colortex11 as iimage2D. A layout naming
      * another format of the target's texel size reads it through a view in that format, as for a

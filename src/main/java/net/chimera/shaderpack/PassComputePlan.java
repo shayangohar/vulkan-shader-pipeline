@@ -715,10 +715,14 @@ public final class PassComputePlan {
             if (GlslTokenRewriter.identifierCount(body, name) > 1) work.fail("PASS_COMPUTE_RESOURCE_UNBOUND:" + name);
         }
 
-        /** Version 450, the source's own extensions (ARB ones are core), the value block, the bindings, the body. */
+        /**
+         * Version 450, the source's own extensions (ARB ones are core), the value block, the bindings,
+         * the body. An extension line in a comment is no directive: photon comments out its subgroup
+         * and half-float extensions.
+         */
         private static String module(String body, Work work, List<ComputeValueBlock.Value> values) {
             StringBuilder extensions = new StringBuilder();
-            Matcher extension = EXTENSION.matcher(body);
+            Matcher extension = EXTENSION.matcher(GlslLexer.stripComments(body));
             while (extension.find()) {
                 if (!extension.group(1).startsWith("GL_ARB_")) extensions.append(extension.group().trim()).append('\n');
             }
