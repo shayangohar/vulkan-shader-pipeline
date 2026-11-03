@@ -40,14 +40,44 @@ public final class GlslVendorExtensions {
     private static final Pattern EXTENSION = Pattern.compile(
             "(?m)^([ \\t]*#[ \\t]*extension[ \\t]+)(\\w+)([ \\t]*:[ \\t]*\\w+[ \\t]*)$");
 
+    private static final String TRINARY = "GL_AMD_shader_trinary_minmax";
+    /**
+     * GL_AMD_shader_trinary_minmax's functions as the extension defines them, for a device without
+     * VK_AMD_shader_trinary_minmax, whose SPIR-V crashed NVIDIA's driver (SpirvDeviceExtensions).
+     * RenderPearl requires the extension on any GPU it does not know to be NVIDIA's, and defines
+     * the same two macros itself when it does not.
+     */
+    private static final List<String> TRINARY_BUILT_INS = List.of(
+            "#define min3(a, b, c) min(a, min(b, c))",
+            "#define max3(a, b, c) max(a, max(b, c))",
+            "#define mid3(a, b, c) max(min(a, b), min(max(a, b), c))");
+
     /** {@code source} with GL_NV_gpu_shader5 enabled as its Vulkan extensions, when {@code types} serve it. */
     public static String forVulkan(String source, SizedTypes types) {
-        if (source == null || !types.all() || !source.contains(NVIDIA)) return source;
+        return forVulkan(source, types, true);
+    }
+
+    /**
+     * {@link #forVulkan(String, SizedTypes)}, and GL_AMD_shader_trinary_minmax's functions written
+     * with min and max in place of its directive when the device lacks it ({@code trinaryMinmax}).
+     */
+    public static String forVulkan(String source, SizedTypes types, boolean trinaryMinmax) {
+        if (source == null) return null;
+        boolean nvidia = types.all() && source.contains(NVIDIA);
+        boolean trinary = !trinaryMinmax && source.contains(TRINARY);
+        if (!nvidia && !trinary) return source;
         Matcher line = EXTENSION.matcher(source);
         StringBuilder result = new StringBuilder();
         while (line.find()) {
-            List<String> names = line.group(2).equals(NVIDIA) ? VULKAN : List.of(line.group(2));
-            List<String> lines = names.stream().map(name -> line.group(1) + name + line.group(3)).toList();
+            String name = line.group(2);
+            List<String> lines;
+            if (nvidia && name.equals(NVIDIA)) {
+                lines = VULKAN.stream().map(vulkan -> line.group(1) + vulkan + line.group(3)).toList();
+            } else if (trinary && name.equals(TRINARY)) {
+                lines = TRINARY_BUILT_INS;
+            } else {
+                lines = List.of(line.group());
+            }
             line.appendReplacement(result, Matcher.quoteReplacement(String.join("\n", lines)));
         }
         line.appendTail(result);

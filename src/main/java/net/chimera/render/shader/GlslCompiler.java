@@ -39,7 +39,8 @@ public final class GlslCompiler {
     public static ByteBuffer compile(String name, String source, int kind, LongConsumer configure) {
         long compiler = Shaderc.shaderc_compiler_initialize();
         long options = Shaderc.shaderc_compile_options_initialize();
-        ByteBuffer text = MemoryUtil.memUTF8(GlslVendorExtensions.forVulkan(source, ChimeraDevice.sizedTypes()), false);
+        ByteBuffer text = MemoryUtil.memUTF8(GlslVendorExtensions.forVulkan(source, ChimeraDevice.sizedTypes(),
+                ChimeraDevice.trinaryMinmax()), false);
         long result = 0L;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             Shaderc.shaderc_compile_options_set_target_env(options,

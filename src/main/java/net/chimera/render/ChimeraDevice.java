@@ -80,6 +80,14 @@ public final class ChimeraDevice {
         return required.stream().filter(name -> !enabled.contains(name)).toList();
     }
 
+    /**
+     * Whether the device serves GL_AMD_shader_trinary_minmax natively; without it the extension's
+     * functions compile as min and max (GlslVendorExtensions). Offline, before a device, it does.
+     */
+    public static boolean trinaryMinmax() {
+        return missingExtensions(List.of("VK_AMD_shader_trinary_minmax")).isEmpty();
+    }
+
     /** Whether {@code device} offers the device extension {@code name}. */
     public static boolean supportsExtension(VkPhysicalDevice device, String name) {
         if (device == null) return false;
