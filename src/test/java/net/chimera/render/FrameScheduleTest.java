@@ -6,13 +6,17 @@ import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -75,6 +79,45 @@ final class FrameScheduleTest {
         assertTrue(!schedule.handBeforeEarlyPost()
                         && schedule.deviations().contains("HAND_PHASE_HOST_BOUNDARY"),
                 "hand boundary was reported as fully relocated");
+    }
+
+    /**
+     * RenderPearl's deferred and composite passes are computes alone, with no post program and no
+     * final: the target graph has no step, yet the chain runs them (Iris ComputeOnlyPass) in their
+     * windows and shows colortex0, which composite.csh writes through colorimg0.
+     */
+    @Test
+    void computeOnlyPassesRunTheChain(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_terrain.vsh"),
+                "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+        Files.writeString(shaders.resolve("gbuffers_terrain.fsh"),
+                "#version 120\nvoid main() {\n/* RENDERTARGETS: 1 */\n gl_FragData[0] = vec4(1.0);\n}\n");
+        String compute = """
+                #version 430
+                layout(local_size_x = 8, local_size_y = 8) in;
+                layout(rgba8) uniform image2D colorimg0;
+                uniform sampler2D colortex1;
+                void main() {
+                    imageStore(colorimg0, ivec2(gl_GlobalInvocationID.xy), texelFetch(colortex1, ivec2(0), 0));
+                }
+                """;
+        Files.writeString(shaders.resolve("deferred.csh"), compute);
+        Files.writeString(shaders.resolve("composite.csh"), compute);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PassComputePlan computes = PassComputePlan.build(analysis.plan(), shaders);
+        assertTrue(computes.compute("deferred").supported() && computes.compute("composite").supported(),
+                computes.computes().toString());
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(analysis.plan().activePrograms(), analysis.config(),
+                analysis.plan().resources(), new PackTargetGraphPlan.Limits(1920, 1080, 8, 16384),
+                new PackTargetGraphPlan.ComputeUse(Set.of(0, 1), Set.of()));
+        assertTrue(graph.steps().isEmpty(), graph.steps().toString());
+        assertTrue(graph.targets().stream().anyMatch(target -> target.index() == 0), "colortex0, which final shows");
+        assertTrue(PackPostChain.runsChain(graph, true) && !PackPostChain.runsChain(graph, false));
+        PackFrameSchedulePlan schedule = PackFrameSchedulePlan.build(analysis.plan().activePrograms(), graph,
+                Map.of("deferred", Set.of(), "composite", Set.of()));
+        assertEquals(PackFrameSchedulePlan.PostWindow.EARLY, schedule.postStage("deferred").window());
+        assertEquals(PackFrameSchedulePlan.PostWindow.LATE, schedule.postStage("composite").window());
     }
 
     @Test

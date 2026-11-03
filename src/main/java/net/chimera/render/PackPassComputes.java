@@ -113,6 +113,14 @@ final class PackPassComputes implements AutoCloseable {
     }
 
     /**
+     * Whether a loaded compute runs in the post chain: a frame pass's or a setup compute. The
+     * shadowcomp computes run with the shadow pass (PackShadowComposites).
+     */
+    boolean runInPostChain() {
+        return loaded.stream().anyMatch(compute -> !PassComputePlan.isShadowcomp(compute.plan().pass()));
+    }
+
+    /**
      * Each pass of the frame some loaded compute runs before, with the depth snapshots its computes
      * read; setup and shadowcomp computes run apart (dispatchSetup, PackShadowComposites).
      */

@@ -37,8 +37,8 @@ import static org.lwjgl.vulkan.VK10.*;
 
 /**
  * Runs the pack's post programs in each frame window: the composite and deferred steps of the
- * target graph, the final pass before the hand, and the identity boundaries that keep the frame
- * presentable when a step cannot run.
+ * target graph, the computes of passes with no program, the final pass before the hand, and the
+ * identity boundaries that keep the frame presentable when a step cannot run.
  */
 final class PackPostChain {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
@@ -648,8 +648,8 @@ final class PackPostChain {
             pass.packDepthTargets.configure(width, height, pass.packTargetGraph.depth());
             pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph,
                     pass.packPassComputes == null ? Map.of() : pass.packPassComputes.storageTargets());
-            pass.packPostChainActive = pass.packTargetResourcesReady
-                    && !pass.packTargetGraph.steps().isEmpty();
+            pass.packPostChainActive = pass.packTargetResourcesReady && runsChain(pass.packTargetGraph,
+                    pass.packPassComputes != null && pass.packPassComputes.runInPostChain());
             // New targets, at load or after a resize: Iris runs its setup computes again.
             if (pass.packPassComputes != null) pass.packPassComputes.requestSetup();
             if (pass.packPostChainActive) logSchedule();
@@ -671,6 +671,15 @@ final class PackPostChain {
             }
             pass.logPackRuntimeFailure("post-resource-allocation", e);
         }
+    }
+
+    /**
+     * Whether the post chain runs: the graph has a post program's step, or {@code computes} run in
+     * the chain. Iris runs a pass with computes and no program (CompositeRenderer.ComputeOnlyPass)
+     * and, with no final program, shows colortex0; RenderPearl's passes are all such.
+     */
+    static boolean runsChain(PackTargetGraphPlan graph, boolean computes) {
+        return !graph.steps().isEmpty() || computes;
     }
 
     /** Logs the frame schedule's windows and the target graph the post chain runs on. */
