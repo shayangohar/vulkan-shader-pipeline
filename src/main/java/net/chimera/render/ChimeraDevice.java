@@ -6,6 +6,9 @@ import org.lwjgl.vulkan.VkExtensionProperties;
 import org.lwjgl.vulkan.VkPhysicalDevice;
 
 import java.nio.IntBuffer;
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
 
 import static org.lwjgl.vulkan.VK10.vkEnumerateDeviceExtensionProperties;
 
@@ -14,13 +17,15 @@ import static org.lwjgl.vulkan.VK10.vkEnumerateDeviceExtensionProperties;
  * windows render with VK_KHR_dynamic_rendering, which VulkanMod leaves off; without it no shader
  * pack can run, and Chimera keeps VulkanMod's own rendering. The independentBlend feature lets a
  * window's attachments blend and mask writes differently. The sized arithmetic types serve a pack's
- * GL vendor extensions (GlslVendorExtensions).
+ * GL vendor extensions (GlslVendorExtensions). The enabled device extensions bound which SPIR-V a
+ * pipeline may be built from.
  */
 public final class ChimeraDevice {
     private static volatile boolean dynamicRendering;
     private static volatile boolean independentBlend;
     private static volatile boolean geometryShader;
     private static volatile GlslVendorExtensions.SizedTypes sizedTypes = GlslVendorExtensions.SizedTypes.NONE;
+    private static volatile Set<String> enabledExtensions;
 
     private ChimeraDevice() {}
 
@@ -58,6 +63,21 @@ public final class ChimeraDevice {
 
     public static void setSizedTypes(GlslVendorExtensions.SizedTypes types) {
         sizedTypes = types;
+    }
+
+    public static void setEnabledExtensions(Collection<String> names) {
+        enabledExtensions = Set.copyOf(names);
+    }
+
+    /**
+     * The extensions in {@code required} the device was created without, which a module that
+     * needs them must not reach the driver with (SpirvDeviceExtensions). None before the device
+     * exists, as offline.
+     */
+    public static List<String> missingExtensions(Collection<String> required) {
+        Set<String> enabled = enabledExtensions;
+        if (enabled == null) return List.of();
+        return required.stream().filter(name -> !enabled.contains(name)).toList();
     }
 
     /** Whether {@code device} offers the device extension {@code name}. */

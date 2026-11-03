@@ -1,11 +1,13 @@
 package net.chimera.render.shader;
 
+import net.chimera.render.ChimeraDevice;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.shaderc.Shaderc;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -37,5 +39,24 @@ final class GlslCompilerTest {
                 options -> {}));
         assertTrue(failure.getMessage().contains("broken.fsh") && failure.getMessage().contains("undeclared"),
                 failure.getMessage());
+    }
+
+    /** NVIDIA's driver crashed building RenderPearl's deferred1, which calls GL_AMD_shader_trinary_minmax's min3. */
+    @Test
+    void refusesAModuleNeedingAnExtensionTheDeviceWasCreatedWithout() {
+        String source = """
+                #version 450
+                #extension GL_AMD_shader_trinary_minmax : require
+                layout(local_size_x = 1) in;
+                layout(std430, binding = 0) buffer Values { vec3 value; };
+                void main() { value = min3(value, vec3(1.0), vec3(2.0)); }
+                """;
+        ChimeraDevice.setEnabledExtensions(List.of("VK_KHR_dynamic_rendering"));
+        IllegalStateException failure = assertThrows(IllegalStateException.class, () -> GlslCompiler.compile(
+                "deferred1.csh", source, Shaderc.shaderc_glsl_compute_shader, options -> {}));
+        assertTrue(failure.getMessage().contains("VK_AMD_shader_trinary_minmax"), failure.getMessage());
+        ChimeraDevice.setEnabledExtensions(List.of("VK_AMD_shader_trinary_minmax"));
+        MemoryUtil.memFree(GlslCompiler.compile("deferred1.csh", source, Shaderc.shaderc_glsl_compute_shader,
+                options -> {}));
     }
 }

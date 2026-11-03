@@ -2,11 +2,13 @@ package net.chimera.render.shader;
 
 import net.chimera.render.ChimeraDevice;
 import net.chimera.shaderpack.GlslVendorExtensions;
+import net.chimera.shaderpack.SpirvDeviceExtensions;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.shaderc.Shaderc;
 
 import java.nio.ByteBuffer;
+import java.util.List;
 import java.util.function.LongConsumer;
 
 /**
@@ -26,10 +28,13 @@ public final class GlslCompiler {
     /**
      * Compiles {@code source}, a {@code kind} shader (a {@code shaderc_glsl_*_shader} constant)
      * named {@code name}, with the options {@code configure} sets. A GL vendor extension the device
-     * serves compiles as its Vulkan equivalent (GlslVendorExtensions). Returns the module in memory
+     * serves compiles as its Vulkan equivalent (GlslVendorExtensions). A module that needs a device
+     * extension the device was created without fails here, as the stage would on a GL driver
+     * without it, and never reaches the driver (SpirvDeviceExtensions). Returns the module in memory
      * the caller frees with {@link MemoryUtil#memFree}.
      *
-     * @throws IllegalStateException with shaderc's report when the source does not compile
+     * @throws IllegalStateException with shaderc's report when the source does not compile, or the
+     *         missing extensions
      */
     public static ByteBuffer compile(String name, String source, int kind, LongConsumer configure) {
         long compiler = Shaderc.shaderc_compiler_initialize();
@@ -48,6 +53,11 @@ public final class GlslCompiler {
                 throw new IllegalStateException(report == null ? name + ": compilation failed" : report);
             }
             ByteBuffer bytes = Shaderc.shaderc_result_get_bytes(result);
+            List<String> missing = ChimeraDevice.missingExtensions(SpirvDeviceExtensions.required(bytes));
+            if (!missing.isEmpty()) {
+                throw new IllegalStateException(name + ": needs device extension " + String.join(", ", missing)
+                        + ", which the device was created without");
+            }
             ByteBuffer module = MemoryUtil.memAlloc(bytes.remaining());
             MemoryUtil.memCopy(bytes, module);
             return module;

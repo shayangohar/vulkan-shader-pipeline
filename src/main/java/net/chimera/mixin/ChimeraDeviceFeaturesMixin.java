@@ -19,14 +19,20 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Set;
+
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME;
 import static org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2;
 
 /**
  * Enables what Chimera needs on VulkanMod's logical device: the supported core features of the
  * pack image path, independentBlend for per-attachment blend and write masks, geometryShader for
- * a pack program's .gsh stage, the sized arithmetic types a pack's GL vendor extensions provide, and
- * VK_KHR_dynamic_rendering with its feature, which Chimera's windows render with (ChimeraDevice).
+ * a pack program's .gsh stage, the sized arithmetic types a pack's GL vendor extensions provide,
+ * VK_KHR_dynamic_rendering with its feature, which Chimera's windows render with (ChimeraDevice), and
+ * the device extensions a pack's GL vendor extensions compile to.
  */
 @Mixin(value = DeviceManager.class, remap = false)
 public abstract class ChimeraDeviceFeaturesMixin {
@@ -137,6 +143,19 @@ public abstract class ChimeraDeviceFeaturesMixin {
         return info;
     }
 
+    /**
+     * Device extensions that packs' GL vendor extensions compile to and that need no feature
+     * struct: RenderPearl's GL_AMD_shader_trinary_minmax and Alpha Piscium's
+     * GL_NV_shader_subgroup_partitioned. A module that needs one the device lacks fails its compile
+     * (GlslCompiler).
+     */
+    private static final List<String> PACK_VENDOR_EXTENSIONS = List.of("VK_AMD_shader_trinary_minmax",
+            "VK_NV_shader_subgroup_partitioned");
+
+    /**
+     * Adds VK_KHR_dynamic_rendering and the offered pack vendor extensions to VulkanMod's list, and
+     * records the list the device is created with (ChimeraDevice.missingExtensions).
+     */
     @ModifyArg(
             method = "createLogicalDevice",
             at = @At(value = "INVOKE", target =
@@ -145,17 +164,30 @@ public abstract class ChimeraDeviceFeaturesMixin {
             index = 0,
             require = 1
     )
-    private static PointerBuffer chimera$enableDynamicRenderingExtension(PointerBuffer extensions) {
-        if (!ChimeraDevice.dynamicRendering()) return extensions;
-        MemoryStack stack = MemoryStack.stackGet();
-        PointerBuffer withDynamicRendering = stack.mallocPointer(extensions.remaining() + 1);
+    private static PointerBuffer chimera$enablePackExtensions(PointerBuffer extensions) {
+        Set<String> names = new LinkedHashSet<>();
         for (int index = extensions.position(); index < extensions.limit(); index++) {
-            if (VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME.equals(extensions.getStringUTF8(index))) {
-                return extensions;
-            }
-            withDynamicRendering.put(extensions.get(index));
+            names.add(extensions.getStringUTF8(index));
         }
-        withDynamicRendering.put(stack.UTF8(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME));
-        return withDynamicRendering.flip();
+        List<String> added = new ArrayList<>();
+        if (ChimeraDevice.dynamicRendering() && names.add(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) {
+            added.add(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
+        }
+        for (String vendor : PACK_VENDOR_EXTENSIONS) {
+            if (!names.contains(vendor) && ChimeraDevice.supportsExtension(DeviceManager.physicalDevice, vendor)) {
+                names.add(vendor);
+                added.add(vendor);
+            }
+        }
+        ChimeraDevice.setEnabledExtensions(names);
+        LOGGER.info("[chimera] device extensions added for shader packs: {}", added);
+        if (added.isEmpty()) return extensions;
+        MemoryStack stack = MemoryStack.stackGet();
+        PointerBuffer withPackExtensions = stack.mallocPointer(extensions.remaining() + added.size());
+        for (int index = extensions.position(); index < extensions.limit(); index++) {
+            withPackExtensions.put(extensions.get(index));
+        }
+        added.forEach(name -> withPackExtensions.put(stack.UTF8(name)));
+        return withPackExtensions.flip();
     }
 }
