@@ -93,8 +93,81 @@ public final class GlslVendorExtensions {
      * inputs and outputs as their 32-bit types without storageInputOutput16 ({@link #widenInterfaces}).
      */
     public static String forVulkan(String source, PackDevice device) {
-        String result = forVulkan(source, device.sizedTypes(), device.trinaryMinmax());
+        String result = forVulkan(hoistExtensions(source), device.sizedTypes(), device.trinaryMinmax());
         return device.features().contains("storageInputOutput16") ? result : widenInterfaces(result);
+    }
+
+    /** A {@code #extension} or {@code #version} directive, as a line's text outside comments begins. */
+    private static final Pattern DIRECTIVE = Pattern.compile("^[ \\t]*#[ \\t]*(extension|version)\\b");
+
+    /**
+     * {@code source} with its {@code #extension} lines moved up to follow its {@code #version}
+     * line, when code comes before one of them, and unchanged otherwise. Chimera declares a
+     * stage's outputs and uniforms ahead of the pack's source, and RenderPearl's AMD path declares
+     * them f16vec3, which is no type before its GL_AMD_gpu_shader_half_float directive. A directive
+     * in a comment is no directive and stays.
+     */
+    static String hoistExtensions(String source) {
+        if (source == null || !source.contains("extension")) return source;
+        List<int[]> extensions = new ArrayList<>();
+        int versionEnd = 0;
+        boolean code = false;
+        boolean misplaced = false;
+        boolean[] inComment = {false};
+        for (int start = 0; start < source.length(); ) {
+            int newline = source.indexOf('\n', start);
+            int end = newline < 0 ? source.length() : newline + 1;
+            String visible = outsideComments(source.substring(start, end), inComment);
+            Matcher directive = DIRECTIVE.matcher(visible);
+            if (directive.find()) {
+                if (directive.group(1).equals("version")) {
+                    versionEnd = end;
+                } else {
+                    extensions.add(new int[] {start, end});
+                    misplaced |= code;
+                }
+            } else if (!visible.isBlank() && !visible.strip().startsWith("#")) {
+                code = true;
+            }
+            start = end;
+        }
+        if (!misplaced) return source;
+        StringBuilder hoisted = new StringBuilder();
+        StringBuilder rest = new StringBuilder(source.substring(0, versionEnd));
+        int at = versionEnd;
+        for (int[] line : extensions) {
+            // One above the version line stays, as the compiler would read it.
+            if (line[0] < versionEnd) continue;
+            hoisted.append(source, line[0], line[1]).append(source.charAt(line[1] - 1) == '\n' ? "" : "\n");
+            rest.append(source, at, line[0]);
+            at = line[1];
+        }
+        rest.append(source.substring(at));
+        boolean newline = versionEnd == 0 || source.charAt(versionEnd - 1) == '\n';
+        return rest.insert(versionEnd, (newline ? "" : "\n") + hoisted).toString();
+    }
+
+    /** {@code line} with its comments blanked; {@code inComment[0]} carries a block comment on to the next line. */
+    private static String outsideComments(String line, boolean[] inComment) {
+        StringBuilder visible = new StringBuilder(line.length());
+        for (int index = 0; index < line.length(); index++) {
+            if (inComment[0]) {
+                if (line.startsWith("*/", index)) {
+                    inComment[0] = false;
+                    index++;
+                }
+                visible.append(' ');
+            } else if (line.startsWith("/*", index)) {
+                inComment[0] = true;
+                index++;
+                visible.append(' ');
+            } else if (line.startsWith("//", index)) {
+                break;
+            } else {
+                visible.append(line.charAt(index));
+            }
+        }
+        return visible.toString();
     }
 
     /**

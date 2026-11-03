@@ -99,6 +99,35 @@ final class GlslVendorExtensionsTest {
                 "AMD's GPU takes 16-bit stage interfaces");
     }
 
+    /**
+     * Chimera declares RenderPearl's outputs ahead of its source, where AMD's path makes them f16vec3
+     * before its half-float directive: "syntax error, unexpected IDENTIFIER". The directives move up
+     * to follow the version line; one in a comment stays, and a source already in order is unchanged.
+     */
+    @Test
+    void extensionsMoveAheadOfTheDeclarationsBeforeThem() {
+        String fragment = """
+                #version 460
+                layout(location = 0) out f16vec3 chimeraFragColor0;
+                /* #extension GL_NV_gpu_shader5 : require */
+                // #extension GL_ARB_gpu_shader_int64 : require
+                	#extension GL_AMD_gpu_shader_half_float : require
+                void main() { chimeraFragColor0 = f16vec3(1.0); }
+                """;
+        String hoisted = GlslVendorExtensions.hoistExtensions(fragment);
+        assertEquals("""
+                #version 460
+                	#extension GL_AMD_gpu_shader_half_float : require
+                layout(location = 0) out f16vec3 chimeraFragColor0;
+                /* #extension GL_NV_gpu_shader5 : require */
+                // #extension GL_ARB_gpu_shader_int64 : require
+                void main() { chimeraFragColor0 = f16vec3(1.0); }
+                """, hoisted);
+        assertEquals("", compile(GlslVendorExtensions.forVulkan(fragment, PackDevice.offline("amd")),
+                Shaderc.shaderc_glsl_fragment_shader));
+        assertEquals(hoisted, GlslVendorExtensions.hoistExtensions(hoisted), "a source in order stays as it is");
+    }
+
     /** shaderc's report, or empty when the source compiles for Vulkan 1.2. */
     private static String compile(String source, int kind) {
         long compiler = Shaderc.shaderc_compiler_initialize();
