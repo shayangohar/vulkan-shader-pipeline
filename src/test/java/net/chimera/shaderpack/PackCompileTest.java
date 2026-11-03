@@ -5,7 +5,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.chimera.render.ChimeraDevice;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -360,7 +359,7 @@ final class PackCompileTest {
     private static final Map<String, Outcome> COMPILED = new ConcurrentHashMap<>();
 
     private static Outcome outcome(String source, int kind, String fileName) {
-        String key = kind + ":" + ChimeraDevice.sizedTypes() + ":"
+        String key = kind + ":" + PackDevice.current() + ":"
                 + ConformanceReport.sha256(source.getBytes(StandardCharsets.UTF_8));
         return COMPILED.computeIfAbsent(key, ignored -> {
             Compiled compiled = spirv(source, kind, fileName);

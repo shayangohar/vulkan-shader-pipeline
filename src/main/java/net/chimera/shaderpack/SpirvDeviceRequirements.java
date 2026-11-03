@@ -9,19 +9,21 @@ import java.util.SortedSet;
 import java.util.TreeSet;
 
 /**
- * The device extensions a SPIR-V module needs. Each OpExtension it declares and each extended
+ * What a SPIR-V module needs from the device. Each OpExtension it declares and each extended
  * instruction set it imports needs its Vulkan extension enabled on the device, unless Vulkan 1.2
- * made it core. A GL driver refuses an {@code #extension name : require} it lacks when it compiles
- * the stage; a Vulkan driver handed such a module can crash instead. RenderPearl requires
- * GL_AMD_shader_trinary_minmax on a GPU it does not know to be NVIDIA's, and NVIDIA's driver
- * crashed in vkCreateComputePipelines on its deferred1 (2026-11-02).
+ * made it core; each OpCapability may need a feature (PackDevice.missing). A GL driver refuses an
+ * {@code #extension name : require} it lacks when it compiles the stage; a Vulkan driver handed
+ * such a module can crash instead. RenderPearl requires GL_AMD_shader_trinary_minmax on a GPU it
+ * does not know to be NVIDIA's, and NVIDIA's driver crashed in vkCreateComputePipelines on its
+ * deferred1 (2026-11-02).
  */
-public final class SpirvDeviceExtensions {
+public final class SpirvDeviceRequirements {
     private static final int MAGIC = 0x07230203;
     private static final int HEADER_WORDS = 5;
     private static final int OP_EXTENSION = 10;
     private static final int OP_EXT_INST_IMPORT = 11;
     private static final int OP_MEMORY_MODEL = 14;
+    private static final int OP_CAPABILITY = 17;
 
     /** SPIR-V extensions Vulkan 1.1 and 1.2 made core; the features they use are the device's to enable. */
     private static final Set<String> CORE = Set.of("SPV_KHR_16bit_storage", "SPV_KHR_device_group",
@@ -43,33 +45,43 @@ public final class SpirvDeviceExtensions {
             "SPV_EXT_shader_atomic_float16_add", "VK_EXT_shader_atomic_float2",
             "SPV_EXT_shader_image_int64", "VK_EXT_shader_image_atomic_int64");
 
-    private SpirvDeviceExtensions() {}
+    /** A module's device extensions and the capabilities it declares, each sorted. */
+    public record Requirements(SortedSet<String> extensions, SortedSet<Integer> capabilities) {}
 
-    /** The device extensions {@code spirv} needs, sorted; none when it cannot be read. */
-    public static SortedSet<String> required(ByteBuffer spirv) {
+    private SpirvDeviceRequirements() {}
+
+    /** What {@code spirv} needs; nothing when it cannot be read. */
+    public static Requirements of(ByteBuffer spirv) {
         ByteBuffer view = spirv.duplicate().order(ByteOrder.LITTLE_ENDIAN);
         int[] words = new int[view.remaining() / 4];
         view.asIntBuffer().get(words);
-        return required(words);
+        return of(words);
     }
 
-    static SortedSet<String> required(int[] words) {
-        SortedSet<String> result = new TreeSet<>();
-        if (words.length < HEADER_WORDS || words[0] != MAGIC) return result;
+    /** The device extensions {@code spirv} needs, sorted; none when it cannot be read. */
+    public static SortedSet<String> extensions(ByteBuffer spirv) {
+        return of(spirv).extensions();
+    }
+
+    static Requirements of(int[] words) {
+        SortedSet<String> extensions = new TreeSet<>();
+        SortedSet<Integer> capabilities = new TreeSet<>();
+        if (words.length < HEADER_WORDS || words[0] != MAGIC) return new Requirements(extensions, capabilities);
         for (int at = HEADER_WORDS; at < words.length; at += words[at] >>> 16) {
             int count = words[at] >>> 16;
             if (count == 0 || at + count > words.length) break;
             int opcode = words[at] & 0xFFFF;
-            // Extensions and imports precede the memory model, and every instruction after it.
+            // Capabilities, extensions and imports precede the memory model, and every instruction after it.
             if (opcode == OP_MEMORY_MODEL) break;
+            if (opcode == OP_CAPABILITY && count > 1) capabilities.add(words[at + 1]);
             String needed = switch (opcode) {
                 case OP_EXTENSION -> extension(string(words, at + 1, at + count));
                 case OP_EXT_INST_IMPORT -> instructionSet(string(words, at + 2, at + count));
                 default -> null;
             };
-            if (needed != null) result.add(needed);
+            if (needed != null) extensions.add(needed);
         }
-        return result;
+        return new Requirements(extensions, capabilities);
     }
 
     /** The Vulkan extension a SPIR-V extension needs, or null when Vulkan 1.2 has it in core. */

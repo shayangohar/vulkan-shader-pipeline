@@ -1,7 +1,7 @@
 package net.chimera.render.shader;
 
-import net.chimera.render.ChimeraDevice;
-import net.chimera.shaderpack.SpirvDeviceExtensions;
+import net.chimera.shaderpack.PackDevice;
+import net.chimera.shaderpack.SpirvDeviceRequirements;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.shaderc.Shaderc;
@@ -18,6 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Chimera's shaderc entry, on LWJGL's default thread stack as in game. */
 final class GlslCompilerTest {
     private static final int SPIRV_MAGIC = 0x07230203;
+
+    /** The offline NVIDIA device, created with {@code extensions} alone. */
+    private static void createdWith(String... extensions) {
+        PackDevice.set(PackDevice.offline("nvidia").withExtensions(List.of(extensions)));
+    }
 
     /** Bliss's composite outgrew the 64 KB stack shaderc's CharSequence overloads encode into. */
     @Test
@@ -53,11 +58,11 @@ final class GlslCompilerTest {
                 layout(std430, binding = 0) buffer Values { uvec4 value; };
                 void main() { value = subgroupPartitionNV(value.x); }
                 """;
-        ChimeraDevice.setEnabledExtensions(List.of("VK_KHR_dynamic_rendering"));
+        createdWith("VK_KHR_dynamic_rendering");
         IllegalStateException failure = assertThrows(IllegalStateException.class, () -> GlslCompiler.compile(
                 "composite7.csh", source, Shaderc.shaderc_glsl_compute_shader, options -> {}));
         assertTrue(failure.getMessage().contains("VK_NV_shader_subgroup_partitioned"), failure.getMessage());
-        ChimeraDevice.setEnabledExtensions(List.of("VK_NV_shader_subgroup_partitioned"));
+        createdWith("VK_NV_shader_subgroup_partitioned");
         MemoryUtil.memFree(GlslCompiler.compile("composite7.csh", source, Shaderc.shaderc_glsl_compute_shader,
                 options -> {}));
     }
@@ -77,11 +82,11 @@ final class GlslCompilerTest {
                             allInvocationsEqual(value > 0.25), 1.0);
                 }
                 """;
-        ChimeraDevice.setEnabledExtensions(List.of("VK_KHR_dynamic_rendering"));
+        createdWith("VK_KHR_dynamic_rendering");
         IllegalStateException failure = assertThrows(IllegalStateException.class, () -> GlslCompiler.compile(
                 "gbuffers_terrain.fsh", source, Shaderc.shaderc_glsl_fragment_shader, options -> {}));
         assertTrue(failure.getMessage().contains("VK_EXT_shader_subgroup_vote"), failure.getMessage());
-        ChimeraDevice.setEnabledExtensions(List.of("VK_KHR_dynamic_rendering", "VK_EXT_shader_subgroup_vote"));
+        createdWith("VK_KHR_dynamic_rendering", "VK_EXT_shader_subgroup_vote");
         MemoryUtil.memFree(GlslCompiler.compile("gbuffers_terrain.fsh", source, Shaderc.shaderc_glsl_fragment_shader,
                 options -> {}));
     }
@@ -100,11 +105,11 @@ final class GlslCompilerTest {
                     count = mid3(count, ivec2(0), ivec2(8));
                 }
                 """;
-        ChimeraDevice.setEnabledExtensions(List.of("VK_KHR_dynamic_rendering"));
+        createdWith("VK_KHR_dynamic_rendering");
         ByteBuffer module = GlslCompiler.compile("deferred1.csh", source, Shaderc.shaderc_glsl_compute_shader,
                 options -> {});
         try {
-            assertEquals(Set.of(), SpirvDeviceExtensions.required(module));
+            assertEquals(Set.of(), SpirvDeviceRequirements.extensions(module));
         } finally {
             MemoryUtil.memFree(module);
         }

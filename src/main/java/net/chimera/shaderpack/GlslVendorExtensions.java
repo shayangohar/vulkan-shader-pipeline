@@ -43,7 +43,7 @@ public final class GlslVendorExtensions {
     private static final String TRINARY = "GL_AMD_shader_trinary_minmax";
     /**
      * GL_AMD_shader_trinary_minmax's functions as the extension defines them, for a device without
-     * VK_AMD_shader_trinary_minmax, whose SPIR-V crashed NVIDIA's driver (SpirvDeviceExtensions).
+     * VK_AMD_shader_trinary_minmax, whose SPIR-V crashed NVIDIA's driver (PackDevice.missing).
      * RenderPearl requires the extension on any GPU it does not know to be NVIDIA's, and defines
      * the same two macros itself when it does not.
      */
