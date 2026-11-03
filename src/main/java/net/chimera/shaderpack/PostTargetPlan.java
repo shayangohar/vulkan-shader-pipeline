@@ -44,8 +44,8 @@ public final class PostTargetPlan {
     private static final Pattern MIPMAP_DIRECTIVE_NAME = Pattern.compile(
             "(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])MipmapEnabled");
 
-    /** One modern fragment output: its declaration's source range, type, name and location. */
-    public record ModernOutput(int start, int end, String type, String name, int location) {}
+    /** One modern fragment output: its declaration's source range, type, name, location and component. */
+    public record ModernOutput(int start, int end, String type, String name, int location, int component) {}
 
     /**
      * Modern fragment outputs as GL links them for Iris: an explicit
@@ -81,7 +81,8 @@ public final class PostTargetPlan {
             }
             int start = tree.offset(output.declaration().range().start());
             outputs.add(new ModernOutput(GlslDeclarations.indentationStart(text, start),
-                    tree.offset(output.declaration().range().end()), output.type(), output.name(), location));
+                    tree.offset(output.declaration().range().end()), output.type(), output.name(), location,
+                    GlslDeclarations.component(tree, output.declaration())));
         }
         return List.copyOf(outputs);
     }
@@ -93,6 +94,7 @@ public final class PostTargetPlan {
     private final List<Integer> outputFormats;
     private final int[] outputFormatsArray;
     private final Map<Integer, String> outputTypes;
+    private final Map<Integer, Integer> outputComponents;
     private final List<Integer> mipmappedTargets;
     private final List<String> deviations;
 
@@ -103,6 +105,7 @@ public final class PostTargetPlan {
             List<Integer> discardedOutputs,
             List<Integer> outputFormats,
             Map<Integer, String> outputTypes,
+            Map<Integer, Integer> outputComponents,
             List<Integer> mipmappedTargets,
             List<String> deviations
     ) {
@@ -113,6 +116,7 @@ public final class PostTargetPlan {
         this.outputFormats = List.copyOf(outputFormats);
         this.outputFormatsArray = outputFormats.stream().mapToInt(Integer::intValue).toArray();
         this.outputTypes = Map.copyOf(outputTypes);
+        this.outputComponents = Map.copyOf(outputComponents);
         this.mipmappedTargets = List.copyOf(mipmappedTargets);
         this.deviations = deviations.stream().distinct().sorted().toList();
     }
@@ -126,10 +130,12 @@ public final class PostTargetPlan {
         List<Integer> targetSlots = selectDirective(directives, deviations);
         Set<Integer> outputSet = legacyOutputs(text, deviations);
         Map<Integer, String> outputTypes = new TreeMap<>();
+        Map<Integer, Integer> outputComponents = new TreeMap<>();
         for (ModernOutput output : modernOutputs(text)) {
             if (outputTypes.put(output.location(), output.type()) != null) {
                 deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
             }
+            if (output.component() != 0) outputComponents.put(output.location(), output.component());
             outputSet.add(output.location());
         }
 
@@ -157,7 +163,7 @@ public final class PostTargetPlan {
                 .toList();
         PostTargetPlan plan = new PostTargetPlan(
                 programName, targetSlots, outputLocations, discardedOutputs, outputFormats,
-                outputTypes, parseMipmappedTargets(text), deviations);
+                outputTypes, outputComponents, parseMipmappedTargets(text), deviations);
         return new ParseResult(plan, plan.deviations());
     }
 
@@ -446,6 +452,14 @@ public final class PostTargetPlan {
     /** The declared GLSL type of an output location: a modern output's own type, else vec4. */
     public String outputType(int outputLocation) {
         return outputTypes.getOrDefault(outputLocation, "vec4");
+    }
+
+    /**
+     * The first component an output location's value fills: a modern output's layout component,
+     * else 0. RenderPearl writes its deferred-ignore flag to colortex2.y as a uint at component 1.
+     */
+    public int outputComponent(int outputLocation) {
+        return outputComponents.getOrDefault(outputLocation, 0);
     }
 
     /** Targets whose mip chain Iris regenerates before this program runs. */

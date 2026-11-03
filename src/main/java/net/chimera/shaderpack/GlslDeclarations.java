@@ -188,8 +188,18 @@ final class GlslDeclarations {
 
     /** The {@code location} a declaration's layout gives it; null without one. */
     static Integer location(GlslTree tree, GlslTree.Declaration declaration) {
+        return layoutInteger(tree, declaration, "location");
+    }
+
+    /** The {@code component} a declaration's layout gives it; 0 without one, as GLSL defaults it. */
+    static int component(GlslTree tree, GlslTree.Declaration declaration) {
+        Integer component = layoutInteger(tree, declaration, "component");
+        return component == null ? 0 : component;
+    }
+
+    private static Integer layoutInteger(GlslTree tree, GlslTree.Declaration declaration, String name) {
         for (GlslTree.Qualifier qualifier : declaration.qualifiers()) {
-            String value = layoutArguments(tree, qualifier).get("location");
+            String value = layoutArguments(tree, qualifier).get(name);
             if (value != null && value.matches("\\d+")) return Integer.parseInt(value);
         }
         return null;

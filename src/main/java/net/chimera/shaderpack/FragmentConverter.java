@@ -337,17 +337,19 @@ public final class FragmentConverter {
             int highest = shadowOutputs.targetSlots().stream().mapToInt(Integer::intValue).max().orElse(0);
             int count = Math.max(2, highest + 1);
             String[] types = new String[count];
+            int[] components = new int[count];
             Arrays.fill(types, "vec4");
             for (int location : shadowOutputs.outputLocations()) {
                 int target = shadowOutputs.targetForOutput(location);
                 outputs.put("chimeraFragColor" + location, "chimeraShadowColor" + target);
                 types[target] = shadowOutputs.outputType(location);
+                components[target] = shadowOutputs.outputComponent(location);
             }
             src = GlslTokenRewriter.replaceIdentifiers(src, outputs);
             StringBuilder declarations = new StringBuilder();
             for (int target = 0; target < count; target++) {
                 if (target > 0) declarations.append('\n');
-                declarations.append("layout(location = ").append(target).append(") out ").append(types[target])
+                declarations.append(outputLayout(target, components[target])).append(" out ").append(types[target])
                         .append(" chimeraShadowColor").append(target).append(';');
             }
             return declarations + (shadowOutputs.discardedOutputs().isEmpty() ? ""
@@ -457,11 +459,16 @@ public final class FragmentConverter {
     static String postOutputDeclarations(PostTargetPlan targetPlan) {
         StringBuilder declarations = new StringBuilder();
         for (int location : targetPlan.outputLocations()) {
-            declarations.append("layout(location = ").append(location).append(") out ")
+            declarations.append(outputLayout(location, targetPlan.outputComponent(location))).append(" out ")
                     .append(targetPlan.outputType(location))
                     .append(" chimeraFragColor").append(location).append(";\n");
         }
         return declarations.append(discardedOutputDeclarations(targetPlan)).toString();
+    }
+
+    /** An output's layout as the pack declared it: a component past 0 stays, or the value lands in .x. */
+    private static String outputLayout(int location, int component) {
+        return "layout(location = " + location + (component == 0 ? "" : ", component = " + component) + ")";
     }
 
     /** Private globals for discarded gl_FragData writes; a discarded modern output keeps its own. */

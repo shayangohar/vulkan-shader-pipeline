@@ -255,6 +255,33 @@ final class CorpusCompileFixesTest {
     }
 
     /**
+     * RenderPearl writes its deferred-ignore flag to colortex2.y as {@code layout(location = 1,
+     * component = 1) out uint}. The generated output keeps the component: without it the flag
+     * landed in .x, and deferred lit the beacon beam black.
+     */
+    @Test
+    void aModernOutputKeepsItsComponent() {
+        String source = """
+                #version 460
+                /* RENDERTARGETS: 1,2 */
+                layout(location = 0) out vec3 colortex1;
+                layout(location = 1, component = 1) out uint colortex2;
+                void main() { colortex1 = vec3(1.0); colortex2 = 0xe6000000u; }
+                """;
+        PostTargetPlan plan = PostTargetPlan.parse("gbuffers_beaconbeam", source).plan();
+        assertEquals(1, plan.outputComponent(1));
+        assertEquals(0, plan.outputComponent(0));
+        String declarations = FragmentConverter.postOutputDeclarations(plan);
+        assertTrue(declarations.contains("layout(location = 0) out vec3 chimeraFragColor0;")
+                && declarations.contains("layout(location = 1, component = 1) out uint chimeraFragColor1;"),
+                declarations);
+        String converted = FragmentConverter.convertPostOutputs(source, plan);
+        String module = "#version 460\n" + declarations + converted.substring(converted.indexOf('\n') + 1);
+        MemoryUtil.memFree(GlslCompiler.compile("gbuffers_beaconbeam.fsh", module,
+                Shaderc.shaderc_glsl_fragment_shader, options -> {}));
+    }
+
+    /**
      * Every format in Iris's InternalTextureFormat list has a target image, the integer ones too.
      * superDuperVanilla's RGB16_SNORM colortex1 had none, and every program writing it fell back;
      * so did every program writing Noble's RGBA32UI colortex1. Insanity's RGB16 and Bloop's R16 are
