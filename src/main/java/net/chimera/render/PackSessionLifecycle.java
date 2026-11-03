@@ -548,6 +548,7 @@ final class PackSessionLifecycle {
      */
     private PackSource.LoadResult loadPackPlan(Path dir) {
         boolean fresh = pass.packSource == null;
+        PackEngineDefines.setMipmapLevel(Minecraft.getInstance().options.mipmapLevels().get());
         PackSource.LoadResult result = fresh
                 ? PackSource.loadResult(dir, this.currentDimension, PendingOptions.drain(dir)) : pass.packSource;
         pass.packSource = result;

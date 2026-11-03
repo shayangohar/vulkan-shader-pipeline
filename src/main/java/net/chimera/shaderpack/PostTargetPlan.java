@@ -40,7 +40,9 @@ public final class PostTargetPlan {
             "(?i)\\b(?:DRAWBUFFERS|RENDERTARGETS)\\b");
     private static final Pattern FRAG_DATA = Pattern.compile(
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
-    private static final Pattern OUTPUT_TYPE = Pattern.compile("float|int|uint|[iu]?vec[234]");
+    /** RenderPearl's NVIDIA path writes f16vec3 shadow colours; GlslVendorExtensions widens them where it must. */
+    private static final Pattern OUTPUT_TYPE = Pattern.compile(
+            "float|int|uint|[iu]?vec[234]|float16_t|u?int16_t|[fiu]16vec[234]");
     private static final Pattern MIPMAP_DIRECTIVE_NAME = Pattern.compile(
             "(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])MipmapEnabled");
 

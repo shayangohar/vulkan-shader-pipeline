@@ -89,6 +89,34 @@ final class PackDirectivesTest {
         assertTrue(compiled.failures().isEmpty(), "GLSL breadth compilation: " + compiled.failures());
     }
 
+    /**
+     * RenderPearl's NVIDIA path writes {@code out f16vec3 shadowcolor0}. The shadow colour keeps its
+     * type, as a vec3 one does, and compiles on a device without 16-bit stage outputs, where it
+     * widens; left undeclared as an output, it overlapped the colour declared in its place.
+     */
+    @Test
+    void aHalfShadowColourKeepsItsType(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        writeVec3ShadowProgram(shaders);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 460 compatibility
+                #extension GL_AMD_gpu_shader_half_float : require
+                uniform sampler2D gtexture;
+                in vec2 uv;
+                layout(location = 0) out f16vec3 shadowcolor0;
+                /* RENDERTARGETS: 0 */
+                void main() {
+                    shadowcolor0 = f16vec3(texture(gtexture, uv).rgb);
+                }
+                """);
+        var analysis = PackProbe.analyze(root);
+        String fragment = analysis.plan().program("shadow").convertedFragment();
+        assertTrue(fragment.contains("layout(location = 0) out f16vec3 chimeraShadowColor0;")
+                && !fragment.contains("out f16vec3 shadowcolor0"), fragment);
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
+    }
+
     /** A 400 compatibility entity program: aliased attributes, flat integer and matrix varyings, two outputs. */
     private static void writeModernEntityProgram(Path shaders) throws IOException {
         Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """

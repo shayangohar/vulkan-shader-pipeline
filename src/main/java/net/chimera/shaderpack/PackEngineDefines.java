@@ -23,11 +23,13 @@ public final class PackEngineDefines {
      * Iris's fixed standard environment (StandardMacros) as Iris 1.8.14 defines it
      * on Minecraft 1.21.1, the one version Chimera targets. Packs branch on these
      * everywhere, {@code MC_VERSION} above all: undefined, it reads as 0 and
-     * selects a pack's pre-1.13 paths. Vendor, mipmap-level and texture-format macros
-     * depend on the live device and options, and are not defined here. IRIS_TAG_SUPPORT
-     * promises block.properties tags (PackMaterialResolver).
+     * selects a pack's pre-1.13 paths. The device's macros (PackDeviceMacros) and
+     * MC_MIPMAP_LEVEL join them in {@link #standard()}; texture-format macros are not
+     * defined. IRIS_TAG_SUPPORT promises block.properties tags (PackMaterialResolver).
      */
     private static final Map<String, String> STANDARD = standardMacros();
+    /** Minecraft's default mipmap levels, until a pack load reads the game's option. */
+    private static volatile int mipmapLevel = 4;
 
     private PackEngineDefines() {}
 
@@ -59,9 +61,20 @@ public final class PackEngineDefines {
         return "MC_OS_UNKNOWN";
     }
 
-    /** The engine's standard macros alone, for sources preprocessed outside a program. */
+    /**
+     * The engine's standard macros with the device's and the mipmap level, alone, for sources
+     * preprocessed outside a program.
+     */
     public static Map<String, String> standard() {
-        return STANDARD;
+        TreeMap<String, String> result = new TreeMap<>(STANDARD);
+        result.put("MC_MIPMAP_LEVEL", Integer.toString(mipmapLevel));
+        result.putAll(PackDeviceMacros.macros(PackDevice.current()));
+        return Collections.unmodifiableMap(result);
+    }
+
+    /** The game's mipmap levels option, which Iris gives packs as MC_MIPMAP_LEVEL. */
+    public static void setMipmapLevel(int levels) {
+        mipmapLevel = levels;
     }
 
     public static Map<String, String> forPack(Map<String, String> packDefines) {
@@ -80,7 +93,7 @@ public final class PackEngineDefines {
                     .forEach(result::add);
         }
         result.add(IS_IRIS);
-        result.addAll(STANDARD.keySet());
+        result.addAll(standard().keySet());
         if (customImages) {
             result.add(CUSTOM_IMAGES);
         }
@@ -98,7 +111,7 @@ public final class PackEngineDefines {
             });
         }
         result.put(IS_IRIS, "1");
-        result.putAll(STANDARD);
+        result.putAll(standard());
         if (customImages) {
             result.put(CUSTOM_IMAGES, "1");
         } else {
