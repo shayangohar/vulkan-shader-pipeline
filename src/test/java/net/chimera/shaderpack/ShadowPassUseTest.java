@@ -99,10 +99,10 @@ final class ShadowPassUseTest {
     }
 
     /**
-     * Mellow draws its shadow pass only for DYNAMIC_SHADOWS or COLORED_LIGHTS. For the voxels alone it
-     * reads shadowtex0 in deferred1.vsh behind {@code gl_VertexID == -1e6} ("Guarantee the shadowmap
-     * runs for colored lights to work"), so Iris builds its ShadowRenderer and drops vanilla entity
-     * shadows there too.
+     * Mellow draws its shadow pass only for DYNAMIC_SHADOWS or voxelised COLORED_LIGHTS (3.5: 1 or 3
+     * of Off, Voxelised, Screen-Space, Hybrid). For the voxels alone it reads shadowtex0 in
+     * deferred1.vsh behind {@code gl_VertexID == -1e6} ("Guarantee the shadowmap runs for colored
+     * lights to work"), so Iris builds its ShadowRenderer and drops vanilla entity shadows there too.
      */
     @Test
     @Tag("packs")
@@ -115,9 +115,11 @@ final class ShadowPassUseTest {
         assertFalse(defaults.runs() || defaults.replacesEntityShadows(), defaults.toString());
         ShadowPassUse shadows = analyzeWith(pack, Map.of("DYNAMIC_SHADOWS", "true"));
         assertTrue(shadows.runs() && shadows.replacesEntityShadows(), shadows.toString());
-        ShadowPassUse lights = analyzeWith(pack, Map.of("COLORED_LIGHTS", "true"));
+        ShadowPassUse lights = analyzeWith(pack, Map.of("COLORED_LIGHTS", "1"));
         assertTrue(lights.readers().contains("deferred1:shadowtex0") && lights.sideEffect() && lights.runs()
                 && lights.replacesEntityShadows(), lights.toString());
+        ShadowPassUse screenSpace = analyzeWith(pack, Map.of("COLORED_LIGHTS", "2"));
+        assertFalse(screenSpace.runs() || screenSpace.replacesEntityShadows(), screenSpace.toString());
     }
 
     /** A pack with shadow.vsh/fsh, gbuffers_terrain with {@code terrain} as its fragment, and these properties. */

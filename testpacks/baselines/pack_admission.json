@@ -75,18 +75,19 @@
     "gbuffers_textured_lit",
     "gbuffers_translucent"
   ],
-  "MakeUp-UltraFast-9.5g.zip": [
+  "MakeUp-UltraFast-9.6.zip": [
     "dh_terrain",
     "dh_water",
     "gbuffers_entities_glowing"
   ],
-  "Mellow v3.4.1a.zip": [
+  "Mellow v3.5.zip": [
     "clrwl_gbuffers",
     "clrwl_shadow",
     "dh_terrain",
     "dh_water",
     "gbuffers_clouds",
-    "gbuffers_terrain_solid"
+    "gbuffers_terrain_solid",
+    "gbuffers_textured_lit"
   ],
   "Noble v1.9.9.zip": [
     "dh_shadow",
@@ -107,7 +108,22 @@
   "RedHat_v34.3.1.zip": [
     "gbuffers_textured_lit"
   ],
-  "RenderPearl v2.4.0.zip": [
+  "RenderPearl v2.8.0-beta.4.zip": [
+    "clrwl_gbuffers",
+    "clrwl_gbuffers_additive",
+    "clrwl_gbuffers_damagedblock",
+    "clrwl_gbuffers_glint",
+    "clrwl_gbuffers_lightning",
+    "clrwl_gbuffers_translucent",
+    "clrwl_shadow",
+    "clrwl_shadow_additive",
+    "clrwl_shadow_glint",
+    "clrwl_shadow_lightning",
+    "clrwl_shadow_translucent",
+    "composite3_b",
+    "dh_shadow",
+    "dh_terrain",
+    "dh_water",
     "gbuffers_terrain_cutout",
     "gbuffers_terrain_solid",
     "gbuffers_textured_lit",
@@ -148,7 +164,7 @@
     "dh_terrain",
     "dh_water"
   ],
-  "Solas Shader V3.7b.zip": [
+  "Solas Shader V3.9.zip": [
     "clrwl_gbuffers",
     "clrwl_gbuffers_translucent",
     "clrwl_shadow",
@@ -168,12 +184,19 @@
     "clrwl_gbuffers",
     "clrwl_shadow"
   ],
-  "photon_v1.3b.zip": [
+  "photon_v1.4.zip": [
+    "clrwl_gbuffers",
+    "clrwl_gbuffers_damagedblock",
+    "clrwl_gbuffers_glint",
+    "clrwl_gbuffers_translucent",
+    "clrwl_shadow",
     "dh_terrain",
     "dh_water",
     "gbuffers_clouds",
     "gbuffers_terrain_solid",
-    "shadow_solid"
+    "gbuffers_voxels",
+    "shadow_solid",
+    "shadow_voxels"
   ],
   "rethinking-voxels_r0.1-beta9.zip": [
     "dh_terrain",
