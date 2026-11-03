@@ -8,6 +8,7 @@ import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexBuffer;
 import com.mojang.math.Axis;
+import net.chimera.render.ChimeraCloudRenderer;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.PackUniformProvider;
@@ -18,9 +19,11 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.DimensionSpecialEffects;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.ShaderInstance;
+import net.minecraft.server.packs.resources.ResourceManager;
 import net.minecraft.world.level.LevelHeightAccessor;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -38,7 +41,9 @@ import java.util.function.Predicate;
  * the world clear (ChimeraLevelRendererMixin), as Iris draws it ahead of the sky. The celestial
  * plane turns by the pack's sun path rotation after vanilla's -90 degree Y turn. The pack's sun,
  * moon, stars and sky switches drop those parts as Iris's MixinLevelRenderer_SunMoonToggle does.
- * renderClouds draws in the CLOUDS phase, and not at all when the pack's cloud program draws nothing.
+ * renderClouds draws in the CLOUDS phase, and not at all when the pack's cloud program draws nothing;
+ * the pack's cloud program draws over Sodium's cloud mesh (ChimeraCloudRenderer), which Iris on 1.21.1
+ * runs it on, unless the dimension draws its own clouds.
  */
 @Mixin(LevelRenderer.class)
 public abstract class ChimeraSkyRendererMixin {
@@ -52,6 +57,11 @@ public abstract class ChimeraSkyRendererMixin {
     private static final String FOG_COLOR = "Lnet/minecraft/client/renderer/FogRenderer;levelFogColor()V";
     private static final String SUNRISE =
             "Lnet/minecraft/client/renderer/DimensionSpecialEffects;getSunriseColor(FF)[F";
+
+    @Shadow
+    private ClientLevel level;
+    @Shadow
+    private int ticks;
 
     @WrapMethod(method = "renderSky")
     private void chimera$skyWindow(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
@@ -179,10 +189,22 @@ public abstract class ChimeraSkyRendererMixin {
         }
         var previous = PackUniformProvider.setRenderingPhase(PackRenderingPhase.CLOUDS);
         try {
-            original.call(pose, frustum, projection, partialTick, cameraX, cameraY, cameraZ);
+            if (!ChimeraSkyBridge.drawsPackClouds() || this.level == null) {
+                original.call(pose, frustum, projection, partialTick, cameraX, cameraY, cameraZ);
+            } else if (!this.level.effects().renderClouds(this.level, this.ticks, partialTick, pose, cameraX, cameraY,
+                    cameraZ, frustum, projection)) {
+                ChimeraCloudRenderer.shared().draw(this.level, this.ticks, pose, frustum, projection, partialTick,
+                        cameraX, cameraY, cameraZ);
+            }
         } finally {
             PackUniformProvider.setRenderingPhase(previous);
         }
+    }
+
+    /** Sodium reads the cloud texture again on a resource reload. */
+    @Inject(method = "onResourceManagerReload", at = @At("RETURN"), require = 1)
+    private void chimera$cloudTexture(ResourceManager resources, CallbackInfo callback) {
+        ChimeraCloudRenderer.shared().reload();
     }
 
     /** Enters {@code phase} for the rest of the sky window, while a pack draws the sky. */

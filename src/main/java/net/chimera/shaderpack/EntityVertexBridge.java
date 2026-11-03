@@ -458,7 +458,7 @@ public final class EntityVertexBridge {
      * them. gbufferModelView and its inverse stay the pack's uniforms in every lane, as in Iris: an
      * item and its glint (depth test EQUAL) must place the same vertex bit for bit, and a GPU
      * inverse of ModelViewMat rounds differently from the uniform the glint lane reads. Clouds'
-     * ModelViewMat also carries vanilla's cloud scale and offset, which gbufferModelView never does.
+     * ModelViewMat also carries the cloud mesh's offset, which gbufferModelView never does.
      */
     private static Map<String, String> entityInputReplacements(
             String vertexPreamble,

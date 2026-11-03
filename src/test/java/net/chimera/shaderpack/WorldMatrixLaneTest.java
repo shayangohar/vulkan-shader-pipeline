@@ -95,7 +95,7 @@ final class WorldMatrixLaneTest {
         assertEquals(item, positionLine(analysis, "gbuffers_armor_glint"),
                 "the glint must place the item's vertices with the same expression");
         assertEquals(item, positionLine(analysis, "gbuffers_clouds"),
-                "clouds' ModelViewMat carries their scale, never gbufferModelView");
+                "clouds' ModelViewMat carries their offset, never gbufferModelView");
         var compiled = PackCompileTest.run(root, analysis);
         assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
     }

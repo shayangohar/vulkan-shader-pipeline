@@ -671,10 +671,11 @@ final class GlslVertexPreambles {
     }
 
     /**
-     * What Iris's VanillaTransformer gives a cloud program: vanilla's cloud mesh
-     * (DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL), gl_Vertex in the mesh's own space (the
-     * draw's model view carries the cloud offset), the clouds texture coordinate, the face colour
-     * (the cloud colour times the face shade), the face's axis normal and full light (240, 240).
+     * What Iris's VanillaTransformer gives a cloud program, on vanilla's cloud layout
+     * (DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL), which Chimera's Sodium-shaped cloud mesh keeps:
+     * gl_Vertex in the mesh's own space (the draw's model view carries the cloud offset), the cell's
+     * texel coordinate, the face colour (the face shade, times the cloud colour in ColorModulator),
+     * the face's axis normal and full light (240, 240).
      */
     static final String CLOUD_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
             .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")

@@ -836,6 +836,7 @@ public final class ChimeraMainPass implements MainPass {
         stopRenderWorkForCleanup();
         sessions.waitForImmediateDestruction("final pack cleanup");
         this.horizonRenderer.close();
+        ChimeraCloudRenderer.shared().close();
         sessions.cleanUpPackVariant();
         // The material owner has renderer lifetime: shader-pack replacement
         // must not close it, and final teardown closes it exactly once while

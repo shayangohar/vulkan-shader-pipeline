@@ -78,6 +78,14 @@ public final class ChimeraSkyBridge {
         return enabled && cloudsDrawNothing;
     }
 
+    /**
+     * True while the pack's cloud program draws the clouds, which then draw over Sodium's cloud mesh
+     * (ChimeraCloudRenderer) rather than vanilla's tile sheets.
+     */
+    public static boolean drawsPackClouds() {
+        return enabled && clouds != null;
+    }
+
     public static boolean hasBasicSky() {
         return enabled && skyBasic != null;
     }
