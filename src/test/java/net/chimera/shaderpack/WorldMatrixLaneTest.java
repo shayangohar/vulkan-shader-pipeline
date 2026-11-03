@@ -178,6 +178,30 @@ final class WorldMatrixLaneTest {
         return count;
     }
 
+    /**
+     * RenderPearl's terrain clamps gl_ProjectionMatrix * view to the frustum and unprojects it with
+     * gbufferProjectionInverse alone: reading the inverse takes the stage into GL's range too.
+     */
+    @Test
+    void anInverseProjectionStageRunsInGlRange(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_water.vsh"), """
+                #version 330 compatibility
+                uniform mat4 gbufferProjectionInverse;
+                out vec4 color;
+                void main() {
+                    vec4 clip = gl_ProjectionMatrix * (gl_ModelViewMatrix * gl_Vertex);
+                    color = gbufferProjectionInverse * clamp(clip / clip.w, vec4(-1.0, -1.0, 0.0, 1.0), vec4(1.0));
+                    gl_Position = clip;
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_water.fsh"), FRAGMENT);
+        String water = convertedVertex(PackProbe.analyze(root), "gbuffers_water");
+        assertTrue(water.contains("chimeraGlClip(") && water.contains(WorldClipRange.AUTHORED_ENTRY + "();\n    "
+                + CONVERSION) && occurrences(water, "gl_Position.z = ") == 1,
+                "a stage that unprojects with gbufferProjectionInverse must run in GL's range: " + water);
+    }
+
     private static String convertedVertex(PackProbe.Analysis analysis, String name) {
         PackProgramPlan plan = analysis.plan().program(name);
         assertTrue(plan != null && plan.executable() && plan.convertedVertex() != null,

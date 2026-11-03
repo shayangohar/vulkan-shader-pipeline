@@ -24,9 +24,15 @@ enum WorldClipRange {
     HOST,
     GL;
 
-    /** The pack's camera projections, in GL's clip range. */
+    /**
+     * The pack's camera projections and their inverses, in GL's clip range. RenderPearl's terrain
+     * clamps gl_ProjectionMatrix * view to the frustum and unprojects it with
+     * gbufferProjectionInverse alone; with the host's range there it placed each light at about
+     * twice its distance and culled every one past a few blocks.
+     */
     private static final Set<String> PACK_PROJECTIONS = Set.of(
-            "gbufferProjection", "gbufferPreviousProjection", "dhProjection", "dhPreviousProjection");
+            "gbufferProjection", "gbufferProjectionInverse", "gbufferPreviousProjection", "dhProjection",
+            "dhProjectionInverse", "dhPreviousProjection");
     /** The legacy built-ins that carry the host's clip depth. */
     private static final List<String> CLIP_BUILTINS = List.of("gl_ProjectionMatrix", "gl_ModelViewProjectionMatrix");
     /** Name the authored entry point keeps once the conversion claims {@code main}. */
