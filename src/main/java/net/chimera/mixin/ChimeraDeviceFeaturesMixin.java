@@ -32,7 +32,7 @@ import static org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2;
  * pack image path, independentBlend for per-attachment blend and write masks, geometryShader for
  * a pack program's .gsh stage, the sized arithmetic types a pack's GL vendor extensions provide,
  * VK_KHR_dynamic_rendering with its feature, which Chimera's windows render with (ChimeraDevice), and
- * the device extensions a pack's GL vendor extensions compile to.
+ * the device extensions pack GLSL compiles to.
  */
 @Mixin(value = DeviceManager.class, remap = false)
 public abstract class ChimeraDeviceFeaturesMixin {
@@ -144,16 +144,17 @@ public abstract class ChimeraDeviceFeaturesMixin {
     }
 
     /**
-     * Device extensions that packs' GL vendor extensions compile to and that need no feature
-     * struct: RenderPearl's GL_AMD_shader_trinary_minmax and Alpha Piscium's
-     * GL_NV_shader_subgroup_partitioned. A module that needs one the device lacks fails its compile
+     * Device extensions that pack GLSL compiles to and that need no feature struct: RenderPearl's
+     * GL_AMD_shader_trinary_minmax, Alpha Piscium's GL_NV_shader_subgroup_partitioned, and GLSL
+     * 4.60's anyInvocation, allInvocations and allInvocationsEqual, which RenderPearl 2.8 calls
+     * without GL_KHR_shader_subgroup. A module that needs one the device lacks fails its compile
      * (GlslCompiler).
      */
-    private static final List<String> PACK_VENDOR_EXTENSIONS = List.of("VK_AMD_shader_trinary_minmax",
-            "VK_NV_shader_subgroup_partitioned");
+    private static final List<String> PACK_EXTENSIONS = List.of("VK_AMD_shader_trinary_minmax",
+            "VK_NV_shader_subgroup_partitioned", "VK_EXT_shader_subgroup_vote");
 
     /**
-     * Adds VK_KHR_dynamic_rendering and the offered pack vendor extensions to VulkanMod's list, and
+     * Adds VK_KHR_dynamic_rendering and the offered pack extensions to VulkanMod's list, and
      * records the list the device is created with (ChimeraDevice.missingExtensions).
      */
     @ModifyArg(
@@ -173,10 +174,10 @@ public abstract class ChimeraDeviceFeaturesMixin {
         if (ChimeraDevice.dynamicRendering() && names.add(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) {
             added.add(VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
         }
-        for (String vendor : PACK_VENDOR_EXTENSIONS) {
-            if (!names.contains(vendor) && ChimeraDevice.supportsExtension(DeviceManager.physicalDevice, vendor)) {
-                names.add(vendor);
-                added.add(vendor);
+        for (String pack : PACK_EXTENSIONS) {
+            if (!names.contains(pack) && ChimeraDevice.supportsExtension(DeviceManager.physicalDevice, pack)) {
+                names.add(pack);
+                added.add(pack);
             }
         }
         ChimeraDevice.setEnabledExtensions(names);

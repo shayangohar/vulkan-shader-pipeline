@@ -62,6 +62,30 @@ final class GlslCompilerTest {
                 options -> {}));
     }
 
+    /**
+     * GLSL 4.60's group votes, which RenderPearl 2.8 calls for subgroupAny without GL_KHR_shader_subgroup,
+     * compile to SPV_KHR_subgroup_vote: the device must enable VK_EXT_shader_subgroup_vote.
+     */
+    @Test
+    void groupVotesNeedTheSubgroupVoteExtension() {
+        String source = """
+                #version 460
+                layout(location = 0) in float value;
+                layout(location = 0) out vec4 color;
+                void main() {
+                    color = vec4(anyInvocation(value > 0.5), allInvocations(value > 0.0),
+                            allInvocationsEqual(value > 0.25), 1.0);
+                }
+                """;
+        ChimeraDevice.setEnabledExtensions(List.of("VK_KHR_dynamic_rendering"));
+        IllegalStateException failure = assertThrows(IllegalStateException.class, () -> GlslCompiler.compile(
+                "gbuffers_terrain.fsh", source, Shaderc.shaderc_glsl_fragment_shader, options -> {}));
+        assertTrue(failure.getMessage().contains("VK_EXT_shader_subgroup_vote"), failure.getMessage());
+        ChimeraDevice.setEnabledExtensions(List.of("VK_KHR_dynamic_rendering", "VK_EXT_shader_subgroup_vote"));
+        MemoryUtil.memFree(GlslCompiler.compile("gbuffers_terrain.fsh", source, Shaderc.shaderc_glsl_fragment_shader,
+                options -> {}));
+    }
+
     /** RenderPearl's deferred1 calls min3 under GL_AMD_shader_trinary_minmax, which NVIDIA's device lacks. */
     @Test
     void compilesTheAmdTrinaryFunctionsAsMinAndMaxWithoutTheExtension() {
