@@ -451,12 +451,17 @@ final class PackCompileTest {
      * rewrites the baseline after review. Every compiled shader must also match its
      * converted-output baseline ({@link ConvertedOutputSnapshot}); {@code -Pchimera.snapshot.update=true}
      * rewrites that, and {@code -Pchimera.snapshot.spirvOnly=true} compares SPIR-V alone.
+     * {@code -Pchimera.device=amd} or {@code intel} compiles for that GPU (PackDevice), whose
+     * vendor paths differ, against its own admission baseline and without converted output.
      */
     @Test
     void compileLockedPacks() throws Exception {
         List<Path> packs = new ArrayList<>(List.of(TestPacks.complementary(), TestPacks.bsl()));
         packs.addAll(TestPacks.extra());
-        Path baselinePath = TestPacks.baseline("pack_admission");
+        // Each device profile admits its own programs; converted output is recorded for the default, NVIDIA.
+        String profile = PackDevice.current().profile();
+        boolean defaultProfile = profile.equals(PackDevice.DEFAULT_PROFILE);
+        Path baselinePath = TestPacks.baseline(defaultProfile ? "pack_admission" : "pack_admission-" + profile);
         boolean update = Boolean.getBoolean("chimera.packCompile.updateAdmission");
         Gson gson = new GsonBuilder().setPrettyPrinting().create();
         Type baselineType =
@@ -468,10 +473,12 @@ final class PackCompileTest {
         for (Path pack : packs) {
             String key = pack.getFileName().toString();
             PackProbe.Analysis analysis = PackProbe.analyze(pack);
-            ConvertedOutputSnapshot snapshot = new ConvertedOutputSnapshot(key);
+            ConvertedOutputSnapshot snapshot = defaultProfile ? new ConvertedOutputSnapshot(key) : null;
             Result result = run(pack, analysis, snapshot);
-            failures.addAll(snapshot.compareWithBaseline(Boolean.getBoolean("chimera.snapshot.update"),
-                    Boolean.getBoolean("chimera.snapshot.spirvOnly")));
+            if (snapshot != null) {
+                failures.addAll(snapshot.compareWithBaseline(Boolean.getBoolean("chimera.snapshot.update"),
+                        Boolean.getBoolean("chimera.snapshot.spirvOnly")));
+            }
             SortedSet<String> rejected = rejectedPrograms(pack, analysis);
             System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected,"
                     + " pass computes %s%n", key, result.compiled(), result.failures().size(), rejected.size(),

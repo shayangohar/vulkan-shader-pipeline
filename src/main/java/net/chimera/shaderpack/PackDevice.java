@@ -27,6 +27,8 @@ import java.util.stream.Stream;
  */
 public record PackDevice(String profile, int vendorId, int driverId, String name, SortedSet<String> features,
                          int subgroupStages, int subgroupOperations, SortedSet<String> extensions) {
+    /** The offline profile the tests, the corpus gate and the option sweep compile for unless told another. */
+    public static final String DEFAULT_PROFILE = "nvidia";
     public static final int VENDOR_AMD = 0x1002;
     public static final int VENDOR_NVIDIA = 0x10DE;
     public static final int VENDOR_INTEL = 0x8086;
@@ -108,7 +110,7 @@ public record PackDevice(String profile, int vendorId, int driverId, String name
                     "Intel(R) Arc(TM) A770 Graphics", allFeaturesExcept("shaderFloat64"), 0x3F, 0xFF,
                     sorted(List.of("VK_KHR_swapchain", "VK_KHR_dynamic_rendering", "VK_EXT_shader_subgroup_vote"))));
 
-    private static volatile PackDevice current = offline(System.getProperty("chimera.device", "nvidia"));
+    private static volatile PackDevice current = offline(System.getProperty("chimera.device", DEFAULT_PROFILE));
 
     public PackDevice {
         features = sorted(features);

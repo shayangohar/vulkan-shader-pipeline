@@ -5,8 +5,12 @@ The frozen Fabric 1.21.11 line (CHIMERA instance) runs from the fabric/1.21.11 b
   .\tools\check-packs.ps1                          the full gate: check build
   .\tools\check-packs.ps1 packTest                 one task
   .\tools\check-packs.ps1 -Corpus optionSweep      also the corpus packs in testpacks\corpus\packs
+  .\tools\check-packs.ps1 -Corpus -Device amd packTest --tests '*PackCompileTest*'
+                                                   compile for another GPU profile: nvidia (default), amd, intel
 
 Every value becomes a -Pchimera.* property, which build.gradle passes to the tests.
+A profile other than nvidia checks compiles against its own admission baseline
+(testpacks\baselines\pack_admission-<profile>.json) and records no converted output.
 The corpus zips are not committed: testpacks\corpus\pins holds their Modrinth pins.
 The tests read the locked packs from copies in build\locked-packs, without the instance's
 <pack>.txt option files: the baselines assume default options (KNOW-615).
@@ -16,6 +20,8 @@ param(
     [string]$PackRoot = (Join-Path $env:APPDATA 'PrismLauncher\instances\Chimera NeoForge 1.21.1\minecraft\shaderpacks'),
     [switch]$PrintBaselines,
     [switch]$Corpus,
+    [ValidateSet('nvidia', 'amd', 'intel')]
+    [string]$Device,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$GradleArguments
 )
@@ -50,6 +56,7 @@ $properties = @(
     '-Pchimera.gpu=true'
 )
 if ($PrintBaselines) { $properties += '-Pchimera.printBaselines=true' }
+if ($Device) { $properties += "-Pchimera.device=$Device" }
 if (-not $GradleArguments) { $GradleArguments = @('check', 'build') }
 
 # Gradle reports failing tasks on stderr. Under 'Stop', a redirected run would end at the first such
