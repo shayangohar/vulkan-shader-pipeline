@@ -22,7 +22,10 @@ import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
  * layout for its draw: the images the chain reads now (PackPostTargets.storageSource), as a pass
  * compute binds them. Iris binds the target's texture to an image unit, which GL needs no layout
  * for; VulkanMod moves only sampled images, and rejects one it finds general, so each goes back to
- * the sampled layout after the draw.
+ * the sampled layout after the draw. PackPostTargets holds them once the pass's output copies are
+ * recorded, just before the draw opens, and releases them as it closes: holding them earlier made
+ * Rethinking Voxels' prepare2 copy its colortex3 out of GENERAL ("Unexpected value:1"), and the
+ * runtime fallback turned the whole post chain off.
  */
 final class PostTargetStorage {
     private static final int SHADER_STAGES =

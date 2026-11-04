@@ -66,6 +66,8 @@ public final class PackPostTargets {
     private final VulkanImage[] snapshotImages = new VulkanImage[TARGET_COUNT];
     /** What world programs read (worldImages), refilled on each call. */
     private final VulkanImage[] worldImages = new VulkanImage[TARGET_COUNT];
+    /** The targets the drawing post pass stores to as colorimgN, held in GENERAL for its draw. */
+    private final PostTargetStorage storage = new PostTargetStorage();
 
     private VulkanImage hdrIdentitySource;
     private PackTargetGraphPlan graph;
@@ -492,6 +494,9 @@ public final class PackPostTargets {
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             claimOutputSides(stack, commandBuffer, step);
+            // After the copies above, which move images through VulkanMod's tracked layouts, and
+            // outside the render pass: VulkanMod moves no image out of GENERAL ("Unexpected value:1").
+            this.storage.begin(commandBuffer, this, post.storageTargets());
             PostAttachments attachments = colorAttachments(stack, commandBuffer, plan, step);
             int renderWidth = attachments.width();
             int renderHeight = attachments.height();
@@ -595,6 +600,7 @@ public final class PackPostTargets {
         boolean committed = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdEndRenderingKHR(commandBuffer);
+            this.storage.end(commandBuffer);
             transitionWrittenTargetsForSampling(stack, commandBuffer);
             committed = true;
         } finally {
@@ -641,6 +647,7 @@ public final class PackPostTargets {
     public void abort(VkCommandBuffer commandBuffer) {
         if (this.rendering) vkCmdEndRenderingKHR(commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            this.storage.end(commandBuffer);
             transitionWrittenTargetsForSampling(stack, commandBuffer);
         } finally {
             this.temporal.abort();

@@ -56,9 +56,6 @@ final class PackPostChain {
     /** Debug NaN detector over pack targets; idle unless enabled. */
     final PackNanTripwire nanTripwire = new PackNanTripwire();
 
-    /** The colour targets the drawing pass stores to as colorimgN, general for its draw. */
-    private final PostTargetStorage targetStorage = new PostTargetStorage();
-
     PackPostChain(ChimeraMainPass pass) {
         this.pass = pass;
     }
@@ -291,7 +288,6 @@ final class PackPostChain {
             pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
             if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
             pass.prepareProgramImages(post.pipeline());
-            this.targetStorage.begin(commandBuffer, pass.packPostTargets, post.storageTargets());
             previous = pass.images.bindProgramImages(post.pipeline(), pass.packPostTargets.sourceImages(),
                     hdrColor,
                     DrawMaterialContext.captureLive());
@@ -308,7 +304,6 @@ final class PackPostChain {
             throw stageFailure;
         } finally {
             if (previous != null) previous.close();
-            this.targetStorage.end(commandBuffer);
         }
     }
 

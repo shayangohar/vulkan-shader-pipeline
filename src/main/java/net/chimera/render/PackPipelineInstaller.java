@@ -18,6 +18,7 @@ import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.chimera.shaderpack.TargetSpec;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import org.slf4j.Logger;
@@ -102,6 +103,8 @@ final class PackPipelineInstaller {
         if (!advancedImagesAllowed(name, advanced)) {
             return "ADVANCED_RESOURCE_BRIDGE_UNAVAILABLE";
         }
+        String unstorable = unstorableTargetImage(name, advanced);
+        if (unstorable != null) return "TARGET_IMAGE_FORMAT_UNSUPPORTED:" + unstorable;
         boolean storageAllowed = plan == null
                 || !advanced.bufferDependentPrograms().contains(name)
                 || (storage != null && storage.programAvailable(name));
@@ -111,6 +114,23 @@ final class PackPipelineInstaller {
         }
         if (resources != null && !resources.programAvailable(name)) {
             return resources.failureDeviationForProgram(name);
+        }
+        return null;
+    }
+
+    /**
+     * The first colorimgN the program stores to whose target this device cannot make a storage
+     * image, in the target's format or the one the program binds it in; null when there is none.
+     * A pass compute's such binding is refused the same way (PackPassComputes.bindingRefusal).
+     */
+    private String unstorableTargetImage(String name, PackAdvancedResourcePlan advanced) {
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding : advanced.graphicsImages(name)) {
+            if (binding.target() < 0) continue;
+            TargetSpec target = pass.packTargetGraph == null ? null : pass.packTargetGraph.target(binding.target());
+            if (target == null || !PackPassComputes.storageSupported(target.format())
+                    || !PackPassComputes.storageSupported(binding.viewVkFormat())) {
+                return binding.symbol();
+            }
         }
         return null;
     }
