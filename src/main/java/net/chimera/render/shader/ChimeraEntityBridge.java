@@ -550,9 +550,14 @@ public final class ChimeraEntityBridge {
         };
     }
 
-    /** The shader a composite render type draws with, which Iris keys its overrides on; null for none. */
+    /**
+     * The shader a composite render type draws with, which Iris keys its overrides on, the bolt's
+     * through the lightning type it wraps; null for none.
+     */
     private static String shaderOf(RenderType type) {
-        if (!(type instanceof ChimeraCompositeRenderTypeAccessor composite)) return null;
+        if (!(LightningBoltRenderType.unwrap(type) instanceof ChimeraCompositeRenderTypeAccessor composite)) {
+            return null;
+        }
         var shard = ((ChimeraCompositeStateAccessor) (Object) composite.chimera$state()).chimera$shaderState();
         ShaderInstance shader = ((ChimeraShaderStateShardAccessor) shard).chimera$shader().map(Supplier::get)
                 .orElse(null);

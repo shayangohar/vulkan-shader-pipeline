@@ -39,6 +39,20 @@ final class IrisTransparencyTest {
                 RenderStateShard.TRANSLUCENT_TRANSPARENCY, RenderStateShard.LEQUAL_DEPTH_TEST));
     }
 
+    /**
+     * The bolt's type, LightningBoltRenderType, reads as the RenderType.lightning() it wraps
+     * (LightningBoltRenderType.unwrap): LIGHTNING_TRANSPARENCY is Iris's GENERAL_TRANSPARENT, so the
+     * bolt is held and drawn after RenderPearl's deferred pass, as Iris draws it. Read as itself it
+     * drew with the entities, and the bolt showed solid white over the unlit scene.
+     */
+    @Test
+    void lightningDrawsAfterTheDeferredPasses() {
+        IrisTransparency lightning = IrisTransparency.ofComposite("lightning",
+                RenderStateShard.LIGHTNING_TRANSPARENCY, RenderStateShard.LEQUAL_DEPTH_TEST);
+        assertEquals(IrisTransparency.GENERAL_TRANSPARENT, lightning);
+        assertFalse(lightning.drawsBeforeDeferred());
+    }
+
     /** Iris's MixinLevelRenderer ends exactly these three kinds at the translucent boundary. */
     @Test
     void separateEntityDrawsDrawsTheOpaqueKindsBeforeDeferred() {

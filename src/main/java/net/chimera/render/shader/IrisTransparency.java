@@ -16,15 +16,17 @@ public enum IrisTransparency {
 
     /**
      * The type's transparency as Iris sets it (MixinSheets, then MixinCompositeRenderType): a type that
-     * is no composite reads GENERAL_TRANSPARENT, Iris's default for any render type.
+     * is no composite reads GENERAL_TRANSPARENT, Iris's default for any render type. The bolt's type
+     * reads the lightning type it wraps, as Iris's InnerWrappedRenderType does.
      */
     public static IrisTransparency of(RenderType type) {
-        if (type == Sheets.armorTrimsSheet(false)) return OPAQUE_DECAL;
-        if (type == RenderType.textBackground() || type == RenderType.textBackgroundSeeThrough()) return OPAQUE;
-        if (type == RenderType.dragonRaysDepth()) return DECAL;
-        if (!(type instanceof ChimeraCompositeRenderTypeAccessor composite)) return GENERAL_TRANSPARENT;
+        RenderType drawn = LightningBoltRenderType.unwrap(type);
+        if (drawn == Sheets.armorTrimsSheet(false)) return OPAQUE_DECAL;
+        if (drawn == RenderType.textBackground() || drawn == RenderType.textBackgroundSeeThrough()) return OPAQUE;
+        if (drawn == RenderType.dragonRaysDepth()) return DECAL;
+        if (!(drawn instanceof ChimeraCompositeRenderTypeAccessor composite)) return GENERAL_TRANSPARENT;
         var state = (ChimeraCompositeStateAccessor) (Object) composite.chimera$state();
-        return ofComposite(type.name, state.chimera$transparencyState(), state.chimera$depthTestState());
+        return ofComposite(drawn.name, state.chimera$transparencyState(), state.chimera$depthTestState());
     }
 
     /** A composite type's transparency from its name and its transparency and depth-test shards. */
