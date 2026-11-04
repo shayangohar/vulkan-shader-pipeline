@@ -201,10 +201,7 @@
     "dh_terrain",
     "dh_water",
     "gbuffers_clouds",
-    "gbuffers_entities_glowing",
-    "prepare",
-    "prepare1",
-    "prepare2"
+    "gbuffers_entities_glowing"
   ],
   "superDuperVanilla.zip": [
     "dh_generic",

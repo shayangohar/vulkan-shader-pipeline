@@ -158,6 +158,12 @@ public final class PackAdvancedResourcePlan {
         public int viewVkFormat() {
             return viewFormat.isEmpty() ? 0 : IrisColorFormats.of(viewFormat).vkFormat();
         }
+
+        /** The colour target a post pass's colorimgN binding stores to (TargetImages); -1 for a pack image. */
+        public int target() {
+            int target = TargetImages.target(symbol);
+            return target >= 0 && imageName.equals(TargetImages.resource(target)) ? target : -1;
+        }
     }
 
     /**
@@ -658,6 +664,18 @@ public final class PackAdvancedResourcePlan {
                 .collect(Collectors.toCollection(TreeSet::new));
     }
 
+    /**
+     * The Vulkan formats post passes store each colour target in as colorimgN, which make its
+     * images storage ones, with a view in any other format (PackPostTargets.configure).
+     */
+    public Map<Integer, Set<Integer>> targetImageFormats() {
+        Map<Integer, Set<Integer>> formats = new TreeMap<>();
+        graphicsImages.values().stream().flatMap(List::stream).filter(binding -> binding.target() >= 0)
+                .forEach(binding -> formats.computeIfAbsent(binding.target(), ignored -> new TreeSet<>())
+                        .add(binding.viewVkFormat()));
+        return formats;
+    }
+
     /** Returns the union of writer and reader bindings for pipeline setup. */
     public List<GraphicsImageBinding> imageBindings(String program) {
         Map<String, GraphicsImageBinding> result = new TreeMap<>();
@@ -719,8 +737,8 @@ public final class PackAdvancedResourcePlan {
 
     /**
      * Whether the program declares an image or storage block that no binding here serves, as the
-     * report reads it (ADVANCED_RESOURCE_UNSUPPORTED). Rethinking Voxels' prepare stores to
-     * {@code colorimg9}, which Chimera binds only for pass computes.
+     * report reads it (ADVANCED_RESOURCE_UNSUPPORTED): a final or gbuffers program storing to
+     * {@code colorimgN}, which Chimera binds only in the other post passes and pass computes.
      */
     public boolean declaresUnplannedResource(String program) {
         return deviations.contains(UNPLANNED_DECLARATION + program);

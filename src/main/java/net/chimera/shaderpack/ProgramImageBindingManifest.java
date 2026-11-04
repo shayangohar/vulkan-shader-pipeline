@@ -8,8 +8,9 @@ import java.util.Objects;
 
 /** Finalized image descriptors and their explicit, program-scoped execution resolvers. */
 public record ProgramImageBindingManifest(List<Entry> entries) {
+    /** What an entry binds; TARGET_IMAGE is a colour target a post pass stores to as colorimgN. */
     public enum Kind { COLOR_TARGET, DEPTH_TARGET, SHADOW_DEPTH, SHADOW_COLOR,
-        PACK_TEXTURE, HOST_TEXTURE, ADVANCED_IMAGE, MATERIAL_MAP, CENTER_DEPTH }
+        PACK_TEXTURE, HOST_TEXTURE, ADVANCED_IMAGE, MATERIAL_MAP, CENTER_DEPTH, TARGET_IMAGE }
 
     public record Entry(String symbol, int slot, int descriptorType, int stageMask,
             Kind kind, String resourceKey, int set, int binding, String sourceSymbol) {
@@ -76,7 +77,8 @@ public record ProgramImageBindingManifest(List<Entry> entries) {
         for (int i = 0; i < layout.storageImages().size(); i++) {
             var image = layout.storageImages().get(i);
             entries.add(new Entry("Sampler" + image.selectorSlot(), image.selectorSlot(), 3, 63,
-                    Kind.ADVANCED_IMAGE, image.imageName(), 0, layout.imageBase() + i, image.symbol()));
+                    image.target() >= 0 ? Kind.TARGET_IMAGE : Kind.ADVANCED_IMAGE, image.imageName(), 0,
+                    layout.imageBase() + i, image.symbol()));
         }
         for (int i = 0; i < layout.advancedSamplers().size(); i++) {
             var image = layout.advancedSamplers().get(i);

@@ -164,6 +164,9 @@ final class PackImageBindings {
                     : pass.packResourceOwner.image(entry.resourceKey());
             case ADVANCED_IMAGE -> pass.packAdvancedImageOwner == null ? null
                     : pass.packAdvancedImageOwner.image(entry.resourceKey());
+            // The image the chain reads now, which PostTargetStorage holds in the general layout.
+            case TARGET_IMAGE -> pass.packPostTargets.storageSource(Renderer.getCommandBuffer(),
+                    PackResourcePlan.targetIndex(entry.resourceKey()));
             case CENTER_DEPTH -> pass.packCenterDepth == null ? null : pass.packCenterDepth.image();
             case MATERIAL_MAP -> throw new AssertionError();
             case HOST_TEXTURE -> throw new AssertionError();

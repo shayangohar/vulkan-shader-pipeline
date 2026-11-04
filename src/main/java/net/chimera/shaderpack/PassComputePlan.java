@@ -92,9 +92,6 @@ public final class PassComputePlan {
         }
     }
 
-    /** The format and GLSL type a compute binds a storage image in. */
-    private record StorageForm(String format, String type) {}
-
     /** What a storage image declaration binds: its form, kind, target index and resource. */
     private record ImageUse(StorageForm form, Kind kind, int target, String resource) {}
 
@@ -486,12 +483,7 @@ public final class PassComputePlan {
          * its own format, or through a view in another one of its texel size; null for another size.
          */
         private static StorageForm storageForm(int vkFormat, String qualifiers) {
-            IrisColorFormats.Format own = IrisColorFormats.stored(vkFormat);
-            String view = own == null ? "" : AdvancedImageDeclarations.viewFormat(own, declaredFormat(qualifiers));
-            if (view == null) return null;
-            if (!view.isEmpty()) return new StorageForm(view, imageType(IrisColorFormats.of(view).kind()));
-            String format = imageFormat(vkFormat);
-            return format == null ? null : new StorageForm(format, imageType(kind(vkFormat)));
+            return StorageForm.of(vkFormat, declaredFormat(qualifiers));
         }
 
         /** A pack image this session creates, or null. */
@@ -660,22 +652,7 @@ public final class PassComputePlan {
 
         /** The sampler type a target binds to: usampler2D or isampler2D for an integer format (Iris). */
         private String targetSamplerType(int target) {
-            return typePrefix(kind(targetFormat(target))) + "sampler2D";
-        }
-
-        /** The kind of value a target format stores; float for one no target uses. */
-        private static IrisColorFormats.Kind kind(int vkFormat) {
-            IrisColorFormats.Format format = IrisColorFormats.stored(vkFormat);
-            return format == null ? IrisColorFormats.Kind.FLOAT : format.kind();
-        }
-
-        /** The 2D storage image type that reads values of {@code kind}. */
-        private static String imageType(IrisColorFormats.Kind kind) {
-            return typePrefix(kind) + "image2D";
-        }
-
-        private static String typePrefix(IrisColorFormats.Kind kind) {
-            return kind == IrisColorFormats.Kind.UINT ? "u" : kind == IrisColorFormats.Kind.SINT ? "i" : "";
+            return StorageForm.typePrefix(StorageForm.kind(targetFormat(target))) + "sampler2D";
         }
 
         /** The live value uniforms the frame serves, in the order the block lays them out. */

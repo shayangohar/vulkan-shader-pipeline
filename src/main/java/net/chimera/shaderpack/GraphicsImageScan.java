@@ -17,7 +17,7 @@ import java.util.stream.Collectors;
  * and reads through its sampler, and the stages guarded by the custom-image feature.
  */
 final class GraphicsImageScan {
-    private static final Pattern GRAPHICS_IMAGE_DECLARATION = Pattern.compile(
+    static final Pattern GRAPHICS_IMAGE_DECLARATION = Pattern.compile(
             "(?:layout\\s*\\(([^)]*)\\)\\s*)?"
                     + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
                     + "\\b(u?i?image(?:1D|2D|3D)(?:Array)?)\\s+([A-Za-z_]\\w*)");
@@ -31,6 +31,8 @@ final class GraphicsImageScan {
     private final Map<String, PackAdvancedResourcePlan.ImageSpec> images;
     private final List<String> deviations;
     private final Set<String> imageSamplerNames;
+    /** The selector slots the program being scanned samples through (addTargetWriter). */
+    private Set<Integer> sampledSlots = Set.of();
 
     private GraphicsImageScan(PackPlan plan, Map<String, PackAdvancedResourcePlan.ImageSpec> images,
                               List<String> deviations) {
@@ -81,6 +83,9 @@ final class GraphicsImageScan {
         if (usesAdvanced) {
             dependent.add(program.name());
         }
+        sampledSlots = program.interfacePlan() == null ? Set.of()
+                : program.interfacePlan().effective(UniformRegistry.Stage.POST).samplers().stream()
+                        .map(UniformRegistry.SamplerBinding::slot).collect(Collectors.toSet());
         for (Map.Entry<String, PreparedShaderSource> stageEntry : program.stages().entrySet()) {
             PreparedShaderSource stage = stageEntry.getValue();
             if (stage == null || stage.source() == null) continue;
@@ -131,7 +136,13 @@ final class GraphicsImageScan {
         String symbol = declared.symbol();
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySymbol(images, symbol);
         if (spec == null) {
-            // Not a pack image: Iris's colorimgN and shadowcolorimgN, which no draw here binds.
+            int target = TargetImages.target(symbol);
+            if (target >= 0 && TargetImages.servedIn(program)) {
+                if (referenced) addTargetWriter(program, stage, declared, target);
+                return;
+            }
+            // Not a pack image: Iris's shadowcolorimgN, and colorimgN outside the post passes,
+            // which no draw here binds.
             if (referenced) deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + symbol);
             return;
         }
@@ -145,6 +156,32 @@ final class GraphicsImageScan {
                         spec.name(), spec.sampler(), declared.glslType(), viewFormat, selectorSlot,
                         StorageBufferDeclarations.stageMask(stage)));
         if (live) producedImages.add(spec.name());
+    }
+
+    /**
+     * colorimgN in a post pass: target N as a storage image at the slot the pass would sample it
+     * through, in the target's format or a same-size view the declaration names, as for a pass
+     * compute (StorageForm). A format of another size has no such view, and a pass that also
+     * samples the target would read one image in two layouts: either refuses the program.
+     */
+    private void addTargetWriter(String program, String stage, Declared declared, int target) {
+        String symbol = declared.symbol();
+        int slot = SelectorNamespace.colorTargetSlot(target);
+        Map<Integer, Integer> formats = plan.config() == null ? Map.of() : plan.config().colortexFormats();
+        StorageForm form = StorageForm.of(formats.getOrDefault(target, PostTargetPlan.DEFAULT_FORMAT),
+                declared.format());
+        if (form == null) deviations.add("ADVANCED_IMAGE_FORMAT_INCOMPATIBLE:" + symbol + ":" + declared.format());
+        if (sampledSlots.contains(slot)) {
+            deviations.add("TARGET_IMAGE_ALSO_SAMPLED:" + program + ":" + TargetImages.resource(target));
+        }
+        if (form == null || sampledSlots.contains(slot)) {
+            deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + symbol);
+            return;
+        }
+        writers.computeIfAbsent(program, ignored -> new ArrayList<>())
+                .add(new PackAdvancedResourcePlan.GraphicsImageBinding(program, symbol,
+                        TargetImages.resource(target), "", form.type(), form.format(), slot,
+                        StorageBufferDeclarations.stageMask(stage)));
     }
 
     /**

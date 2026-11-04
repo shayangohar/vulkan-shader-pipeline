@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -217,9 +218,18 @@ public final class PackPipelines {
             frameInputs = frameInputs == null ? List.of() : frameInputs.stream().distinct().sorted().toList();
         }
 
-        /** The colour targets the pass reads from the frame, ascending. */
+        /** The colour targets the pass reads from the frame, sampled or stored to, ascending. */
         public List<Integer> requiredColorInputs() {
-            return colorInputTargets(frameInputs);
+            List<Integer> inputs = new ArrayList<>(colorInputTargets(frameInputs));
+            inputs.addAll(storageTargets());
+            return inputs.stream().distinct().sorted().toList();
+        }
+
+        /** The colour targets the pass stores to as colorimgN (TargetImages), ascending. */
+        public List<Integer> storageTargets() {
+            return imageBindings.entries().stream()
+                    .filter(entry -> entry.kind() == ProgramImageBindingManifest.Kind.TARGET_IMAGE)
+                    .map(entry -> PackResourcePlan.targetIndex(entry.resourceKey())).distinct().sorted().toList();
         }
     }
 

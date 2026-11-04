@@ -177,6 +177,7 @@ public final class PackTargetGraphPlan {
                 continue;
             }
             program.targetPlan().targetSlots().stream().filter(inputs::allocatable).forEach(used::add);
+            TargetImages.referenced(program).stream().filter(inputs::allocatable).forEach(used::add);
             for (String sampler : samplerNames(program)) {
                 Integer target = colorTarget(program, sampler, inputs.resources());
                 if (inputs.allocatable(target)) used.add(target);
@@ -311,9 +312,12 @@ public final class PackTargetGraphPlan {
         return unwritten;
     }
 
-    /** The color targets a post program samples, ascending. */
+    /**
+     * The color targets a post program samples, and those it binds as colorimgN, ascending: Iris
+     * binds that the image the pass samples (IrisImages.addRenderTargetImages).
+     */
     private static List<Integer> readTargets(GraphInputs inputs, PackProgramPlan program) {
-        List<Integer> reads = new ArrayList<>();
+        List<Integer> reads = new ArrayList<>(TargetImages.referenced(program));
         for (String sampler : samplerNames(program)) {
             Integer target = colorTarget(program, sampler, inputs.resources());
             if (target != null && !reads.contains(target)) reads.add(target);

@@ -32,6 +32,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -53,6 +55,9 @@ final class PackPostChain {
 
     /** Debug NaN detector over pack targets; idle unless enabled. */
     final PackNanTripwire nanTripwire = new PackNanTripwire();
+
+    /** The colour targets the drawing pass stores to as colorimgN, general for its draw. */
+    private final PostTargetStorage targetStorage = new PostTargetStorage();
 
     PackPostChain(ChimeraMainPass pass) {
         this.pass = pass;
@@ -286,6 +291,7 @@ final class PackPostChain {
             pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
             if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
             pass.prepareProgramImages(post.pipeline());
+            this.targetStorage.begin(commandBuffer, pass.packPostTargets, post.storageTargets());
             previous = pass.images.bindProgramImages(post.pipeline(), pass.packPostTargets.sourceImages(),
                     hdrColor,
                     DrawMaterialContext.captureLive());
@@ -302,6 +308,7 @@ final class PackPostChain {
             throw stageFailure;
         } finally {
             if (previous != null) previous.close();
+            this.targetStorage.end(commandBuffer);
         }
     }
 
@@ -610,6 +617,21 @@ final class PackPostChain {
         return "unavailable inputs " + missing;
     }
 
+    /**
+     * The targets pass computes and post passes store to (colorimgN), each with the formats they
+     * bind it in: their images are created for storage, with a view in any other format.
+     */
+    private Map<Integer, Set<Integer>> storageTargets() {
+        Map<Integer, Set<Integer>> targets = new TreeMap<>();
+        if (pass.packPassComputes != null) {
+            pass.packPassComputes.storageTargets().forEach((target, formats) ->
+                    targets.computeIfAbsent(target, ignored -> new TreeSet<>()).addAll(formats));
+        }
+        pass.packPlan.advancedResources().targetImageFormats().forEach((target, formats) ->
+                targets.computeIfAbsent(target, ignored -> new TreeSet<>()).addAll(formats));
+        return targets;
+    }
+
     void configurePackPostTargets(int width, int height) {
         if (pass.packPostChainRejected) {
             return;
@@ -646,8 +668,7 @@ final class PackPostChain {
                     pass.packPlan.activePrograms(), pass.packTargetGraph, computeDepthReads());
             pass.packNeedsHdrDepth = pass.packTargetGraph.depth().any();
             pass.packDepthTargets.configure(width, height, pass.packTargetGraph.depth());
-            pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph,
-                    pass.packPassComputes == null ? Map.of() : pass.packPassComputes.storageTargets());
+            pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph, storageTargets());
             pass.packPostChainActive = pass.packTargetResourcesReady && runsChain(pass.packTargetGraph,
                     pass.packPassComputes != null && pass.packPassComputes.runInPostChain());
             // New targets, at load or after a resize: Iris runs its setup computes again.

@@ -369,8 +369,13 @@ final class PackDescriptorContracts {
     }
 
     /** The admitted image a storage binding writes; an unsupported one fails the rewrite. */
+    /**
+     * The pack image a storage binding names; null for a colour target's colorimgN, whose binding
+     * carries the format it is declared in (GraphicsImageScan.addTargetWriter).
+     */
     private static PackAdvancedResourcePlan.ImageSpec supportedImage(
             PackAdvancedResourcePlan advancedResources, PackAdvancedResourcePlan.GraphicsImageBinding binding) {
+        if (binding.target() >= 0) return null;
         PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
                 .get(binding.imageName());
         if (spec == null || !spec.supported()) throw new PackPipelines.PreparationFailure(

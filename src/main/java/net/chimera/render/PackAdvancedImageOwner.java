@@ -105,7 +105,8 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
      */
     public boolean programImagesAvailable(String program) {
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
-            if (!availableForSymbol(binding.symbol())) return false;
+            // A colour target's colorimgN is the target graph's (PostTargetStorage), not this owner's.
+            if (binding.target() < 0 && !availableForSymbol(binding.symbol())) return false;
         }
         return true;
     }
