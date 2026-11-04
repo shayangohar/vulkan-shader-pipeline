@@ -15,7 +15,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * RenderPearl 2.8's float16 path computes a NaN name-tag background; NVIDIA's GL driver then draws
  * the opaque glyphs over it, as their blend weighs the NaN by zero, while Vulkan keeps the NaN and
- * the whole tag went black. A geometry fragment writes what the NaN shows, opaque black, as main ends.
+ * the whole tag went black. A geometry fragment writes what the NaN shows, opaque black, as main ends;
+ * at alpha 0 it shows nothing, or the clear texels of RenderPearl's rain quads covered the world black.
  */
 final class NanOutputsTest {
     @Test
@@ -39,9 +40,10 @@ final class NanOutputsTest {
                 }
                 """;
         String converted = FragmentConverter.withoutNanOutputs(fragment);
-        // A NaN colour shows opaque black, as a NaN blended at any alpha does; other outputs take 0.
-        assertTrue(converted.contains(
-                        "vec4 chimeraNoNan(vec4 value) { return any(isnan(value)) ? vec4(0, 0, 0, 1) : value; }")
+        // A NaN colour shows opaque black, as a NaN blended at any alpha but 0 does; at alpha 0 it adds
+        // nothing, as RenderPearl's clear rain texels add nothing under Iris. Other outputs take 0.
+        assertTrue(converted.contains("vec4 chimeraNoNan(vec4 value) { return any(isnan(value)) "
+                        + "? (value.a == vec4(0).a ? vec4(0) : vec4(0, 0, 0, 1)) : value; }")
                         && converted.contains("f16vec3 chimeraNoNan(f16vec3 value) { return mix(value, f16vec3(0), "
                                 + "isnan(value)); }")
                         && converted.contains("vec3 chimeraNoNan(vec3 value)")

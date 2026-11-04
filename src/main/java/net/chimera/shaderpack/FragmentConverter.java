@@ -401,15 +401,16 @@ public final class FragmentConverter {
 
     /**
      * {@code source} writing what a NaN shows in place of a NaN in its float outputs, at the end of
-     * main's body: a colour with a NaN component is opaque black, and another output takes 0 for
-     * each NaN component. Under GL, as under Vulkan, a NaN fragment blends to NaN at any alpha,
-     * which shows black over whatever it covers. But a later blend that weighs the NaN by zero yields
-     * the other term under NVIDIA's GL driver, and NaN under Vulkan. RenderPearl 2.8's float16 path
-     * computes a NaN name-tag background, and Iris draws the opaque glyphs over it, while in Chimera
-     * the glyphs stayed NaN and the whole tag black. Opaque black keeps Iris's box; a 0 at the quad's
-     * 25% alpha showed the unlit scene there instead, bright at night, since the tag skips deferred
-     * lighting. Each output goes through a helper overloaded for its type, so it still resolves when
-     * a 16-bit output compiles as its 32-bit type.
+     * main's body: a colour with a NaN component is opaque black, or nothing at alpha 0, and another
+     * output takes 0 for each NaN component. NVIDIA's GL driver blends a term weighed by zero to 0
+     * however NaN it is, and Vulkan to NaN. So under GL a NaN colour at alpha 0 adds nothing, and one
+     * at any other alpha blends to NaN, which shows black over what it covers; a later draw that
+     * weighs that NaN by zero then covers it. RenderPearl 2.8's float16 path computes NaN for texels
+     * of no colour: its rain quads' clear texels, at alpha 0, which drew a black quad over the world
+     * while opaque, and its name-tag background, at 25%, which Iris shows black under the glyphs. A 0
+     * there showed the unlit scene instead, bright at night, as the tag skips deferred lighting.
+     * Each output goes through a helper overloaded for its type, so it still resolves when a 16-bit
+     * output compiles as its 32-bit type.
      */
     static String withoutNanOutputs(String source) {
         GlslTree tree = GlslTree.parse(source);
@@ -435,7 +436,8 @@ public final class FragmentConverter {
         StringBuilder helpers = new StringBuilder();
         for (String type : types) {
             String guarded = type.endsWith("vec4")
-                    ? "any(isnan(value)) ? " + type + "(0, 0, 0, 1) : value"
+                    ? "any(isnan(value)) ? (value.a == " + type + "(0).a ? " + type + "(0) : " + type
+                            + "(0, 0, 0, 1)) : value"
                     : "mix(value, " + type + "(0), isnan(value))";
             helpers.append(type).append(' ').append(helper).append('(').append(type).append(" value) { return ")
                     .append(guarded).append("; }\n");
