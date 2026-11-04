@@ -400,13 +400,16 @@ public final class FragmentConverter {
     private static final Pattern FLOAT_OUTPUT = Pattern.compile("float|vec[234]|float16_t|f16vec[234]");
 
     /**
-     * {@code source} writing 0 in place of each NaN component of its float outputs at the end of
-     * main's body. A blend whose factor for a NaN is zero yields the other term under NVIDIA's GL
-     * driver and NaN under Vulkan. RenderPearl 2.8's float16 path computes a NaN name-tag
-     * background, and Iris draws the opaque glyphs over it, while in Chimera the glyphs stayed NaN
-     * and the whole tag black. The pack means a dark see-through box under lit text, which a 0 gives.
-     * Each output goes through a helper overloaded for its type, so it still resolves when a 16-bit
-     * output compiles as its 32-bit type.
+     * {@code source} writing what a NaN shows in place of a NaN in its float outputs, at the end of
+     * main's body: a colour with a NaN component is opaque black, and another output takes 0 for
+     * each NaN component. Under GL, as under Vulkan, a NaN fragment blends to NaN at any alpha,
+     * which shows black over whatever it covers. But a later blend that weighs the NaN by zero yields
+     * the other term under NVIDIA's GL driver, and NaN under Vulkan. RenderPearl 2.8's float16 path
+     * computes a NaN name-tag background, and Iris draws the opaque glyphs over it, while in Chimera
+     * the glyphs stayed NaN and the whole tag black. Opaque black keeps Iris's box; a 0 at the quad's
+     * 25% alpha showed the unlit scene there instead, bright at night, since the tag skips deferred
+     * lighting. Each output goes through a helper overloaded for its type, so it still resolves when
+     * a 16-bit output compiles as its 32-bit type.
      */
     static String withoutNanOutputs(String source) {
         GlslTree tree = GlslTree.parse(source);
@@ -431,8 +434,11 @@ public final class FragmentConverter {
         if (statements.isEmpty()) return source;
         StringBuilder helpers = new StringBuilder();
         for (String type : types) {
-            helpers.append(type).append(' ').append(helper).append('(').append(type)
-                    .append(" value) { return mix(value, ").append(type).append("(0), isnan(value)); }\n");
+            String guarded = type.endsWith("vec4")
+                    ? "any(isnan(value)) ? " + type + "(0, 0, 0, 1) : value"
+                    : "mix(value, " + type + "(0), isnan(value))";
+            helpers.append(type).append(' ').append(helper).append('(').append(type).append(" value) { return ")
+                    .append(guarded).append("; }\n");
         }
         int main = GlslTokenRewriter.mainDefinition(tree).range().start();
         String withHelpers = tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(main, main),
