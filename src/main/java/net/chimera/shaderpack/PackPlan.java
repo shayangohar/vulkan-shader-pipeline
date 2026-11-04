@@ -2,10 +2,12 @@ package net.chimera.shaderpack;
 
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /** Immutable plan for the active pack variant. */
 public record PackPlan(
@@ -245,6 +247,33 @@ public record PackPlan(
 
     public PackResourcePlan resources() {
         return resources;
+    }
+
+    /**
+     * The shadowcolor targets the shadow pass's programs sample, by index: each executable shadow
+     * program's sampler that reads the target itself, not a pack texture in its place
+     * (ChimeraShadowMap.snapshotPassReads copies them as the pass opens).
+     */
+    public Set<Integer> shadowPassColorReads() {
+        Set<Integer> reads = new TreeSet<>();
+        for (PackProgramPlan program : programs) {
+            if (!program.executable() || program.interfacePlan() == null
+                    || !FamilyAdapterRegistry.isShadowFamily(program.name())) {
+                continue;
+            }
+            List<String> unread = program.interfacePlan().deviations();
+            Set<String> sampled = new HashSet<>();
+            program.interfacePlan().samplers().stream().map(UniformRegistry.SamplerBinding::name)
+                    .filter(name -> !unread.contains("SAMPLER_DECLARATION_UNUSED:" + name)).forEach(sampled::add);
+            for (PackResourceBinding binding : resources.bindings(program.name())) {
+                int index = PackResourcePlan.shadowColorIndex(binding.resourceKey());
+                if (binding.kind() == PackResourceKind.SHADOW_COLOR && index >= 0
+                        && sampled.contains(binding.sampler())) {
+                    reads.add(index);
+                }
+            }
+        }
+        return Collections.unmodifiableSet(reads);
     }
 
     public PackAdvancedResourcePlan advancedResources() {

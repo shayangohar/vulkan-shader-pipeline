@@ -68,6 +68,9 @@ public class ChimeraShadowMap {
     private final Map<Integer, VulkanImage> alternateColors = new TreeMap<>();
     /** The shadowcolor targets whose current contents are on their alternate side. */
     private final Set<Integer> flippedColors = new TreeSet<>();
+    /** The copies shadow programs sample attached shadowcolor targets through (snapshotPassReads). */
+    private final Map<Integer, VulkanImage> passReadCopies = new TreeMap<>();
+    private boolean passReadsOpen;
     private GraphicsPipeline shadowPipeline;
     private final DepthSampleView depthSampleView = new DepthSampleView();
     /**
@@ -566,9 +569,55 @@ public class ChimeraShadowMap {
         VTextureSelector.bindTexture(5, shadowDepth); // slot 5 for pack shadowtex0
     }
 
-    /** The current side of shadowcolor{@code index}: the one the latest shadowcomp pass drew, else the drawn one. */
+    /**
+     * The current side of shadowcolor{@code index}: the one the latest shadowcomp pass drew, else the
+     * drawn one; while the shadow pass draws, its copy of a target the pass has attached.
+     */
     public VulkanImage shadowColor(int index) {
+        VulkanImage copy = this.passReadsOpen ? this.passReadCopies.get(index) : null;
+        if (copy != null) return copy;
         return this.flippedColors.contains(index) ? this.alternateColors.get(index) : drawnColor(index);
+    }
+
+    /**
+     * Takes the contents the shadow pass's programs sample each attached shadowcolor target in
+     * {@code indices} through, and serves them until closePassReads. Iris attaches only the targets
+     * the shadow program draws and binds every target to its samplers (addGbufferOrShadowSamplers), so
+     * a program reads what a target held as the pass opened: its clear colour if it clears every
+     * frame, else its contents. The pass here attaches every target up to the highest a program
+     * names, and sampling one while it is attached is a feedback loop. Rethinking Voxels' interactive
+     * water reads shadowcolor2 this way. A compute-only target is not attached and is read as it is.
+     * Recorded outside a render pass.
+     */
+    void snapshotPassReads(VkCommandBuffer commandBuffer, Set<Integer> indices) {
+        this.passReadsOpen = false;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            for (int index : indices) {
+                if (index >= this.shadowColors.size()) continue;
+                VulkanImage copy = this.passReadCopies.computeIfAbsent(index, this::createPassReadCopy);
+                ShadowTargetDirectives.ColorTarget target = this.targets.color(index);
+                if (target.clear()) {
+                    PackTargetImages.clearImage(stack, commandBuffer, copy, target.clearColor());
+                    continue;
+                }
+                VulkanImage source = shadowColor(index);
+                PackTargetImages.copyImage(stack, commandBuffer, source, copy);
+                source.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                copy.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            }
+        }
+        this.passReadsOpen = true;
+    }
+
+    /** The shadow pass has closed: shadowcolor reads return to the targets themselves. */
+    void closePassReads() {
+        this.passReadsOpen = false;
+    }
+
+    private VulkanImage createPassReadCopy(int index) {
+        TargetSpec spec = colorSpec(index);
+        return createColorTarget(new TargetSpec(index, spec.format(), spec.width(), spec.height(),
+                spec.clear(), spec.clearColor(), false, false, false, spec.paddedAlpha(), List.of()));
     }
 
     /** The side the shadow pass draws shadowcolor{@code index} on, or a compute-only target's one image. */
@@ -700,6 +749,9 @@ public class ChimeraShadowMap {
         this.alternateColors.values().forEach(TargetFormatViews::free);
         this.alternateColors.clear();
         this.flippedColors.clear();
+        this.passReadCopies.values().forEach(TargetFormatViews::free);
+        this.passReadCopies.clear();
+        this.passReadsOpen = false;
         this.computeTargets = Map.of();
         this.targets = ShadowTargetDirectives.defaults();
         this.shadowFramebuffer = null;

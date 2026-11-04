@@ -300,7 +300,9 @@ final class InterfacePlanner {
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
             String name = sampler.getKey();
             String type = sampler.getValue();
-            if (allowUnusedDeclarations && UniformRegistry.isSamplerUnused(stripped, name)) {
+            // A shadow program's unread shadowcolor stays inactive, so the pass copies no target for it.
+            boolean shadowColor = stage.shadowPass() && PackResourcePlan.shadowColorIndex(name) >= 0;
+            if ((allowUnusedDeclarations || shadowColor) && UniformRegistry.isSamplerUnused(stripped, name)) {
                 deviations.add("SAMPLER_DECLARATION_UNUSED:" + name);
                 continue;
             }
@@ -375,14 +377,21 @@ final class InterfacePlanner {
         if (stage == UniformRegistry.Stage.POST && CenterDepthSmooth.SAMPLER.equals(lookup)) {
             return SelectorNamespace.CENTER_DEPTH_SLOT;
         }
-        if (stage.shadowPass()) return null;
         // Iris gives every program each shadowcolor target and the hardware shadow samplers
-        // (addShadowSamplers), shadow programs too, where a read samples the target being drawn;
-        // Chimera binds them outside the shadow pass. PackPlanBuilder refuses those the pack lacks.
+        // (addShadowSamplers), shadow programs too. A shadow program reads a shadowcolor target as
+        // the pass opened (ChimeraShadowMap.snapshotPassReads); the hardware samplers bind outside
+        // the shadow pass. PackPlanBuilder refuses those the pack lacks.
+        if (stage.shadowPass()) return shadowPassColorSlot(lookup);
         int shadow = SelectorNamespace.shadowSamplerSlot(lookup);
         if (shadow >= 0) return shadow;
         return stage == UniformRegistry.Stage.POST
                 ? postFallbackSlot(name) : UniformRegistry.gbufferColorInputSlot(name);
+    }
+
+    /** A shadowcolorN sampler's slot in the shadow pass; null for any other name. */
+    private static Integer shadowPassColorSlot(String lookup) {
+        int slot = SelectorNamespace.shadowColorSlot(PackResourcePlan.shadowColorIndex(lookup));
+        return slot >= 0 ? slot : null;
     }
 
     /** Post's fallback for a name its stage map lacks: an extended color target. */

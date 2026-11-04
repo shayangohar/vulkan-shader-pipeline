@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -124,6 +125,49 @@ final class ShadowPassTest {
                 void main() { gl_FragData[0] = mix(texture(tex, texCoord), entityColor, entityColor.a); }
                 """);
         assertOverlayServed(root, PackProbe.analyze(root), "texelFetch(chimeraOverlay, chimeraOverlayUV, 0)", false);
+    }
+
+    /**
+     * A shadow program samples a shadowcolor target (KNOW-1055): Iris binds every target to the
+     * shadow pass's samplers. Rethinking Voxels' interactive water reads shadowcolor2, which its
+     * shadowcomp2 stores, in every shadow program, and Chimera refused them all. The program now
+     * binds the target, and the plan names it among those the pass copies as it opens
+     * (ChimeraShadowMap.snapshotPassReads). A target nothing in the pass samples is not copied.
+     */
+    @Test
+    void shadowProgramsSampleShadowColorTargets(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "iris.features.optional=HIGHER_SHADOWCOLOR\n");
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 430 compatibility
+                out vec2 texCoord;
+                void main() { texCoord = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 430 compatibility
+                uniform sampler2D tex;
+                uniform sampler2D shadowcolor1;
+                uniform sampler2D shadowcolor2;
+                in vec2 texCoord;
+                void main() {
+                    /* RENDERTARGETS: 0 */
+                    gl_FragData[0] = texture(tex, texCoord) * texture(shadowcolor2, texCoord);
+                }
+                """);
+        var analysis = PackProbe.analyze(root);
+        for (String program : List.of("shadow", "shadow_entities")) {
+            PackProgramPlan plan = analysis.plan().program(program);
+            assertTrue(plan != null && plan.executable(), program + " rejected: "
+                    + (plan == null ? "missing" : plan.deviations()));
+            var samplers = plan.interfacePlan().samplers();
+            assertTrue(samplers.stream().anyMatch(sampler -> sampler.name().equals("shadowcolor2")
+                    && sampler.slot() == SelectorNamespace.shadowColorSlot(2)), samplers.toString());
+        }
+        assertEquals(Set.of(2), analysis.plan().shadowPassColorReads(), "shadowcolor1 is declared, never read");
+        assertTrue(analysis.config().shadowSettings().colorTargetCount() >= 3,
+                "the pass attaches every target up to the highest a program names");
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
     }
 
     /** shadow_entities and shadow_block read the overlay through {@code fetch}; the terrain shadow program does not. */

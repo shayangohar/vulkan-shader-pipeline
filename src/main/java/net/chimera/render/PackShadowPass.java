@@ -3,6 +3,7 @@ package net.chimera.render;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.ShadowCasterDirectives;
 import net.chimera.shaderpack.ShadowCullingPlan;
@@ -68,6 +69,9 @@ final class PackShadowPass {
      * shadow_water for the translucent one where the pack has them, shadow otherwise.
      */
     private String shadowTerrainProgram = "shadow";
+    /** The plan colorReads was taken from, and the shadowcolor targets its shadow programs sample. */
+    private PackPlan colorReadsPlan;
+    private Set<Integer> colorReads = Set.of();
 
     /**
      * Armed at level-segment HEAD, consumed just before the sky
@@ -127,6 +131,7 @@ final class PackShadowPass {
                 if (packShadow) {
                     // The shadow pass draws, and its programs sample, every target's main side.
                     this.shadowMap.resetColorSides();
+                    this.shadowMap.snapshotPassReads(cmd, shadowPassColorReads());
                     shadowBindings = bindPackShadowImages(layerPipeline(TerrainLayers.OPAQUE));
                 }
                 beginShadowDraw(frame);
@@ -145,8 +150,18 @@ final class PackShadowPass {
             recoverShadowMap(frame, failure);
         } finally {
             this.shadowPassActive = false;
+            this.shadowMap.closePassReads();
             PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
         }
+    }
+
+    /** The shadowcolor targets the loaded plan's shadow programs sample (PackPlan.shadowPassColorReads). */
+    private Set<Integer> shadowPassColorReads() {
+        if (pass.packPlan != this.colorReadsPlan) {
+            this.colorReadsPlan = pass.packPlan;
+            this.colorReads = pass.packPlan == null ? Set.of() : pass.packPlan.shadowPassColorReads();
+        }
+        return this.colorReads;
     }
 
     /** One shadow map recording: its command buffer, attachments, caster path, projection and camera. */

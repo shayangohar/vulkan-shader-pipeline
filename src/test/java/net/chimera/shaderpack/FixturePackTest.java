@@ -756,8 +756,11 @@ final class FixturePackTest {
                 "uniform sampler2D texture; uniform sampler2D shadowcolor0;"
                         + " void main() { gl_FragColor = texture2D(shadowcolor0, vec2(0.5)); }",
                 UniformRegistry.Stage.SHADOW);
-        assertTrue(colorInput.deviations().contains("SHADOW_COLOR_INPUT_UNSUPPORTED"),
-                "shadow color input deviation is missing");
+        // Iris binds the shadowcolor targets in the shadow pass too; the pass reads a copy (KNOW-1055).
+        assertTrue(colorInput.executable() && colorInput.samplers().stream().anyMatch(sampler ->
+                        sampler.name().equals("shadowcolor0")
+                                && sampler.slot() == SelectorNamespace.shadowColorSlot(0)),
+                "a shadow program binds the shadowcolor target it reads: " + colorInput);
         // shadowtex1 is the opaque copy, never the attachment the pass draws (Glimmer's shadow reads it).
         UniformRegistry.ProgramInterface opaque = UniformRegistry.plan(
                 "uniform sampler2D shadowtex1; void main() { gl_FragColor = texture2D(shadowtex1, vec2(0.5)); }",
@@ -765,7 +768,6 @@ final class FixturePackTest {
         assertTrue(opaque.executable() && opaque.samplers().stream().anyMatch(sampler ->
                         sampler.name().equals("shadowtex1") && sampler.slot() == SelectorNamespace.SHADOW_TEX1_SLOT),
                 opaque.deviations().toString());
-        assertTrue(!colorInput.executable(), "shadow color input was accepted");
         assertTrue(TerrainVertexBridge.convertShadowVertex(
                 Files.readString(pack.resolve("shaders/shadow.vsh"), StandardCharsets.UTF_8),
                 pack.resolve("shaders/shadow.vsh"),
