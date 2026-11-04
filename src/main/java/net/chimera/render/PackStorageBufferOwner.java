@@ -213,28 +213,41 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         }
         if (DeviceManager.deviceProperties != null) {
             var limits = DeviceManager.deviceProperties.limits();
-            long descriptorCount = bindings.stream()
-                    .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                    .distinct().count();
-            if (descriptorCount > limits.maxDescriptorSetStorageBuffersDynamic()) {
-                programFailures.put(program, "STORAGE_BUFFER_DESCRIPTOR_LIMIT:" + program);
-                return false;
-            }
-            long fragmentCount = bindings.stream()
-                    .filter(value -> (value.stageMask() & VK_SHADER_STAGE_FRAGMENT_BIT) != 0)
-                    .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                    .distinct().count();
-            long vertexCount = bindings.stream()
-                    .filter(value -> (value.stageMask() & VK_SHADER_STAGE_VERTEX_BIT) != 0)
-                    .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                    .distinct().count();
-            int perStageLimit = limits.maxPerStageDescriptorStorageBuffers();
-            if (fragmentCount > perStageLimit || vertexCount > perStageLimit) {
-                programFailures.put(program, "STORAGE_BUFFER_STAGE_LIMIT:" + program);
+            String limit = limitFailure(program, bindings, limits.maxDescriptorSetStorageBuffersDynamic(),
+                    limits.maxPerStageDescriptorStorageBuffers());
+            if (limit != null) {
+                programFailures.put(program, limit);
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * Why the device's descriptor limits refuse {@code program}'s storage buffers, or null. Vulkan
+     * reports each limit as an unsigned 32-bit count: AMD's driver gives the per-stage one as
+     * 0xFFFFFFFF, no limit, which Java reads as -1, and every program binding a buffer, RenderPearl's
+     * terrain, water and hand among them, was refused on the Radeon.
+     */
+    static String limitFailure(String program, List<PackAdvancedResourcePlan.StorageBufferBinding> bindings,
+                               int setDynamicLimit, int perStageLimit) {
+        long all = bindings.stream().map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
+                .distinct().count();
+        if (all > Integer.toUnsignedLong(setDynamicLimit)) {
+            return "STORAGE_BUFFER_DESCRIPTOR_LIMIT:" + program;
+        }
+        long stageLimit = Integer.toUnsignedLong(perStageLimit);
+        if (descriptors(bindings, VK_SHADER_STAGE_FRAGMENT_BIT) > stageLimit
+                || descriptors(bindings, VK_SHADER_STAGE_VERTEX_BIT) > stageLimit) {
+            return "STORAGE_BUFFER_STAGE_LIMIT:" + program;
+        }
+        return null;
+    }
+
+    /** The distinct buffers {@code bindings} give the stages in {@code stages}. */
+    private static long descriptors(List<PackAdvancedResourcePlan.StorageBufferBinding> bindings, int stages) {
+        return bindings.stream().filter(value -> (value.stageMask() & stages) != 0)
+                .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex).distinct().count();
     }
 
     public Map<Integer, String> failures() {
