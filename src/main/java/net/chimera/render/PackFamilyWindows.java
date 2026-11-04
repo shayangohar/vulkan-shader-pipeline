@@ -177,7 +177,7 @@ final class PackFamilyWindows {
         DrawMaterialContext drawContext =
                 DrawMaterialContext.forTerrain(VTextureSelector.getImage(0));
         pass.packGeometryBindings = pass.images.bindProgramImages(terrain.pipeline(),
-                pass.packPostTargets.sourceImages(), pass.targets.hdrFramebuffer.getColorAttachment(),
+                pass.packPostTargets.worldImages(), pass.targets.hdrFramebuffer.getColorAttachment(),
                 drawContext);
         if (pass.packGeometryBindings.containsSlot(0)) {
             ChimeraTextureBindingState.bindTerrainAtlas(VTextureSelector.getImage(0));

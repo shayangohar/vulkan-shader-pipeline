@@ -5,6 +5,7 @@ import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.TargetSpec;
 import net.chimera.shaderpack.TargetStep;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -41,6 +42,26 @@ final class PackPostTargetsTest {
         PostTargetPlan formatted = PostTargetPlan.parse(
                 "composite", "/* RENDERTARGETS: 0,4,7 */", formats).plan();
         assert formatted.outputFormats().equals(List.of(37, 37, 109)); // colortex0 undeclared: RGBA8, as Iris
+    }
+
+    /**
+     * Rethinking Voxels' prepare passes do not run, so the chain drops colortex8, which its
+     * terrain reads. The terrain reads the image colortex8 holds, as under Iris; the resolver
+     * found no image and the game crashed (RESOURCE_BINDING_UNAVAILABLE:gbuffers_terrain:Sampler22).
+     */
+    @Test
+    void worldProgramsReadWhatADroppedTargetHolds() {
+        var held = MaterialMapFixtures.markerImage();
+        var source = MaterialMapFixtures.markerImage();
+        var hdr = MaterialMapFixtures.markerImage();
+        assertEquals(held, PackPostTargets.worldImage(8, null, true, held), "a dropped target reads its image");
+        assertEquals(source, PackPostTargets.worldImage(8, source, true, held), "a live source wins");
+        assertEquals(null, PackPostTargets.worldImage(9, null, false, null), "the session made no colortex9");
+        assertEquals(null, PackPostTargets.worldImage(0, null, true, held), "colortex0 is left to the resolver");
+        var colors = new VulkanImage[16];
+        colors[8] = PackPostTargets.worldImage(8, null, true, held);
+        assertEquals(held, PackPostChain.resolvePackColorInput(8, colors, hdr));
+        assertEquals(hdr, PackPostChain.resolvePackColorInput(0, colors, hdr));
     }
 
     @Test

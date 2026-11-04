@@ -200,17 +200,27 @@ final class PackImageBindings {
         return pass.shadowPass.shadowPassActive ? shadowMap.opaqueDepthCopy() : shadowMap.opaqueDepth();
     }
 
+    /**
+     * Binds a program's images at a draw: a fullscreen program reads the chain's sources, a world
+     * program what the targets hold (PackPostTargets.worldImages).
+     */
     public ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindProgramImages(
             GraphicsPipeline pipeline) {
-        return bindProgramImages(pipeline, pass.packPostTargets.sourceImages(),
-                pass.targets.hdrFramebuffer == null ? null : pass.targets.hdrFramebuffer.getColorAttachment(),
-                DrawMaterialContext.captureLive());
+        ChimeraMainPass.ProgramImages program = this.programImages.get(pipeline);
+        boolean fullscreen = program != null && PostTargetPlan.isFullscreenProgramName(program.name());
+        return bindProgramImages(pipeline,
+                fullscreen ? pass.packPostTargets.sourceImages() : pass.packPostTargets.worldImages(),
+                hdrColor(), DrawMaterialContext.captureLive());
+    }
+
+    private VulkanImage hdrColor() {
+        return pass.targets.hdrFramebuffer == null ? null : pass.targets.hdrFramebuffer.getColorAttachment();
     }
 
     /**
      * True when every pack target and depth snapshot the water program samples
-     * holds this frame's data. A failed early window or depth capture leaves
-     * one invalid, and the manifest resolver would then reject the draw.
+     * can be bound: a target as world programs read it (PackPostTargets.worldImages). A failed
+     * depth capture leaves one missing, and the manifest resolver would then reject the draw.
      * depthtex0 counts while the world depth can still be captured: the
      * program's prepare captures it before the layer draws.
      */
@@ -220,8 +230,8 @@ final class PackImageBindings {
         for (ProgramImageBindingManifest.Entry entry : program.manifest().entries()) {
             boolean ready = switch (entry.kind()) {
                 case COLOR_TARGET -> pass.packPostTargets.isConfigured()
-                        && pass.packPostTargets.currentTargetAvailable(
-                                PackResourcePlan.targetIndex(entry.resourceKey()));
+                        && PackPostChain.resolvePackColorInput(PackResourcePlan.targetIndex(entry.resourceKey()),
+                                pass.packPostTargets.worldImages(), hdrColor()) != null;
                 case DEPTH_TARGET -> pass.packDepthTargets.image(entry.resourceKey()) != null
                         || entry.resourceKey().equals("depthtex0") && pass.depth.drawnDepthCapturable();
                 default -> true;

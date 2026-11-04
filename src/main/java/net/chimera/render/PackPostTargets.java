@@ -64,6 +64,8 @@ public final class PackPostTargets {
     private final VulkanImage[] pendingImages = new VulkanImage[TARGET_COUNT];
     /** Copies a geometry window samples in place of the targets it draws into. */
     private final VulkanImage[] snapshotImages = new VulkanImage[TARGET_COUNT];
+    /** What world programs read (worldImages), refilled on each call. */
+    private final VulkanImage[] worldImages = new VulkanImage[TARGET_COUNT];
 
     private VulkanImage hdrIdentitySource;
     private PackTargetGraphPlan graph;
@@ -276,18 +278,23 @@ public final class PackPostTargets {
         }
     }
 
-    /** Copies each written target the window also samples, and makes the copy what it samples. */
+    /**
+     * Copies each written target the window also samples, and makes the copy what it samples. A
+     * target a skipped pass dropped is copied from the image it holds, which is the window's
+     * attachment: its world programs read it (worldImages), and must not read what they draw into.
+     */
     private void snapshotOutputs(VkCommandBuffer commandBuffer, List<Integer> outputTargets,
                                  List<Integer> snapshotTargets) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (int target : snapshotTargets) {
-                if (target <= 0 || target >= TARGET_COUNT || !outputTargets.contains(target)
-                        || !this.valid[target] || this.sourceImages[target] == null) continue;
+                if (target <= 0 || target >= TARGET_COUNT || !outputTargets.contains(target)) continue;
+                VulkanImage held = worldImage(target, this.sourceImages[target], this.used[target],
+                        imageFor(target, this.activeSide[target]));
+                if (held == null) continue;
                 if (this.snapshotImages[target] == null) {
                     this.snapshotImages[target] = PackTargetImages.createTargetImage(targetSpec(target), false);
                 }
-                PackTargetImages.copyImage(stack, commandBuffer, this.sourceImages[target],
-                        this.snapshotImages[target]);
+                PackTargetImages.copyImage(stack, commandBuffer, held, this.snapshotImages[target]);
                 this.sourceImages[target] = this.snapshotImages[target];
                 trace("snapshot target=" + target + " image=" + imageId(this.snapshotImages[target]));
             }
@@ -644,6 +651,30 @@ public final class PackPostTargets {
 
     public VulkanImage[] sourceImages() { return this.sourceImages; }
     public PackTargetGraphPlan graph() { return this.graph; }
+
+    /**
+     * The images world programs read the targets through: each one's source, or, for a target a
+     * skipped pass dropped from the chain (invalidateOutputs), the image it still holds. A post
+     * reader of such a target falls back with its pass; a world program has no fallback, and Iris
+     * samples whatever the target holds. Reading it as missing crashed the game: Rethinking
+     * Voxels' terrain reads colortex8, which its unsupported prepare passes write.
+     */
+    public VulkanImage[] worldImages() {
+        for (int target = 0; target < TARGET_COUNT; target++) {
+            this.worldImages[target] = worldImage(target, this.sourceImages[target], this.used[target],
+                    imageFor(target, this.activeSide[target]));
+        }
+        return this.worldImages;
+    }
+
+    /**
+     * The image a world program reads as {@code target}: its {@code source} while the chain holds
+     * one, else the {@code held} image of a target the session made. colortex0 keeps its source;
+     * the resolver reads the HDR image in its place.
+     */
+    static VulkanImage worldImage(int target, VulkanImage source, boolean used, VulkanImage held) {
+        return source != null || target == 0 || !used ? source : held;
+    }
 
     public boolean areInputsAvailable(List<Integer> requiredTargets) {
         if (requiredTargets == null) return true;
