@@ -414,8 +414,11 @@ public final class FragmentConverter {
         Set<String> types = new TreeSet<>();
         StringBuilder statements = new StringBuilder();
         for (GlslDeclarations.Variable output : GlslDeclarations.variables(tree)) {
-            if (!output.qualifiers().contains("out") || !output.plain()
-                    || !FLOAT_OUTPUT.matcher(output.type()).matches()) {
+            // A built-in, as RenderPearl's depth_unchanged gl_FragDepth, and an output the program
+            // never writes stay unwritten: a write would store an undefined value.
+            if (!output.qualifiers().contains("out") || !output.plain() || output.name().startsWith("gl_")
+                    || !FLOAT_OUTPUT.matcher(output.type()).matches()
+                    || GlslTokenRewriter.identifierCount(source, output.name()) < 2) {
                 continue;
             }
             types.add(output.type());

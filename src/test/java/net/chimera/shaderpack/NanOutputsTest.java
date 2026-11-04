@@ -27,6 +27,8 @@ final class NanOutputsTest {
                 layout(location = 1) out uvec4 colortex2;
                 layout(location = 2) out f16vec3 colortex3;
                 layout(location = 3) out float colortex4;
+                layout(location = 4) out vec4 colortex5;
+                layout(depth_unchanged) out float gl_FragDepth;
                 layout(location = 0) in vec4 tint;
                 void main() {
                     if (tint.a < 0.1) return;
@@ -44,6 +46,10 @@ final class NanOutputsTest {
                         && converted.contains("colortex3 = chimeraNoNan(colortex3);")
                         && converted.contains("colortex4 = chimeraNoNan(colortex4);")
                         && !converted.contains("chimeraNoNan(colortex2)"),
+                converted);
+        // RenderPearl redeclares gl_FragDepth depth_unchanged and never writes it; a write of its undefined
+        // value broke every depth test. An output the program never writes stays unwritten too.
+        assertTrue(!converted.contains("chimeraNoNan(gl_FragDepth)") && !converted.contains("chimeraNoNan(colortex5)"),
                 converted);
         assertTrue(converted.indexOf("colortex4 = 1.0 / tint.r;") < converted.indexOf("colortex1 = chimeraNoNan")
                         && !converted.contains("chimeraAuthoredMain"),
