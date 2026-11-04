@@ -65,6 +65,89 @@ final class ShadowPassTest {
                 "Iris defaults: entities and block entities on, player and light block entities off");
     }
 
+    /**
+     * entityColor on the shadow pass's entity casters (KNOW-520): Iris patches it from the overlay
+     * there as on gbuffers_entities. Rethinking Voxels' shadow geometry stage reads it to light
+     * primed TNT while it flashes; the stage reads the first vertex's overlay, whose coordinates the
+     * vertex stage forwards from UV1. Without a geometry stage the fragment reads its own. The
+     * terrain shadow program keeps the uniform, which reads zero: Iris's terrain layout has no overlay.
+     */
+    @Test
+    void shadowEntityCastersReadEntityColor(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 430 compatibility
+                out vec2 texCoordV;
+                void main() { texCoordV = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.gsh"), """
+                #version 430 compatibility
+                layout(triangles) in;
+                layout(triangle_strip, max_vertices = 3) out;
+                uniform vec4 entityColor;
+                in vec2 texCoordV[];
+                out vec2 texCoord;
+                out vec4 tint;
+                void main() {
+                    for (int i = 0; i < 3; i++) {
+                        gl_Position = gl_in[i].gl_Position;
+                        texCoord = texCoordV[i];
+                        tint = mix(vec4(1.0), entityColor, entityColor.a);
+                        EmitVertex();
+                    }
+                    EndPrimitive();
+                }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 430 compatibility
+                uniform sampler2D tex;
+                in vec2 texCoord;
+                in vec4 tint;
+                void main() { gl_FragData[0] = texture(tex, texCoord) * tint; }
+                """);
+        var analysis = PackProbe.analyze(root);
+        assertOverlayServed(root, analysis, "texelFetch(chimeraOverlay, chimeraOverlayUV[0], 0)", true);
+        assertTrue(analysis.plan().program("shadow_entities").convertedGeometry()
+                .contains("flat in ivec2 chimeraOverlayUV[];"), "the geometry stage reads the forwarded overlay");
+
+        Files.delete(shaders.resolve("shadow.gsh"));
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 430 compatibility
+                out vec2 texCoord;
+                void main() { texCoord = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 430 compatibility
+                uniform sampler2D tex;
+                uniform vec4 entityColor;
+                in vec2 texCoord;
+                void main() { gl_FragData[0] = mix(texture(tex, texCoord), entityColor, entityColor.a); }
+                """);
+        assertOverlayServed(root, PackProbe.analyze(root), "texelFetch(chimeraOverlay, chimeraOverlayUV, 0)", false);
+    }
+
+    /** shadow_entities and shadow_block read the overlay through {@code fetch}; the terrain shadow program does not. */
+    private static void assertOverlayServed(Path root, PackProbe.Analysis analysis, String fetch, boolean geometry) {
+        for (String program : List.of("shadow_entities", "shadow_block")) {
+            PackProgramPlan plan = analysis.plan().program(program);
+            assertTrue(plan != null && plan.executable(), program + " rejected: "
+                    + (plan == null ? "missing" : plan.deviations()));
+            String reader = geometry ? plan.convertedGeometry() : plan.convertedFragment();
+            assertTrue(reader.contains(fetch) && plan.convertedVertex().contains("chimeraOverlayUV = UV1;"),
+                    program + " must read entityColor from the forwarded overlay: " + reader);
+            // A moving block's shadow draws on the block layout, which has no overlay: entityColor is zero.
+            String movingBlock = EntityVertexBridge.fragmentForFormat(reader, DefaultVertexFormat.BLOCK);
+            assertTrue(!movingBlock.contains(fetch)
+                    && movingBlock.contains("vec4 chimeraOverlayTexel = vec4(0.0, 0.0, 0.0, 1.0);"), movingBlock);
+            assertTrue(!analysis.report().program(program).deviations().contains("UNIFORM_DEFAULTED:entityColor"),
+                    analysis.report().program(program).deviations().toString());
+        }
+        assertTrue(analysis.report().program("shadow").deviations().contains("UNIFORM_DEFAULTED:entityColor"),
+                "the terrain shadow program keeps the zero uniform");
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
+    }
+
     /** The shadow program converted onto the entity layout: host matrices, per-vertex ids, per-draw alpha. */
     private static void assertShadowEntitiesReadEntityLayout(PackProgramPlan plan) {
         String vertex = plan.convertedVertex();

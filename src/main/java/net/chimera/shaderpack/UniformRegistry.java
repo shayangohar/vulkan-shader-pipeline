@@ -382,7 +382,9 @@ public final class UniformRegistry {
             Map.entry("gtexture", 0),
             Map.entry("lightmap", 2),
             Map.entry("noisetex", 7),
-            Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT)
+            Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
+            // The entity casters' overlay, which only their injected entityColor reads (EntityOverlayColor).
+            Map.entry(PackResourcePlan.OVERLAY_SAMPLER, 1)
     );
 
     /**

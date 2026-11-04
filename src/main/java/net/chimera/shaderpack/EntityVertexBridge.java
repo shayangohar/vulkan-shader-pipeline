@@ -914,9 +914,9 @@ public final class EntityVertexBridge {
     }
 
     /**
-     * The program's fragment for a pipeline on {@code format}: a layout without UV1 (text, a
-     * held map's background, particles in the hand) has no overlay, so entityColor is zero
-     * there, as under Iris.
+     * The program's fragment, or a shadow program's geometry stage, for a pipeline on
+     * {@code format}: a layout without UV1 (text, a held map's background, particles in the hand,
+     * a moving block's shadow) has no overlay, so entityColor is zero there, as under Iris.
      */
     public static String fragmentForFormat(String converted, VertexFormat format) {
         return format == null || format.getElementAttributeNames().contains("UV1")

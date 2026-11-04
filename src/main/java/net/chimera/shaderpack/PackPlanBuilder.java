@@ -12,29 +12,18 @@ import java.util.function.Supplier;
 public final class PackPlanBuilder {
     private PackPlanBuilder() {}
 
-    public static PackPlan build(
-            List<PackProgram> programs,
-            PackConfig.PackConfigData config
-    ) {
+    public static PackPlan build(List<PackProgram> programs, PackConfig.PackConfigData config) {
         return build(programs, config, PackEntityIdResolver.empty());
     }
 
-    public static PackPlan build(
-            List<PackProgram> programs,
-            PackConfig.PackConfigData config,
-            PackEntityIdResolver entityIds
-    ) {
+    public static PackPlan build(List<PackProgram> programs, PackConfig.PackConfigData config,
+                                 PackEntityIdResolver entityIds) {
         return build(programs, config, entityIds, PackResolutionPlan.empty());
     }
 
-    public static PackPlan build(
-            List<PackProgram> programs,
-            PackConfig.PackConfigData config,
-            PackEntityIdResolver entityIds,
-            PackResolutionPlan resolution
-    ) {
-        return build(programs, config, entityIds, resolution,
-                PackAdvancedResourcePlan.empty());
+    public static PackPlan build(List<PackProgram> programs, PackConfig.PackConfigData config,
+                                 PackEntityIdResolver entityIds, PackResolutionPlan resolution) {
+        return build(programs, config, entityIds, resolution, PackAdvancedResourcePlan.empty());
     }
 
     public static PackPlan build(
@@ -353,6 +342,11 @@ public final class PackPlanBuilder {
                 // how the plan proves it (AuthoredOutput).
                 fragment = alphaTestPlan.injectDrawTest(fragment);
             }
+            if (!FamilyAdapterRegistry.isShadowEntityFamily(name)) return;
+            var served = EntityOverlayColor.injectShadow(vertex, geometry, fragment, geometryStageRuns());
+            vertex = served.vertex();
+            geometry = served.geometry();
+            fragment = served.fragment();
         }
 
         /**

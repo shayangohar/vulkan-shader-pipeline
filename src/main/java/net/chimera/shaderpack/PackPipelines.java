@@ -420,8 +420,8 @@ public final class PackPipelines {
                     convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
             String geometrySource = plan.convertedGeometry() == null ? null : PackDescriptorContracts.bindPackShader(
-                    plan.convertedGeometry(), plan.name(), advancedResources, layout, interfacePlan, stage,
-                    VK_SHADER_STAGE_GEOMETRY_BIT);
+                    EntityVertexBridge.fragmentForFormat(plan.convertedGeometry(), format), plan.name(),
+                    advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_GEOMETRY_BIT);
             String fragmentSource = PackDescriptorContracts.bindPackShader(
                     EntityVertexBridge.fragmentForFormat(plan.convertedFragment(), format), plan.name(),
                     advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);
