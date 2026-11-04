@@ -80,6 +80,27 @@ public final class PackUniformProvider {
     }
 
     /**
+     * Gives each binding what its name resolves to in the session just installed; the buffer
+     * stays, as built pipelines read it. A name can change meaning between sessions: RenderPearl's
+     * water reads waveState in every variant but declares it only with WAVES on, so the unset
+     * binding the default variant made kept serving zero once WAVES was switched on, and the
+     * water lay flat. Iris builds each program's uniforms afresh with the pack.
+     */
+    private void resolveBindings() {
+        bindings.replaceAll((key, binding) -> {
+            UniformRegistry.UniformDescriptor current = resolveUniform(key.name(), key.type());
+            return current == null || current.equals(binding.descriptor) ? binding
+                    : new Binding(current, binding.type, binding.buffer);
+        });
+    }
+
+    /** The descriptor the shared binding of {@code name} is written from, or null without one. */
+    UniformRegistry.UniformDescriptor boundDescriptor(String name, String type) {
+        Binding binding = bindings.get(new UniformKey(name, type));
+        return binding == null ? null : binding.descriptor;
+    }
+
+    /**
      * The catalog entry a declared name resolves to, the session's pack-authored values included.
      * A refused declaration resolves to nothing, so nothing can serve a substitute value.
      */
@@ -320,6 +341,7 @@ public final class PackUniformProvider {
         INSTANCE.runtimeSettings = settings == null ? PackRuntimeSettings.empty() : settings;
         INSTANCE.loggedValueFailures.clear();
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
+        INSTANCE.resolveBindings();
         INSTANCE.refreshBindings(true);
     }
 
@@ -337,6 +359,7 @@ public final class PackUniformProvider {
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
         INSTANCE.frameState.installDirectives(PackDirectives.DEFAULTS);
         INSTANCE.frameState.resetSession();
+        INSTANCE.resolveBindings();
         INSTANCE.refreshBindings(true);
     }
 
