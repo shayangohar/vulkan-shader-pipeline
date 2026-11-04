@@ -568,13 +568,14 @@ final class ComputePassTest {
     }
 
     /**
-     * A buffer only pass computes bind is allocated from what the storage budget leaves once the
-     * images and the fixed-size buffers programs bind are charged.
+     * Iris's buffers take any size the driver does (KNOW-844): a 1 GiB buffer only pass computes bind
+     * plans as supported, with no session budget, and the device's storage range and the allocation
+     * bound it at load (PackStorageBufferOwner).
      */
     @Test
-    void computeBufferBudget(@TempDir Path root) throws IOException {
+    void buffersHaveNoSessionBudget(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.0 = 64\nbufferObject.1 = 128\n");
+        Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.0 = 64\nbufferObject.1 = 1073741824\n");
         Files.writeString(shaders.resolve("composite.fsh"), """
                 #version 430
                 layout(std430, binding = 0) buffer Exposure { float exposure; };
@@ -587,7 +588,8 @@ final class ComputePassTest {
                 """);
         PackAdvancedResourcePlan plan = PackProbe.analyze(root).plan().advancedResources();
         assertEquals(Set.of(0), plan.programBuffers(), plan.storageBuffers().toString());
-        assertEquals(PackAdvancedResourcePlan.MAX_TOTAL_BYTES - 64, plan.computeBufferBudget());
+        assertTrue(plan.buffers().get(1).supported() && plan.deviations().stream().noneMatch(value ->
+                value.contains("BUDGET") || value.contains("SIZE_UNSUPPORTED")), plan.deviations().toString());
     }
 
     /**

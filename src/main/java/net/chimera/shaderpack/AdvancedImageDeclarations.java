@@ -1,7 +1,6 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -39,7 +38,6 @@ final class AdvancedImageDeclarations {
             images.put(spec.name(), spec);
             deviations.addAll(spec.deviations());
         }
-        applyBudget(images, deviations);
         images.values().stream().filter(PackAdvancedResourcePlan.ImageSpec::supported)
                 .forEach(spec -> deviations.add("ADVANCED_IMAGE_APPLIED:" + spec.name()));
         return images;
@@ -114,8 +112,9 @@ final class AdvancedImageDeclarations {
     }
 
     /**
-     * A 1D, 2D or 3D image of fixed size. Iris creates any size the driver takes; here the byte
-     * budget (applyBudget) and, at creation, the device's per-axis limit bound it.
+     * A 1D, 2D or 3D image of fixed size. Iris creates any size the driver takes; so does Chimera,
+     * where the device's per-axis limit and the allocation bound it at creation
+     * (PackAdvancedImageOwner). Rethinking Voxels' VX_VOL_SIZE=3 asks for about 2.6 GB.
      */
     private static PackAdvancedResourcePlan.ImageSpec fixedImage(
             String name, String[] values, Map<String, String> defines, List<String> deviations) {
@@ -221,34 +220,6 @@ final class AdvancedImageDeclarations {
         }
         deviations.add("ADVANCED_IMAGE_DIMENSION_UNRESOLVED:" + image + ":" + token);
         return 0;
-    }
-
-    static void applyBudget(Map<String, PackAdvancedResourcePlan.ImageSpec> images, List<String> deviations) {
-        List<Map.Entry<String, PackAdvancedResourcePlan.ImageSpec>> candidates = images.entrySet().stream()
-                .filter(entry -> entry.getValue().supported())
-                .sorted(Comparator.comparingLong((Map.Entry<String, PackAdvancedResourcePlan.ImageSpec> entry)
-                                -> entry.getValue().estimatedBytes())
-                        .thenComparing(Map.Entry::getKey))
-                .toList();
-        long admitted = 0L;
-        boolean rejected = false;
-        for (Map.Entry<String, PackAdvancedResourcePlan.ImageSpec> entry : candidates) {
-            PackAdvancedResourcePlan.ImageSpec spec = entry.getValue();
-            if (spec.estimatedBytes() > PackAdvancedResourcePlan.MAX_TOTAL_BYTES - admitted) {
-                List<String> next = new ArrayList<>(spec.deviations());
-                next.add("ADVANCED_IMAGE_BUDGET_EXCEEDED:" + spec.name());
-                images.put(entry.getKey(), new PackAdvancedResourcePlan.ImageSpec(spec.name(), spec.sampler(),
-                        spec.pixelFormat(), spec.internalFormat(), spec.pixelType(), spec.clear(),
-                        spec.relative(), spec.width(), spec.height(), spec.depth(),
-                        spec.widthToken(), spec.heightToken(), spec.depthToken(), spec.estimatedBytes(),
-                        PackAdvancedResourcePlan.Status.UNSUPPORTED, next));
-                deviations.add("ADVANCED_IMAGE_BUDGET_EXCEEDED:" + spec.name());
-                rejected = true;
-            } else {
-                admitted += spec.estimatedBytes();
-            }
-        }
-        if (rejected) deviations.add("ADVANCED_IMAGE_BUDGET_EXCEEDED");
     }
 
     /**

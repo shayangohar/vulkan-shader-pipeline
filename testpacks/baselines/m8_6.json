@@ -8,13 +8,13 @@
   },
   "unsupported": {
     "fixture": "unsupported_advanced",
-    "requires": ["ADVANCED_IMAGE_BUDGET_EXCEEDED:too_large", "STORAGE_BUFFER_DEFERRED:bufferObject.0"],
-    "fingerprint": "d999ad6f626cd1f41d662d1e67f52e6bbf97acd03601f6b65579997bf5da0497"
+    "requires": ["ADVANCED_IMAGE_APPLIED:too_large", "STORAGE_BUFFER_DEFERRED:bufferObject.0"],
+    "fingerprint": "9283ef4671f880f88444cec0aa410585d4971a1b507af93b4d6c256460fc421c"
   },
   "budgetIsolation": {
     "fixture": "budget_isolation",
     "validImage": "small_image",
-    "rejectedImage": "large_image",
-    "fingerprint": "4c6967cb96fd839924cc9e80e689f8e331258fb2f063a908a4a04d4a89613952"
+    "largeImage": "large_image",
+    "fingerprint": "7b5956cc2662d50db2962a12078beade8fe425230b947038d7df394acfcb770d"
   }
 }

@@ -26,10 +26,8 @@ import java.util.stream.Collectors;
  * them are {@link PassComputePlan}'s.</p>
  */
 public final class PackAdvancedResourcePlan {
-    public static final long MAX_TOTAL_BYTES = 768L * 1024L * 1024L;
     /** ShaderProperties skips a bufferObject index above 8: "they're reserved". */
     public static final int MAX_BUFFER_INDEX = 8;
-    public static final long MAX_STORAGE_BUFFER_BYTES = 64L * 1024L * 1024L;
 
     static final Pattern VALUE_UNIFORM_DECLARATION = Pattern.compile(
             "(?m)^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
@@ -572,15 +570,6 @@ public final class PackAdvancedResourcePlan {
         ordinaryContracts.forEach((program, contract) -> bindingBases.put(program, contract.nextBinding()));
         Map<String, List<StorageBufferBinding>> storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
                 plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
-        Map<Integer, BufferSpec> budgetedBuffers = StorageBufferDeclarations.applyStorageBudget(
-                buffers, storageBuffers, storageEligible, images, deviations);
-        if (!budgetedBuffers.equals(buffers)) {
-            buffers = budgetedBuffers;
-            bufferDependent.clear();
-            storageEligible.clear();
-            storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
-                    plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
-        }
         addUnplannedDeclarations(plan, graphics.dependent, bufferDependent, deviations);
         return new PackAdvancedResourcePlan(images, graphics.writers, graphics.readers, buffers,
                 storageBuffers, graphics.dependent, bufferDependent, storageEligible,
@@ -700,19 +689,6 @@ public final class PackAdvancedResourcePlan {
         return StorageBufferDeclarations.programBuffers(storageBuffers, storageEligiblePrograms);
     }
 
-    /**
-     * What the session budget leaves for the buffers only pass computes bind, once the supported
-     * images and the fixed-size buffers programs bind are charged (applyStorageBudget). A relative
-     * buffer follows the screen, and only the device's range bounds it.
-     */
-    public long computeBufferBudget() {
-        long used = StorageBufferDeclarations.imageBytes(images);
-        for (Integer index : programBuffers()) {
-            BufferSpec spec = buffers.get(index);
-            if (spec != null && spec.supported() && !spec.relative()) used += spec.size();
-        }
-        return Math.max(0L, MAX_TOTAL_BYTES - used);
-    }
     public boolean storageBufferCapabilityPossible() {
         if (bufferDependentPrograms.isEmpty()) return true;
         boolean hasBinding = storageBuffers.values().stream().flatMap(List::stream)

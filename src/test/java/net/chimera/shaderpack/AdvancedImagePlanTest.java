@@ -66,11 +66,11 @@ final class AdvancedImagePlanTest {
 
         PackProbe.Analysis unsupported = PackProbe.analyze(unsupportedPath);
         PackAdvancedResourcePlan unsupportedPlan = unsupported.plan().advancedResources();
-        assertTrue(!unsupportedPlan.capabilityPossible(), "unsupported capability enabled");
-        // 1024^3 R16UI texels, 2 GiB: past the byte budget, which bounds an image in place of an axis cap.
-        assertTrue(unsupportedPlan.deviations().stream().anyMatch(value ->
-                        value.startsWith("ADVANCED_IMAGE_BUDGET_EXCEEDED:too_large")),
-                "oversized image deviation missing");
+        // 1024^3 R16UI texels, 2 GiB: Iris creates any size the driver takes, so the plan admits it and
+        // the device's axis limit and the allocation bound it at creation (KNOW-844).
+        assertTrue(unsupportedPlan.capabilityPossible() && unsupportedPlan.images().get("too_large").supported()
+                        && unsupportedPlan.deviations().stream().noneMatch(value -> value.contains("BUDGET")),
+                "a large image has no session budget: " + unsupportedPlan.deviations());
         assertTrue(unsupportedPlan.deviations().contains("STORAGE_BUFFER_DEFERRED:bufferObject.0"),
                 "storage-buffer deferral missing");
 
@@ -400,7 +400,11 @@ final class AdvancedImagePlanTest {
                 """.formatted(sampler, sampler));
     }
 
-    /** The budget fixture's plan, which rejects only its oversized image and keeps compute. */
+    /**
+     * The budget fixture's plan, which admits both images and keeps compute. Its 512^3 RGBA16F image,
+     * 1 GiB, is the size of Rethinking Voxels' distanceFieldI at VX_VOL_SIZE=3; Chimera's 768 MiB
+     * session budget refused it, where Iris creates any size the driver takes (KNOW-844).
+     */
     private static PackAdvancedResourcePlan budgetIsolationPlan(Path budgetPath) {
         assertTrue(Files.isDirectory(budgetPath), "budget fixture is missing");
         PackProbe.Analysis budget = PackProbe.analyze(budgetPath);
@@ -409,13 +413,11 @@ final class AdvancedImagePlanTest {
         PackAdvancedResourcePlan.ImageSpec large = budgetPlan.images().get("large_image");
         assertTrue(small != null && small.supported(),
                 "budget fixture rejected the valid image");
-        assertTrue(large != null && !large.supported(),
-                "budget fixture admitted the oversized image");
+        assertTrue(large != null && large.supported(),
+                "budget fixture refused the 1 GiB image: " + (large == null ? "missing" : large.deviations()));
         PassComputePlan.PassCompute shadowcomp = budget.passComputes().compute("shadowcomp");
         assertTrue(shadowcomp != null && shadowcomp.supported() && budgetPlan.capabilityPossible(),
-                "budget fixture disabled compute because of an unrelated image");
-        assertTrue(budgetPlan.deviations().contains("ADVANCED_IMAGE_BUDGET_EXCEEDED:large_image"),
-                "per-resource budget deviation missing");
+                "budget fixture disabled compute");
         assertEquals(budgetPlan.snapshot(),
                 PackProbe.analyze(budgetPath).plan().advancedResources().snapshot(),
                 "budget plan is not deterministic");

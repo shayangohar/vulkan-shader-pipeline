@@ -87,25 +87,16 @@ public final class PackStorageBufferOwner implements AutoCloseable {
 
     /**
      * The session's buffers: those a program or a pass compute ({@code computeBuffers}) binds, a
-     * relative one sized for a screen of this size (Iris sizes it at creation). A fixed-size buffer
-     * only computes bind takes what the plan's budget leaves (computeBufferBudget).
+     * relative one sized for a screen of this size (Iris sizes it at creation). As in Iris, only the
+     * device bounds a buffer: its storage range, then the allocation.
      */
     public static PackStorageBufferOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight,
                                               Set<Integer> computeBuffers) {
         PackStorageBufferOwner owner = new PackStorageBufferOwner(plan, screenWidth, screenHeight, computeBuffers);
         long maxRange = maxRange();
-        Set<Integer> programBuffers = owner.plan.programBuffers();
-        long computeBudget = owner.plan.computeBufferBudget();
         for (Integer index : used(owner.plan, computeBuffers)) {
             PackAdvancedResourcePlan.BufferSpec spec = owner.plan.buffers().get(index);
             if (spec == null || !spec.supported()) continue;
-            if (!programBuffers.contains(index) && !spec.relative()) {
-                if (spec.size() > computeBudget) {
-                    owner.failures.put(index, "STORAGE_BUFFER_BUDGET_EXCEEDED:" + index);
-                    continue;
-                }
-                computeBudget -= spec.size();
-            }
             long bytes = spec.bytes(screenWidth, screenHeight);
             // The host sizes buffers with an int.
             if (bytes > maxRange) {

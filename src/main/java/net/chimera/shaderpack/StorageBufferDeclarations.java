@@ -127,16 +127,12 @@ final class StorageBufferDeclarations {
     }
 
     /**
-     * A size below 1 switches the buffer off, as in Iris (DISABLED). Beyond that, Chimera's one limit:
-     * one buffer's budget. Any byte count binds, as Iris's buffers take any size: the buffer is
-     * filled whole (VK_WHOLE_SIZE).
+     * A size below 1 switches the buffer off, as in Iris (DISABLED). Any larger byte count binds, as
+     * Iris's buffers take any size the driver does: the device's storage range and the allocation
+     * bound it (PackStorageBufferOwner), and the buffer is filled whole (VK_WHOLE_SIZE).
      */
     private static void checkSize(int index, long size, List<String> deviations) {
-        if (size < 1L) {
-            deviations.add(DISABLED + index);
-        } else if (size > PackAdvancedResourcePlan.MAX_STORAGE_BUFFER_BYTES) {
-            deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
-        }
+        if (size < 1L) deviations.add(DISABLED + index);
     }
 
     private static PackAdvancedResourcePlan.Status status(List<String> deviations) {
@@ -321,43 +317,6 @@ final class StorageBufferDeclarations {
                     .toList();
         }
         return matches;
-    }
-
-    static Map<Integer, PackAdvancedResourcePlan.BufferSpec> applyStorageBudget(
-            Map<Integer, PackAdvancedResourcePlan.BufferSpec> buffers,
-            Map<String, List<PackAdvancedResourcePlan.StorageBufferBinding>> storageBuffers,
-            List<String> eligiblePrograms,
-            Map<String, PackAdvancedResourcePlan.ImageSpec> images,
-            List<String> deviations
-    ) {
-        Map<Integer, PackAdvancedResourcePlan.BufferSpec> result = new TreeMap<>(buffers);
-        long remaining = Math.max(0L, PackAdvancedResourcePlan.MAX_TOTAL_BYTES - imageBytes(images));
-        boolean rejected = false;
-        for (Integer index : programBuffers(storageBuffers, eligiblePrograms)) {
-            PackAdvancedResourcePlan.BufferSpec spec = result.get(index);
-            // A relative buffer follows the screen; allocation checks it against the device's range.
-            if (spec == null || !spec.supported() || spec.relative()) continue;
-            if (spec.size() > remaining) {
-                List<String> next = new ArrayList<>(spec.deviations());
-                next.add("STORAGE_BUFFER_BUDGET_EXCEEDED:" + index);
-                result.put(index, new PackAdvancedResourcePlan.BufferSpec(spec.logicalIndex(), spec.size(),
-                        spec.requestedName(), PackAdvancedResourcePlan.Status.UNSUPPORTED, next));
-                deviations.add("STORAGE_BUFFER_BUDGET_EXCEEDED:" + index);
-                rejected = true;
-            } else {
-                remaining -= spec.size();
-            }
-        }
-        if (rejected) deviations.add("STORAGE_BUFFER_BUDGET_EXCEEDED");
-        return result;
-    }
-
-    /** The bytes the supported images take from the session budget. */
-    static long imageBytes(Map<String, PackAdvancedResourcePlan.ImageSpec> images) {
-        return images.values().stream()
-                .filter(PackAdvancedResourcePlan.ImageSpec::supported)
-                .mapToLong(PackAdvancedResourcePlan.ImageSpec::estimatedBytes)
-                .sum();
     }
 
     /** The bufferObject indexes storage-eligible programs bind through a supported block. */
