@@ -97,6 +97,39 @@ final class TargetImagePlanTest {
         assertTrue(deviations.contains("ADVANCED_IMAGE_UNSERVED:final:colorimg2"), deviations.toString());
     }
 
+    /**
+     * Rethinking Voxels' prepare1 names colortex3 in its directive, writes no output, and only
+     * stores to colorimg9. Iris flips colortex3 anyway, onto the other side it cleared too, so the
+     * flip hands back what the frame began with: the target is unwritten (KNOW-859). Read as
+     * written, Chimera made last frame's uncleared side current. A write the scan cannot place,
+     * through a variable gl_FragData index, still reads as the first target's.
+     */
+    @Test
+    void aPassThatOnlyDiscardsLeavesItsTargetsUnwritten(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        writeProgram(shaders, "prepare1", """
+                #version 430 compatibility
+                const int colortex9Format = R32UI;
+                layout(r32ui) uniform uimage2D colorimg9;
+                void main() {
+                    imageAtomicMin(colorimg9, ivec2(gl_FragCoord.xy), 7u);
+                    /*DRAWBUFFERS:3*/
+                    discard;
+                }
+                """);
+        writeProgram(shaders, "prepare2", """
+                #version 120
+                /* DRAWBUFFERS:3 */
+                void main() { for (int i = 0; i < 1; i++) gl_FragData[i] = vec4(1.0); }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(analysis.plan().programs(), analysis.config(),
+                16, 16, 8, 16384);
+        assertEquals(List.of(3), graph.step("prepare1").unwrittenTargets(), graph.snapshot());
+        assertEquals(List.of(3), graph.step("prepare1").outputTargets(), graph.snapshot());
+        assertEquals(List.of(), graph.step("prepare2").unwrittenTargets(), graph.snapshot());
+    }
+
     private static void writeProgram(Path shaders, String program, String fragment) throws Exception {
         Files.writeString(shaders.resolve(program + ".vsh"),
                 "#version 120\nvoid main() { gl_Position = ftransform(); }\n");

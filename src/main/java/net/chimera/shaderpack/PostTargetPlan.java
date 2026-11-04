@@ -99,6 +99,7 @@ public final class PostTargetPlan {
     private final Map<Integer, Integer> outputComponents;
     private final List<Integer> mipmappedTargets;
     private final List<String> deviations;
+    private final boolean writesNoOutput;
 
     private PostTargetPlan(
             String programName,
@@ -109,8 +110,10 @@ public final class PostTargetPlan {
             Map<Integer, String> outputTypes,
             Map<Integer, Integer> outputComponents,
             List<Integer> mipmappedTargets,
-            List<String> deviations
+            List<String> deviations,
+            boolean writesNoOutput
     ) {
+        this.writesNoOutput = writesNoOutput;
         this.programName = programName;
         this.targetSlots = List.copyOf(targetSlots);
         this.outputLocations = List.copyOf(outputLocations);
@@ -165,8 +168,19 @@ public final class PostTargetPlan {
                 .toList();
         PostTargetPlan plan = new PostTargetPlan(
                 programName, targetSlots, outputLocations, discardedOutputs, outputFormats,
-                outputTypes, outputComponents, parseMipmappedTargets(text), deviations);
+                outputTypes, outputComponents, parseMipmappedTargets(text), deviations,
+                writesNoOutput(text, outputSet));
         return new ParseResult(plan, plan.deviations());
+    }
+
+    /**
+     * Whether the shader certainly writes no output: it names neither gl_FragData nor
+     * gl_FragColor, and parses with no output variable. Rethinking Voxels' prepare1 and prepare2
+     * only discard, and work through image stores.
+     */
+    private static boolean writesNoOutput(String text, Set<Integer> outputs) {
+        return outputs.isEmpty() && !text.contains("gl_FragData") && !text.contains("gl_FragColor")
+                && GlslDeclarations.parseOrNull(text) != null;
     }
 
     /**
@@ -434,6 +448,15 @@ public final class PostTargetPlan {
     /** Fragment output locations used by the source. */
     public List<Integer> outputLocations() {
         return outputLocations;
+    }
+
+    /**
+     * Whether the source certainly writes no output, so every directive target is left unwritten
+     * (PackTargetGraphPlan.unwrittenTargets). An empty {@link #outputLocations()} alone may be a
+     * write the scan did not see.
+     */
+    public boolean writesNoOutput() {
+        return writesNoOutput;
     }
 
     /** Output locations past the route: written, and discarded as GL discards them. */

@@ -502,7 +502,14 @@ public final class PackTargetGraphPlan {
                 .filter(Objects::nonNull).toList();
     }
 
+    /**
+     * The targets a post program's shader writes. One that certainly writes nothing leaves all its
+     * directive targets unwritten, so they flip with no content change, as in Iris, whose clear of
+     * both sides makes the flip neutral: Rethinking Voxels' prepare1 and prepare2 name colortex3
+     * and only discard. Read as written, the flip handed prepare3 last frame's colour there.
+     */
     private static List<Integer> outputTargets(PostTargetPlan plan) {
+        if (plan.writesNoOutput() && !plan.isFinal() && !plan.targetSlots().isEmpty()) return List.of();
         if (plan.outputLocations().isEmpty()) {
             return plan.targetSlots().isEmpty() ? List.of(0) : List.of(plan.targetSlots().get(0));
         }
