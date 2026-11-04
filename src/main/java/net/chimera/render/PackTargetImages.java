@@ -30,9 +30,15 @@ import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_SNORM;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_SNORM;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_UNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16_SNORM;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16_UNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8B8A8_SNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8G8_SNORM;
+import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8_SNORM;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
@@ -64,11 +70,12 @@ final class PackTargetImages {
 
     /**
      * Exact formats whose target features are optional in Vulkan: R16, RG16 and RGBA16 normalized,
-     * and R11F_G11F_B10F as B10G11R11_UFLOAT_PACK32.
+     * R11F_G11F_B10F as B10G11R11_UFLOAT_PACK32, and the signed normalized formats.
      */
     private static final Set<Integer> OPTIONAL_TARGET_FORMATS = Set.of(
             VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16A16_UNORM,
-            VK_FORMAT_B10G11R11_UFLOAT_PACK32);
+            VK_FORMAT_B10G11R11_UFLOAT_PACK32, VK_FORMAT_R8_SNORM, VK_FORMAT_R8G8_SNORM, VK_FORMAT_R8G8B8A8_SNORM,
+            VK_FORMAT_R16_SNORM, VK_FORMAT_R16G16_SNORM, VK_FORMAT_R16G16B16A16_SNORM);
 
     /** Checks the device features the targets' formats rely on before any image is allocated. */
     static void verifyFormats(Collection<TargetSpec> targets) {

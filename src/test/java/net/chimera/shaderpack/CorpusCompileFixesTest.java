@@ -285,13 +285,17 @@ final class CorpusCompileFixesTest {
      * Every format in Iris's InternalTextureFormat list has a target image, the integer ones too.
      * superDuperVanilla's RGB16_SNORM colortex1 had none, and every program writing it fell back;
      * so did every program writing Noble's RGBA32UI colortex1. Insanity's RGB16 and Bloop's R16 are
-     * 16-bit UNORM images, and RGB16 pads its alpha.
+     * 16-bit UNORM images, and RGB16 pads its alpha. Signed normalized formats are SNORM images, so
+     * a write clamps to [-1, 1]: as RGBA16F, Rethinking Voxels' RGBA8_SNORM colortex5 kept
+     * reflections brighter than Iris's.
      */
     @Test
     void everyIrisColourFormatHasATarget(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
-        Map<String, Integer> expected = Map.ofEntries(Map.entry("RGBA", 37), Map.entry("RGB16_SNORM", 109),
-                Map.entry("RGBA16_SNORM", 109), Map.entry("R16_SNORM", 100), Map.entry("RG8_SNORM", 83),
+        Map<String, Integer> expected = Map.ofEntries(Map.entry("RGBA", 37), Map.entry("R8_SNORM", 10),
+                Map.entry("RG8_SNORM", 17), Map.entry("RGB8_SNORM", 38), Map.entry("RGBA8_SNORM", 38),
+                Map.entry("R16_SNORM", 71), Map.entry("RG16_SNORM", 78), Map.entry("RGB16_SNORM", 92),
+                Map.entry("RGBA16_SNORM", 92),
                 Map.entry("RGB32F", 109), Map.entry("RGB565", 37), Map.entry("RGB9_E5", 97),
                 Map.entry("RGBA32UI", 107), Map.entry("R32UI", 98), Map.entry("RG16I", 82),
                 Map.entry("RGB8UI", 41), Map.entry("RGB10_A2UI", 68), Map.entry("R11F_G11F_B10F", 122),

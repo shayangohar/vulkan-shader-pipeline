@@ -10,8 +10,10 @@ import java.util.Set;
  * Iris's InternalTextureFormat list as colour-target formats. Each token maps to the Vulkan format
  * its texels are stored in, how many bytes one takes, and whether shaders read it as floats or as
  * unsigned or signed integers. A format Vulkan cannot draw to as GL declares it is approximated:
- * an RGB format gains alpha (which reads as 1, as GL's missing alpha does), a signed normalized
- * one becomes a float with at least its precision, and a packed or low-precision one widens.
+ * an RGB format gains alpha (which reads as 1, as GL's missing alpha does), and a packed or
+ * low-precision one widens. Signed normalized formats are stored as such, so a write clamps to
+ * [-1, 1] as GL's does; Rethinking Voxels' colortex5 relies on it (PackTargetImages checks the
+ * device draws to them).
  */
 public final class IrisColorFormats {
     private IrisColorFormats() {}
@@ -27,14 +29,20 @@ public final class IrisColorFormats {
 
     static {
         exact("R8", 9, 1, Kind.FLOAT);              // VK_FORMAT_R8_UNORM
+        exact("R8_SNORM", 10, 1, Kind.FLOAT);       // VK_FORMAT_R8_SNORM
         exact("RG8", 16, 2, Kind.FLOAT);            // VK_FORMAT_R8G8_UNORM
+        exact("RG8_SNORM", 17, 2, Kind.FLOAT);      // VK_FORMAT_R8G8_SNORM
         exact("RGBA8", 37, 4, Kind.FLOAT);          // VK_FORMAT_R8G8B8A8_UNORM
+        exact("RGBA8_SNORM", 38, 4, Kind.FLOAT);    // VK_FORMAT_R8G8B8A8_SNORM
         exact("RGB10_A2", 64, 4, Kind.FLOAT);       // VK_FORMAT_A2B10G10R10_UNORM_PACK32 (GL bit order)
         exact("R16", 70, 2, Kind.FLOAT);            // VK_FORMAT_R16_UNORM
+        exact("R16_SNORM", 71, 2, Kind.FLOAT);      // VK_FORMAT_R16_SNORM
         exact("R16F", 76, 2, Kind.FLOAT);           // VK_FORMAT_R16_SFLOAT
         exact("RG16", 77, 4, Kind.FLOAT);           // VK_FORMAT_R16G16_UNORM
+        exact("RG16_SNORM", 78, 4, Kind.FLOAT);     // VK_FORMAT_R16G16_SNORM
         exact("RG16F", 83, 4, Kind.FLOAT);          // VK_FORMAT_R16G16_SFLOAT
         exact("RGBA16", 91, 8, Kind.FLOAT);         // VK_FORMAT_R16G16B16A16_UNORM
+        exact("RGBA16_SNORM", 92, 8, Kind.FLOAT);   // VK_FORMAT_R16G16B16A16_SNORM
         exact("RGBA16F", 97, 8, Kind.FLOAT);        // VK_FORMAT_R16G16B16A16_SFLOAT
         exact("R32F", 100, 4, Kind.FLOAT);          // VK_FORMAT_R32_SFLOAT
         exact("RG32F", 103, 8, Kind.FLOAT);         // VK_FORMAT_R32G32_SFLOAT
@@ -61,15 +69,9 @@ public final class IrisColorFormats {
         exact("RGBA32UI", 107, 16, Kind.UINT);      // VK_FORMAT_R32G32B32A32_UINT
         exact("RGBA32I", 108, 16, Kind.SINT);       // VK_FORMAT_R32G32B32A32_SINT
         approximate("RGB8", "RGBA8", true);
-        approximate("R8_SNORM", "R16F", false);
-        approximate("RG8_SNORM", "RG16F", false);
-        approximate("RGB8_SNORM", "RGBA16F", true);
-        approximate("RGBA8_SNORM", "RGBA16F", false);
+        approximate("RGB8_SNORM", "RGBA8_SNORM", true);
         approximate("RGB16", "RGBA16", true);
-        approximate("R16_SNORM", "R32F", false);
-        approximate("RG16_SNORM", "RG32F", false);
-        approximate("RGB16_SNORM", "RGBA32F", true);
-        approximate("RGBA16_SNORM", "RGBA32F", false);
+        approximate("RGB16_SNORM", "RGBA16_SNORM", true);
         approximate("RGB16F", "RGBA16F", true);
         approximate("RGB32F", "RGBA32F", true);
         approximate("RGBA2", "RGBA8", false);
