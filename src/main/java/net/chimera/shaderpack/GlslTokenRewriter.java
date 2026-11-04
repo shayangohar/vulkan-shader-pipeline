@@ -396,7 +396,7 @@ public final class GlslTokenRewriter {
     }
 
     /** The source's one main definition; only {@code void main()} is supported. */
-    private static GlslTree.Function mainDefinition(GlslTree tree) {
+    static GlslTree.Function mainDefinition(GlslTree tree) {
         List<GlslTree.Function> mains = new ArrayList<>();
         for (GlslTree.External external : tree.externals()) {
             if (external instanceof GlslTree.Function function && function.body() != null

@@ -214,6 +214,11 @@ public final class GlslVendorExtensions {
         return Map.copyOf(result);
     }
 
+    /** The 32-bit type a 16-bit stage interface type widens to, or null for another type. */
+    static String widenedType(String type) {
+        return WIDENED.get(type);
+    }
+
     private static boolean stageInterface(GlslTree tree, List<GlslTree.Qualifier> qualifiers) {
         return qualifiers.stream().map(qualifier -> tree.text(qualifier.keyword()))
                 .anyMatch(keyword -> keyword.equals("in") || keyword.equals("out") || keyword.equals("varying")
