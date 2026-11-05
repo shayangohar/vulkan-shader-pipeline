@@ -140,9 +140,7 @@
     "dh_water",
     "gbuffers_hand",
     "gbuffers_hand_water",
-    "gbuffers_terrain",
     "gbuffers_textured_lit",
-    "gbuffers_water",
     "physics_ocean",
     "physics_ocean_shadow"
   ],

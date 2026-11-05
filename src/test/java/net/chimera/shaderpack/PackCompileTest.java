@@ -41,6 +41,15 @@ import java.util.function.LongConsumer;
  */
 @Tag("packs")
 final class PackCompileTest {
+    /** The file extension each stage between the vertex and fragment stages records under. */
+    private static final Map<String, String> BETWEEN_EXTENSIONS = Map.of("tess_control", ".tcs",
+            "tess_evaluation", ".tes", "geometry", ".gsh");
+    /** The shaderc kind each stage between the vertex and fragment stages compiles as. */
+    private static final Map<String, Integer> BETWEEN_KINDS = Map.of(
+            "tess_control", Shaderc.shaderc_glsl_tess_control_shader,
+            "tess_evaluation", Shaderc.shaderc_glsl_tess_evaluation_shader,
+            "geometry", Shaderc.shaderc_glsl_geometry_shader);
+
     record Result(int compiled, List<String> failures, List<String> passComputes) {
         Result(int compiled, List<String> failures) {
             this(compiled, failures, List.of());
@@ -172,22 +181,31 @@ final class PackCompileTest {
             vertexError = program.convertedVertex() == null ? null
                     : check(program.name() + ".vsh", prepared.vertex(), true);
             String fragmentError = check(program.name() + ".fsh", prepared.fragment(), false);
-            String geometryError = prepared.geometry() == null ? null : check(program.name() + ".gsh",
-                    prepared.geometry(), Shaderc.shaderc_glsl_geometry_shader, "pack.gsh");
+            boolean betweenCompiles = prepared.between().present().stream()
+                    .map(between -> checkBetween(program.name(), between)).toList().stream().allMatch(ok -> ok);
             compileInputVariants(program, stage);
             // -Pchimera.packCompile.dumpProgram=<name> writes that program's prepared stages for review.
             if (program.name().equals(System.getProperty("chimera.packCompile.dumpProgram"))) {
                 dump(pack, program.name() + ".vsh", prepared.vertex());
-                if (prepared.geometry() != null) dump(pack, program.name() + ".gsh", prepared.geometry());
+                prepared.between().present().forEach(between -> dump(pack,
+                        program.name() + BETWEEN_EXTENSIONS.get(between.name()), between.source()));
                 dump(pack, program.name() + ".fsh", prepared.fragment());
             }
             if (vertexError != null) failures.add(program.name() + " vertex: " + vertexError
                     + " [" + dump(pack, program.name() + ".vsh", prepared.vertex()) + "]");
-            if (geometryError != null) failures.add(program.name() + " geometry: " + geometryError
-                    + " [" + dump(pack, program.name() + ".gsh", prepared.geometry()) + "]");
             if (fragmentError != null) failures.add(program.name() + " fragment: " + fragmentError
                     + " [" + dump(pack, program.name() + ".fsh", prepared.fragment()) + "]");
-            return vertexError == null && geometryError == null && fragmentError == null;
+            return vertexError == null && betweenCompiles && fragmentError == null;
+        }
+
+        /** Compiles one stage the program runs between its vertex and fragment stages; false when it fails. */
+        private boolean checkBetween(String program, BetweenStages.Stage between) {
+            String extension = BETWEEN_EXTENSIONS.get(between.name());
+            String error = check(program + extension, between.source(), BETWEEN_KINDS.get(between.name()),
+                    "pack" + extension);
+            if (error != null) failures.add(program + " " + between.name() + ": " + error
+                    + " [" + dump(pack, program + extension, between.source()) + "]");
+            return error == null;
         }
 
         /**

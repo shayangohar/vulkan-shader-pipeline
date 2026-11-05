@@ -76,6 +76,31 @@ enum WorldClipRange {
                 + "}\n";
     }
 
+    /**
+     * A stage before the last one ahead of the rasterizer, in this range: GL's helpers ahead of it
+     * and its clip depth left in GL's range, for a later stage (TessellationStageBridge) to convert.
+     */
+    String withHelpers(String converted) {
+        return this == HOST ? converted : HELPERS + converted;
+    }
+
+    /**
+     * The range a modern vertex stage runs in, from its source without comments. A shadow stage's
+     * is the host's: it converts its own clip depth (ShadowStageBuiltins). A world stage ahead of
+     * tessellation ({@code laterStageConverts}) runs in GL's, so the control stage reads GL's clip
+     * position, as under Iris.
+     */
+    static WorldClipRange forVertex(String stripped, boolean shadowStage, boolean laterStageConverts) {
+        if (shadowStage) return HOST;
+        return laterStageConverts ? GL : of(stripped);
+    }
+
+    /** A converted vertex stage with its clip depth converted, unless a later stage converts it. */
+    String vertexBody(String converted, boolean shadowStage, boolean laterStageConverts) {
+        if (shadowStage) return ShadowStageBuiltins.vertexClipRange(converted, laterStageConverts);
+        return laterStageConverts ? withHelpers(converted) : convert(converted);
+    }
+
     /** Whether {@code converted} is a stage {@link #convert} took into GL's range. */
     static boolean converts(String converted) {
         return GlslTokenRewriter.containsIdentifier(converted, AUTHORED_ENTRY);

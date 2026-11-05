@@ -73,9 +73,14 @@ public final class PackPipelines {
         return contract != null ? contract : PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
     }
 
-    /** A program's bound stage sources and descriptors; {@code geometry} is null without a geometry stage. */
-    record PreparedPipeline(OrdinaryDescriptorContract ordinary, String vertex, String geometry, String fragment,
-            ProgramBindingLayout layout, ProgramImageBindingManifest imageBindings) {}
+    /** A program's bound stage sources and descriptors, with the bound stages it runs between vertex and fragment. */
+    record PreparedPipeline(OrdinaryDescriptorContract ordinary, String vertex, BetweenStages between,
+            String fragment, ProgramBindingLayout layout, ProgramImageBindingManifest imageBindings) {
+        /** The bound geometry stage; null without one. */
+        String geometry() {
+            return between.geometry();
+        }
+    }
 
     static PreparedPipeline prepareShadow(PackProgramPlan plan, PackAdvancedResourcePlan resources) {
         return prepare(plan, resources, UniformRegistry.Stage.SHADOW, plan.convertedVertex());
@@ -103,16 +108,21 @@ public final class PackPipelines {
         }
         OrdinaryDescriptorContract ordinary = ordinaryContract(plan, resources);
         ProgramBindingLayout layout = resources.bindingLayout(plan.name());
-        String geometry = plan.convertedGeometry() == null ? null
-                : PackDescriptorContracts.bindPackShader(plan.convertedGeometry(), plan.name(), resources, layout,
-                        plan.interfacePlan().project("geometry", stage), stage, VK_SHADER_STAGE_GEOMETRY_BIT);
         return new PreparedPipeline(ordinary,
                 PackDescriptorContracts.bindPackShader(vertex, plan.name(), resources, layout,
                         plan.interfacePlan().project("vertex", stage), stage, VK_SHADER_STAGE_VERTEX_BIT),
-                geometry,
+                bindBetween(plan, plan.betweenStages(), resources, layout, plan.interfacePlan(), stage),
                 PackDescriptorContracts.bindPackShader(fragment, plan.name(), resources, layout,
                         plan.interfacePlan().project("fragment", stage), stage, VK_SHADER_STAGE_FRAGMENT_BIT), layout,
                 ProgramImageBindingManifest.from(layout, ordinary));
+    }
+
+    /** Each stage {@code between} the vertex and fragment stages bound as the plan's interface projects it. */
+    private static BetweenStages bindBetween(PackProgramPlan plan, BetweenStages between,
+            PackAdvancedResourcePlan resources, ProgramBindingLayout layout,
+            UniformRegistry.ProgramInterfacePlan interfacePlan, UniformRegistry.Stage stage) {
+        return between.map(each -> PackDescriptorContracts.bindPackShader(each.source(), plan.name(), resources,
+                layout, interfacePlan.project(each.name(), stage), stage, each.stageBit()));
     }
 
     /**
@@ -125,7 +135,7 @@ public final class PackPipelines {
         PackDescriptorLayout layout = PackDescriptorContracts.withAdvancedDescriptors(
                 prepared.ordinary().layout(), program, resources);
         String mismatch = PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
-                prepared.vertex(), prepared.geometry(), prepared.fragment(), layout.descriptorBindings());
+                prepared.vertex(), prepared.between(), prepared.fragment(), layout.descriptorBindings());
         if (mismatch != null) throw new PreparationFailure("descriptor-contract", mismatch);
         prepared.imageBindings().verify(layout.descriptorBindings());
         return layout;
@@ -162,15 +172,15 @@ public final class PackPipelines {
     /** Compiles a pack program's stages and creates its pipeline; pack uniforms come from the frame state. */
     static GraphicsPipeline createNative(String name, VertexFormat format, PackDescriptorLayout layout,
             String vertex, String fragment, ProgramImageBindingManifest imageBindings) {
-        return createNative(name, format, layout, vertex, null, fragment, imageBindings);
+        return createNative(name, format, layout, vertex, BetweenStages.NONE, fragment, imageBindings);
     }
 
-    /** The same with a geometry stage between the vertex and fragment stages, when {@code geometry} is not null. */
+    /** The same with the stages {@code between} the vertex and fragment stages. */
     static GraphicsPipeline createNative(String name, VertexFormat format, PackDescriptorLayout layout,
-            String vertex, String geometry, String fragment, ProgramImageBindingManifest imageBindings) {
+            String vertex, BetweenStages between, String fragment, ProgramImageBindingManifest imageBindings) {
         imageBindings.verify(layout.descriptorBindings());
         try {
-            return HostPipelineLayout.create(name, format, layout, vertex, geometry, fragment,
+            return HostPipelineLayout.create(name, format, layout, vertex, between, fragment,
                     PackUniformProvider.shared()::supplier, true);
         } catch (HostPipelineLayout.LayoutFailure failure) {
             throw new PreparationFailure("descriptor-contract", "BUILDER_CONFIG_REJECTED", failure);
@@ -419,9 +429,10 @@ public final class PackPipelines {
             String vertexSource = PackDescriptorContracts.bindPackShader(
                     convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
-            String geometrySource = plan.convertedGeometry() == null ? null : PackDescriptorContracts.bindPackShader(
+            BetweenStages geometry = BetweenStages.geometry(plan.convertedGeometry() == null ? null
+                    : PackDescriptorContracts.bindPackShader(
                     EntityVertexBridge.fragmentForFormat(plan.convertedGeometry(), format), plan.name(),
-                    advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_GEOMETRY_BIT);
+                    advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_GEOMETRY_BIT));
             String fragmentSource = PackDescriptorContracts.bindPackShader(
                     EntityVertexBridge.fragmentForFormat(plan.convertedFragment(), format), plan.name(),
                     advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -431,7 +442,7 @@ public final class PackPipelines {
             PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
                     plan.name(), advancedResources);
             PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertexSource,
-                    geometrySource, fragmentSource, storageOwner);
+                    geometry, fragmentSource, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             GeometryOutputPlan outputPlan = stage.shadowPass() ? null : plan.geometryOutputPlan();
             int[] attachmentFormats = stage.shadowPass() ? shadowAttachmentFormats(plan)
@@ -440,7 +451,7 @@ public final class PackPipelines {
             PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
                     ? plan.blendPlan().shadowAttachments(attachmentFormats.length)
                     : routedBlends(plan.blendPlan(), outputPlan, attachmentFormats);
-            GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, geometrySource,
+            GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, geometry,
                     fragmentSource, imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
@@ -485,7 +496,7 @@ public final class PackPipelines {
      * {@code blend.<program>} directive is registered for its draws' blendFunc.
      */
     private static GraphicsPipeline createRouted(
-            String name, VertexFormat format, PackDescriptorLayout layout, String vertex, String geometry,
+            String name, VertexFormat format, PackDescriptorLayout layout, String vertex, BetweenStages between,
             String fragment, ProgramImageBindingManifest imageBindings, int[] attachmentFormats,
             PackBlendPlan.Mode[] attachmentBlends, PackBlendPlan.Mode programBlend
     ) {
@@ -494,7 +505,7 @@ public final class PackPipelines {
         }
         GraphicsPipeline pipeline;
         try {
-            pipeline = createNative(name, format, layout, vertex, geometry, fragment, imageBindings);
+            pipeline = createNative(name, format, layout, vertex, between, fragment, imageBindings);
         } finally {
             if (attachmentFormats != null) MrtPipelineContext.end();
         }
@@ -671,10 +682,10 @@ public final class PackPipelines {
             String fragmentSource = prepared.fragment();
             PackDescriptorLayout layout = prepareLayout(prepared, plan.name(), advancedResources);
             PackDescriptorContracts.verifyAdvancedLayout(layout, plan.name(), advancedResources, vertexSource,
-                    prepared.geometry(), fragmentSource, storageOwner);
+                    prepared.between(), fragmentSource, storageOwner);
             int[] attachmentFormats = shadowAttachmentFormats(plan);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
-                    ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, prepared.geometry(),
+                    ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, prepared.between(),
                     fragmentSource, prepared.imageBindings(), attachmentFormats,
                     plan.blendPlan().shadowAttachments(attachmentFormats.length),
                     blendFuncOverride(plan, UniformRegistry.Stage.SHADOW));
@@ -810,10 +821,12 @@ public final class PackPipelines {
             if (vertex == null) {
                 throw new IllegalStateException("advanced terrain vertex image declaration rejected");
             }
+            BetweenStages between = bindBetween(plan, plan.betweenStages(), advancedResources, layout,
+                    plan.interfacePlan(), stage);
             PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
                     plan.name(), advancedResources);
-            PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertex, fragment,
-                    storageOwner);
+            PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertex, between,
+                    fragment, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             // An authored route takes its own attachments; otherwise a coverage build writes the
             // pack colour plus a coverage depth.
@@ -823,7 +836,7 @@ public final class PackPipelines {
                     : coverage ? new int[] {targetFormat, VK10.VK_FORMAT_R32_SFLOAT} : null;
             PackBlendPlan.Mode[] attachmentBlends = routedBlends(plan.blendPlan(), outputPlan, attachmentFormats);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
-                    ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, null, fragment,
+                    ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, between, fragment,
                     imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
         } catch (Exception e) {

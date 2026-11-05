@@ -157,9 +157,9 @@ final class ProgramReportRules {
     }
 
     /**
-     * Whether Iris would run a stage of the program that Chimera does not: a tessellation stage
-     * the pack enables (TASK-648), a geometry stage the plan did not convert, or a compute stage
-     * that is not a pass compute (Noble's composite99.csh is one, planned and run apart from
+     * Whether Iris would run a stage of the program that Chimera does not: a geometry stage, or a
+     * tessellation stage the pack enables, that the plan did not convert (TASK-648), or a compute
+     * stage that is not a pass compute (Noble's composite99.csh is one, planned and run apart from
      * composite99's draw).
      */
     private static boolean runsUnsupportedStage(PackProbe.Inventory inventory, PackPlan packPlan,
@@ -167,9 +167,10 @@ final class ProgramReportRules {
         boolean passCompute = PassComputePlan.isPassComputeProgram(inventory.name);
         boolean tessellation = packPlan != null && packPlan.settings() != null
                 && packPlan.settings().readsTessellation();
-        boolean geometryRuns = programPlan != null && programPlan.convertedGeometry() != null;
+        Set<String> converted = programPlan == null ? Set.of() : programPlan.betweenStages().present().stream()
+                .map(BetweenStages.Stage::name).collect(Collectors.toSet());
         return inventory.stages.stream().anyMatch(stage -> PackProgram.runsBetweenStages(stage, tessellation)
-                && !(stage.equals("geometry") && geometryRuns)
+                && !converted.contains(stage)
                 || stage.equals("compute") && !passCompute);
     }
 

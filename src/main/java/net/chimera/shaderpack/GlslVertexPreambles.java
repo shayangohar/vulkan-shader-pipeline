@@ -57,13 +57,28 @@ final class GlslVertexPreambles {
         return FragmentConverter.entityUniformBlock(fragmentUniforms);
     }
 
-    static final String TERRAIN_VERTEX_PREAMBLE = """
+    /** The terrain and water lanes' view block, which every stage that reads the host's matrices declares. */
+    static final String TERRAIN_VIEW_BLOCK = """
             layout(binding = 0) uniform ViewUBO {
                 mat4 MVP;
                 mat4 LightMVP;
                 vec4 ChimeraCameraFraction;
                 vec4 ChimeraTexCoordShrink;
             };
+            """;
+
+    /**
+     * The legacy matrix built-ins of a terrain or water stage in the host's clip range: the view
+     * from gbufferModelView, the projection from the view block's MVP.
+     */
+    static Map<String, String> terrainMatrixBuiltins() {
+        return Map.of("gl_ModelViewMatrix", "gbufferModelView",
+                "gl_NormalMatrix", normalMatrix("gbufferModelView"),
+                "gl_ProjectionMatrix", "(MVP * inverse(gbufferModelView))",
+                "gl_ModelViewProjectionMatrix", "MVP");
+    }
+
+    static final String TERRAIN_VERTEX_PREAMBLE = TERRAIN_VIEW_BLOCK + """
 
             layout(push_constant) uniform Push {
                 vec3 ChunkOffset;

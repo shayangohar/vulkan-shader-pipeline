@@ -43,6 +43,17 @@ public final class GlslInterfaceScanner {
         boolean perVertexInputs() {
             return this == TESS_CONTROL || this == TESS_EVALUATION || this == GEOMETRY;
         }
+
+        /** The stage a program stage of this name (PackProbe's: vertex, tess_control, ...) declares. */
+        static Stage of(String programStage) {
+            return switch (programStage) {
+                case "vertex" -> VERTEX;
+                case "tess_control" -> TESS_CONTROL;
+                case "tess_evaluation" -> TESS_EVALUATION;
+                case "geometry" -> GEOMETRY;
+                default -> FRAGMENT;
+            };
+        }
     }
 
     /**
@@ -97,6 +108,21 @@ public final class GlslInterfaceScanner {
 
         public Declaration output(String name) {
             return outputs.stream().filter(value -> value.name().equals(name)).findFirst().orElse(null);
+        }
+
+        /** Each input the stage reads, at location 0: a fullscreen pass's inputs, which no vertex stage feeds. */
+        public Map<String, Integer> readInputLocations() {
+            Map<String, Integer> result = new TreeMap<>();
+            inputs.stream().filter(Declaration::referenced).forEach(input -> result.put(input.name(), 0));
+            return result;
+        }
+
+        /** Each input the stage reads, with its type. */
+        public Map<String, String> readInputTypes() {
+            Map<String, String> result = new TreeMap<>();
+            inputs.stream().filter(Declaration::referenced)
+                    .forEach(input -> result.put(input.name(), input.typeWithArray()));
+            return result;
         }
 
         private static List<Declaration> sortedDeclarations(List<Declaration> values) {

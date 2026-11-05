@@ -295,13 +295,15 @@ public final class UniformRegistry {
     }
 
     /**
-     * A program interface over every stage the program runs, with pack-owned sampler slots: a
-     * geometry stage's uniforms and samplers join the program's, and project("geometry") answers.
+     * A program interface over every stage the program runs, with pack-owned sampler slots: the
+     * uniforms and samplers of each stage it runs between its vertex and fragment stages
+     * ({@code betweenStages}, by stage name; null for none) join the program's, and project
+     * answers for each of them.
      */
     public static ProgramInterfacePlan planProgram(
             String fragmentSource,
             String vertexSource,
-            String geometrySource,
+            Map<String, String> betweenStages,
             Stage stage,
             PostTargetPlan targetPlan,
             boolean prepared,
@@ -321,7 +323,7 @@ public final class UniformRegistry {
         List<String> deviations = new ArrayList<>(fragment.deviations());
         Map<String, String> otherStages = new LinkedHashMap<>();
         if (vertexSource != null) otherStages.put("vertex", vertexSource);
-        if (geometrySource != null) otherStages.put("geometry", geometrySource);
+        if (betweenStages != null) otherStages.putAll(betweenStages);
         otherStages.forEach((name, source) -> {
             ProgramInterface plan = InterfacePlanner.planInternal(source, effectiveStage, false, prepared,
                     customDescriptors, customSamplerSlots);

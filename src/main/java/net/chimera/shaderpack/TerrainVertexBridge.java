@@ -158,9 +158,11 @@ final class TerrainVertexBridge {
 
     /**
      * The modern bridge, paired with the stage after the vertex stage: the fragment stage, or a
-     * geometry stage ({@code geometryNext}, whose GeometryStageBridge.consumerView stands in
-     * {@code fragmentSource}). A shadow vertex converts its clip depth only as the last stage
-     * before the rasterizer; before a geometry stage, that stage converts what it emits.
+     * stage that converts the clip depth after it ({@code laterStageConverts}): a shadow program's
+     * geometry stage (GeometryStageBridge.consumerView stands in {@code fragmentSource}), or a
+     * world program's tessellation control stage (TessellationStageBridge.consumerView). A vertex
+     * stage converts its clip depth only as the last stage before the rasterizer. Ahead of
+     * tessellation a world stage runs in GL's range, so the control stage reads GL's clip position.
      */
     static LegacyGlslConverter.TerrainVertexConversion convertModernTerrainVertexOrThrow(
             String source,
@@ -171,7 +173,7 @@ final class TerrainVertexBridge {
             boolean shadowStage,
             boolean entityInputs,
             boolean allowStorageBuffers,
-            boolean geometryNext
+            boolean laterStageConverts
     ) {
         String prepared = EntityDeclarations.defaultUnboundIdentityAttributes(
                 LegacyGlslConverter.prepareSource(source, sourceFile, true));
@@ -180,8 +182,7 @@ final class TerrainVertexBridge {
         vertex = LegacyGlslConverter.expandModernVaryingLists(vertex);
         fragment = LegacyGlslConverter.expandModernVaryingLists(fragment);
         vertex = withoutUnreachableFunctions(vertex);
-        // A shadow stage converts its own clip depth (ShadowStageBuiltins).
-        WorldClipRange clip = shadowStage ? WorldClipRange.HOST : WorldClipRange.of(stripComments(vertex));
+        WorldClipRange clip = WorldClipRange.forVertex(stripComments(vertex), shadowStage, laterStageConverts);
         // On the entity layout both stages read the entity identities from EntityIds.
         Map<String, String> entityIdTypes = entityInputs
                 ? EntityVertexBridge.entityIdTypes(stripComments(vertex), fragment) : Map.of();
@@ -227,8 +228,7 @@ final class TerrainVertexBridge {
         }
         converted = EntityVertexBridge.injectEntityIdPrologues(converted, entityIdTypes.keySet());
         String chimeraVaryings = EntityVertexBridge.entityIdOutputDeclarations(entityIdTypes.keySet(), layout);
-        String body = shadowStage ? ShadowStageBuiltins.vertexClipRange(converted, geometryNext)
-                : clip.convert(converted);
+        String body = clip.vertexBody(converted, shadowStage, laterStageConverts);
         return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n"
                 + stagePreamble(vertexPreamble, source, shadowStage, entityInputs)
                 + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
@@ -831,10 +831,7 @@ final class TerrainVertexBridge {
         replacements.putIfAbsent("mc_midTexCoord", "chimeraMidTexCoordValue()");
         replacements.putIfAbsent("at_midBlock", "chimeraMidBlockValue().xyz");
         replacements.putIfAbsent("at_tangent", "chimeraTangentValue()");
-        replacements.putIfAbsent("gl_ModelViewMatrix", "gbufferModelView");
-        replacements.putIfAbsent("gl_NormalMatrix", GlslVertexPreambles.normalMatrix("gbufferModelView"));
-        replacements.putIfAbsent("gl_ProjectionMatrix", "(MVP * inverse(gbufferModelView))");
-        replacements.putIfAbsent("gl_ModelViewProjectionMatrix", "MVP");
+        GlslVertexPreambles.terrainMatrixBuiltins().forEach(replacements::putIfAbsent);
         // Vulkan GLSL names the vertex index gl_VertexIndex; RenderPearl's terrain gates its
         // per-face work on gl_VertexID & 3, as the entity, post and shadow lanes map it.
         replacements.putIfAbsent("gl_VertexID", "gl_VertexIndex");

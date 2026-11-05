@@ -7,12 +7,14 @@ import net.chimera.render.ChimeraDevice;
 import net.chimera.render.PackImageDescriptor;
 import net.chimera.render.PackStorageBufferDescriptor;
 import net.chimera.render.PackStorageViewDescriptor;
+import net.chimera.shaderpack.BetweenStages;
 import net.chimera.shaderpack.PackDescriptorLayout;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackWorkers;
 import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.SpirvOutputWrites;
 import net.chimera.shaderpack.SpirvTrigPrecision;
+import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.SPIRVUtils;
@@ -84,38 +86,39 @@ public final class HostPipelineLayout {
     public static GraphicsPipeline create(String name, VertexFormat format, PackDescriptorLayout layout,
                                           String vertexSource, String fragmentSource, UniformSource uniforms,
                                           boolean packModules) {
-        return create(name, format, layout, vertexSource, null, fragmentSource, uniforms, packModules);
+        return create(name, format, layout, vertexSource, BetweenStages.NONE, fragmentSource, uniforms, packModules);
     }
 
     /**
      * As {@link #create(String, VertexFormat, PackDescriptorLayout, String, String, UniformSource, boolean)},
-     * with a geometry stage between the vertex and fragment stages when {@code geometrySource} is not
-     * null (GeometryStageModules).
+     * with the stages {@code between} the vertex and fragment stages: VulkanMod's tessellation
+     * stages, drawn as patches of BetweenStages.PATCH_VERTICES, and a geometry stage
+     * (GeometryStageModules).
      *
-     * @throws LayoutFailure when the host cannot bind the layout, or the device has no geometryShader
+     * @throws LayoutFailure when the host cannot bind the layout, or the device lacks a stage's feature
      * @throws ShaderCompilationFailure when a stage does not compile
      */
     public static GraphicsPipeline create(String name, VertexFormat format, PackDescriptorLayout layout,
-                                          String vertexSource, String geometrySource, String fragmentSource,
+                                          String vertexSource, BetweenStages between, String fragmentSource,
                                           UniformSource uniforms, boolean packModules) {
-        if (geometrySource != null && !ChimeraDevice.geometryShader()) {
-            throw new LayoutFailure("the device has no geometryShader for " + name + ".gsh");
-        }
+        requireDeviceStages(name, between);
         Pipeline.Builder builder = new Pipeline.Builder(format, name);
         builder.setUniforms(uniformBuffers(layout, uniforms), images(layout, packModules));
         ((ChimeraPipelineBuilderAccessor) builder).chimera$setPushConstants(pushConstants(layout, uniforms));
-        List<Stage> stages = new ArrayList<>(3);
+        List<Stage> stages = new ArrayList<>(5);
         stages.add(new Stage(name + ".vsh", vertexSource, Shaderc.shaderc_glsl_vertex_shader));
-        if (geometrySource != null) {
-            stages.add(new Stage(name + ".gsh", geometrySource, Shaderc.shaderc_glsl_geometry_shader));
-        }
+        between.present().forEach(stage -> stages.add(betweenStage(name, stage)));
         stages.add(new Stage(name + ".fsh", fragmentSource, Shaderc.shaderc_glsl_fragment_shader));
         // The stages compile apart (PackWorkers); the pipeline is created here, on the calling thread.
         List<SPIRVUtils.SPIRV> compiled = PackWorkers.map(stages, stage -> compile(stage, packModules));
         SPIRVUtils.SPIRV fragment = compiled.get(compiled.size() - 1);
         builder.setSPIRVs(compiled.get(0), fragment);
-        GraphicsPipeline pipeline = geometrySource == null ? builder.createGraphicsPipeline()
-                : GeometryStageModules.construct(compiled.get(1).bytecode(), builder::createGraphicsPipeline);
+        if (between.tessellated()) {
+            builder.setTessellationSPIRVs(compiled.get(1), compiled.get(2), BetweenStages.PATCH_VERTICES);
+        }
+        GraphicsPipeline pipeline = between.geometry() == null ? builder.createGraphicsPipeline()
+                : GeometryStageModules.construct(compiled.get(compiled.size() - 2).bytecode(),
+                        builder::createGraphicsPipeline);
         if (packModules) {
             MrtPipelineContext.recordWrittenOutputs(pipeline, SpirvOutputWrites.writtenLocations(fragment.bytecode()));
         }
@@ -124,6 +127,26 @@ public final class HostPipelineLayout {
 
     /** One stage of a pipeline: its file name for shaderc's reports, its source, and its shaderc kind. */
     private record Stage(String name, String source, int kind) {}
+
+    /** A stage between the vertex and fragment stages, as shaderc compiles it. */
+    private static Stage betweenStage(String name, BetweenStages.Stage stage) {
+        return switch (stage.name()) {
+            case "tess_control" -> new Stage(name + ".tcs", stage.source(), Shaderc.shaderc_glsl_tess_control_shader);
+            case "tess_evaluation" -> new Stage(name + ".tes", stage.source(),
+                    Shaderc.shaderc_glsl_tess_evaluation_shader);
+            default -> new Stage(name + ".gsh", stage.source(), Shaderc.shaderc_glsl_geometry_shader);
+        };
+    }
+
+    /** The device features the stages {@code between} need: tessellationShader, geometryShader. */
+    private static void requireDeviceStages(String name, BetweenStages between) {
+        if (between.geometry() != null && !ChimeraDevice.geometryShader()) {
+            throw new LayoutFailure("the device has no geometryShader for " + name + ".gsh");
+        }
+        if (between.tessellated() && !DeviceManager.isTessellationEnabled()) {
+            throw new LayoutFailure("the device has no tessellationShader for " + name + ".tcs");
+        }
+    }
 
     /**
      * Builds one of Chimera's own pipelines, named {@code name}, from a config in

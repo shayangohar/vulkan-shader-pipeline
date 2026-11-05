@@ -388,15 +388,15 @@ public final class PackAdvancedResourcePlan {
 
     public static String layoutMismatch(ProgramBindingLayout layout, String vertex, String fragment,
             List<DescriptorBinding> descriptors) {
-        return layoutMismatch(layout, vertex, null, fragment, descriptors);
+        return layoutMismatch(layout, vertex, BetweenStages.NONE, fragment, descriptors);
     }
 
-    /** The same check over every stage the program runs; {@code geometry} is null without a geometry stage. */
-    public static String layoutMismatch(ProgramBindingLayout layout, String vertex, String geometry, String fragment,
-            List<DescriptorBinding> descriptors) {
+    /** The same check over every stage the program runs, the stages {@code between} its vertex and fragment too. */
+    public static String layoutMismatch(ProgramBindingLayout layout, String vertex, BetweenStages between,
+            String fragment, List<DescriptorBinding> descriptors) {
         if (layout == null) return "DESCRIPTOR_LAYOUT_MISMATCH:missing-plan";
         List<DescriptorBinding> declared = new ArrayList<>(shaderBindings(vertex, 1));
-        declared.addAll(shaderBindings(geometry, VK10.VK_SHADER_STAGE_GEOMETRY_BIT));
+        between.present().forEach(stage -> declared.addAll(shaderBindings(stage.source(), stage.stageBit())));
         declared.addAll(shaderBindings(fragment, 16));
         String duplicate = duplicateDescriptor(descriptors);
         if (duplicate != null) return duplicate;

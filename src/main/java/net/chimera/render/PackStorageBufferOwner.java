@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import net.chimera.ChimeraMod;
+import net.chimera.shaderpack.BetweenStages;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
@@ -297,14 +298,14 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     /** Records shader/layout agreement before native pipeline creation. */
     public String verifyLayout(String program, String vertex, String fragment,
             List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
-        return verifyLayout(program, vertex, null, fragment, descriptors);
+        return verifyLayout(program, vertex, BetweenStages.NONE, fragment, descriptors);
     }
 
-    /** The same over every stage the program runs; {@code geometry} is null without a geometry stage. */
-    public String verifyLayout(String program, String vertex, String geometry, String fragment,
+    /** The same over every stage the program runs, the stages {@code between} its vertex and fragment too. */
+    public String verifyLayout(String program, String vertex, BetweenStages between, String fragment,
             List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
         String mismatch = PackAdvancedResourcePlan.layoutMismatch(
-                plan.bindingLayout(program), vertex, geometry, fragment, descriptors);
+                plan.bindingLayout(program), vertex, between, fragment, descriptors);
         if (mismatch == null) {
             verifiedLayouts.add(program);
             programFailures.remove(program);

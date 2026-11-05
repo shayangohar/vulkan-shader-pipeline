@@ -158,6 +158,27 @@ public final class FamilyAdapterRegistry {
                 && plan.vertexContract() == FamilyAdapterPlan.VertexContract.FIXED_TERRAIN;
     }
 
+    /** Terrain, water and the shadow terrain programs: the programs the terrain vertex bridge converts. */
+    static boolean isTerrainLike(String name) {
+        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water") || isShadowTerrain(name);
+    }
+
+    /** Programs whose modern sources are normalized like terrain: terrain, water and both shadow lanes. */
+    static boolean isTerrainMaterialFamily(String name) {
+        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water") || isShadowFamily(name);
+    }
+
+    /**
+     * Families whose active sources can write multiple outputs through DRAWBUFFERS/RENDERTARGETS.
+     * Each gets an immutable geometry output plan; single-output plans stay executable and unused
+     * directives never block the family.
+     */
+    static boolean isGeometryOutputFamily(String name) {
+        return isEntityLike(name) || isParticleLike(name) || isWeatherFamily(name) || isHostLayoutFamily(name)
+                || isSkyFamily(name) || isCloudFamily(name)
+                || name.equals("gbuffers_terrain") || name.equals("gbuffers_water");
+    }
+
     /** The program whose lane {@code name} runs on: a shadow terrain program on shadow's; any other on its own. */
     public static String laneProgram(String name) {
         return isShadowTerrain(name) ? "shadow" : name;

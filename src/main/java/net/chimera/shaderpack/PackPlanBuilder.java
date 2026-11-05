@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -105,6 +106,9 @@ public final class PackPlanBuilder {
         private String vertex;
         /** The prepared geometry stage, run between the vertex and fragment stages; null without one. */
         private String geometry;
+        /** The prepared tessellation stages, run between the vertex and fragment stages; null without them. */
+        private String tessControl;
+        private String tessEvaluation;
         private String hostLayoutFailure;
         private UniformRegistry.ProgramInterfacePlan interfacePlan;
         private List<String> unboundShadowSamplers = List.of();
@@ -115,6 +119,7 @@ public final class PackPlanBuilder {
         private String convertedFragment;
         private String convertedVertex;
         private String convertedGeometry;
+        private TessellationStageBridge.Conversion convertedTessellation;
         private LegacyGlslConverter.TerrainVaryingLayout vertexLayout;
         /** The geometry stage's output locations, which the fragment stage reads from; null without one. */
         private LegacyGlslConverter.TerrainVaryingLayout geometryLayout;
@@ -130,18 +135,20 @@ public final class PackPlanBuilder {
             this.config = config;
             this.resolution = resolution;
             this.advancedResources = advancedResources;
-            this.stages = ProgramStageSources.prepare(program, name, isTerrainMaterialFamily(name),
-                    settings().readsTessellation());
+            this.stages = ProgramStageSources.prepare(program, name,
+                    FamilyAdapterRegistry.isTerrainMaterialFamily(name), settings().readsTessellation());
             this.fragment = ProgramStageSources.source(stages, "fragment", program.executableFragmentSource());
             this.vertex = ProgramStageSources.source(stages, "vertex", program.executableVertexSource());
             this.geometry = ProgramStageSources.source(stages, "geometry", null);
+            this.tessControl = ProgramStageSources.source(stages, "tess_control", null);
+            this.tessEvaluation = ProgramStageSources.source(stages, "tess_evaluation", null);
             this.familyAdapter = FamilyAdapterRegistry.forProgram(name);
             this.terrainMaterial = TerrainMaterialPlan.forProgram(name, vertex, fragment);
             this.preparedSnapshot = !program.preparedSources().isEmpty();
             this.stage = FamilyAdapterRegistry.stageFor(name);
             Map<Integer, Integer> formats = config == null ? Map.of() : config.colortexFormats();
             this.targetPlan = PostTargetPlan.forFullscreenProgram(name, fragment, config);
-            this.geometryOutputPlan = isGeometryOutputFamily(name)
+            this.geometryOutputPlan = FamilyAdapterRegistry.isGeometryOutputFamily(name)
                     ? GeometryOutputPlan.parse(name, fragment, formats) : null;
             PackProgramResolution sourceResolution = resolution == null ? null : resolution.resolution(name);
             this.directiveProgram = sourceResolution == null || sourceResolution.selectedProgram().isBlank()
@@ -173,6 +180,7 @@ public final class PackPlanBuilder {
                 if (executable && FamilyAdapterRegistry.isEntityLike(name) && vertex != null) {
                     convertEntityVertex();
                 }
+                convertTessellation();
                 convertGeometry();
                 convertFragment();
             } catch (RuntimeException e) {
@@ -187,7 +195,8 @@ public final class PackPlanBuilder {
                     varyingLocations(), targetPlan, convertedFragment, convertedVertex,
                     vertexLayout, deviations, executable,
                     familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan, blendPlan, shadowAttachments(),
-                    convertedGeometry);
+                    convertedGeometry, convertedTessellation == null ? null : convertedTessellation.control(),
+                    convertedTessellation == null ? null : convertedTessellation.evaluation());
         }
 
         /** The shadowcolor targets the shadow pass draws: Iris's two, or up to eight with HIGHER_SHADOWCOLOR. */
@@ -225,8 +234,8 @@ public final class PackPlanBuilder {
          * albedo texture in a world program (UnitZeroSampler).
          */
         private void prepareIrisCoreProfile() {
-            String overlay = stage == UniformRegistry.Stage.POST || isTerrainMaterialFamily(name)
-                    ? IrisCoreProfile.NO_OVERLAY : "UV1";
+            String overlay = stage == UniformRegistry.Stage.POST
+                    || FamilyAdapterRegistry.isTerrainMaterialFamily(name) ? IrisCoreProfile.NO_OVERLAY : "UV1";
             IrisCoreProfile.Patch patch = irisPatch();
             if (vertex != null && patch != IrisCoreProfile.Patch.LINES) {
                 vertex = IrisCoreProfile.prepareIrisCoreProfile(vertex, vertexFile(), true, overlay,
@@ -242,6 +251,9 @@ public final class PackPlanBuilder {
             }
             vertex = UnitZeroSampler.apply(CenterDepthSmooth.apply(vertex, name), config, deviations, name);
             geometry = UnitZeroSampler.apply(CenterDepthSmooth.apply(geometry, name), config, deviations, name);
+            tessControl = UnitZeroSampler.apply(CenterDepthSmooth.apply(tessControl, name), config, deviations, name);
+            tessEvaluation = UnitZeroSampler.apply(CenterDepthSmooth.apply(tessEvaluation, name), config, deviations,
+                    name);
             fragment = UnitZeroSampler.apply(CenterDepthSmooth.apply(fragment, name), config, deviations, name);
         }
 
@@ -316,8 +328,10 @@ public final class PackPlanBuilder {
          */
         private void injectAlphaTest() {
             vertex = servedStageValues(vertex, vertexFile());
-            // Every stage reads Iris's values alike; the geometry stage is prepared with its includes expanded.
+            // Every stage reads Iris's values alike; the stages between are prepared with their includes expanded.
             geometry = servedStageValues(geometry, null);
+            tessControl = servedStageValues(tessControl, null);
+            tessEvaluation = servedStageValues(tessEvaluation, null);
             fragment = servedStageValues(fragment, fragmentFile());
             if (vertex == null) {
                 return;
@@ -399,44 +413,56 @@ public final class PackPlanBuilder {
 
         private void planInterface() {
             PackSettingsPlan settings = config == null ? null : config.settings();
-            String runningGeometry = geometryStageRuns() ? geometry : null;
+            Map<String, String> between = runningBetweenStages();
             interfacePlan = UniformRegistry.planProgram(
-                    fragment, vertex, runningGeometry, stage, targetPlan, !program.variantFolder().isBlank(),
+                    fragment, vertex, between, stage, targetPlan, !program.variantFolder().isBlank(),
                     settings == null ? Map.of() : settings.runtimeSettings().customDescriptors(),
                     settings == null ? Map.of() : settings.customSamplerSlots());
             unboundShadowSamplers = ShadowTargetDirectives.unboundShadowSamplers(interfacePlan.samplers(), config,
                     this::readsSampler);
+            List<GlslInterfaceScanner.StageInterface> chain = new ArrayList<>();
+            if (vertex != null) {
+                stageInterfaces.put("vertex", GlslInterfaceScanner.scan(vertex, true));
+                chain.add(stageInterfaces.get("vertex"));
+            }
+            between.forEach((name, source) -> {
+                stageInterfaces.put(name, GlslInterfaceScanner.scan(source, GlslInterfaceScanner.Stage.of(name)));
+                chain.add(stageInterfaces.get(name));
+            });
             if (fragment != null) {
                 stageInterfaces.put("fragment", GlslInterfaceScanner.scan(fragment, false));
             }
-            if (vertex != null) {
-                stageInterfaces.put("vertex", GlslInterfaceScanner.scan(vertex, true));
-            }
-            if (runningGeometry != null) {
-                stageInterfaces.put("geometry",
-                        GlslInterfaceScanner.scan(runningGeometry, GlslInterfaceScanner.Stage.GEOMETRY));
-            }
+            chain.add(stageInterfaces.get("fragment"));
             pairedPostVertex = stage == UniformRegistry.Stage.POST && vertex != null;
             boolean reconcileStages = vertex != null && (stage != UniformRegistry.Stage.POST || pairedPostVertex);
             stageMatch = !reconcileStages
                     ? new GlslInterfaceScanner.ProgramMatch(Map.of(), List.of())
-                    : runningGeometry != null
-                    ? GlslInterfaceScanner.match(stageInterfaces.get("vertex"), stageInterfaces.get("geometry"),
-                            stageInterfaces.get("fragment"))
-                    : GlslInterfaceScanner.match(stageInterfaces.get("vertex"), stageInterfaces.get("fragment"));
+                    : GlslInterfaceScanner.match(chain);
+        }
+
+        /** The stages that run between the vertex and fragment stages, by stage name, in the order they run. */
+        private Map<String, String> runningBetweenStages() {
+            Map<String, String> between = new LinkedHashMap<>();
+            if (tessellationRuns()) {
+                between.put("tess_control", tessControl);
+                between.put("tess_evaluation", tessEvaluation);
+            }
+            if (geometryStageRuns()) between.put("geometry", geometry);
+            return between;
         }
 
         /** Whether any stage reads {@code sampler}; GL leaves one nothing reads inactive, bound or not. */
         private boolean readsSampler(String sampler) {
             return fragment != null && !UniformRegistry.isSamplerUnused(fragment, sampler)
                     || vertex != null && !UniformRegistry.isSamplerUnused(vertex, sampler)
-                    || geometryStageRuns() && !UniformRegistry.isSamplerUnused(geometry, sampler);
+                    || runningBetweenStages().values().stream()
+                            .anyMatch(source -> !UniformRegistry.isSamplerUnused(source, sampler));
         }
 
         private Map<String, Integer> varyingLocations() {
-            return stage == UniformRegistry.Stage.POST && !pairedPostVertex
-                    ? postVaryingLocations(stageInterfaces.get("fragment"))
-                    : stageMatch.locations();
+            GlslInterfaceScanner.StageInterface fragmentInterface = stageInterfaces.get("fragment");
+            return stage != UniformRegistry.Stage.POST || pairedPostVertex ? stageMatch.locations()
+                    : fragmentInterface == null ? Map.of() : fragmentInterface.readInputLocations();
         }
 
         private void collectPlanningDeviations() {
@@ -459,7 +485,7 @@ public final class PackPlanBuilder {
         /** Whether the planned sources may execute, recording each contract they break. */
         private boolean admitted() {
             // Every check runs, so the report names every reason a program is refused.
-            boolean admitted = geometryStages.isEmpty() || geometryStageRuns();
+            boolean admitted = geometryStages.isEmpty() || geometryStageRuns() || tessellationRuns();
             if (!admitted) {
                 // A lane resolved to such a program (shadow_lines to Spring's shadow) too.
                 deviations.add("UNSUPPORTED_PACK_STAGE");
@@ -473,16 +499,45 @@ public final class PackPlanBuilder {
 
         /**
          * Whether the program's stages between vertex and fragment run: a geometry stage alone, on
-         * every shadow lane. Tessellation and the main pass's geometry stages stay refused (TASK-648).
+         * every shadow lane. The main pass's geometry stages stay refused (TASK-648).
          */
         private boolean geometryStageRuns() {
             return geometry != null && geometryStages.equals(List.of("geometry"))
                     && FamilyAdapterRegistry.isShadowFamily(name);
         }
 
-        /** What the vertex stage feeds: a running geometry stage, which converts the clip depth, or the fragment. */
+        /**
+         * Whether the program's tessellation stages run: both alone, on the terrain or water lane after a
+         * modern vertex stage (TessellationStageBridge). The hand and shadow lanes stay refused (TASK-1066).
+         */
+        private boolean tessellationRuns() {
+            return tessControl != null && tessEvaluation != null
+                    && geometryStages.equals(List.of("tess_control", "tess_evaluation"))
+                    && (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")) && terrainMaterial.modern();
+        }
+
+        /**
+         * What the vertex stage feeds: a running geometry or tessellation control stage, after which
+         * a later stage converts the clip depth, or the fragment.
+         */
         private String vertexConsumer() {
+            if (tessellationRuns()) return TessellationStageBridge.consumerView(tessControl);
             return geometryStageRuns() ? GeometryStageBridge.consumerView(geometry, fragment) : fragment;
+        }
+
+        /** Converts the tessellation stages that run between the converted vertex stage and the fragment stage. */
+        private void convertTessellation() {
+            if (!executable || !tessellationRuns()) return;
+            try {
+                convertedTessellation = TessellationStageBridge.convertTerrain(tessControl, tessEvaluation,
+                        vertexLayout, fragment, interfacePlan.project("tess_control", stage),
+                        interfacePlan.project("tess_evaluation", stage), allowStorageBuffers);
+            } catch (RuntimeException failure) {
+                deviations.add(VertexBridgeDeviations.conversionFailure("TESSELLATION_STAGE_BRIDGE_UNSUPPORTED",
+                        failure));
+                deviations.add("TESSELLATION_STAGE_BRIDGE_UNSUPPORTED");
+                executable = false;
+            }
         }
 
         /** Converts the geometry stage that runs between the converted vertex stage and the fragment stage. */
@@ -682,7 +737,7 @@ public final class PackPlanBuilder {
                                 vertex, vertexFile(), vertexConsumer(), interfacePlan.project("vertex", stage),
                                 allowStorageBuffers, geometryStageRuns()),
                         "SHADOW_ENTITY_VERTEX_BRIDGE", VertexBridgeDeviations.unsupported(name));
-            } else if (isTerrainLike(name)) {
+            } else if (FamilyAdapterRegistry.isTerrainLike(name)) {
                 acceptVertex(this::terrainVertexOrThrow, null, VertexBridgeDeviations.unsupported(name));
             }
         }
@@ -696,9 +751,9 @@ public final class PackPlanBuilder {
                         allowStorageBuffers, geometryStageRuns());
             }
             if (terrainMaterial.modern()) {
-                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, fragment,
+                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, vertexConsumer(),
                         GlslVertexPreambles.MODERN_TERRAIN_VERTEX_PREAMBLE, vertexInterface, false, false,
-                        allowStorageBuffers);
+                        allowStorageBuffers, tessellationRuns());
             }
             return TerrainVertexBridge.convertLegacyVertexOrThrow(vertex, vertexFile(), fragment,
                     GlslVertexPreambles.TERRAIN_VERTEX_PREAMBLE, allowStorageBuffers);
@@ -742,7 +797,7 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
                 acceptFragment(FragmentConverter.FragmentConversionRequest
                         .of(fragment, fragmentFile(), true, slots)
-                        .withTerrainLayout(vertexLayout)
+                        .withTerrainLayout(fragmentInputLayout())
                         .withInterfacePlan(interfacePlan.project("fragment", stage))
                         .withGeometryOutputPlan(geometryOutputPlan)
                         .withAtlasSamplers(PackResourcePlan.terrainAtlasSamplers(name,
@@ -752,7 +807,7 @@ public final class PackPlanBuilder {
                 int[] slots = PackPipelines.shadowSamplerSlots(interfaceSlots(interfacePlan, stage));
                 acceptFragment(FragmentConverter.FragmentConversionRequest
                         .of(fragment, fragmentFile(), true, slots)
-                        .withTerrainLayout(geometryLayout != null ? geometryLayout : vertexLayout)
+                        .withTerrainLayout(fragmentInputLayout())
                         .withInterfacePlan(interfacePlan.project("fragment", stage))
                         .convert(), "POST_CONVERTER_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isEntityLike(name)) {
@@ -771,6 +826,12 @@ public final class PackPlanBuilder {
             } else {
                 executable = false;
             }
+        }
+
+        /** The output locations of the stage that feeds the fragment: tessellation, geometry, or the vertex stage. */
+        private LegacyGlslConverter.TerrainVaryingLayout fragmentInputLayout() {
+            if (convertedTessellation != null) return convertedTessellation.outputLayout();
+            return geometryLayout != null ? geometryLayout : vertexLayout;
         }
 
         private int[] entitySlots() {
@@ -801,7 +862,7 @@ public final class PackPlanBuilder {
             if (executable) {
                 PostVertexBridge.PostVaryingLayout postLayout = !pairedPostVertex ? null
                         : new PostVertexBridge.PostVaryingLayout(
-                        stageMatch.locations(), postVaryingTypes(stageInterfaces.get("fragment")));
+                        stageMatch.locations(), stageInterfaces.get("fragment").readInputTypes());
                 convertedFragment = FragmentConverter.convertPostFragment(
                         fragment, fragmentFile(), interfacePlan.project("fragment", UniformRegistry.Stage.POST),
                         targetPlan,
@@ -862,6 +923,13 @@ public final class PackPlanBuilder {
                 convertedGeometry = advancedResources.rewriteStorageBuffers(name, convertedGeometry);
                 geometryRewritten = convertedGeometry != null;
             }
+            if (convertedTessellation != null) {
+                String control = advancedResources.rewriteStorageBuffers(name, convertedTessellation.control());
+                String evaluation = advancedResources.rewriteStorageBuffers(name, convertedTessellation.evaluation());
+                geometryRewritten &= control != null && evaluation != null;
+                convertedTessellation = new TessellationStageBridge.Conversion(control, evaluation,
+                        convertedTessellation.outputLayout());
+            }
             if (convertedFragment == null || (program.vertexSource() != null && convertedVertex == null)
                     || !geometryRewritten) {
                 deviations.add("STORAGE_BUFFER_REWRITE_FAILED:" + name);
@@ -918,64 +986,6 @@ public final class PackPlanBuilder {
                     PackPipelines.entitySamplerSlots(interfaceSlots(plan, stage)),
                     advancedResources == null ? Set.of() : advancedResources.storedImages(name, "vertex"));
         }
-    }
-
-    private static Map<String, Integer> postVaryingLocations(
-            GlslInterfaceScanner.StageInterface fragment
-    ) {
-        if (fragment == null) {
-            return Map.of();
-        }
-        Map<String, Integer> result = new TreeMap<>();
-        for (GlslInterfaceScanner.Declaration declaration : fragment.inputs()) {
-            if (declaration.referenced()) {
-                result.put(declaration.name(), 0);
-            }
-        }
-        return result;
-    }
-
-    private static Map<String, String> postVaryingTypes(
-            GlslInterfaceScanner.StageInterface fragment
-    ) {
-        if (fragment == null) {
-            return Map.of();
-        }
-        Map<String, String> result = new TreeMap<>();
-        for (GlslInterfaceScanner.Declaration declaration : fragment.inputs()) {
-            if (declaration.referenced()) {
-                result.put(declaration.name(), declaration.typeWithArray());
-            }
-        }
-        return result;
-    }
-
-    private static boolean isTerrainLike(String name) {
-        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
-                || FamilyAdapterRegistry.isShadowTerrain(name);
-    }
-
-    /** Programs whose modern sources are normalized like terrain: terrain, water and both shadow lanes. */
-    private static boolean isTerrainMaterialFamily(String name) {
-        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
-                || FamilyAdapterRegistry.isShadowFamily(name);
-    }
-
-    /**
-     * Families whose active sources can write multiple outputs through
-     * DRAWBUFFERS/RENDERTARGETS. Each gets an immutable geometry output
-     * plan; single-output plans stay executable and unused directives
-     * never block the family.
-     */
-    private static boolean isGeometryOutputFamily(String name) {
-        return FamilyAdapterRegistry.isEntityLike(name)
-                || FamilyAdapterRegistry.isParticleLike(name)
-                || FamilyAdapterRegistry.isWeatherFamily(name)
-                || FamilyAdapterRegistry.isHostLayoutFamily(name)
-                || FamilyAdapterRegistry.isSkyFamily(name)
-                || FamilyAdapterRegistry.isCloudFamily(name)
-                || name.equals("gbuffers_terrain")
-                || name.equals("gbuffers_water");
     }
 
     private static int[] interfaceSlots(

@@ -10,8 +10,8 @@ import java.util.TreeMap;
  * pipeline construction consume the same instance, so eligibility cannot
  * drift between reporting and execution. {@code shadowAttachmentFormats} is the shadow pass's
  * colour attachment contract, shadowcolor0 onward, that a shadow-stage pipeline declares; it is
- * empty for every other stage. {@code convertedGeometry} is the program's converted geometry
- * stage, run between its vertex and fragment stages, or null when it has none.
+ * empty for every other stage. {@code convertedGeometry} and the two converted tessellation stages
+ * run between the program's vertex and fragment stages; each is null when it has none.
  */
 public record PackProgramPlan(
         PackProgram program,
@@ -31,7 +31,9 @@ public record PackProgramPlan(
         PackAlphaTestPlan alphaTestPlan,
         PackBlendPlan blendPlan,
         List<Integer> shadowAttachmentFormats,
-        String convertedGeometry
+        String convertedGeometry,
+        String convertedTessControl,
+        String convertedTessEvaluation
 ) {
     public PackProgramPlan {
         stages = immutableStages(stages);
@@ -69,7 +71,12 @@ public record PackProgramPlan(
     ) {
         this(program, stages, interfacePlan, stageInterfaces, varyingLocations, targetPlan,
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable, null, null, null, null, null,
-                null, null);
+                null, null, null, null);
+    }
+
+    /** The converted stages the program runs between its vertex and fragment stages. */
+    public BetweenStages betweenStages() {
+        return new BetweenStages(convertedTessControl, convertedTessEvaluation, convertedGeometry);
     }
 
     /** The authored cloud program provably draws nothing (see AuthoredOutput). */

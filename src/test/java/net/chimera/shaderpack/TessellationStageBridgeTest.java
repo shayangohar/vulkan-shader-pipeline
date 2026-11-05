@@ -1,0 +1,144 @@
+package net.chimera.shaderpack;
+
+import org.junit.jupiter.api.Test;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Tessellation stages between the vertex and fragment stages (TASK-1066), in the shape Shrimple's
+ * terrain and water take once their VertexData blocks are flattened: the control stage copies each
+ * vertex through and sets its levels, the evaluation stage interpolates and projects.
+ */
+final class TessellationStageBridgeTest {
+    private static final String CONTROL = """
+            #version 430 compatibility
+            layout (vertices=3) out;
+            in vec2 VertexData_uv[];
+            flat in int VertexData_blockId[];
+            in vec3 VertexData_unused[];
+            out vec2 VertexData_uv_tc[];
+            flat out int VertexData_blockId_tc[];
+            void main() {
+                gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+                VertexData_uv_tc[gl_InvocationID] = VertexData_uv[gl_InvocationID];
+                VertexData_blockId_tc[gl_InvocationID] = VertexData_blockId[gl_InvocationID];
+                if (gl_InvocationID == 0) {
+                    gl_TessLevelOuter[0] = 1.0;
+                    gl_TessLevelOuter[1] = 1.0;
+                    gl_TessLevelOuter[2] = 1.0;
+                    gl_TessLevelInner[0] = 1.0;
+                }
+            }
+            """;
+    private static final String EVALUATION = """
+            #version 430 compatibility
+            layout (triangles, fractional_odd_spacing, ccw) in;
+            in vec2 VertexData_uv_tc[];
+            flat in int VertexData_blockId_tc[];
+            out vec2 VertexData_uv_te;
+            flat out int VertexData_blockId_te;
+            void main() {
+                vec4 view = gl_TessCoord.x * gl_in[0].gl_Position + gl_TessCoord.y * gl_in[1].gl_Position
+                        + gl_TessCoord.z * gl_in[2].gl_Position;
+                VertexData_uv_te = gl_TessCoord.x * VertexData_uv_tc[0] + gl_TessCoord.y * VertexData_uv_tc[1]
+                        + gl_TessCoord.z * VertexData_uv_tc[2];
+                VertexData_blockId_te = VertexData_blockId_tc[0];
+                gl_Position = gl_ProjectionMatrix * view;
+            }
+            """;
+    private static final String FRAGMENT = """
+            #version 430 compatibility
+            in vec2 VertexData_uv_te;
+            flat in int VertexData_blockId_te;
+            void main() { gl_FragData[0] = vec4(VertexData_uv_te, float(VertexData_blockId_te), 1.0); }
+            """;
+
+    /** The control stage's inputs and outputs, and the evaluation stage's inputs, read one value per vertex. */
+    @Test
+    void theStagesPairPerVertexAsIrisLinksThem() {
+        var control = GlslInterfaceScanner.scan(CONTROL, GlslInterfaceScanner.Stage.TESS_CONTROL);
+        var evaluation = GlslInterfaceScanner.scan(EVALUATION, GlslInterfaceScanner.Stage.TESS_EVALUATION);
+        assertTrue(control.deviations().isEmpty() && evaluation.deviations().isEmpty(),
+                control.deviations() + " " + evaluation.deviations());
+        assertTrue(control.output("VertexData_uv_tc").perVertex() && control.input("VertexData_uv").perVertex());
+        assertEquals("VertexData_uv_tc[]", control.output("VertexData_uv_tc").declarator());
+        assertFalse(evaluation.output("VertexData_uv_te").perVertex());
+        var vertex = GlslInterfaceScanner.scan("""
+                out vec2 VertexData_uv;
+                flat out int VertexData_blockId;
+                void main() { VertexData_uv = vec2(0.0); VertexData_blockId = 1; gl_Position = vec4(0.0); }
+                """, true);
+        var match = GlslInterfaceScanner.match(List.of(vertex, control, evaluation,
+                GlslInterfaceScanner.scan(FRAGMENT, false)));
+        assertTrue(match.executable(), match.deviations().toString());
+        assertEquals(Map.of("VertexData_blockId_te", 0, "VertexData_uv_te", 1), match.locations());
+    }
+
+    /** The control stage as the vertex stage's consumer: single-valued inputs, no outputs, the body kept. */
+    @Test
+    void theConsumerViewReadsLikeAFragmentStage() {
+        String view = TessellationStageBridge.consumerView(CONTROL);
+        assertTrue(view.contains("in vec2 VertexData_uv;\n") && view.contains("flat in int VertexData_blockId;\n"),
+                view);
+        assertFalse(view.contains("out vec2 VertexData_uv_tc"), view);
+        assertTrue(view.contains("VertexData_uv_tc[gl_InvocationID] = VertexData_uv[gl_InvocationID];"), view);
+    }
+
+    /**
+     * The control stage reads the vertex outputs' locations and writes its own, packed by name; the
+     * evaluation stage reads those and writes the fragment inputs' locations, an integer flat. Only
+     * the evaluation stage, the last before the rasterizer, converts GL's clip depth, and only it
+     * reads the host's projection, so only it declares the view block. Its winding is reversed.
+     */
+    @Test
+    void bothStagesConvert() {
+        LegacyGlslConverter.TerrainVaryingLayout vertex = new LegacyGlslConverter.TerrainVaryingLayout(
+                Map.of("VertexData_blockId", "int", "VertexData_uv", "vec2"),
+                Map.of("VertexData_blockId", 3, "VertexData_uv", 5));
+        TessellationStageBridge.Conversion conversion = TessellationStageBridge.convertTerrain(CONTROL, EVALUATION,
+                vertex, FRAGMENT, null, null, false);
+        String control = conversion.control();
+        assertTrue(control.startsWith("#version 460\n") && !control.contains("compatibility"), control);
+        assertTrue(control.contains("layout(location = 5) in vec2 VertexData_uv[];")
+                && control.contains("layout(location = 3) flat in int VertexData_blockId[];")
+                && !control.contains("VertexData_unused"), control);
+        assertTrue(control.contains("layout(location = 1) out vec2 VertexData_uv_tc[];")
+                && control.contains("layout(location = 0) flat out int VertexData_blockId_tc[];")
+                && control.contains("layout (vertices=3) out;"), control);
+        assertFalse(control.contains(WorldClipRange.AUTHORED_ENTRY) || control.contains("ViewUBO"), control);
+
+        String evaluation = conversion.evaluation();
+        assertTrue(evaluation.contains("layout(location = 1) in vec2 VertexData_uv_tc[];")
+                && evaluation.contains("layout(location = 0) flat in int VertexData_blockId_tc[];"), evaluation);
+        assertTrue(evaluation.contains("layout(location = 1) out vec2 VertexData_uv_te;")
+                && evaluation.contains("layout(location = 0) flat out int VertexData_blockId_te;"), evaluation);
+        assertTrue(evaluation.contains("layout (triangles, fractional_odd_spacing, cw) in;"), evaluation);
+        assertTrue(evaluation.contains("gl_Position = chimeraGlClip((MVP * inverse(gbufferModelView))) * view;")
+                && evaluation.contains("uniform ViewUBO")
+                && evaluation.contains("gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);"), evaluation);
+        assertEquals(1, conversion.outputLayout().location("VertexData_uv_te"));
+    }
+
+    /** GL's ccw is Vulkan's cw under the upper-left domain origin, and GL's default is ccw. */
+    @Test
+    void theWindingIsReversed() {
+        assertEquals("layout(triangles, cw) in;", TessellationStageBridge.swappedWinding("layout(triangles, ccw) in;"));
+        assertEquals("layout(triangles, ccw) in;", TessellationStageBridge.swappedWinding("layout(triangles, cw) in;"));
+        assertEquals("layout(triangles, cw) in;", TessellationStageBridge.swappedWinding("layout(triangles) in;"));
+    }
+
+    /** A world vertex stage ahead of tessellation runs in GL's range; the evaluation stage converts its depth. */
+    @Test
+    void aVertexStageAheadOfTessellationLeavesItsClipDepthInGlRange() {
+        WorldClipRange clip = WorldClipRange.forVertex("void main() { gl_Position = vec4(0.0); }", false, true);
+        assertEquals(WorldClipRange.GL, clip);
+        String body = clip.vertexBody("void main() { gl_Position = vec4(0.0); }", false, true);
+        assertTrue(body.contains("vec4 chimeraGlClip(vec4 clip)") && !body.contains(WorldClipRange.AUTHORED_ENTRY),
+                body);
+    }
+}

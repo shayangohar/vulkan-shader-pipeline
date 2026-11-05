@@ -18,6 +18,8 @@ import java.util.stream.Collectors;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_ALL_GRAPHICS;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_GEOMETRY_BIT;
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
 
 /**
@@ -28,6 +30,8 @@ final class PackDescriptorContracts {
     /** Stages whose layout comes from a pipeline JSON; every other stage has a guarded family contract. */
     private static final Set<UniformRegistry.Stage> PIPELINE_JSON_STAGES = Set.of(UniformRegistry.Stage.SHADOW,
             UniformRegistry.Stage.GEOMETRY, UniformRegistry.Stage.TRANSLUCENT, UniformRegistry.Stage.POST);
+    private static final int TESSELLATION_STAGES = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT
+            | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 
     private PackDescriptorContracts() {}
 
@@ -64,13 +68,19 @@ final class PackDescriptorContracts {
         int[] slots = ordinarySamplerSlots(iface, stage, advancedSamplerNames);
         for (int slot : slots) PackPipelines.requireSelector(slot);
         PackDescriptorLayout layout = PIPELINE_JSON_STAGES.contains(stage)
-                ? pipelineJsonLayout(stage, iface, slots) : familyLayout(plan, stage, iface, slots);
+                ? pipelineJsonLayout(stage, iface, slots, plan.betweenStages().tessellated())
+                : familyLayout(plan, stage, iface, slots);
         return new OrdinaryDescriptorContract(layout, ordinaryResources(layout, iface));
     }
 
-    /** A shadow, terrain, water or post layout: its pipeline JSON's blocks, the pack's uniforms, then samplers. */
+    /**
+     * A shadow, terrain, water or post layout: its pipeline JSON's blocks, the pack's uniforms, then
+     * samplers. A tessellated program's evaluation stage reads the host's view block too
+     * (TessellationStageBridge), so every host block reaches the tessellation stages.
+     */
     private static PackDescriptorLayout pipelineJsonLayout(UniformRegistry.Stage stage,
-                                                           UniformRegistry.ProgramInterface iface, int[] slots) {
+                                                           UniformRegistry.ProgramInterface iface, int[] slots,
+                                                           boolean tessellated) {
         PackDescriptorLayout layout;
         if (stage == UniformRegistry.Stage.POST) {
             // A post program's only block is the pack's uniforms, at binding 0, and it pushes nothing.
@@ -79,7 +89,10 @@ final class PackDescriptorContracts {
         } else {
             PackDescriptorLayout host = PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson(
                     stage == UniformRegistry.Stage.SHADOW ? "chimera_shadow.json" : "chimera_terrain.json"));
-            List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(host.uniformBlocks());
+            List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(host.uniformBlocks().stream()
+                    .map(block -> !tessellated ? block : new PackDescriptorLayout.UniformBlock(block.binding(),
+                            block.stages() | TESSELLATION_STAGES, block.size(), block.fields()))
+                    .toList());
             blocks.addAll(packUniformBlock(iface, host.bindingAfterBlocks(), VK_SHADER_STAGE_ALL_GRAPHICS));
             layout = new PackDescriptorLayout(blocks, List.of(), host.pushConstants());
         }
@@ -441,17 +454,17 @@ final class PackDescriptorContracts {
     static void verifyAdvancedLayout(PackDescriptorLayout layout, String program,
             PackAdvancedResourcePlan resources, String vertex, String fragment,
             PackStorageBufferOwner owner) {
-        verifyAdvancedLayout(layout, program, resources, vertex, null, fragment, owner);
+        verifyAdvancedLayout(layout, program, resources, vertex, BetweenStages.NONE, fragment, owner);
     }
 
-    /** The same over every stage the program runs; {@code geometry} is null without a geometry stage. */
+    /** The same over every stage the program runs, the stages {@code between} its vertex and fragment included. */
     static void verifyAdvancedLayout(PackDescriptorLayout layout, String program,
-            PackAdvancedResourcePlan resources, String vertex, String geometry, String fragment,
+            PackAdvancedResourcePlan resources, String vertex, BetweenStages between, String fragment,
             PackStorageBufferOwner owner) {
         List<PackAdvancedResourcePlan.DescriptorBinding> descriptors = layout.descriptorBindings();
         String mismatch = owner == null ? PackAdvancedResourcePlan.layoutMismatch(
-                resources.bindingLayout(program), vertex, geometry, fragment, descriptors)
-                : owner.verifyLayout(program, vertex, geometry, fragment, descriptors);
+                resources.bindingLayout(program), vertex, between, fragment, descriptors)
+                : owner.verifyLayout(program, vertex, between, fragment, descriptors);
         if (mismatch != null) throw new PackPipelines.PreparationFailure("descriptor-contract", mismatch);
     }
 
