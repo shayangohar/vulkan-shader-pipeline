@@ -56,8 +56,11 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
     }
 
     /**
-     * This profile's sampling with nearest texel filtering inside the same mip mode, and clamped
-     * to the base level when {@code baseLevelOnly}; null when the profile is incomplete.
+     * This profile's sampling, clamped to the base level when {@code baseLevelOnly}; null when the
+     * profile is incomplete. A {@code nearest} map reads the nearest texel of the nearest level, as
+     * Iris sets a labPBR specular map (TextureFormat.setupTextureParameters: GL_NEAREST_MIPMAP_NEAREST
+     * when mipmapped). Its classes (metal indices, emission 255 for none) must not blend between
+     * levels: Reverie read a level blend of 255 and 0 as half emission, and distant grass glowed.
      */
     public SamplerManager.SamplerKey derive(boolean nearest, boolean baseLevelOnly) {
         if (key == null) return null;
@@ -68,13 +71,11 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
                 Math.min(key.minLod(), maxLod), maxLod, key.lodBias(), key.compareMode(), key.compareFunc());
     }
 
-    private static int nearestOf(int minFilter) {
-        return switch (minFilter) {
-            case GL_LINEAR -> GL_NEAREST;
-            case GL_LINEAR_MIPMAP_NEAREST -> GL_NEAREST_MIPMAP_NEAREST;
-            case GL_LINEAR_MIPMAP_LINEAR -> GL_NEAREST_MIPMAP_LINEAR;
-            default -> minFilter;
-        };
+    /** GL_NEAREST_MIPMAP_NEAREST for any mipmapped filter, else GL_NEAREST. */
+    static int nearestOf(int minFilter) {
+        boolean mipmapped = minFilter == GL_NEAREST_MIPMAP_NEAREST || minFilter == GL_LINEAR_MIPMAP_NEAREST
+                || minFilter == GL_NEAREST_MIPMAP_LINEAR || minFilter == GL_LINEAR_MIPMAP_LINEAR;
+        return mipmapped ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST;
     }
 
     /** The key VulkanMod created {@code sampler} from, or null when it is not one of its cached samplers. */

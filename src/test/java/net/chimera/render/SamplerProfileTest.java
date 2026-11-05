@@ -8,7 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.lwjgl.opengl.GL11.GL_LEQUAL;
 import static org.lwjgl.opengl.GL11.GL_LINEAR;
 import static org.lwjgl.opengl.GL11.GL_LINEAR_MIPMAP_LINEAR;
+import static org.lwjgl.opengl.GL11.GL_LINEAR_MIPMAP_NEAREST;
 import static org.lwjgl.opengl.GL11.GL_NEAREST;
+import static org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_LINEAR;
+import static org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST;
 import static org.lwjgl.opengl.GL11.GL_NONE;
 import static org.lwjgl.opengl.GL11.GL_REPEAT;
 import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
@@ -35,6 +38,20 @@ final class SamplerProfileTest {
         assertEquals(new SamplerManager.SamplerKey(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE,
                 GL_CLAMP_TO_EDGE, 0.0F, 0.0F, 0.0F, GL_NONE, GL_LEQUAL), SamplerProfile.glKey(1 << 8, true));
         assertNull(SamplerProfile.glKey(1 << 8 | SamplerManager.CLAMP_BIT, true), "already clamped");
+    }
+
+    /**
+     * A labPBR specular map reads the nearest texel of the nearest level, as Iris sets it
+     * (TextureFormat.setupTextureParameters): blending levels would invent classes between them.
+     */
+    @Test
+    void aNearestMapNeverBlendsLevels() {
+        for (int mipmapped : new int[] {GL_NEAREST_MIPMAP_NEAREST, GL_LINEAR_MIPMAP_NEAREST,
+                GL_NEAREST_MIPMAP_LINEAR, GL_LINEAR_MIPMAP_LINEAR}) {
+            assertEquals(GL_NEAREST_MIPMAP_NEAREST, SamplerProfile.nearestOf(mipmapped));
+        }
+        assertEquals(GL_NEAREST, SamplerProfile.nearestOf(GL_LINEAR));
+        assertEquals(GL_NEAREST, SamplerProfile.nearestOf(GL_NEAREST));
     }
 
     @Test
