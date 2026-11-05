@@ -609,7 +609,10 @@ public class ChimeraShadowMap {
         this.passReadsOpen = true;
     }
 
-    /** The shadow pass has closed: shadowcolor reads return to the targets themselves. */
+    /**
+     * The shadow pass's last draw is recorded: shadowcolor reads and shadowcolorimg writes return to
+     * the targets themselves, before shadowcomp runs.
+     */
     void closePassReads() {
         this.passReadsOpen = false;
     }

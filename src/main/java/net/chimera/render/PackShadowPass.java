@@ -150,7 +150,6 @@ final class PackShadowPass {
             recoverShadowMap(frame, failure);
         } finally {
             this.shadowPassActive = false;
-            this.shadowMap.closePassReads();
             PipelineManager.setShaderGetter(ChimeraTerrainPipelines::getTerrainPipeline);
         }
     }
@@ -291,9 +290,15 @@ final class PackShadowPass {
         }
     }
 
-    /** Closes the shadow sections, the shadow pass, the pack's shadow geometry scope and its bindings. */
+    /**
+     * Closes the shadow sections, the shadow pass, the pack's shadow geometry scope and its bindings.
+     * The pass's copies of the targets its programs sample close first, with its last draw recorded:
+     * shadowcomp and the receivers read and write the targets themselves, as in Iris. Rethinking
+     * Voxels' shadowcomp2 steps its interactive water in shadowcolor2, and on a copy each step was lost.
+     */
     private void endShadowRecording(ShadowFrame frame,
             ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> shadowBindings) {
+        this.shadowMap.closePassReads();
         ShadowSectionQueue.end();
         if (Renderer.getInstance().getBoundRenderPass() != null) {
             Renderer.getInstance().endRenderPass(frame.cmd());

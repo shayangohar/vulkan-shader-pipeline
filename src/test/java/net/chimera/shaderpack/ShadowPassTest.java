@@ -230,6 +230,29 @@ final class ShadowPassTest {
     }
 
     /**
+     * The copies the shadow pass's programs sample close before shadowcomp runs, so shadowcomp reads and
+     * writes the targets themselves. Rethinking Voxels' shadowcomp2 steps its interactive water in
+     * shadowcolor2; on the copy each step was lost, and its water read a flat 1.0 as full-strength waves.
+     */
+    @Test
+    void shadowcompRunsOnTheTargetsNotThePassCopies() throws IOException {
+        var shadowPass = MixinBytecode.nativeClass("net/chimera/render/PackShadowPass");
+        boolean snapshot = false;
+        boolean closed = false;
+        boolean shadowcomp = false;
+        for (var instruction : MixinBytecode.instructionsThrough(shadowPass, "renderShadowMap")) {
+            if (!(instruction instanceof MethodInsnNode call)) continue;
+            if (call.name.equals("snapshotPassReads")) snapshot = true;
+            if (snapshot && call.name.equals("closePassReads")) closed = true;
+            if (call.name.equals("runShadowComposites")) {
+                shadowcomp = true;
+                assertTrue(closed, "the shadow pass's read copies must close before shadowcomp runs");
+            }
+        }
+        assertTrue(snapshot && shadowcomp, "renderShadowMap must snapshot the pass's reads and run shadowcomp");
+    }
+
+    /**
      * A shadow-pass draw tries its shadow lane first; one without a lane is dropped, never drawn with
      * its host shader.
      */
