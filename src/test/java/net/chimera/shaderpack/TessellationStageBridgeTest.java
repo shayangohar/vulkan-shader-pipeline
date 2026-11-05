@@ -1,7 +1,11 @@
 package net.chimera.shaderpack;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
@@ -178,6 +182,75 @@ final class TessellationStageBridgeTest {
                 IllegalArgumentException.class, () -> TessellationStageBridge.convert(true, CONTROL, EVALUATION,
                         vertex, FRAGMENT, null, null, false));
         assertTrue(refused.getMessage().contains("gl_ProjectionMatrix"), refused.getMessage());
+    }
+
+    /**
+     * A tessellated hand in a pack: admitted, its evaluation stage declaring the entity family's
+     * uniform block where it reads a uniform, and the whole descriptor set matching every stage as
+     * the runtime checks it (PackPipelines.prepareLayout). Declaring the terrain lanes' block there
+     * stopped the game at launch (DESCRIPTOR_LAYOUT_MISMATCH:ChimeraTerrainPackUniforms).
+     */
+    @Test
+    void aTessellatedHandsDescriptorsServeEveryStage(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "iris.features.optional=TESSELATION_SHADERS\n");
+        Files.writeString(shaders.resolve("gbuffers_hand.vsh"), """
+                #version 430 compatibility
+                out vec2 uv;
+                void main() {
+                    uv = gl_MultiTexCoord0.xy;
+                    gl_Position = gl_ProjectionMatrix * (gl_ModelViewMatrix * gl_Vertex);
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_hand.tcs"), """
+                #version 430 compatibility
+                layout(vertices = 3) out;
+                in vec2 uv[];
+                out vec2 uvTc[];
+                void main() {
+                    gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+                    uvTc[gl_InvocationID] = uv[gl_InvocationID];
+                    gl_TessLevelOuter[0] = 1.0; gl_TessLevelOuter[1] = 1.0; gl_TessLevelOuter[2] = 1.0;
+                    gl_TessLevelInner[0] = 1.0;
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_hand.tes"), """
+                #version 430 compatibility
+                layout(triangles) in;
+                uniform float frameTimeCounter;
+                in vec2 uvTc[];
+                out vec2 uvTe;
+                void main() {
+                    gl_Position = gl_TessCoord.x * gl_in[0].gl_Position + gl_TessCoord.y * gl_in[1].gl_Position
+                            + gl_TessCoord.z * gl_in[2].gl_Position;
+                    uvTe = gl_TessCoord.x * uvTc[0] + gl_TessCoord.y * uvTc[1] + gl_TessCoord.z * uvTc[2]
+                            + vec2(0.0, frameTimeCounter * 0.0);
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_hand.fsh"), """
+                #version 430 compatibility
+                uniform sampler2D texture;
+                uniform float frameTimeCounter;
+                uniform int currentRenderedItemId;
+                in vec2 uvTe;
+                void main() {
+                    gl_FragData[0] = texture2D(texture, uvTe) * float(currentRenderedItemId) * frameTimeCounter;
+                }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackProgramPlan hand = analysis.plan().program("gbuffers_hand");
+        assertTrue(hand.executable(), hand.deviations().toString());
+        assertTrue(hand.convertedTessEvaluation().contains("layout(binding = 2) uniform ChimeraEntityUniforms")
+                && hand.convertedTessEvaluation().contains("chimeraRenderedItemId = chimeraRenderedItemIdTC[0];")
+                && !hand.convertedTessControl().contains("ChimeraTerrainPackUniforms"), hand.convertedTessEvaluation());
+        PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(hand, analysis.plan().advancedResources(),
+                UniformRegistry.Stage.HAND, PackFamilyPipelines.familyVertex(hand));
+        PackPipelines.prepareLayout(prepared, hand.name(), analysis.plan().advancedResources());
+        assertNull(PackCompileTest.compile(prepared.vertex(), true), prepared.vertex());
+        assertNull(PackCompileTest.compileBetween(prepared.between().tessControl(), "tess_control"));
+        assertNull(PackCompileTest.compileBetween(prepared.between().tessEvaluation(), "tess_evaluation"),
+                prepared.between().tessEvaluation());
+        assertNull(PackCompileTest.compile(prepared.fragment(), false), prepared.fragment());
     }
 
     /** GL's ccw is Vulkan's cw under the upper-left domain origin, and GL's default is ccw. */

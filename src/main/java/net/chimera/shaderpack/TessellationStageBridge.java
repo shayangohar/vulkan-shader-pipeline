@@ -57,7 +57,7 @@ final class TessellationStageBridge {
                                      UniformRegistry.ProgramInterface evaluationPlan, boolean allowStorageBuffers) {
         return convertStages(new Stage(normalized(control), GlslInterfaceScanner.Stage.TESS_CONTROL, controlPlan),
                 new Stage(normalized(evaluation), GlslInterfaceScanner.Stage.TESS_EVALUATION, evaluationPlan),
-                inputLayout, fragment, allowStorageBuffers, PassedOn.NONE);
+                inputLayout, fragment, allowStorageBuffers, PassedOn.NONE, false);
     }
 
     /** {@link #convertHand} for a hand program ({@code hand}), else {@link #convertTerrain}. */
@@ -75,7 +75,8 @@ final class TessellationStageBridge {
      * entity vertex bridge. The hand's projection is the draw's own, which the host serves to the
      * vertex stage alone, so neither stage may read a legacy matrix. The values that bridge adds
      * to the vertex stage's outputs for the fragment stage (the entity identities and the
-     * forwarded host values) pass on through both stages ({@link PassedOn}).
+     * forwarded host values) pass on through both stages ({@link PassedOn}). A stage that reads the
+     * pack's uniforms declares the entity family's block, as the vertex stage does.
      *
      * @throws IllegalArgumentException as {@link #convertTerrain}, and when a stage reads a draw matrix
      */
@@ -93,12 +94,12 @@ final class TessellationStageBridge {
             throw new IllegalArgumentException("hand tessellation domain is not triangles");
         }
         return convertStages(controlStage, evaluationStage, inputLayout, fragment, allowStorageBuffers,
-                PassedOn.of(inputLayout));
+                PassedOn.of(inputLayout), true);
     }
 
     private static Conversion convertStages(Stage controlStage, Stage evaluationStage,
-                                      LegacyGlslConverter.TerrainVaryingLayout inputLayout, String fragment,
-                                      boolean allowStorageBuffers, PassedOn passedOn) {
+                                            LegacyGlslConverter.TerrainVaryingLayout inputLayout, String fragment,
+                                            boolean allowStorageBuffers, PassedOn passedOn, boolean entityBlock) {
         String viewBlock = GlslVertexPreambles.TERRAIN_VIEW_BLOCK;
         LegacyGlslConverter.TerrainVaryingLayout patchLayout = patchLayout(controlStage.source(), passedOn);
         String producer = producerView(evaluationStage.source());
@@ -112,8 +113,8 @@ final class TessellationStageBridge {
         String convertedEvaluation = WorldClipRange.GL.convert(swappedWinding(passedOn.evaluation(
                 converted(evaluationStage, patchLayout, outputLayout, allowStorageBuffers), patchLayout,
                 outputLayout)));
-        return new Conversion(header(convertedControl, controlStage.plan(), viewBlock),
-                header(convertedEvaluation, evaluationStage.plan(), viewBlock), outputLayout);
+        return new Conversion(header(convertedControl, controlStage.plan(), viewBlock, entityBlock),
+                header(convertedEvaluation, evaluationStage.plan(), viewBlock, entityBlock), outputLayout);
     }
 
     /** No legacy matrix of the draw, nor its texture matrix, which only the vertex stage is served. */
@@ -271,11 +272,17 @@ final class TessellationStageBridge {
         return LegacyGlslConverter.convertTextureCalls(converted);
     }
 
-    /** The stage's version, render-stage defines, the host view block when it reads MVP, and the pack's uniforms. */
-    private static String header(String converted, UniformRegistry.ProgramInterface plan, String viewBlock) {
+    /**
+     * The stage's version, render-stage defines, the host view block when it reads MVP, and the pack's
+     * uniforms: the terrain lanes' block, or the entity family's ({@code entityBlock}) when the stage reads one.
+     */
+    private static String header(String converted, UniformRegistry.ProgramInterface plan, String viewBlock,
+                                 boolean entityBlock) {
         String view = GlslTokenRewriter.containsIdentifier(converted, "MVP") ? viewBlock : "";
-        return "#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES + view
-                + TerrainVertexBridge.modernUniformBlock(plan, false) + converted;
+        String uniforms = !entityBlock ? TerrainVertexBridge.modernUniformBlock(plan, false)
+                : GlslVertexPreambles.entityCameraUniformBlock(converted, plan == null ? null
+                : plan.executableUniforms());
+        return "#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES + view + uniforms + converted;
     }
 
     /** A main, no storage buffer the plan did not admit, and no value uniform the plan left out. */

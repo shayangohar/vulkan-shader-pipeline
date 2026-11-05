@@ -171,7 +171,10 @@ final class PackCompileTest {
                 prepared = PackPipelines.prepare(program, resources, stage, vertex);
                 // The runtime checks a post or shadow program's whole descriptor set before creating it
                 // (PackPipelines.buildPost, buildShadow, buildGeometry); a mismatch there stops the game.
-                if (stage == UniformRegistry.Stage.POST || FamilyAdapterRegistry.isShadowFamily(program.name())) {
+                // So it does for a program with stages between vertex and fragment: Shrimple's hand
+                // evaluation stage declared the terrain lanes' uniform block and stopped it at launch.
+                if (stage == UniformRegistry.Stage.POST || FamilyAdapterRegistry.isShadowFamily(program.name())
+                        || !prepared.between().present().isEmpty()) {
                     PackPipelines.prepareLayout(prepared, program.name(), resources);
                 }
             } catch (RuntimeException failure) {
