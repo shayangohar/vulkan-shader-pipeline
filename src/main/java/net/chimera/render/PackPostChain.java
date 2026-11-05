@@ -209,8 +209,9 @@ final class PackPostChain {
                 throw new IllegalStateException("PACK_TARGET_FRAME_NOT_STARTED:post window " + window);
             }
             pass.packPostTargets.requireFrameStarted();
-            // Each Iris composite renderer starts with every target base-level sampled.
+            // Each Iris composite renderer starts with every target base-level sampled, and its group's pre-flips.
             pass.packPostTargets.resetMipmapSampling();
+            pass.packPostTargets.flipBeforeGroup(window);
             ChimeraMainPass.preparePackFullscreenState();
             boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {

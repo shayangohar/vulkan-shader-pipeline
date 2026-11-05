@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PostTargetPlan;
@@ -251,6 +252,37 @@ final class PackPostTargetsTest {
         Files.writeString(shaders.resolve("shaders.json"),
                 "{\"programs\":[{\"name\":\"composite\",\"fragment\":\"composite.fsh\"},"
                         + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+    }
+
+    /**
+     * Iris flips a {@code flip.composite_pre} target once as the composite group opens, whatever its
+     * passes are called (CompositeRenderer's explicitPreFlips). Shrimple has no program named
+     * composite; its composite_pre flip of colortex2 hands the composite passes its deferred
+     * shadows. Iris has no renderer for composite1_pre or final_pre, so they flip nothing.
+     */
+    @Test
+    void aGroupPreFlipFlipsAsTheGroupOpens(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        String header = "#version 120\nuniform sampler2D colortex2;\nvarying vec2 texcoord;\n";
+        Files.writeString(shaders.resolve("deferred1.fsh"),
+                "#version 120\n/* RENDERTARGETS: 2 */\nvoid main() {\n    gl_FragColor = vec4(1.0);\n}\n");
+        Files.writeString(shaders.resolve("composite1.fsh"), header
+                + "/* RENDERTARGETS: 0 */\nvoid main() {\n    gl_FragColor = texture2D(colortex2, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"), "flip.composite_pre.colortex2 = true\n"
+                + "flip.composite1_pre.colortex2 = true\nflip.final_pre.colortex2 = true\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"deferred1\",\"fragment\":\"deferred1.fsh\"},"
+                        + "{\"name\":\"composite1\",\"fragment\":\"composite1.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        assertEquals(List.of(2), graph.preFlips(PackFrameSchedulePlan.PostWindow.LATE));
+        assertEquals(List.of(), graph.preFlips(PackFrameSchedulePlan.PostWindow.EARLY));
+        assertEquals(List.of(), graph.step("composite1").flipsAfter());
+        assertTrue(graph.target(2).doubled(), "a pre-flipped target needs its other side");
     }
 
     private static void writeFlipFixture(Path root) throws Exception {

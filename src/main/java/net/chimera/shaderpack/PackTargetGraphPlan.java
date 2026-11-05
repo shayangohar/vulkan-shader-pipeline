@@ -31,6 +31,8 @@ public final class PackTargetGraphPlan {
     private final Set<Integer> geometryReads;
     /** Targets read outside the post steps' order: the world's reads and every target a pass compute binds. */
     private final Set<Integer> unorderedReads;
+    /** The allocated targets each pass group's {@code flip.<group>_pre} directives flip as the group opens. */
+    private final Map<PackFrameSchedulePlan.PostWindow, List<Integer>> preFlips;
     private final String snapshot;
     private final String fingerprint;
 
@@ -41,10 +43,12 @@ public final class PackTargetGraphPlan {
             List<String> deviations,
             int maxAttachments,
             Set<Integer> geometryReads,
-            Set<Integer> computeTargets
+            Set<Integer> computeTargets,
+            Map<PackFrameSchedulePlan.PostWindow, List<Integer>> preFlips
     ) {
         this.targets = targets.stream().sorted(Comparator.comparingInt(TargetSpec::index)).toList();
         this.steps = steps.stream().toList();
+        this.preFlips = Map.copyOf(preFlips);
         this.geometryReads = Set.copyOf(geometryReads);
         Set<Integer> unordered = new TreeSet<>(geometryReads);
         unordered.addAll(computeTargets);
@@ -122,6 +126,8 @@ public final class PackTargetGraphPlan {
                 .sorted(Comparator.comparing(PackProgramPlan::name, PostTargetPlan.programComparator()))
                 .toList();
         Map<Integer, Boolean> doubleTargets = new TreeMap<>();
+        Map<PackFrameSchedulePlan.PostWindow, List<Integer>> preFlips = groupPreFlips(config, preliminary,
+                doubleTargets, deviations);
         Set<Integer> mipmappedTargets = new TreeSet<>();
         List<TargetStep> steps = new ArrayList<>();
         for (PackProgramPlan program : postPrograms) {
@@ -132,7 +138,44 @@ public final class PackTargetGraphPlan {
         DepthGraphPlan depth = depthGraph(inputs, postPrograms);
         deviations.addAll(depth.deviations());
         return new PackTargetGraphPlan(finalTargets(preliminary, doubleTargets, mipmappedTargets), steps, depth,
-                deviations, Math.max(1, deviceMaxColorAttachments), geometryReads, inputs.computes().targets());
+                deviations, Math.max(1, deviceMaxColorAttachments), geometryReads, inputs.computes().targets(),
+                preFlips);
+    }
+
+    /** The pass groups Iris builds a CompositeRenderer for, each with its {@code flip.<group>_pre} key. */
+    private static final Map<PackFrameSchedulePlan.PostWindow, String> PRE_FLIP_GROUPS = Map.of(
+            PackFrameSchedulePlan.PostWindow.BEGIN, "begin_pre",
+            PackFrameSchedulePlan.PostWindow.PREPARE, "prepare_pre",
+            PackFrameSchedulePlan.PostWindow.EARLY, "deferred_pre",
+            PackFrameSchedulePlan.PostWindow.LATE, "composite_pre");
+
+    /**
+     * Each pass group's pre-flips, double-buffered: Iris flips them once as the group's renderer
+     * opens, before any of its passes (CompositeRenderer's explicitPreFlips), whatever the passes
+     * are called. Shrimple's flip.composite_pre.colortex2 hands its composite passes the deferred
+     * shadows. A flip.final_pre has no renderer in Iris and flips nothing.
+     */
+    private static Map<PackFrameSchedulePlan.PostWindow, List<Integer>> groupPreFlips(
+            PackConfig.PackConfigData config, Map<Integer, TargetSpec> preliminary,
+            Map<Integer, Boolean> doubleTargets, List<String> deviations) {
+        Map<PackFrameSchedulePlan.PostWindow, List<Integer>> result = new TreeMap<>();
+        if (config == null) return result;
+        PRE_FLIP_GROUPS.forEach((window, key) -> {
+            List<Integer> targets = config.preFlips().getOrDefault(key, List.of()).stream()
+                    .filter(preliminary::containsKey).toList();
+            if (targets.isEmpty()) return;
+            result.put(window, targets);
+            for (int target : targets) {
+                doubleTargets.put(target, true);
+                deviations.add("POST_TARGET_FLIP_PRE_APPLIED:" + key + ":" + target);
+            }
+        });
+        return result;
+    }
+
+    /** The targets a {@code flip.<group>_pre} directive flips as {@code window}'s pass group opens. */
+    public List<Integer> preFlips(PackFrameSchedulePlan.PostWindow window) {
+        return preFlips.getOrDefault(window, List.of());
     }
 
     /** What every phase of the graph build reads. */
@@ -284,14 +327,14 @@ public final class PackTargetGraphPlan {
         List<Integer> unwritten = unwrittenTargets(post, writes, doubleTargets, stepDeviations);
         List<Integer> stepWrites = new ArrayList<>(writes);
         stepWrites.addAll(unwritten);
-        StepFlips flips = applyFlips(inputs.config(), post, preliminary, doubleTargets, stepDeviations);
+        List<Integer> flipsAfter = applyFlips(inputs.config(), post, preliminary, doubleTargets, stepDeviations);
         Map<Integer, Integer> readSides = new TreeMap<>();
         Map<Integer, Integer> writeSides = new TreeMap<>();
         for (int target : reads) readSides.put(target, 0);
         for (int target : stepWrites) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
         return new TargetStep(post.programName(), reads, stepWrites, post.outputFormats(), readSides, writeSides,
                 mipmapTargets, extent.width(), extent.height(), post.isFinal(), executable, stepDeviations,
-                flips.before(), flips.after(), unwritten);
+                flipsAfter, unwritten);
     }
 
     /**
@@ -372,28 +415,21 @@ public final class PackTargetGraphPlan {
         }
     }
 
-    /** The allocated targets a step's pre-flip and flip directives flip before and after it runs. */
-    private record StepFlips(List<Integer> before, List<Integer> after) {}
-
-    /** Double-buffers each target a pre-flip or flip directive names for this pass, recording each. */
-    private static StepFlips applyFlips(PackConfig.PackConfigData config, PostTargetPlan post,
-                                        Map<Integer, TargetSpec> preliminary, Map<Integer, Boolean> doubleTargets,
-                                        List<String> stepDeviations) {
-        Map<String, List<Integer>> preFlips = config == null ? Map.of() : config.preFlips();
+    /**
+     * The allocated targets a {@code flip.<program>} directive flips after this pass, each
+     * double-buffered and recorded. A group's pre-flips are the graph's (groupPreFlips).
+     */
+    private static List<Integer> applyFlips(PackConfig.PackConfigData config, PostTargetPlan post,
+                                            Map<Integer, TargetSpec> preliminary, Map<Integer, Boolean> doubleTargets,
+                                            List<String> stepDeviations) {
         Map<String, List<Integer>> flips = config == null ? Map.of() : config.flips();
-        List<Integer> before = preFlips.getOrDefault(post.isFinal() ? "final_pre" : post.programName() + "_pre",
-                List.of()).stream().filter(preliminary::containsKey).toList();
         List<Integer> after = flips.getOrDefault(post.programName(), List.of()).stream()
                 .filter(preliminary::containsKey).toList();
-        for (int target : before) {
-            doubleTargets.put(target, true);
-            stepDeviations.add("POST_TARGET_FLIP_PRE_APPLIED:" + post.programName() + ":" + target);
-        }
         for (int target : after) {
             doubleTargets.put(target, true);
             stepDeviations.add("POST_TARGET_FLIP_APPLIED:" + post.programName() + ":" + target);
         }
-        return new StepFlips(before, after);
+        return after;
     }
 
     /**
@@ -692,6 +728,7 @@ public final class PackTargetGraphPlan {
             result.append(';');
         }
         if (!geometryReads.isEmpty()) result.append("geometryReads=").append(new TreeSet<>(geometryReads)).append(';');
+        if (!preFlips.isEmpty()) result.append("preFlips=").append(new TreeMap<>(preFlips)).append(';');
         result.append("depth=").append(depth.names()).append(':').append(depth.format())
                 .append(";deviations=").append(deviations);
         return result.toString();

@@ -82,6 +82,10 @@ final class TargetGraphTest {
                 "unsupported graph did not name its unsafe layout");
 
         Path baseline = TestPacks.baseline("m7_4");
+        if (TestPacks.printBaselines()) {
+            System.out.println("m7_4 reportSha256=" + first.report().sha256() + " graphFingerprint="
+                    + graph.fingerprint());
+        }
         String expected = Files.readString(baseline, StandardCharsets.UTF_8).trim();
         assertTrue(expected.contains(first.report().sha256()), "report baseline mismatch");
         assertTrue(expected.contains(graph.fingerprint()), "graph baseline mismatch");

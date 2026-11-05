@@ -3,6 +3,7 @@ package net.chimera.render;
 import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.PackConfig;
+import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
@@ -424,6 +425,14 @@ public final class PackPostTargets {
         return levels > 1;
     }
 
+    /**
+     * Flips the targets {@code window}'s pass group names in a {@code flip.<group>_pre} directive,
+     * as Iris's CompositeRenderer does once as the group opens, before any of its passes.
+     */
+    public void flipBeforeGroup(PackFrameSchedulePlan.PostWindow window) {
+        if (this.graph != null) flip(this.graph.preFlips(window));
+    }
+
     /** Iris resets every target's filter after each deferred, composite and final renderer. */
     public void resetMipmapSampling() {
         for (VulkanImage image : this.mipSampling) {
@@ -483,7 +492,6 @@ public final class PackPostTargets {
             throw new IllegalStateException("post step is not executable: " + post.name());
         }
         pendingWriteSideReset();
-        flip(step.flipsBefore());
         this.currentStep = step;
         this.currentPlan = plan;
         int attachmentCount = plan.targetSlots().size();
