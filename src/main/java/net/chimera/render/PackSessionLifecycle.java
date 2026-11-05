@@ -257,6 +257,7 @@ final class PackSessionLifecycle {
         ChimeraTerrainPipelines.setTranslucentOverride(null);
         ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
         ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
+        PackAtlasMipmaps.setPackInstalled(false);
         PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
         RenderedItemIds.install(PackItemIdResolver.empty());
         PackUniformProvider.resetSession();
@@ -505,6 +506,7 @@ final class PackSessionLifecycle {
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
             ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
+            PackAtlasMipmaps.setPackInstalled(false);
             PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
             RenderedItemIds.install(PackItemIdResolver.empty());
             PackUniformProvider.installRuntimeSettings(null);
@@ -599,6 +601,7 @@ final class PackSessionLifecycle {
                 shading.oldLighting(), shading.separateAo(), shading.voxelizeLightBlocks(),
                 shading.deviations().isEmpty() ? "" : " " + shading.deviations());
         ChimeraTerrainPipelines.setTerrainShading(shading);
+        PackAtlasMipmaps.setPackInstalled(true);
     }
 
     /** Installs the plan's uniform runtime settings and logs how the pack resolved. */

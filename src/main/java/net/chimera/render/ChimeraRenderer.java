@@ -175,6 +175,8 @@ public final class ChimeraRenderer {
         chimeraPass.pumpMaterialMapBuilds();
         chimeraPass.resources.refreshWorldResourcesIfDue();
         ChimeraTerrainPipelines.rebuildingOnce(ChimeraRenderer::changePackAtFrameBoundary);
+        // After any pack change above, so a replaced pack's teardown and install upload the atlas once.
+        PackAtlasMipmaps.reconcile();
     }
 
     /** Hands a pending pack change or dimension variant to the host, applies it, and resumes Chimera. */

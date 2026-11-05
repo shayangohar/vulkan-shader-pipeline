@@ -4,6 +4,7 @@ import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.ChimeraTextures;
 import net.chimera.render.MaterialMapOwner;
 import net.chimera.render.MaterialMapPixels;
+import net.chimera.render.PackAtlasMipmaps;
 import net.chimera.render.shader.AtlasSizes;
 import net.minecraft.client.renderer.texture.SpriteLoader;
 import net.minecraft.client.renderer.texture.TextureAtlas;
@@ -20,8 +21,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Reports stitched atlas layouts to the material owner, and each atlas's
- * size to {@link AtlasSizes} for the {@code atlasSize} uniform.
+ * Reports stitched atlas layouts to the material owner, each atlas's
+ * size to {@link AtlasSizes} for the {@code atlasSize} uniform, and a
+ * restitched block atlas to {@link PackAtlasMipmaps}.
  *
  * <p>At {@code TextureAtlas.upload} return the atlas texture is fully
  * uploaded, so the observation copies only immutable metadata (atlas
@@ -51,6 +53,7 @@ public abstract class ChimeraAtlasMaterialMixin {
             }
             AtlasSizes.note(image, preparations.width(), preparations.height(),
                     atlas.location().equals(InventoryMenu.BLOCK_ATLAS));
+            PackAtlasMipmaps.noteAtlasUpload(atlas);
             var pass = ChimeraRenderer.getMainPass();
             if (pass == null) return;
             MaterialMapOwner owner = pass.materialMaps();

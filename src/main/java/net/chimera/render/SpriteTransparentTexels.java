@@ -12,15 +12,6 @@ import com.mojang.blaze3d.platform.NativeImage;
  * and its particles lit nothing in black.
  */
 public final class SpriteTransparentTexels {
-    private static final float[] LINEAR = new float[256];
-
-    static {
-        for (int value = 0; value < LINEAR.length; value++) {
-            float srgb = value / 255.0F;
-            LINEAR[value] = srgb <= 0.04045F ? srgb / 12.92F : (float) Math.pow((srgb + 0.055F) / 1.055F, 2.4);
-        }
-    }
-
     private SpriteTransparentTexels() {}
 
     /** Recolours {@code image}'s alpha-0 texels in place, as {@link #fill(int[])} does. */
@@ -50,21 +41,17 @@ public final class SpriteTransparentTexels {
                 transparent = true;
                 continue;
             }
-            red += LINEAR[texel & 0xFF] * alpha;
-            green += LINEAR[texel >>> 8 & 0xFF] * alpha;
-            blue += LINEAR[texel >>> 16 & 0xFF] * alpha;
+            red += SrgbChannels.linear(texel & 0xFF) * alpha;
+            green += SrgbChannels.linear(texel >>> 8 & 0xFF) * alpha;
+            blue += SrgbChannels.linear(texel >>> 16 & 0xFF) * alpha;
             weight += alpha;
         }
         if (!transparent || weight == 0) return false;
-        int mean = srgb(red / weight) | srgb(green / weight) << 8 | srgb(blue / weight) << 16;
+        int mean = SrgbChannels.encode(red / weight) | SrgbChannels.encode(green / weight) << 8
+                | SrgbChannels.encode(blue / weight) << 16;
         for (int index = 0; index < abgr.length; index++) {
             if (abgr[index] >>> 24 == 0) abgr[index] = mean;
         }
         return true;
-    }
-
-    private static int srgb(double linear) {
-        double encoded = linear <= 0.0031308 ? linear * 12.92 : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
-        return (int) Math.round(Math.min(1, Math.max(0, encoded)) * 255);
     }
 }
