@@ -358,6 +358,11 @@ final class PackCompileTest {
     }
 
     /** VulkanMod's shaderc settings; returns the first error line, or null on success. */
+    /** The compile error of {@code source} as the stage between vertex and fragment named {@code stage}, or null. */
+    static String compileBetween(String source, String stage) {
+        return outcome(source, BETWEEN_KINDS.get(stage), "pack" + BETWEEN_EXTENSIONS.get(stage)).error();
+    }
+
     static String compile(String source, boolean vertex) {
         return vertex ? outcome(source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh").error()
                 : outcome(source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh").error();

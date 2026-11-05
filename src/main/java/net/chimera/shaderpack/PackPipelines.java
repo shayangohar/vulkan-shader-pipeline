@@ -30,7 +30,6 @@ import java.util.TreeSet;
 import java.util.regex.Pattern;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
-import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_GEOMETRY_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
 
 /**
@@ -429,10 +428,10 @@ public final class PackPipelines {
             String vertexSource = PackDescriptorContracts.bindPackShader(
                     convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
-            BetweenStages geometry = BetweenStages.geometry(plan.convertedGeometry() == null ? null
-                    : PackDescriptorContracts.bindPackShader(
-                    EntityVertexBridge.fragmentForFormat(plan.convertedGeometry(), format), plan.name(),
-                    advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_GEOMETRY_BIT));
+            PackAdvancedResourcePlan resources = advancedResources;
+            BetweenStages geometry = plan.betweenStages().map(each -> PackDescriptorContracts.bindPackShader(
+                    EntityVertexBridge.fragmentForFormat(each.source(), format), plan.name(), resources, layout,
+                    interfacePlan, stage, each.stageBit()));
             String fragmentSource = PackDescriptorContracts.bindPackShader(
                     EntityVertexBridge.fragmentForFormat(plan.convertedFragment(), format), plan.name(),
                     advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);

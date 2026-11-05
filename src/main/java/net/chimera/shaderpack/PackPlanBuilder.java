@@ -227,11 +227,10 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * Iris core-profile names (vaPosition, modelViewMatrix) become the compatibility built-ins
-         * every converter serves. A pack's own gbuffers_line vertex keeps Iris's unbound UVs
-         * (prepareLineVertex). A fullscreen pass reads centerDepthSmooth from Iris's smoothed texture
-         * (CenterDepthSmooth). An unknown sampler2D reads unit 0: colortex0 in a fullscreen pass, the
-         * albedo texture in a world program (UnitZeroSampler).
+         * Iris core-profile names (vaPosition, modelViewMatrix) become the compatibility built-ins every converter
+         * serves. A pack's own gbuffers_line vertex keeps Iris's unbound UVs (prepareLineVertex). A fullscreen pass
+         * reads centerDepthSmooth from Iris's smoothed texture (CenterDepthSmooth). An unknown sampler2D reads unit 0:
+         * colortex0 in a fullscreen pass, the albedo texture in a world program (UnitZeroSampler).
          */
         private void prepareIrisCoreProfile() {
             String overlay = stage == UniformRegistry.Stage.POST
@@ -380,13 +379,12 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * A stage with the values Iris fixes for its program served into it, its includes
-         * expanded first. A world program's alphaTestRef reads its alpha-test reference; a post
-         * program reads the constants of a fullscreen pass (ServedUniforms.servePostValues) and
-         * keeps refusing alphaTestRef, which Iris leaves the last world draw's
-         * (UniformRegistry.IRIS_UNSERVED). A uniform Iris never sets reads its initializer
-         * (ServedUniforms.readInitializers). A stage whose includes do not resolve is left for the
-         * converters to refuse.
+         * A stage with the values Iris fixes for its program served into it, its includes expanded first. A world
+         * program's alphaTestRef reads its alpha-test reference; a post program reads the constants of a fullscreen
+         * pass (ServedUniforms.servePostValues) and keeps refusing alphaTestRef, which Iris leaves the last world
+         * draw's (UniformRegistry.IRIS_UNSERVED). A uniform Iris never sets reads its initializer
+         * (ServedUniforms.readInitializers). A stage whose includes do not resolve is left for the converters to
+         * refuse.
          */
         private String servedStageValues(String source, Path file) {
             if (source == null) return null;
@@ -507,13 +505,13 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * Whether the program's tessellation stages run: both alone, on the terrain or water lane after a
-         * modern vertex stage (TessellationStageBridge). The hand and shadow lanes stay refused (TASK-1066).
+         * Whether the program's tessellation stages run: both alone, on the hand lanes, or on the terrain or water lane
+         * after a modern vertex stage (TessellationStageBridge). The shadow lanes stay refused.
          */
         private boolean tessellationRuns() {
-            return tessControl != null && tessEvaluation != null
-                    && geometryStages.equals(List.of("tess_control", "tess_evaluation"))
-                    && (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")) && terrainMaterial.modern();
+            return tessControl != null && tessEvaluation != null && geometryStages.equals(List.of("tess_control",
+                    "tess_evaluation")) && (FamilyAdapterRegistry.isHandFamily(name) || terrainMaterial.modern()
+                    && (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")));
         }
 
         /**
@@ -529,9 +527,10 @@ public final class PackPlanBuilder {
         private void convertTessellation() {
             if (!executable || !tessellationRuns()) return;
             try {
-                convertedTessellation = TessellationStageBridge.convertTerrain(tessControl, tessEvaluation,
-                        vertexLayout, fragment, interfacePlan.project("tess_control", stage),
-                        interfacePlan.project("tess_evaluation", stage), allowStorageBuffers);
+                convertedTessellation = TessellationStageBridge.convert(FamilyAdapterRegistry.isHandFamily(name),
+                        tessControl, tessEvaluation, vertexLayout, fragment,
+                        interfacePlan.project("tess_control", stage), interfacePlan.project("tess_evaluation", stage),
+                        allowStorageBuffers);
             } catch (RuntimeException failure) {
                 deviations.add(VertexBridgeDeviations.conversionFailure("TESSELLATION_STAGE_BRIDGE_UNSUPPORTED",
                         failure));
@@ -769,7 +768,8 @@ public final class PackPlanBuilder {
                         ? EntityVertexBridge.convertBlockVertexChecked(vertex, vertexFile(), fragment,
                         stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                         : FamilyAdapterRegistry.isHandFamily(name)
-                        ? EntityVertexBridge.convertHandVertexChecked(vertex, vertexFile(), fragment,
+                        ? EntityVertexBridge.convertHandVertexChecked(vertex, vertexFile(),
+                        new EntityVertexBridge.Consumer(vertexConsumer(), tessellationRuns()), fragment,
                         stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                         : EntityVertexBridge.convertEntityVertexChecked(vertex, vertexFile(), fragment,
                         stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers);
@@ -811,8 +811,8 @@ public final class PackPlanBuilder {
                         .withInterfacePlan(interfacePlan.project("fragment", stage))
                         .convert(), "POST_CONVERTER_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isEntityLike(name)) {
-                acceptFragment(FragmentConverter.convertEntityFragment(fragment, fragmentFile(),
-                        entitySlots(), vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan),
+                acceptFragment(FragmentConverter.convertEntityFragment(fragment, fragmentFile(), entitySlots(),
+                        fragmentInputLayout(), interfacePlan.project("fragment", stage), geometryOutputPlan),
                         "ENTITY_FRAGMENT_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isSkyFamily(name) || FamilyAdapterRegistry.isCloudFamily(name)) {
                 acceptFragment(FragmentConverter.convertSkyFragment(fragment, fragmentFile(), entitySlots(),

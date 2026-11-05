@@ -7,6 +7,8 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -122,6 +124,60 @@ final class TessellationStageBridgeTest {
                 && evaluation.contains("uniform ViewUBO")
                 && evaluation.contains("gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);"), evaluation);
         assertEquals(1, conversion.outputLayout().location("VertexData_uv_te"));
+    }
+
+    /** Shrimple's hand evaluation stage at its default DISPLACE_MODE: it interpolates the projected position. */
+    private static final String HAND_EVALUATION = EVALUATION.replace("vec4 view =", "gl_Position =")
+            .replace("gl_Position = gl_ProjectionMatrix * view;", "");
+
+    /**
+     * The entity bridge adds the identities and host values the hand fragment reads to the vertex
+     * stage's outputs; both stages pass them on after the pack's own. The control stage copies each
+     * per vertex. The evaluation stage writes an integer as the first vertex's and a float at the
+     * evaluated point, and converts the clip depth the vertex stage left in GL's range.
+     */
+    @Test
+    void aHandPassesTheBridgeValuesOnThroughBothStages() {
+        LegacyGlslConverter.TerrainVaryingLayout vertex = new LegacyGlslConverter.TerrainVaryingLayout(
+                Map.of("VertexData_blockId", "int", "VertexData_uv", "vec2", "chimeraRenderedItemId", "uint",
+                        "chimeraVertexAlpha", "float"),
+                Map.of("VertexData_blockId", 3, "VertexData_uv", 5, "chimeraRenderedItemId", 6,
+                        "chimeraVertexAlpha", 7),
+                Map.of("chimeraRenderedItemId", "flat"));
+        TessellationStageBridge.Conversion conversion = TessellationStageBridge.convert(true, CONTROL,
+                HAND_EVALUATION, vertex, FRAGMENT, null, null, false);
+        String control = conversion.control();
+        assertTrue(control.contains("layout(location = 6) flat in uint chimeraRenderedItemId[];")
+                && control.contains("layout(location = 2) flat out uint chimeraRenderedItemIdTC[];")
+                && control.contains("layout(location = 3) out float chimeraVertexAlphaTC[];")
+                && control.contains("chimeraRenderedItemIdTC[gl_InvocationID] = "
+                        + "chimeraRenderedItemId[gl_InvocationID];"), control);
+        String evaluation = conversion.evaluation();
+        assertTrue(evaluation.contains("layout(location = 2) flat out uint chimeraRenderedItemId;")
+                && evaluation.contains("chimeraRenderedItemId = chimeraRenderedItemIdTC[0];")
+                && evaluation.contains("chimeraVertexAlpha = gl_TessCoord.x * chimeraVertexAlphaTC[0]"
+                        + " + gl_TessCoord.y * chimeraVertexAlphaTC[1] + gl_TessCoord.z * chimeraVertexAlphaTC[2];")
+                && evaluation.contains("gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);")
+                && !evaluation.contains("ViewUBO"), evaluation);
+        assertEquals(List.of(2, 3), List.of(conversion.outputLayout().location("chimeraRenderedItemId"),
+                conversion.outputLayout().location("chimeraVertexAlpha")));
+        assertNull(PackCompileTest.compileBetween(control, "tess_control"), control);
+        assertNull(PackCompileTest.compileBetween(evaluation, "tess_evaluation"), evaluation);
+    }
+
+    /**
+     * The host serves the hand's projection to its vertex stage alone, so a hand stage that reads a
+     * legacy matrix (Shrimple's DISPLACE_TESSELATION) falls back, where a terrain stage reads the host's.
+     */
+    @Test
+    void aHandStageReadingADrawMatrixIsRefused() {
+        LegacyGlslConverter.TerrainVaryingLayout vertex = new LegacyGlslConverter.TerrainVaryingLayout(
+                Map.of("VertexData_blockId", "int", "VertexData_uv", "vec2"),
+                Map.of("VertexData_blockId", 0, "VertexData_uv", 1));
+        IllegalArgumentException refused = assertThrows(
+                IllegalArgumentException.class, () -> TessellationStageBridge.convert(true, CONTROL, EVALUATION,
+                        vertex, FRAGMENT, null, null, false));
+        assertTrue(refused.getMessage().contains("gl_ProjectionMatrix"), refused.getMessage());
     }
 
     /** GL's ccw is Vulkan's cw under the upper-left domain origin, and GL's default is ccw. */

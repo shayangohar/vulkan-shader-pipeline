@@ -1,5 +1,8 @@
 package net.chimera.shaderpack;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
@@ -7,7 +10,7 @@ import java.util.regex.Pattern;
 
 /**
  * A program's tessellation stages (.tcs and .tes), which Iris runs between the vertex and fragment
- * stages when the pack lists TESSELLATION_SHADERS (Shrimple's terrain and water). The control
+ * stages when the pack lists TESSELLATION_SHADERS (Shrimple's terrain, water and hand). The control
  * stage's per-vertex inputs pair with the vertex stage's outputs, its per-vertex outputs with the
  * evaluation stage's inputs, and the evaluation stage's outputs with the fragment stage's inputs,
  * each pair by name at one shared location. Both stages read the program's uniforms through the
@@ -25,6 +28,7 @@ final class TessellationStageBridge {
 
     /** The evaluation stage's input layout, {@code layout(triangles, ccw) in;}. */
     private static final Pattern INPUT_LAYOUT = Pattern.compile("\\blayout\\s*\\(([^)]*)\\)\\s*in\\s*;");
+    private static final Pattern TEXTURE_MATRIX = Pattern.compile("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]");
 
     /** The converted stages, and the locations of the evaluation stage's outputs, which the fragment stage reads. */
     record Conversion(String control, String evaluation, LegacyGlslConverter.TerrainVaryingLayout outputLayout) {}
@@ -51,20 +55,77 @@ final class TessellationStageBridge {
                                      LegacyGlslConverter.TerrainVaryingLayout inputLayout, String fragment,
                                      UniformRegistry.ProgramInterface controlPlan,
                                      UniformRegistry.ProgramInterface evaluationPlan, boolean allowStorageBuffers) {
-        String viewBlock = GlslVertexPreambles.TERRAIN_VIEW_BLOCK;
+        return convertStages(new Stage(normalized(control), GlslInterfaceScanner.Stage.TESS_CONTROL, controlPlan),
+                new Stage(normalized(evaluation), GlslInterfaceScanner.Stage.TESS_EVALUATION, evaluationPlan),
+                inputLayout, fragment, allowStorageBuffers, PassedOn.NONE);
+    }
+
+    /** {@link #convertHand} for a hand program ({@code hand}), else {@link #convertTerrain}. */
+    static Conversion convert(boolean hand, String control, String evaluation,
+                              LegacyGlslConverter.TerrainVaryingLayout inputLayout, String fragment,
+                              UniformRegistry.ProgramInterface controlPlan,
+                              UniformRegistry.ProgramInterface evaluationPlan, boolean allowStorageBuffers) {
+        return hand ? convertHand(control, evaluation, inputLayout, fragment, controlPlan, evaluationPlan,
+                allowStorageBuffers) : convertTerrain(control, evaluation, inputLayout, fragment, controlPlan,
+                evaluationPlan, allowStorageBuffers);
+    }
+
+    /**
+     * Converts both stages of a hand program (gbuffers_hand, gbuffers_hand_water), drawn by the
+     * entity vertex bridge. The hand's projection is the draw's own, which the host serves to the
+     * vertex stage alone, so neither stage may read a legacy matrix. The values that bridge adds
+     * to the vertex stage's outputs for the fragment stage (the entity identities and the
+     * forwarded host values) pass on through both stages ({@link PassedOn}).
+     *
+     * @throws IllegalArgumentException as {@link #convertTerrain}, and when a stage reads a draw matrix
+     */
+    static Conversion convertHand(String control, String evaluation,
+                                  LegacyGlslConverter.TerrainVaryingLayout inputLayout, String fragment,
+                                  UniformRegistry.ProgramInterface controlPlan,
+                                  UniformRegistry.ProgramInterface evaluationPlan, boolean allowStorageBuffers) {
         Stage controlStage = new Stage(normalized(control), GlslInterfaceScanner.Stage.TESS_CONTROL, controlPlan);
         Stage evaluationStage = new Stage(normalized(evaluation), GlslInterfaceScanner.Stage.TESS_EVALUATION,
                 evaluationPlan);
-        LegacyGlslConverter.TerrainVaryingLayout patchLayout = patchLayout(controlStage.source());
-        LegacyGlslConverter.TerrainVaryingLayout outputLayout = TerrainVertexBridge.modernVaryingLayout(
-                producerView(evaluationStage.source()), LegacyGlslConverter.expandModernVaryingLists(
-                        TerrainVertexBridge.normalizedFragment(fragment, false)), Map.of());
-        String convertedControl = WorldClipRange.GL.withHelpers(
-                converted(controlStage, inputLayout, patchLayout, allowStorageBuffers));
-        String convertedEvaluation = WorldClipRange.GL.convert(swappedWinding(
-                converted(evaluationStage, patchLayout, outputLayout, allowStorageBuffers)));
-        return new Conversion(header(convertedControl, controlPlan, viewBlock),
-                header(convertedEvaluation, evaluationPlan, viewBlock), outputLayout);
+        requireNoDrawMatrices(controlStage.source());
+        requireNoDrawMatrices(evaluationStage.source());
+        Matcher domain = INPUT_LAYOUT.matcher(GlslLexer.stripComments(evaluationStage.source()));
+        if (!domain.find() || !domain.group(1).matches("(?s).*\\btriangles\\b.*")) {
+            throw new IllegalArgumentException("hand tessellation domain is not triangles");
+        }
+        return convertStages(controlStage, evaluationStage, inputLayout, fragment, allowStorageBuffers,
+                PassedOn.of(inputLayout));
+    }
+
+    private static Conversion convertStages(Stage controlStage, Stage evaluationStage,
+                                      LegacyGlslConverter.TerrainVaryingLayout inputLayout, String fragment,
+                                      boolean allowStorageBuffers, PassedOn passedOn) {
+        String viewBlock = GlslVertexPreambles.TERRAIN_VIEW_BLOCK;
+        LegacyGlslConverter.TerrainVaryingLayout patchLayout = patchLayout(controlStage.source(), passedOn);
+        String producer = producerView(evaluationStage.source());
+        LegacyGlslConverter.TerrainVaryingLayout outputLayout = passedOn.appendedTo(
+                TerrainVertexBridge.modernVaryingLayout(producer, LegacyGlslConverter.expandModernVaryingLists(
+                        TerrainVertexBridge.normalizedFragment(fragment, false)), Map.of()),
+                EntityVertexBridge.parseEntityVaryingDeclarations(producer, true).slots().values().stream()
+                        .mapToInt(Integer::intValue).sum(), "");
+        String convertedControl = WorldClipRange.GL.withHelpers(passedOn.control(
+                converted(controlStage, inputLayout, patchLayout, allowStorageBuffers), inputLayout, patchLayout));
+        String convertedEvaluation = WorldClipRange.GL.convert(swappedWinding(passedOn.evaluation(
+                converted(evaluationStage, patchLayout, outputLayout, allowStorageBuffers), patchLayout,
+                outputLayout)));
+        return new Conversion(header(convertedControl, controlStage.plan(), viewBlock),
+                header(convertedEvaluation, evaluationStage.plan(), viewBlock), outputLayout);
+    }
+
+    /** No legacy matrix of the draw, nor its texture matrix, which only the vertex stage is served. */
+    private static void requireNoDrawMatrices(String source) {
+        String stripped = GlslLexer.stripComments(source);
+        String matrix = GlslTokenRewriter.firstIdentifier(stripped,
+                GlslVertexPreambles.terrainMatrixBuiltins()::containsKey);
+        if (matrix == null && TEXTURE_MATRIX.matcher(stripped).find()) matrix = "gl_TextureMatrix[0]";
+        if (matrix != null) {
+            throw new IllegalArgumentException("hand tessellation stage reads a draw matrix only the vertex stage "
+                    + "is served: " + matrix);
+        }
     }
 
     /** One stage's normalized source, its kind and its projection of the program's interface. */
@@ -80,8 +141,11 @@ final class TessellationStageBridge {
                 declaration -> declaration.input() ? "" : null);
     }
 
-    /** The control stage's per-vertex outputs, packed in name order, which the evaluation stage reads. */
-    private static LegacyGlslConverter.TerrainVaryingLayout patchLayout(String control) {
+    /**
+     * The control stage's per-vertex outputs, packed in name order, which the evaluation stage reads,
+     * then the values it passes on.
+     */
+    private static LegacyGlslConverter.TerrainVaryingLayout patchLayout(String control, PassedOn passedOn) {
         GlslInterfaceScanner.StageInterface scanned = GlslInterfaceScanner.scan(control,
                 GlslInterfaceScanner.Stage.TESS_CONTROL);
         if (!scanned.deviations().isEmpty()) {
@@ -97,7 +161,97 @@ final class TessellationStageBridge {
             if (output.qualifier() != null) qualifiers.put(output.name(), output.qualifier());
             location += output.slots();
         }
-        return new LegacyGlslConverter.TerrainVaryingLayout(types, locations, qualifiers);
+        return passedOn.appendedTo(new LegacyGlslConverter.TerrainVaryingLayout(types, locations, qualifiers),
+                location, PassedOn.PATCH_SUFFIX);
+    }
+
+    /**
+     * The values the entity vertex bridge adds to the vertex stage's outputs for the fragment stage,
+     * each with its type and qualifier, which a hand's tessellation stages pass on. The control
+     * stage copies each per vertex. The evaluation stage writes a smooth float as the pack's own
+     * values are, at the evaluated point. It writes any other value as the patch's first vertex's,
+     * as Iris reads iris_entityInfo[0].
+     */
+    private record PassedOn(Map<String, String> types, Map<String, String> qualifiers) {
+        static final PassedOn NONE = new PassedOn(Map.of(), Map.of());
+        /** The suffix of a value's per-vertex copy; the evaluation stage writes the vertex stage's name. */
+        static final String PATCH_SUFFIX = "TC";
+
+        static PassedOn of(LegacyGlslConverter.TerrainVaryingLayout vertexLayout) {
+            List<String> names = new ArrayList<>();
+            EntityVertexBridge.ENTITY_ID_NAMES.forEach(name -> names.add(EntityVertexBridge.entityIdVarying(name)));
+            EntityVertexBridge.ForwardedVarying.ALL.forEach(varying -> names.add(varying.name()));
+            Map<String, String> types = new LinkedHashMap<>();
+            Map<String, String> qualifiers = new LinkedHashMap<>();
+            for (String name : names) {
+                if (!vertexLayout.locations().containsKey(name)) continue;
+                String type = vertexLayout.types().get(name);
+                types.put(name, type);
+                // An integer is flat, as the fragment stage takes it.
+                qualifiers.put(name, type.matches("u?int|[iu]vec[234]") ? "flat" : vertexLayout.qualifier(name));
+            }
+            return new PassedOn(types, qualifiers);
+        }
+
+        /** {@code layout} and each value after it from {@code location}, its name with {@code suffix}. */
+        LegacyGlslConverter.TerrainVaryingLayout appendedTo(LegacyGlslConverter.TerrainVaryingLayout layout,
+                                                            int location, String suffix) {
+            if (types.isEmpty()) return layout;
+            Map<String, String> allTypes = new TreeMap<>(layout.types());
+            Map<String, Integer> locations = new TreeMap<>(layout.locations());
+            Map<String, String> allQualifiers = new TreeMap<>(layout.qualifiers());
+            int next = location;
+            for (String name : types.keySet()) {
+                allTypes.put(name + suffix, types.get(name));
+                locations.put(name + suffix, next++);
+                if (!qualifiers.get(name).isEmpty()) allQualifiers.put(name + suffix, qualifiers.get(name));
+            }
+            return new LegacyGlslConverter.TerrainVaryingLayout(allTypes, locations, allQualifiers);
+        }
+
+        /** The control stage reading each value from the vertex stage and copying it per vertex. */
+        String control(String converted, LegacyGlslConverter.TerrainVaryingLayout inputs,
+                       LegacyGlslConverter.TerrainVaryingLayout patch) {
+            String result = converted;
+            StringBuilder declarations = new StringBuilder();
+            for (String name : types.keySet()) {
+                declarations.append(declaration(inputs, name, "in", "[]"))
+                        .append(declaration(patch, name + PATCH_SUFFIX, "out", "[]"));
+                result = LegacyGlslConverter.injectMainPrologue(result,
+                        name + PATCH_SUFFIX + "[gl_InvocationID] = " + name + "[gl_InvocationID];");
+            }
+            return beforeMain(result, declarations.toString());
+        }
+
+        /** The evaluation stage reading each value's copies and writing the value the fragment stage reads. */
+        String evaluation(String converted, LegacyGlslConverter.TerrainVaryingLayout patch,
+                          LegacyGlslConverter.TerrainVaryingLayout outputs) {
+            String result = converted;
+            StringBuilder declarations = new StringBuilder();
+            for (String name : types.keySet()) {
+                String copies = name + PATCH_SUFFIX;
+                declarations.append(declaration(patch, copies, "in", "[]"))
+                        .append(declaration(outputs, name, "out", ""));
+                boolean smooth = qualifiers.get(name).isEmpty() && types.get(name).matches("float|vec[234]");
+                String value = !smooth ? copies + "[0]" : "gl_TessCoord.x * " + copies + "[0] + gl_TessCoord.y * "
+                        + copies + "[1] + gl_TessCoord.z * " + copies + "[2]";
+                result = LegacyGlslConverter.injectMainPrologue(result, name + " = " + value + ";");
+            }
+            return beforeMain(result, declarations.toString());
+        }
+
+        private static String declaration(LegacyGlslConverter.TerrainVaryingLayout layout, String name,
+                                          String direction, String array) {
+            return "layout(location = " + layout.location(name) + ") " + qualified(layout.qualifier(name))
+                    + direction + " " + layout.types().get(name) + " " + name + array + ";\n";
+        }
+
+        private static String beforeMain(String source, String declarations) {
+            if (declarations.isEmpty()) return source;
+            GlslTree tree = GlslTree.parse(source);
+            int main = tree.offset(GlslDeclarations.mainDefinition(tree).range().start());
+            return source.substring(0, main) + declarations + source.substring(main);
+        }
     }
 
     /** The stage converted below its header: interface located, uniforms and samplers served, built-ins mapped. */

@@ -286,6 +286,27 @@ public final class EntityVertexBridge {
                 GlslVertexPreambles.HAND_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan);
     }
 
+    /**
+     * The stage the vertex stage's outputs feed: the fragment stage, or the tessellation control
+     * stage as TessellationStageBridge.consumerView declares it. After that the evaluation stage
+     * converts the clip depth ({@code laterStageConverts}).
+     */
+    record Consumer(String source, boolean laterStageConverts) {}
+
+    /**
+     * Hand vertex conversion feeding {@code consumer}, adding what {@code fragmentSource} reads. A
+     * hand ahead of its tessellation stages keeps its position in GL's clip range: the control
+     * stage reads it as under Iris, and the evaluation stage converts its depth.
+     */
+    public static LegacyGlslConverter.TerrainVertexConversion convertHandVertexChecked(
+            String source, Path sourceFile, Consumer consumer, String fragmentSource,
+            Map<String, Integer> sharedLocations, boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms, VertexSamplerPlan samplerPlan) {
+        return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations,
+                GlslVertexPreambles.HAND_VERTEX_PREAMBLE, allowStorageBuffers, fragmentUniforms, samplerPlan,
+                consumer);
+    }
+
     static LegacyGlslConverter.TerrainVertexConversion convertEntityVertex(
             String source,
             Path sourceFile,
@@ -319,6 +340,15 @@ public final class EntityVertexBridge {
             List<UniformRegistry.UniformDeclaration> fragmentUniforms,
             VertexSamplerPlan samplerPlan
     ) {
+        return convertEntityVertexOrThrow(source, sourceFile, fragmentSource, sharedLocations, vertexPreamble,
+                allowStorageBuffers, fragmentUniforms, samplerPlan, new Consumer(fragmentSource, false));
+    }
+
+    private static LegacyGlslConverter.TerrainVertexConversion convertEntityVertexOrThrow(
+            String source, Path sourceFile, String fragmentSource, Map<String, Integer> sharedLocations,
+            String vertexPreamble, boolean allowStorageBuffers,
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms, VertexSamplerPlan samplerPlan, Consumer consumer
+    ) {
         String src = LegacyGlslConverter.prepareSource(source, sourceFile, true);
         src = LegacyGlslConverter.expandModernVaryingLists(src);
         src = LegacyGlslConverter.pruneUnreachableFunctions(src);
@@ -338,7 +368,7 @@ public final class EntityVertexBridge {
                 allowStorageBuffers, samplerPlan != null, samplerPlan == null ? Set.of() : samplerPlan.storageImages());
 
         EntityVaryingDeclarations vertexVaryings = parseEntityVaryingDeclarations(stripped, true);
-        requireMatchingFragmentVaryings(vertexVaryings, fragmentSource);
+        requireMatchingFragmentVaryings(vertexVaryings, consumer.source());
         List<ForwardedVarying> forwarded = ForwardedVarying.readBy(fragmentSource);
         // The bridge's varyings follow the pack's: the entity identities, then what the fragment reads.
         Map<String, String> addedVaryings = new LinkedHashMap<>();
@@ -373,7 +403,8 @@ public final class EntityVertexBridge {
             chimeraVaryings += varying.declaration(layout, "out");
         }
         String cameraBlock = GlslVertexPreambles.entityCameraUniformBlock(converted, fragmentUniforms);
-        converted = clip.convert(wrapProjectedMain(converted, vertexPreamble));
+        converted = clip.convert(consumer.laterStageConverts() ? converted : wrapProjectedMain(converted,
+                vertexPreamble));
         return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n" + INVARIANT_POSITION
                 + vertexPreamble + chimeraVaryings + cameraBlock + converted,
                 layout);
