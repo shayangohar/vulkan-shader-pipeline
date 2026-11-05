@@ -49,21 +49,33 @@ final class ProgramStageSources {
         return result;
     }
 
+    /** The stages GL links, in the order each feeds the next. */
+    private static final List<String> LINK_ORDER = List.of("vertex", "tess_control", "tess_evaluation", "geometry",
+            "fragment");
+    /** The suffix of the varyings each stage writes, which the stage after it reads (InterfaceBlockFlattener). */
+    private static final Map<String, String> WRITER_SUFFIXES = Map.of("vertex", "", "tess_control", "_tc",
+            "tess_evaluation", "_te", "geometry", "_gs", "fragment", "");
+
     /**
-     * The vertex and fragment stages with their interface blocks as plain varyings
-     * (InterfaceBlockFlattener). A program with another stage keeps its blocks: a geometry
-     * stage's arrayed input block cannot be flattened to match.
+     * Every stage with its interface blocks as plain varyings (InterfaceBlockFlattener). Each
+     * stage's inputs carry the suffix of the stage before it and its outputs its own, so a stage
+     * between the vertex and fragment stages can read and write blocks of one name.
      */
     private static Map<String, PreparedShaderSource> flattenInterfaceBlocks(Map<String, PreparedShaderSource> stages) {
-        if (!Set.of("vertex", "fragment").containsAll(stages.keySet())) return stages;
+        if (!Set.copyOf(LINK_ORDER).containsAll(stages.keySet())) return stages;
         Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
-        for (Map.Entry<String, PreparedShaderSource> entry : stages.entrySet()) {
-            PreparedShaderSource prepared = entry.getValue();
-            InterfaceBlockFlattener.Result flattened = InterfaceBlockFlattener.flatten(prepared.source());
+        String inputSuffix = "";
+        for (String stage : LINK_ORDER) {
+            PreparedShaderSource prepared = stages.get(stage);
+            if (prepared == null) continue;
+            String outputSuffix = WRITER_SUFFIXES.get(stage);
+            InterfaceBlockFlattener.Result flattened = InterfaceBlockFlattener.flatten(prepared.source(),
+                    inputSuffix, outputSuffix);
+            inputSuffix = outputSuffix;
             if (flattened.blocks().isEmpty()) continue;
             List<String> deviations = new ArrayList<>(prepared.deviations());
             flattened.blocks().forEach(block -> deviations.add("INTERFACE_BLOCK_FLATTENED:" + block));
-            result.put(entry.getKey(), new PreparedShaderSource(prepared.stage(), prepared.relativePath(),
+            result.put(stage, new PreparedShaderSource(prepared.stage(), prepared.relativePath(),
                     flattened.source(), prepared.dependencies(), deviations));
         }
         return result;

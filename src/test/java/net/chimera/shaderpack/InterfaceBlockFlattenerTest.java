@@ -66,7 +66,7 @@ final class InterfaceBlockFlattenerTest {
     }
 
     @Test
-    void aRedeclaredPerVertexIsDroppedAndAnArrayedBlockIsKept() {
+    void aRedeclaredPerVertexIsDropped() {
         InterfaceBlockFlattener.Result perVertex = InterfaceBlockFlattener.flatten("""
                 #version 430
                 out gl_PerVertex { vec4 gl_Position; };
@@ -75,13 +75,59 @@ final class InterfaceBlockFlattenerTest {
         assertEquals(List.of("gl_PerVertex"), perVertex.blocks());
         assertFalse(perVertex.source().contains("gl_PerVertex"), perVertex.source());
         assertTrue(perVertex.source().contains("gl_Position = vec4(0.0);"), perVertex.source());
+    }
 
-        String geometryInput = """
+    /**
+     * Shrimple's shadow.gsh reads the vertex stage's VertexData (an int blockId) and writes its own
+     * (a uint one) for the fragment stage: GL pairs each stage with the next on its own, so the
+     * names a stage reads carry the suffix of the stage that writes them.
+     */
+    @Test
+    void anArrayedBlockBecomesArrayedVaryingsNamedForTheStageThatWritesThem() {
+        InterfaceBlockFlattener.Result geometry = InterfaceBlockFlattener.flatten("""
                 #version 430
-                in VertexData { vec2 uv; } v[];
-                void main() {}
+                in VertexData { flat int blockId; vec3 shadowPos[4]; } vIn[];
+                out VertexData { flat uint blockId; } vOut;
+                void main() {
+                    for (int i = 0; i < 3; i++) {
+                        vOut.blockId = uint(vIn[i].blockId) + uint(vIn[i].shadowPos[1].x);
+                        EmitVertex();
+                    }
+                }
+                """, "", "_gs");
+        assertEquals(List.of("VertexData", "VertexData"), geometry.blocks());
+        assertTrue(geometry.source().contains("flat in int VertexData_blockId[];"), geometry.source());
+        assertTrue(geometry.source().contains("in vec3 VertexData_shadowPos[][4];"), geometry.source());
+        assertTrue(geometry.source().contains("flat out uint VertexData_blockId_gs;"), geometry.source());
+        assertTrue(geometry.source().contains(
+                "VertexData_blockId_gs = uint(VertexData_blockId[i]) + uint(VertexData_shadowPos[i][1].x);"),
+                geometry.source());
+    }
+
+    /** A tessellation control stage writes one element per output vertex. */
+    @Test
+    void aControlStageWritesItsArrayedOutputAtItsInvocation() {
+        InterfaceBlockFlattener.Result control = InterfaceBlockFlattener.flatten("""
+                #version 430
+                layout (vertices=3) out;
+                in VertexData { vec2 uv; } vIn[];
+                out VertexData { vec2 uv; } vOut[];
+                void main() { vOut[gl_InvocationID].uv = vIn[gl_InvocationID].uv; }
+                """, "", "_tc");
+        assertTrue(control.source().contains("out vec2 VertexData_uv_tc[];"), control.source());
+        assertTrue(control.source().contains(
+                "VertexData_uv_tc[gl_InvocationID] = VertexData_uv[gl_InvocationID];"), control.source());
+    }
+
+    /** An index that reads another flattened block cannot be renamed piece by piece. */
+    @Test
+    void anInstanceIndexedByAnotherBlockIsLeftAlone() {
+        String source = """
+                #version 430
+                in VertexData { int index; vec2 uv; } vIn[];
+                void main() { vec2 uv = vIn[vIn[0].index].uv; }
                 """;
-        assertEquals(geometryInput, InterfaceBlockFlattener.flatten(geometryInput).source());
+        assertEquals(source, InterfaceBlockFlattener.flatten(source, "", "_gs").source());
     }
 
     /** RenderPearl's shape: an entity program whose stages pass a flat uint in a named block. */

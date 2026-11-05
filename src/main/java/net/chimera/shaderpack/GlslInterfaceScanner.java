@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -31,9 +32,18 @@ public final class GlslInterfaceScanner {
     /**
      * The stage whose interface a source declares. A geometry stage's inputs are arrays with one
      * element per vertex of its primitive ({@code in vec2 texcoord[]}); the scan reads each as the
-     * value one vertex passes, so it pairs with the vertex stage's output of that type.
+     * value one vertex passes, so it pairs with the vertex stage's output of that type. The
+     * tessellation stages' inputs are arrays the same way, and so are the control stage's outputs,
+     * one element per vertex of its output patch.
      */
-    public enum Stage { VERTEX, GEOMETRY, FRAGMENT }
+    public enum Stage {
+        VERTEX, TESS_CONTROL, TESS_EVALUATION, GEOMETRY, FRAGMENT;
+
+        /** Whether a stage of this kind reads one value per vertex of a primitive or patch. */
+        boolean perVertexInputs() {
+            return this == TESS_CONTROL || this == TESS_EVALUATION || this == GEOMETRY;
+        }
+    }
 
     /**
      * One declared name. {@code arraySize} is 0 for a non-array; {@code slots} is the number of
@@ -183,11 +193,21 @@ public final class GlslInterfaceScanner {
      * stage's inputs'.
      */
     public static ProgramMatch match(StageInterface vertex, StageInterface geometry, StageInterface fragment) {
-        ProgramMatch toGeometry = match(vertex, geometry);
-        ProgramMatch toFragment = match(geometry, fragment);
-        List<String> deviations = new ArrayList<>(toGeometry.deviations());
-        deviations.addAll(toFragment.deviations());
-        return new ProgramMatch(toFragment.locations(), deviations);
+        return match(Arrays.asList(vertex, geometry, fragment));
+    }
+
+    /**
+     * Pairs each stage of {@code chain}, vertex first and fragment last, with the stage after it,
+     * as Iris links every stage a program runs. The locations are the fragment stage's inputs'.
+     */
+    public static ProgramMatch match(List<StageInterface> chain) {
+        List<String> deviations = new ArrayList<>();
+        ProgramMatch last = null;
+        for (int index = 1; index < chain.size(); index++) {
+            last = match(chain.get(index - 1), chain.get(index));
+            deviations.addAll(last.deviations());
+        }
+        return new ProgramMatch(last == null ? Map.of() : last.locations(), deviations);
     }
 
     /**
@@ -330,19 +350,11 @@ public final class GlslInterfaceScanner {
             deviations.add("PROGRAM_VARYING_TYPE_UNSUPPORTED:" + type);
             return null;
         }
-        String direction = keyword(tree, qualifiers, storage[1]);
-        boolean varying = direction.equals("varying");
-        if (varying && stage == Stage.GEOMETRY) {
-            // GL has no varying in a geometry stage.
+        InterfaceType kind = interfaceType(tree, qualifiers, storage, stage, type, typeSlots);
+        if (kind == null) {
             deviations.add(DECLARATION_UNSUPPORTED);
             return null;
         }
-        String interpolation = storage[1] > storage[0] && isInterpolation(keyword(tree, qualifiers, storage[1] - 1))
-                ? keyword(tree, qualifiers, storage[1] - 1) : null;
-        boolean input = direction.equals("in") || varying && stage == Stage.FRAGMENT;
-        InterfaceType kind = new InterfaceType(type, interpolation, input,
-                direction.equals("out") || varying && stage == Stage.VERTEX, typeSlots,
-                input && stage == Stage.GEOMETRY);
         int start = qualifiers.get(storage[0]).range().start();
         int end = declaration.range().end();
         List<Declaration> declared = declarators(tree, declaration, start, end, kind);
@@ -353,6 +365,23 @@ public final class GlslInterfaceScanner {
         return new Statement(start, end, declared);
     }
 
+    /**
+     * What a statement's declarators share, or null for a {@code varying} in a geometry or
+     * tessellation stage, which GL does not have.
+     */
+    private static InterfaceType interfaceType(GlslTree tree, List<GlslTree.Qualifier> qualifiers, int[] storage,
+                                               Stage stage, String type, int typeSlots) {
+        String direction = keyword(tree, qualifiers, storage[1]);
+        boolean varying = direction.equals("varying");
+        if (varying && stage.perVertexInputs()) return null;
+        String interpolation = storage[1] > storage[0] && isInterpolation(keyword(tree, qualifiers, storage[1] - 1))
+                ? keyword(tree, qualifiers, storage[1] - 1) : null;
+        boolean input = direction.equals("in") || varying && stage == Stage.FRAGMENT;
+        boolean output = direction.equals("out") || varying && stage == Stage.VERTEX;
+        return new InterfaceType(type, interpolation, input, output, typeSlots,
+                input && stage.perVertexInputs() || output && stage == Stage.TESS_CONTROL);
+    }
+
     /** The type's name; {@code struct} for an inline struct. */
     private static String typeName(GlslTree tree, GlslTree.TypeSpec type) {
         return type.name() >= 0 ? tree.text(type.name()) : "struct";
@@ -360,7 +389,7 @@ public final class GlslInterfaceScanner {
 
     /**
      * What one interface statement's declarators share: type, interpolation, direction, size, and
-     * whether each is a geometry stage's per-vertex input.
+     * whether each is per-vertex: an input of a geometry or tessellation stage, or a control stage's output.
      */
     private record InterfaceType(String type, String interpolation, boolean input, boolean output, int slots,
                                  boolean perVertex) {}
