@@ -285,6 +285,47 @@ final class PackPostTargetsTest {
         assertTrue(graph.target(2).doubled(), "a pre-flipped target needs its other side");
     }
 
+    /**
+     * Shrimple keeps its opaque and translucent deferred data apart by flipping a target only
+     * geometry writes: flip.deferred12.colortex1 sends the translucent geometry to colortex1's other
+     * side, and flip.composite_pre hands the composite passes the opaque side again. Iris's flip
+     * toggles the side whether a pass wrote the target or not. Swapping with no side recorded left
+     * both on one image, so the translucent data overwrote the opaque, and the sun shadows went.
+     */
+    @Test
+    void aFlipOfATargetOnlyGeometryWritesMovesToItsOtherSide(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("deferred1.fsh"),
+                "#version 120\n/* RENDERTARGETS: 6 */\nvoid main() {\n    gl_FragColor = vec4(1.0);\n}\n");
+        Files.writeString(shaders.resolve("composite1.fsh"), "#version 120\nuniform sampler2D colortex1;\n"
+                + "varying vec2 texcoord;\n/* RENDERTARGETS: 0 */\nvoid main() {\n"
+                + "    gl_FragColor = texture2D(colortex1, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "flip.deferred1.colortex1 = true\nflip.composite_pre.colortex1 = true\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"deferred1\",\"fragment\":\"deferred1.fsh\"},"
+                        + "{\"name\":\"composite1\",\"fragment\":\"composite1.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        assertEquals(List.of(1), graph.step("deferred1").flipsAfter());
+        assertEquals(List.of(1), graph.preFlips(PackFrameSchedulePlan.PostWindow.LATE));
+        assertTrue(graph.target(1).doubled() && !graph.target(1).requiresHistory(), String.valueOf(graph.target(1)));
+
+        int[] active = new int[2];
+        int[] previous = new int[2];
+        for (int frame = 0; frame < 3; frame++) {
+            int opaque = active[1];
+            PackPostTargets.flipSides(active, previous, 1, 2);
+            assertTrue(active[1] != opaque, "frame " + frame + ": the translucent geometry drew over the opaque data");
+            PackPostTargets.flipSides(active, previous, 1, 2);
+            assertEquals(opaque, active[1], "frame " + frame + ": the composite passes must read the opaque data");
+        }
+    }
+
     private static void writeFlipFixture(Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         String header = "#version 120\nuniform sampler2D colortex2;\nvarying vec2 texcoord;\n";

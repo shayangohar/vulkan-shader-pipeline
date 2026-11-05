@@ -192,8 +192,8 @@ public final class PackPostTargets {
                     continue;
                 }
                 if (target.clear() && !target.persistent()) {
+                    clearEverySide(stack, commandBuffer, target);
                     VulkanImage image = imageFor(index, this.activeSide[index]);
-                    PackTargetImages.clearImage(stack, commandBuffer, image, target.clearColorCopy());
                     this.valid[index] = true;
                     this.sourceImages[index] = image;
                     this.temporal.seedCurrent(index);
@@ -213,6 +213,18 @@ public final class PackPostTargets {
                 }
                 if (this.valid[index] && unwrittenFlips.contains(index)) matchOtherSide(stack, commandBuffer, index);
             }
+        }
+    }
+
+    /**
+     * Clears each side of a cleared target, as Iris clears both its images at frame open
+     * (ClearPassCreator). A flip can hand a pass the other side before any pass writes it:
+     * Shrimple's translucent geometry draws into the other sides of colortex1, 3 and 9. That side
+     * must hold the clear colour, not an older frame's translucent data.
+     */
+    private void clearEverySide(MemoryStack stack, VkCommandBuffer commandBuffer, TargetSpec target) {
+        for (int side = 0; side < this.sideCounts[target.index()]; side++) {
+            PackTargetImages.clearImage(stack, commandBuffer, imageFor(target.index(), side), target.clearColorCopy());
         }
     }
 
@@ -788,9 +800,23 @@ public final class PackPostTargets {
     private void flip(List<Integer> targets) {
         for (int target : targets) {
             if (target <= 0 || target >= TARGET_COUNT || !this.doubled[target]) continue;
-            swapSides(this.activeSide, this.previousSide, target);
+            flipSides(this.activeSide, this.previousSide, target, this.sideCounts[target]);
             if (this.valid[target]) this.sourceImages[target] = imageFor(target, this.activeSide[target]);
         }
+    }
+
+    /**
+     * Iris's BufferFlipper.flip: the target's other side becomes current. That is the side written
+     * before the current one. A target no post pass has written since the session made it has
+     * none recorded, and its next side is the other one: Shrimple's flip.deferred12 of colortex1,
+     * 3, 7 and 9, which only geometry writes, sends its translucent geometry to their other sides,
+     * apart from the opaque data its composite passes read.
+     */
+    static void flipSides(int[] activeSide, int[] previousSide, int target, int sideCount) {
+        if (activeSide[target] == previousSide[target]) {
+            previousSide[target] = nextSide(activeSide[target], sideCount);
+        }
+        swapSides(activeSide, previousSide, target);
     }
 
     /** Makes a target's previous side current, and its current side previous. */
