@@ -107,6 +107,40 @@ final class GeometryStageBridgeTest {
         assertEquals(1, conversion.outputLayout().location("frag_texcoord"));
     }
 
+    /**
+     * GLSL leaves outputs undefined after EmitVertex; NVIDIA's GL driver keeps them, its Vulkan
+     * driver does not. Spring's terrain stage writes textureResolution once, before its emit loop,
+     * and RenderDoc read garbage on the loop's later vertices (KNOW-1088). Each emit now keeps every
+     * output and the unconverted position, and writes them back after EmitVertex. An output may be
+     * declared below a function, as Rethinking Voxels' are, so the emit is defined last.
+     */
+    @Test
+    void anOutputWrittenBeforeTheEmitLoopKeepsItsValue() {
+        String geometry = GEOMETRY.replace("out uint frag_material;",
+                        "float scaled(float x) { return x * 0.5; }\nout uint frag_material;\nout vec3 frag_tint;")
+                .replace("if (bool(",
+                        "frag_material = vert_survived[0];\n    frag_tint = vec3(scaled(2.0));\n    if (bool(")
+                .replace("frag_material = vert_survived[i];\n", "");
+        LegacyGlslConverter.TerrainVaryingLayout vertex = new LegacyGlslConverter.TerrainVaryingLayout(
+                Map.of("vert_survived", "uint", "vert_texcoord", "vec2"),
+                Map.of("vert_survived", 0, "vert_texcoord", 1));
+        String source = GeometryStageBridge.convertShadow(geometry, vertex, """
+                #version 460 compatibility
+                in vec2 frag_texcoord;
+                flat in uint frag_material;
+                in vec3 frag_tint;
+                void main() { gl_FragData[0] = vec4(frag_tint * frag_texcoord.x, float(frag_material)); }
+                """, null, false, false).source();
+        String kept = ShadowStageBuiltins.KEPT_PREFIX;
+        assertTrue(source.contains("uint " + kept + "frag_material;") && source.contains("vec3 " + kept + "frag_tint;"),
+                source);
+        assertTrue(source.contains("    " + kept + "frag_tint = frag_tint;\n")
+                && source.contains("    vec4 chimeraKeptPosition = gl_Position;\n")
+                && source.contains("    EmitVertex();\n    gl_Position = chimeraKeptPosition;\n")
+                && source.contains("    frag_material = " + kept + "frag_material;\n"), source);
+        assertNull(PackCompileTest.compileBetween(source, "geometry"), source);
+    }
+
     /** The consumer view names each entity identity only the fragment stage reads: the stage passes it on. */
     @Test
     void theConsumerViewNamesTheIdentitiesItPassesOn() {
@@ -157,9 +191,9 @@ final class GeometryStageBridgeTest {
                 && source.contains("layout(location = 2) flat in uint chimeraBlockEntityId[];\n"
                 + "layout(location = 3) flat out uint chimeraBlockEntityIdGS;\n"), source);
         assertTrue(source.contains("frag_entity = float(int(chimeraEntityId[0]));"), source);
-        assertTrue(source.contains("    chimeraEntityIdGS = chimeraEntityId[0];\n"
-                + "    chimeraBlockEntityIdGS = chimeraBlockEntityId[0];\n"
-                + "    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n    EmitVertex();"), source);
+        String passOn = "    chimeraEntityIdGS = chimeraEntityId[0];\n"
+                + "    chimeraBlockEntityIdGS = chimeraBlockEntityId[0];\n";
+        assertTrue(source.contains(passOn) && source.indexOf(passOn) < source.indexOf("    EmitVertex();"), source);
         assertEquals(3, conversion.outputLayout().location("chimeraBlockEntityId"));
     }
 
