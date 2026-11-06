@@ -297,6 +297,36 @@ final class WorldEntityAdapterTest {
      * Iris EntityPatcher: blockEntityId reads iris_Entity.y whether declared as an
      * attribute (MakeUp 9.5g solid_blocks_vertex) or a uniform, beside entityId on .x.
      */
+    /**
+     * A parameter named after an identity hides it, as Shrimple's GetSceneEntityLightColor(const in
+     * int entityId) does in its Nether and End voxel lighting: only the global's references read the
+     * identity. Renaming the parameter too broke the parameter list and refused the program.
+     */
+    @Test
+    void aParameterNamedEntityIdKeepsItsName() {
+        String vertex = """
+                #version 120
+                uniform int entityId;
+                varying float light;
+                float lightOf(const in int entityId) { return float(entityId) * 0.5; }
+                void main() {
+                    light = lightOf(entityId);
+                    gl_Position = ftransform();
+                }
+                """;
+        String fragment = """
+                #version 120
+                varying float light;
+                void main() { gl_FragColor = vec4(light); }
+                """;
+        LegacyGlslConverter.TerrainVertexConversion converted =
+                EntityVertexBridge.convertEntityVertex(vertex, null, fragment, Map.of("light", 0));
+        assertTrue(converted != null, "the entity vertex bridge rejected the source");
+        assertTrue(converted.source().contains("float lightOf(const in int entityId)")
+                && converted.source().contains("return float(entityId) * 0.5;")
+                && !converted.source().contains("lightOf(entityId)"), converted.source());
+    }
+
     @Test
     void blockEntityIdBridge() {
         String vertex = """

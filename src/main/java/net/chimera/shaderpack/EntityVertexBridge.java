@@ -383,8 +383,7 @@ public final class EntityVertexBridge {
         }
         WorldClipRange clip = projectsInGlRange(vertexPreamble) ? WorldClipRange.HOST : WorldClipRange.of(stripped);
         // The plan renamed the pack's own identifiers of the preamble's names in both stages.
-        converted = GlslTokenRewriter.replaceIdentifiers(converted,
-                clip.builtins(entityInputReplacements(vertexPreamble, stripped, layout)));
+        converted = replaceInputs(converted, clip.builtins(entityInputReplacements(vertexPreamble, stripped, layout)));
         converted = converted.replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]",
                 "TextureMat");
         // Iris VanillaTransformer/VanillaCoreTransformer: raw UV2 for both
@@ -608,6 +607,21 @@ public final class EntityVertexBridge {
                     + ") flat out uint " + entityIdVarying(name) + ";\n");
         }
         return declarations.toString();
+    }
+
+    /**
+     * {@code source} with a vertex stage's input {@code replacements}: a built-in everywhere, an entity
+     * identity only where it names the global (GlslScopedReferences). A pack may give a parameter or
+     * local an identity's name, as Shrimple's GetSceneEntityLightColor(const in int entityId) does.
+     */
+    static String replaceInputs(String source, Map<String, String> replacements) {
+        Map<String, String> others = new HashMap<>(replacements);
+        Map<String, String> identities = new HashMap<>();
+        for (String name : ENTITY_ID_NAMES) {
+            String value = others.remove(name);
+            if (value != null && GlslTokenRewriter.containsIdentifier(source, name)) identities.put(name, value);
+        }
+        return GlslScopedReferences.replace(GlslTokenRewriter.replaceIdentifiers(source, others), identities);
     }
 
     /** Each named identity read through its flat varying. */

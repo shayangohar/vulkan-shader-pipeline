@@ -206,7 +206,7 @@ final class TerrainVertexBridge {
             inputReplacements.putAll(shadowInputReplacements(vertex, entityInputs));
         }
         inputReplacements.putAll(EntityVertexBridge.entityIdReplacements(entityIdTypes.keySet(), layout));
-        converted = GlslTokenRewriter.replaceIdentifiers(converted, inputReplacements);
+        converted = EntityVertexBridge.replaceInputs(converted, inputReplacements);
         // Iris gives entity programs the draw's texture matrix (iris_TextureMat).
         converted = converted.replaceAll(
                 "\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", entityInputs ? "TextureMat" : "mat4(1.0)");
