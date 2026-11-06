@@ -310,6 +310,29 @@ final class AdvancedImagePlanTest {
     }
 
     /**
+     * Shrimple's composite18 keeps {@code //layout(r32f) uniform readonly image2D imgDepthNear;} in a
+     * comment. With MATERIAL_SPECULAR=0 no program reads the image, so it gets no slot, and the
+     * commented declaration refused the pass (ADVANCED_IMAGE_UNSERVED) that Iris runs.
+     */
+    @Test
+    void aCommentedImageDeclarationDeclaresNothing(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.imgDepthNear = texDepthNear RED R32F FLOAT false true 0.5 0.75\n");
+        writeVolumeReader(shaders, "composite", "unused");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 430 compatibility
+                uniform sampler2D texDepthNear;
+                //layout(r32f) uniform readonly image2D imgDepthNear;
+                in vec2 uv;
+                void main() { gl_FragData[0] = vec4(uv, 0.0, 1.0); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        assertTrue(!plan.settings().customSamplerSlots().containsKey("texDepthNear")
+                && plan.shouldAttempt("composite"), plan.advancedResources().deviations().toString());
+    }
+
+    /**
      * Rethinking Voxels gives occupancyVolume and voxelCols the sampler none, which Iris reads as no
      * sampler. Each image still binds, so each keeps its own selector slot under its own name.
      */

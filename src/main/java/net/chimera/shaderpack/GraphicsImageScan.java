@@ -108,6 +108,9 @@ final class GraphicsImageScan {
         Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image") ? source : "");
         while (image.find()) {
             String symbol = image.group(3);
+            // A match the parser does not see as a declaration declares nothing: Shrimple's composite18
+            // keeps `//layout(r32f) uniform readonly image2D imgDepthNear;` in a comment.
+            if (usage.successful() && !usage.declaredImages().contains(symbol)) continue;
             String format = AdvancedImageDeclarations.declaredFormat(image.group(1));
             addWriter(program, stage, new Declared(image.group(2), symbol, format),
                     usage.liveImages().contains(symbol), GlslTokenRewriter.identifierCount(source, symbol) > 1);
