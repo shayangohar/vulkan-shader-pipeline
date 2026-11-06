@@ -497,11 +497,12 @@ public final class PackPlanBuilder {
 
         /**
          * Whether the program's stages between vertex and fragment run: a geometry stage alone, on
-         * every shadow lane. The main pass's geometry stages stay refused (TASK-648).
+         * every shadow lane, and on the terrain or water lane after a modern vertex stage (Spring's
+         * gbuffers_terrain). The hands' geometry stages stay refused (TASK-648).
          */
         private boolean geometryStageRuns() {
             return geometry != null && geometryStages.equals(List.of("geometry"))
-                    && FamilyAdapterRegistry.isShadowFamily(name);
+                    && (FamilyAdapterRegistry.isShadowFamily(name) || modernWorldTerrain());
         }
 
         /**
@@ -510,8 +511,12 @@ public final class PackPlanBuilder {
          */
         private boolean tessellationRuns() {
             return tessControl != null && tessEvaluation != null && geometryStages.equals(List.of("tess_control",
-                    "tess_evaluation")) && (FamilyAdapterRegistry.isHandFamily(name) || terrainMaterial.modern()
-                    && (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")));
+                    "tess_evaluation")) && (FamilyAdapterRegistry.isHandFamily(name) || modernWorldTerrain());
+        }
+
+        /** The terrain or water lane, drawn after a modern vertex stage. */
+        private boolean modernWorldTerrain() {
+            return terrainMaterial.modern() && (name.equals("gbuffers_terrain") || name.equals("gbuffers_water"));
         }
 
         /**
@@ -543,9 +548,12 @@ public final class PackPlanBuilder {
         private void convertGeometry() {
             if (!executable || !geometryStageRuns()) return;
             try {
-                GeometryStageBridge.Conversion conversion = GeometryStageBridge.convertShadow(geometry, vertexLayout,
-                        fragment, interfacePlan.project("geometry", stage), allowStorageBuffers,
-                        !FamilyAdapterRegistry.isShadowTerrain(name));
+                UniformRegistry.ProgramInterface geometryPlan = interfacePlan.project("geometry", stage);
+                GeometryStageBridge.Conversion conversion = FamilyAdapterRegistry.isShadowFamily(name)
+                        ? GeometryStageBridge.convertShadow(geometry, vertexLayout, fragment, geometryPlan,
+                                allowStorageBuffers, !FamilyAdapterRegistry.isShadowTerrain(name))
+                        : GeometryStageBridge.convertTerrain(geometry, vertexLayout, fragment, geometryPlan,
+                                allowStorageBuffers);
                 convertedGeometry = conversion.source();
                 geometryLayout = conversion.outputLayout();
             } catch (RuntimeException failure) {
@@ -752,7 +760,7 @@ public final class PackPlanBuilder {
             if (terrainMaterial.modern()) {
                 return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, vertexConsumer(),
                         GlslVertexPreambles.MODERN_TERRAIN_VERTEX_PREAMBLE, vertexInterface, false, false,
-                        allowStorageBuffers, tessellationRuns());
+                        allowStorageBuffers, tessellationRuns() || geometryStageRuns());
             }
             return TerrainVertexBridge.convertLegacyVertexOrThrow(vertex, vertexFile(), fragment,
                     GlslVertexPreambles.TERRAIN_VERTEX_PREAMBLE, allowStorageBuffers);

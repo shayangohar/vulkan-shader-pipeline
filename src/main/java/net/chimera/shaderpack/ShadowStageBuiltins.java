@@ -31,8 +31,10 @@ final class ShadowStageBuiltins {
 
     /**
      * Converts the clip depth of every vertex a geometry stage emits, just before the emit, once
-     * the stage has written its final position. The {@code passOn} statements, which write the
-     * outputs the stage passes on for the vertex stage, run there too: GL leaves every output
+     * the stage has written its final position; a terrain program's geometry stage, which reads GL's
+     * clip position too, converts its own the same way (GeometryStageBridge.convertTerrain). The
+     * {@code passOn} statements, which write the outputs the stage passes on for the vertex stage,
+     * run there too: GL leaves every output
      * undefined after EmitVertex.
      */
     static String emitClipRange(String source, List<String> passOn) {

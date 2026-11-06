@@ -12,7 +12,8 @@ import java.util.regex.Pattern;
  * A pack program's geometry stage (.gsh), which Iris runs between the vertex and fragment stages.
  * Its per-vertex inputs pair with the vertex stage's outputs and its outputs with the fragment
  * stage's inputs, each pair by name at one shared location (GlslInterfaceScanner.Stage.GEOMETRY).
- * The stage reads the program's uniforms through the shadow block the other stages declare, binds
+ * A terrain or water program's stage is converted as {@link #convertTerrain} says; on a shadow lane
+ * the stage reads the program's uniforms through the shadow block the other stages declare, binds
  * its samplers as they do, and converts GL's clip depth for each vertex it emits, as the vertex
  * stage does when nothing follows it (ShadowStageBuiltins). On a lane drawn with the draw's own
  * matrices (the entity casters and the host-layout keys) it also passes on the entity identities
@@ -103,6 +104,47 @@ final class GeometryStageBridge {
         return new Conversion("#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
                 + TerrainVertexBridge.modernUniformBlock(interfacePlan, true)
                 + identityDeclarations(identities.keySet(), inputLayout, outputLayout) + converted, outputLayout);
+    }
+
+    /**
+     * Converts a terrain or water program's geometry stage (Spring's gbuffers_terrain, which
+     * passes each triangle through with its texture resolution). {@code inputLayout} holds the
+     * vertex stage's output locations; the fragment stage's inputs decide the output layout. The
+     * vertex stage hands it GL's clip position, as under Iris, and the stage reads the legacy
+     * matrices as a tessellation stage does, in GL's range (TessellationStageBridge); it converts
+     * the clip depth of each vertex it emits. A stage that reads the host's matrices declares the
+     * terrain view block the vertex stage reads them from.
+     *
+     * @throws IllegalArgumentException as {@link #convertShadow}, but for the draw matrices
+     */
+    static Conversion convertTerrain(String geometry, LegacyGlslConverter.TerrainVaryingLayout inputLayout,
+                                     String fragment, UniformRegistry.ProgramInterface interfacePlan,
+                                     boolean allowStorageBuffers) {
+        String source = LegacyGlslConverter.expandModernVaryingLists(TerrainVertexBridge.normalizeModernTerrain(
+                geometry));
+        LegacyGlslConverter.TerrainVaryingLayout outputLayout = TerrainVertexBridge.modernVaryingLayout(
+                producerView(source), LegacyGlslConverter.expandModernVaryingLists(
+                        TerrainVertexBridge.normalizedFragment(fragment, false)), Map.of());
+        String converted = TerrainVertexBridge.withoutUnreachableFunctions(
+                LegacyGlslConverter.withoutVersionLines(source));
+        converted = interfacePlan == null ? TerrainVertexBridge.stripShadowUniformDeclarations(converted)
+                : UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
+        requireSupported(converted, allowStorageBuffers);
+        converted = located(converted, inputLayout, outputLayout);
+        converted = GlslTokenRewriter.replaceIdentifiers(converted,
+                WorldClipRange.GL.builtins(GlslVertexPreambles.terrainMatrixBuiltins()));
+        converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted)
+                .replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", "mat4(1.0)");
+        converted = TerrainVertexBridge.rewriteModernTerrainSamplers(converted, interfacePlan, false);
+        converted = LegacyGlslConverter.convertTextureCalls(converted);
+        converted = ShadowStageBuiltins.emitClipRange(converted, List.of());
+        if (GlslTokenRewriter.containsIdentifier(converted, "chimeraGlClip")) {
+            converted = WorldClipRange.GL.withHelpers(converted);
+        }
+        String host = GlslTokenRewriter.containsIdentifier(converted, "MVP") ? GlslVertexPreambles.TERRAIN_VIEW_BLOCK
+                : "";
+        return new Conversion("#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES + host
+                + TerrainVertexBridge.modernUniformBlock(interfacePlan, false) + converted, outputLayout);
     }
 
     /**

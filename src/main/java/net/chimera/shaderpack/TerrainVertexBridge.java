@@ -159,10 +159,11 @@ final class TerrainVertexBridge {
     /**
      * The modern bridge, paired with the stage after the vertex stage: the fragment stage, or a
      * stage that converts the clip depth after it ({@code laterStageConverts}): a shadow program's
-     * geometry stage (GeometryStageBridge.consumerView stands in {@code fragmentSource}), or a
-     * world program's tessellation control stage (TessellationStageBridge.consumerView). A vertex
-     * stage converts its clip depth only as the last stage before the rasterizer. Ahead of
-     * tessellation a world stage runs in GL's range, so the control stage reads GL's clip position.
+     * or world program's geometry stage (GeometryStageBridge.consumerView stands in
+     * {@code fragmentSource}), or a world program's tessellation control stage
+     * (TessellationStageBridge.consumerView). A vertex stage converts its clip depth only as the last
+     * stage before the rasterizer. Ahead of tessellation or a geometry stage a world stage runs in GL's
+     * range, so the next stage reads GL's clip position.
      */
     static LegacyGlslConverter.TerrainVertexConversion convertModernTerrainVertexOrThrow(
             String source,

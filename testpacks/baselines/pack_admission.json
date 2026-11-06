@@ -159,7 +159,6 @@
     "dh_water",
     "gbuffers_clouds",
     "gbuffers_hand",
-    "gbuffers_terrain",
     "gbuffers_textured_lit"
   ],
   "miniature-shader-2.19.zip": [

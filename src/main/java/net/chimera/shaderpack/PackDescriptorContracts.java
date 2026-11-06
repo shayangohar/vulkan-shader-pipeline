@@ -68,19 +68,29 @@ final class PackDescriptorContracts {
         int[] slots = ordinarySamplerSlots(iface, stage, advancedSamplerNames);
         for (int slot : slots) PackPipelines.requireSelector(slot);
         PackDescriptorLayout layout = PIPELINE_JSON_STAGES.contains(stage)
-                ? pipelineJsonLayout(stage, iface, slots, plan.betweenStages().tessellated())
+                ? pipelineJsonLayout(stage, iface, slots, hostBlockStages(plan))
                 : familyLayout(plan, stage, iface, slots);
         return new OrdinaryDescriptorContract(layout, ordinaryResources(layout, iface));
     }
 
     /**
+     * The stages between the vertex and fragment stages that every host block of a pipeline JSON
+     * layout reaches: a tessellated program's evaluation stage reads the host's view block
+     * (TessellationStageBridge), and so does a terrain geometry stage that declares it
+     * (GeometryStageBridge.convertTerrain).
+     */
+    private static int hostBlockStages(PackProgramPlan plan) {
+        return (plan.betweenStages().tessellated() ? TESSELLATION_STAGES : 0)
+                | declaring(plan.convertedGeometry(), "uniform ViewUBO", VK_SHADER_STAGE_GEOMETRY_BIT);
+    }
+
+    /**
      * A shadow, terrain, water or post layout: its pipeline JSON's blocks, the pack's uniforms, then
-     * samplers. A tessellated program's evaluation stage reads the host's view block too
-     * (TessellationStageBridge), so every host block reaches the tessellation stages.
+     * samplers. Every host block also reaches {@code betweenStages} (hostBlockStages).
      */
     private static PackDescriptorLayout pipelineJsonLayout(UniformRegistry.Stage stage,
                                                            UniformRegistry.ProgramInterface iface, int[] slots,
-                                                           boolean tessellated) {
+                                                           int betweenStages) {
         PackDescriptorLayout layout;
         if (stage == UniformRegistry.Stage.POST) {
             // A post program's only block is the pack's uniforms, at binding 0, and it pushes nothing.
@@ -90,8 +100,8 @@ final class PackDescriptorContracts {
             PackDescriptorLayout host = PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson(
                     stage == UniformRegistry.Stage.SHADOW ? "chimera_shadow.json" : "chimera_terrain.json"));
             List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(host.uniformBlocks().stream()
-                    .map(block -> !tessellated ? block : new PackDescriptorLayout.UniformBlock(block.binding(),
-                            block.stages() | TESSELLATION_STAGES, block.size(), block.fields()))
+                    .map(block -> betweenStages == 0 ? block : new PackDescriptorLayout.UniformBlock(
+                            block.binding(), block.stages() | betweenStages, block.size(), block.fields()))
                     .toList());
             blocks.addAll(packUniformBlock(iface, host.bindingAfterBlocks(), VK_SHADER_STAGE_ALL_GRAPHICS));
             layout = new PackDescriptorLayout(blocks, List.of(), host.pushConstants());

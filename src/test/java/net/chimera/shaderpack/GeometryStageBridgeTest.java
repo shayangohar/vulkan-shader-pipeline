@@ -10,6 +10,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -241,5 +242,81 @@ final class GeometryStageBridgeTest {
         PackProgramPlan shadow = PackProbe.analyze(root).plan().program("shadow");
         assertTrue(shadow.executable(), shadow.deviations().toString());
         assertTrue(shadow.convertedVertex().contains("gl_Position = vec4(0.0);"), shadow.convertedVertex());
+    }
+
+    /**
+     * Spring's gbuffers_terrain passes each triangle through a geometry stage that writes flat
+     * per-triangle values from atlasSize. Chimera refused the program ("modern terrain varying
+     * mismatch: blockID": the vertex stage was paired with the fragment), and the pack's lighting
+     * read no normals or lightmap for any block: the terrain drew black. The vertex stage now feeds
+     * the geometry stage GL's clip position, which converts what it emits; a geometry stage that
+     * reads the host's matrices declares the view block, and the layout serves it there.
+     */
+    @Test
+    void aTerrainGeometryStageRuns(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_terrain.vsh"), """
+                #version 450 compatibility
+                attribute vec4 mc_Entity;
+                out vec2 v_texcoord;
+                out vec4 v_viewPos;
+                flat out float v_blockID;
+                void main() {
+                    v_blockID = mc_Entity.x;
+                    v_texcoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                    v_viewPos = gl_ModelViewMatrix * gl_Vertex;
+                    gl_Position = ftransform();
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_terrain.gsh"), """
+                #version 450 compatibility
+                layout(triangles) in;
+                layout(triangle_strip, max_vertices = 3) out;
+                uniform ivec2 atlasSize;
+                in vec2 v_texcoord[];
+                in vec4 v_viewPos[];
+                flat in float v_blockID[];
+                out vec2 texcoord;
+                flat out float blockID;
+                flat out int textureResolution;
+                void main() {
+                    vec2 size = abs(v_texcoord[0] - v_texcoord[1]) / distance(v_viewPos[0], v_viewPos[1]);
+                    textureResolution = int(max(atlasSize.x * size.x, atlasSize.y * size.y));
+                    for (int i = 0; i < 3; ++i) {
+                        texcoord = v_texcoord[i];
+                        blockID = v_blockID[i];
+                        gl_Position = i == 3 ? gl_ModelViewProjectionMatrix * v_viewPos[i] : gl_in[i].gl_Position;
+                        EmitVertex();
+                    }
+                    EndPrimitive();
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_terrain.fsh"), """
+                #version 450 compatibility
+                uniform sampler2D tex;
+                in vec2 texcoord;
+                flat in float blockID;
+                flat in int textureResolution;
+                void main() {
+                    gl_FragData[0] = texture(tex, texcoord) * blockID * float(textureResolution);
+                }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackProgramPlan terrain = analysis.plan().program("gbuffers_terrain");
+        assertTrue(terrain.executable(), terrain.deviations().toString());
+        String geometry = terrain.convertedGeometry();
+        assertTrue(geometry.contains("uniform ViewUBO") && geometry.contains("chimeraGlClip(MVP)")
+                && geometry.contains("vec4 chimeraGlClip(vec4 clip)")
+                && geometry.contains("gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n    EmitVertex();")
+                && geometry.contains("ChimeraTerrainPackUniforms"), geometry);
+        assertTrue(terrain.convertedVertex().contains("vec4 chimeraGlClip(vec4 clip)")
+                && !terrain.convertedVertex().contains(WorldClipRange.AUTHORED_ENTRY), terrain.convertedVertex());
+        PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(terrain, analysis.plan().advancedResources(),
+                UniformRegistry.Stage.GEOMETRY, terrain.convertedVertex());
+        PackPipelines.prepareLayout(prepared, terrain.name(), analysis.plan().advancedResources());
+        assertNull(PackCompileTest.compile(prepared.vertex(), true), prepared.vertex());
+        assertNull(PackCompileTest.compileBetween(prepared.between().geometry(), "geometry"),
+                prepared.between().geometry());
+        assertNull(PackCompileTest.compile(prepared.fragment(), false), prepared.fragment());
     }
 }
