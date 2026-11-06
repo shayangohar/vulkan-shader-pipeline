@@ -130,9 +130,10 @@ tasks.register('optionSweep', Test) {
 }
 
 // The metrics ratchet: tools/metrics/baseline.txt records each method over complexity 15 or 80
-// lines and each file over 1,000 lines, each with its reason to stay, plus duplication, inline
+// lines and each file of 2,000 lines or more, each with its reason to stay, plus duplication, inline
 // qualified names and lines over 120 characters. check fails when any of them grows or a listed
-// method or file has no reason; metricsRecord rewrites the baseline and keeps the reasons.
+// method or file has no reason; metricsRecord rewrites the baseline and keeps the reasons. A file
+// of 1,000 lines or more only warns: split a file when it does two jobs, not when it hits a number.
 sourceSets {
     metrics {
         java.srcDir 'tools/metrics'
