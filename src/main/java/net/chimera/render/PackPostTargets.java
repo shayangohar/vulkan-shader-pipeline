@@ -441,8 +441,8 @@ public final class PackPostTargets {
      * Flips the targets {@code window}'s pass group names in a {@code flip.<group>_pre} directive,
      * as Iris's CompositeRenderer does once as the group opens, before any of its passes.
      */
-    public void flipBeforeGroup(PackFrameSchedulePlan.PostWindow window) {
-        if (this.graph != null) flip(this.graph.preFlips(window));
+    public void flipBeforeGroup(VkCommandBuffer commandBuffer, PackFrameSchedulePlan.PostWindow window) {
+        if (this.graph != null) flip(commandBuffer, this.graph.preFlips(window));
     }
 
     /** Iris resets every target's filter after each deferred, composite and final renderer. */
@@ -634,7 +634,7 @@ public final class PackPostTargets {
                         this.temporal.stageWrite(target);
                     }
                 }
-                if (this.currentStep != null) flip(this.currentStep.flipsAfter());
+                if (this.currentStep != null) flip(commandBuffer, this.currentStep.flipsAfter());
             }
             clearPendingState();
             finishRendererState();
@@ -795,14 +795,31 @@ public final class PackPostTargets {
      * written before its current one, becomes current for later passes and the next frame. After
      * a pass that wrote the target this restores the pre-pass image, as Iris's write flip and the
      * explicit flip cancel. Photon's flip.composite1.colortex6 hands deferred3 back its AO
-     * history after composite wrote fog transmittance there. Target 0 is the HDR identity source.
+     * history after composite wrote fog transmittance there. colortex0 still in the HDR image moves
+     * to its graph side first (adoptIdentitySource), so the flip hands that side to the next write.
      */
-    private void flip(List<Integer> targets) {
+    private void flip(VkCommandBuffer commandBuffer, List<Integer> targets) {
         for (int target : targets) {
-            if (target <= 0 || target >= TARGET_COUNT || !this.doubled[target]) continue;
+            if (target < 0 || target >= TARGET_COUNT || !flips(target, this.doubled[target])) continue;
+            VulkanImage source = this.sourceImages[target];
+            if (source != null && source == this.hdrIdentitySource) {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    adoptIdentitySource(stack, commandBuffer, target, source);
+                }
+            }
             flipSides(this.activeSide, this.previousSide, target, this.sideCounts[target]);
             if (this.valid[target]) this.sourceImages[target] = imageFor(target, this.activeSide[target]);
         }
+    }
+
+    /**
+     * Whether a flip directive flips {@code target}: any double-buffered one, colortex0 too, as in
+     * Iris. Shrimple's flip.composite21.colortex0 hands its last bloom pass, composite38, the scene
+     * to blend onto. Skipped, composite38 blended onto colortex0's other side, last frame's final
+     * image, so the bloom added up frame after frame and the VANILLA profile went white.
+     */
+    static boolean flips(int target, boolean doubled) {
+        return target >= 0 && doubled;
     }
 
     /**

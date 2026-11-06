@@ -286,6 +286,49 @@ final class PackPostTargetsTest {
     }
 
     /**
+     * Shrimple's bloom: composite21 reads colortex0 and flips it, and composite38 adds the bloom
+     * onto colortex0 by blending, without reading it. In Iris that write lands on the side current
+     * before the flip, the scene. Chimera skipped flips of colortex0, so composite38 blended onto
+     * its other side, last frame's final image, and the VANILLA profile went white.
+     */
+    @Test
+    void aBlendAfterAFlipLandsOnTheSideCurrentBeforeIt(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        String header = "#version 120\nconst bool colortex0Clear = false;\nvarying vec2 texcoord;\n";
+        Files.writeString(shaders.resolve("composite21.fsh"), header + "uniform sampler2D colortex0;\n"
+                + "/* RENDERTARGETS: 15 */\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("composite38.fsh"), header + "uniform sampler2D colortex15;\n"
+                + "/* RENDERTARGETS: 0 */\nvoid main() {\n    gl_FragColor = texture2D(colortex15, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "flip.composite21.colortex0 = true\nblend.composite38 = ONE ONE ONE ZERO\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"composite21\",\"fragment\":\"composite21.fsh\"},"
+                        + "{\"name\":\"composite38\",\"fragment\":\"composite38.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        assertEquals(List.of(0), graph.step("composite21").flipsAfter());
+        assertTrue(graph.target(0).doubled() && !graph.target(0).requiresHistory(), String.valueOf(graph.target(0)));
+        assertTrue(PackPostTargets.flips(0, true), "a flip of colortex0 must flip it");
+
+        int[] active = new int[1];
+        int[] previous = new int[1];
+        for (int frame = 0; frame < 4; frame++) {
+            // The scene: the world's HDR image, adopted into colortex0's current side at the flip.
+            int scene = active[0];
+            PackPostTargets.flipSides(active, previous, 0, 2);
+            assertTrue(active[0] != scene, "frame " + frame + ": the flip must hand composite38 the other side");
+            int side = PackPostTargets.writeSide(false, true, active[0], previous[0], 2);
+            assertEquals(scene, side, "frame " + frame + ": the bloom must blend onto the scene");
+            previous[0] = active[0];
+            active[0] = side;
+        }
+    }
+
+    /**
      * Shrimple keeps its opaque and translucent deferred data apart by flipping a target only
      * geometry writes: flip.deferred12.colortex1 sends the translucent geometry to colortex1's other
      * side, and flip.composite_pre hands the composite passes the opaque side again. Iris's flip

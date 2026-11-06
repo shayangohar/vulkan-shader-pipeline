@@ -211,7 +211,7 @@ final class PackPostChain {
             pass.packPostTargets.requireFrameStarted();
             // Each Iris composite renderer starts with every target base-level sampled, and its group's pre-flips.
             pass.packPostTargets.resetMipmapSampling();
-            pass.packPostTargets.flipBeforeGroup(window);
+            pass.packPostTargets.flipBeforeGroup(commandBuffer, window);
             ChimeraMainPass.preparePackFullscreenState();
             boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {
