@@ -134,15 +134,17 @@ final class PackDescriptorContracts {
     /** A family layout: the host transform blocks, the pack's uniform block, then samplers. */
     private static PackDescriptorLayout familyLayout(PackProgramPlan plan, UniformRegistry.Stage stage,
                                                      UniformRegistry.ProgramInterface iface, int[] slots) {
+        // A hand's tessellation stages read the draw's matrices from the same host blocks.
         List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(List.of(
                 new PackDescriptorLayout.UniformBlock(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
-                        VK_SHADER_STAGE_VERTEX_BIT, 0, List.of(
+                        VK_SHADER_STAGE_VERTEX_BIT | tessellationStages(plan, "uniform DynamicTransforms"), 0, List.of(
                         new PackDescriptorLayout.Field("mat4", "ModelViewMat"),
                         new PackDescriptorLayout.Field("vec4", "ColorModulator"),
                         new PackDescriptorLayout.Field("float", "LineWidth"),
                         new PackDescriptorLayout.Field("mat4", "TextureMat"))),
                 new PackDescriptorLayout.UniformBlock(UniformRegistry.PROJECTION_BINDING,
-                        VK_SHADER_STAGE_VERTEX_BIT, 0, List.of(new PackDescriptorLayout.Field("mat4", "ProjMat")))));
+                        VK_SHADER_STAGE_VERTEX_BIT | tessellationStages(plan, "uniform Projection"), 0,
+                        List.of(new PackDescriptorLayout.Field("mat4", "ProjMat")))));
         boolean sky = stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD;
         if (!iface.executableUniforms().isEmpty()) {
             // Entity-family vertex, tessellation and geometry stages may
@@ -164,7 +166,17 @@ final class PackDescriptorContracts {
 
     /** {@code stage} when the converted {@code source} declares the family's pack uniform block; none otherwise. */
     private static int declaringStage(String source, int stage) {
-        return source != null && source.contains("layout(binding = 2) uniform ") ? stage : 0;
+        return declaring(source, "layout(binding = 2) uniform ", stage);
+    }
+
+    /** The tessellation stages whose converted source declares {@code block}. */
+    private static int tessellationStages(PackProgramPlan plan, String block) {
+        return declaring(plan.convertedTessControl(), block, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT)
+                | declaring(plan.convertedTessEvaluation(), block, VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT);
+    }
+
+    private static int declaring(String source, String declaration, int stage) {
+        return source != null && source.contains(declaration) ? stage : 0;
     }
 
     static ProgramImageBindingManifest legacyImageBindings(PackDescriptorLayout layout,

@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
  * evaluation stage's inputs, and the evaluation stage's outputs with the fragment stage's inputs,
  * each pair by name at one shared location. Both stages read the program's uniforms through the
  * block the other stages declare, bind their samplers as those do, and read the legacy matrices
- * as the vertex stage does (GlslVertexPreambles.terrainMatrixBuiltins), in GL's clip range: the
+ * as the vertex stage does (GlslVertexPreambles.terrainMatrixBuiltins, handMatrixBuiltins), in GL's clip range: the
  * vertex stage hands the control stage GL's clip position, as under Iris, and the evaluation
  * stage, the last before the rasterizer, converts the depth it emits once (WorldClipRange).
  *
@@ -28,7 +28,6 @@ final class TessellationStageBridge {
 
     /** The evaluation stage's input layout, {@code layout(triangles, ccw) in;}. */
     private static final Pattern INPUT_LAYOUT = Pattern.compile("\\blayout\\s*\\(([^)]*)\\)\\s*in\\s*;");
-    private static final Pattern TEXTURE_MATRIX = Pattern.compile("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]");
 
     /** The converted stages, and the locations of the evaluation stage's outputs, which the fragment stage reads. */
     record Conversion(String control, String evaluation, LegacyGlslConverter.TerrainVaryingLayout outputLayout) {}
@@ -72,13 +71,14 @@ final class TessellationStageBridge {
 
     /**
      * Converts both stages of a hand program (gbuffers_hand, gbuffers_hand_water), drawn by the
-     * entity vertex bridge. The hand's projection is the draw's own, which the host serves to the
-     * vertex stage alone, so neither stage may read a legacy matrix. The values that bridge adds
+     * entity vertex bridge. A stage reads the legacy matrices as the hand's vertex stage does, from
+     * the host's own blocks, the projection in GL's clip range (GlslVertexPreambles.handMatrixBuiltins):
+     * Shrimple's DISPLACE_TESSELATION projects in the evaluation stage. The values that bridge adds
      * to the vertex stage's outputs for the fragment stage (the entity identities and the
      * forwarded host values) pass on through both stages ({@link PassedOn}). A stage that reads the
      * pack's uniforms declares the entity family's block, as the vertex stage does.
      *
-     * @throws IllegalArgumentException as {@link #convertTerrain}, and when a stage reads a draw matrix
+     * @throws IllegalArgumentException as {@link #convertTerrain}, and when the domain is not triangles
      */
     static Conversion convertHand(String control, String evaluation,
                                   LegacyGlslConverter.TerrainVaryingLayout inputLayout, String fragment,
@@ -87,8 +87,6 @@ final class TessellationStageBridge {
         Stage controlStage = new Stage(normalized(control), GlslInterfaceScanner.Stage.TESS_CONTROL, controlPlan);
         Stage evaluationStage = new Stage(normalized(evaluation), GlslInterfaceScanner.Stage.TESS_EVALUATION,
                 evaluationPlan);
-        requireNoDrawMatrices(controlStage.source());
-        requireNoDrawMatrices(evaluationStage.source());
         Matcher domain = INPUT_LAYOUT.matcher(GlslLexer.stripComments(evaluationStage.source()));
         if (!domain.find() || !domain.group(1).matches("(?s).*\\btriangles\\b.*")) {
             throw new IllegalArgumentException("hand tessellation domain is not triangles");
@@ -99,7 +97,7 @@ final class TessellationStageBridge {
 
     private static Conversion convertStages(Stage controlStage, Stage evaluationStage,
                                             LegacyGlslConverter.TerrainVaryingLayout inputLayout, String fragment,
-                                            boolean allowStorageBuffers, PassedOn passedOn, boolean entityBlock) {
+                                            boolean allowStorageBuffers, PassedOn passedOn, boolean hand) {
         String viewBlock = GlslVertexPreambles.TERRAIN_VIEW_BLOCK;
         LegacyGlslConverter.TerrainVaryingLayout patchLayout = patchLayout(controlStage.source(), passedOn);
         String producer = producerView(evaluationStage.source());
@@ -109,24 +107,13 @@ final class TessellationStageBridge {
                 EntityVertexBridge.parseEntityVaryingDeclarations(producer, true).slots().values().stream()
                         .mapToInt(Integer::intValue).sum(), "");
         String convertedControl = WorldClipRange.GL.withHelpers(passedOn.control(
-                converted(controlStage, inputLayout, patchLayout, allowStorageBuffers), inputLayout, patchLayout));
+                converted(controlStage, inputLayout, patchLayout, allowStorageBuffers, hand), inputLayout,
+                patchLayout));
         String convertedEvaluation = WorldClipRange.GL.convert(swappedWinding(passedOn.evaluation(
-                converted(evaluationStage, patchLayout, outputLayout, allowStorageBuffers), patchLayout,
+                converted(evaluationStage, patchLayout, outputLayout, allowStorageBuffers, hand), patchLayout,
                 outputLayout)));
-        return new Conversion(header(convertedControl, controlStage.plan(), viewBlock, entityBlock),
-                header(convertedEvaluation, evaluationStage.plan(), viewBlock, entityBlock), outputLayout);
-    }
-
-    /** No legacy matrix of the draw, nor its texture matrix, which only the vertex stage is served. */
-    private static void requireNoDrawMatrices(String source) {
-        String stripped = GlslLexer.stripComments(source);
-        String matrix = GlslTokenRewriter.firstIdentifier(stripped,
-                GlslVertexPreambles.terrainMatrixBuiltins()::containsKey);
-        if (matrix == null && TEXTURE_MATRIX.matcher(stripped).find()) matrix = "gl_TextureMatrix[0]";
-        if (matrix != null) {
-            throw new IllegalArgumentException("hand tessellation stage reads a draw matrix only the vertex stage "
-                    + "is served: " + matrix);
-        }
+        return new Conversion(header(convertedControl, controlStage.plan(), viewBlock, hand),
+                header(convertedEvaluation, evaluationStage.plan(), viewBlock, hand), outputLayout);
     }
 
     /** One stage's normalized source, its kind and its projection of the program's interface. */
@@ -255,34 +242,50 @@ final class TessellationStageBridge {
         }
     }
 
-    /** The stage converted below its header: interface located, uniforms and samplers served, built-ins mapped. */
+    /**
+     * The stage converted below its header: interface located, uniforms and samplers served, built-ins
+     * mapped, a {@code hand} stage's matrices to its draw's own.
+     */
     private static String converted(Stage stage, LegacyGlslConverter.TerrainVaryingLayout inputs,
-                                     LegacyGlslConverter.TerrainVaryingLayout outputs, boolean allowStorageBuffers) {
+                                     LegacyGlslConverter.TerrainVaryingLayout outputs, boolean allowStorageBuffers,
+                                     boolean hand) {
         String converted = TerrainVertexBridge.withoutUnreachableFunctions(
                 LegacyGlslConverter.withoutVersionLines(stage.source()));
         converted = stage.plan() == null ? TerrainVertexBridge.stripShadowUniformDeclarations(converted)
                 : UniformRegistry.removeUniformDeclarations(converted, stage.plan());
         requireSupported(converted, allowStorageBuffers);
         converted = located(converted, stage.kind(), inputs, outputs);
-        converted = GlslTokenRewriter.replaceIdentifiers(converted,
-                WorldClipRange.GL.builtins(GlslVertexPreambles.terrainMatrixBuiltins()));
+        converted = GlslTokenRewriter.replaceIdentifiers(converted, hand ? GlslVertexPreambles.handMatrixBuiltins()
+                : WorldClipRange.GL.builtins(GlslVertexPreambles.terrainMatrixBuiltins()));
+        // Iris gives the hand the draw's texture matrix (iris_TextureMat), as its vertex stage reads it.
         converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted)
-                .replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", "mat4(1.0)");
+                .replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", hand ? "TextureMat" : "mat4(1.0)");
         converted = TerrainVertexBridge.rewriteModernTerrainSamplers(converted, stage.plan(), false);
         return LegacyGlslConverter.convertTextureCalls(converted);
     }
 
     /**
-     * The stage's version, render-stage defines, the host view block when it reads MVP, and the pack's
-     * uniforms: the terrain lanes' block, or the entity family's ({@code entityBlock}) when the stage reads one.
+     * The stage's version, render-stage defines, the host blocks it reads matrices from, and the pack's
+     * uniforms: the terrain lanes' view block and uniform block, or for a {@code hand} stage the host's
+     * transform and projection blocks and the entity family's block, each where the stage reads it.
      */
     private static String header(String converted, UniformRegistry.ProgramInterface plan, String viewBlock,
-                                 boolean entityBlock) {
-        String view = GlslTokenRewriter.containsIdentifier(converted, "MVP") ? viewBlock : "";
-        String uniforms = !entityBlock ? TerrainVertexBridge.modernUniformBlock(plan, false)
+                                 boolean hand) {
+        String host = hand ? handHostBlocks(converted)
+                : GlslTokenRewriter.containsIdentifier(converted, "MVP") ? viewBlock : "";
+        String uniforms = !hand ? TerrainVertexBridge.modernUniformBlock(plan, false)
                 : GlslVertexPreambles.entityCameraUniformBlock(converted, plan == null ? null
                 : plan.executableUniforms());
-        return "#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES + view + uniforms + converted;
+        return "#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES + host + uniforms + converted;
+    }
+
+    /** The host's transform and projection blocks a hand stage reads its draw's matrices from, each where read. */
+    private static String handHostBlocks(String converted) {
+        String blocks = GlslTokenRewriter.containsIdentifier(converted, "ModelViewMat")
+                || GlslTokenRewriter.containsIdentifier(converted, "TextureMat")
+                ? GlslVertexPreambles.DYNAMIC_TRANSFORMS_BLOCK : "";
+        return GlslTokenRewriter.containsIdentifier(converted, "chimeraHandProjection")
+                ? blocks + GlslVertexPreambles.PROJECTION_BLOCK + GlslVertexPreambles.HAND_PROJECTION : blocks;
     }
 
     /** A main, no storage buffer the plan did not admit, and no value uniform the plan left out. */

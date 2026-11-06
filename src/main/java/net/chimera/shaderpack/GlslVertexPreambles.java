@@ -78,6 +78,17 @@ final class GlslVertexPreambles {
                 "gl_ModelViewProjectionMatrix", "MVP");
     }
 
+    /**
+     * The legacy matrix built-ins of a hand stage after the vertex stage: the draw's own, as the hand's
+     * vertex stage reads them (EntityVertexBridge), the projection in GL's clip range.
+     */
+    static Map<String, String> handMatrixBuiltins() {
+        return Map.of("gl_ModelViewMatrix", "ModelViewMat",
+                "gl_NormalMatrix", normalMatrix("ModelViewMat"),
+                "gl_ProjectionMatrix", "chimeraHandProjection()",
+                "gl_ModelViewProjectionMatrix", "(chimeraHandProjection() * ModelViewMat)");
+    }
+
     static final String TERRAIN_VERTEX_PREAMBLE = TERRAIN_VIEW_BLOCK + """
 
             layout(push_constant) uniform Push {
@@ -332,17 +343,38 @@ final class GlslVertexPreambles {
 
             """;
 
+    /**
+     * The hand's projection in GL's clip range, from the host's Projection block: read by the hand's
+     * vertex stage, and by its tessellation stages when they project (Shrimple's DISPLACE_TESSELATION).
+     */
+    static final String HAND_PROJECTION = """
+            mat4 chimeraHandProjection() {
+                mat4 legacy = ProjMat;
+                legacy[0].z = 2.0 * ProjMat[0].z - ProjMat[0].w;
+                legacy[1].z = 2.0 * ProjMat[1].z - ProjMat[1].w;
+                legacy[2].z = 2.0 * ProjMat[2].z - ProjMat[2].w;
+                legacy[3].z = 2.0 * ProjMat[3].z - ProjMat[3].w;
+                return legacy;
+            }
+            """;
+
+    /** The host's transform blocks as the entity family's vertex stage declares them, for a stage after it. */
+    static final String DYNAMIC_TRANSFORMS_BLOCK = """
+            layout(binding = 0) uniform DynamicTransforms {
+                mat4 ModelViewMat;
+                vec4 ColorModulator;
+                float LineWidth;
+                mat4 TextureMat;
+            };
+            """;
+    static final String PROJECTION_BLOCK = """
+            layout(binding = 1) uniform Projection {
+                mat4 ProjMat;
+            };
+            """;
+
     static final String HAND_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("vec4 chimeraEntityVertexValue()", """
-                    mat4 chimeraHandProjection() {
-                        mat4 legacy = ProjMat;
-                        legacy[0].z = 2.0 * ProjMat[0].z - ProjMat[0].w;
-                        legacy[1].z = 2.0 * ProjMat[1].z - ProjMat[1].w;
-                        legacy[2].z = 2.0 * ProjMat[2].z - ProjMat[2].w;
-                        legacy[3].z = 2.0 * ProjMat[3].z - ProjMat[3].w;
-                        return legacy;
-                    }
-                    vec4 chimeraEntityVertexValue()""")
+            .replace("vec4 chimeraEntityVertexValue()", HAND_PROJECTION + "vec4 chimeraEntityVertexValue()")
             .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat");
 
     /** Iris VanillaTransformer supplies +Z for a host format without a normal. */
@@ -434,16 +466,7 @@ final class GlslVertexPreambles {
 
     /** The glint layout under the hand's legacy projection, as {@link #HAND_VERTEX_PREAMBLE}. */
     static final String GLINT_HAND_VERTEX_PREAMBLE = GLINT_VERTEX_PREAMBLE
-            .replace("vec4 chimeraEntityVertexValue()", """
-                    mat4 chimeraHandProjection() {
-                        mat4 legacy = ProjMat;
-                        legacy[0].z = 2.0 * ProjMat[0].z - ProjMat[0].w;
-                        legacy[1].z = 2.0 * ProjMat[1].z - ProjMat[1].w;
-                        legacy[2].z = 2.0 * ProjMat[2].z - ProjMat[2].w;
-                        legacy[3].z = 2.0 * ProjMat[3].z - ProjMat[3].w;
-                        return legacy;
-                    }
-                    vec4 chimeraEntityVertexValue()""")
+            .replace("vec4 chimeraEntityVertexValue()", HAND_PROJECTION + "vec4 chimeraEntityVertexValue()")
             .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat");
 
     /**

@@ -12,7 +12,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -170,23 +169,28 @@ final class TessellationStageBridgeTest {
     }
 
     /**
-     * The host serves the hand's projection to its vertex stage alone, so a hand stage that reads a
-     * legacy matrix (Shrimple's DISPLACE_TESSELATION) falls back, where a terrain stage reads the host's.
+     * Shrimple's DISPLACE_TESSELATION projects the hand in its evaluation stage, which reads the
+     * draw's own projection in GL's clip range from the host's Projection block, as the hand's vertex
+     * stage does; a terrain stage reads the view block's MVP. Such a hand fell back before.
      */
     @Test
-    void aHandStageReadingADrawMatrixIsRefused() {
+    void aHandEvaluationStageProjectsWithTheHandsOwnProjection() {
         LegacyGlslConverter.TerrainVaryingLayout vertex = new LegacyGlslConverter.TerrainVaryingLayout(
                 Map.of("VertexData_blockId", "int", "VertexData_uv", "vec2"),
                 Map.of("VertexData_blockId", 0, "VertexData_uv", 1));
-        IllegalArgumentException refused = assertThrows(
-                IllegalArgumentException.class, () -> TessellationStageBridge.convert(true, CONTROL, EVALUATION,
-                        vertex, FRAGMENT, null, null, false));
-        assertTrue(refused.getMessage().contains("gl_ProjectionMatrix"), refused.getMessage());
+        String evaluation = TessellationStageBridge.convert(true, CONTROL, EVALUATION, vertex, FRAGMENT, null,
+                null, false).evaluation();
+        assertTrue(evaluation.contains("gl_Position = chimeraHandProjection() * view;")
+                && evaluation.contains("layout(binding = 1) uniform Projection")
+                && evaluation.contains("mat4 chimeraHandProjection()")
+                && !evaluation.contains("ViewUBO") && !evaluation.contains("DynamicTransforms"), evaluation);
+        assertNull(PackCompileTest.compileBetween(evaluation, "tess_evaluation"), evaluation);
     }
 
     /**
-     * A tessellated hand in a pack: admitted, its evaluation stage declaring the entity family's
-     * uniform block where it reads a uniform, and the whole descriptor set matching every stage as
+     * A tessellated hand in a pack, projected in its evaluation stage as Shrimple's DISPLACE_TESSELATION
+     * does: admitted, its evaluation stage declaring the entity family's uniform block where it reads a
+     * uniform and the host's Projection block, and the whole descriptor set matching every stage as
      * the runtime checks it (PackPipelines.prepareLayout). Declaring the terrain lanes' block there
      * stopped the game at launch (DESCRIPTOR_LAYOUT_MISMATCH:ChimeraTerrainPackUniforms).
      */
@@ -199,7 +203,7 @@ final class TessellationStageBridgeTest {
                 out vec2 uv;
                 void main() {
                     uv = gl_MultiTexCoord0.xy;
-                    gl_Position = gl_ProjectionMatrix * (gl_ModelViewMatrix * gl_Vertex);
+                    gl_Position = gl_ModelViewMatrix * gl_Vertex;
                 }
                 """);
         Files.writeString(shaders.resolve("gbuffers_hand.tcs"), """
@@ -221,8 +225,8 @@ final class TessellationStageBridgeTest {
                 in vec2 uvTc[];
                 out vec2 uvTe;
                 void main() {
-                    gl_Position = gl_TessCoord.x * gl_in[0].gl_Position + gl_TessCoord.y * gl_in[1].gl_Position
-                            + gl_TessCoord.z * gl_in[2].gl_Position;
+                    gl_Position = gl_ProjectionMatrix * (gl_TessCoord.x * gl_in[0].gl_Position
+                            + gl_TessCoord.y * gl_in[1].gl_Position + gl_TessCoord.z * gl_in[2].gl_Position);
                     uvTe = gl_TessCoord.x * uvTc[0] + gl_TessCoord.y * uvTc[1] + gl_TessCoord.z * uvTc[2]
                             + vec2(0.0, frameTimeCounter * 0.0);
                 }
@@ -241,6 +245,7 @@ final class TessellationStageBridgeTest {
         PackProgramPlan hand = analysis.plan().program("gbuffers_hand");
         assertTrue(hand.executable(), hand.deviations().toString());
         assertTrue(hand.convertedTessEvaluation().contains("layout(binding = 2) uniform ChimeraEntityUniforms")
+                && hand.convertedTessEvaluation().contains("layout(binding = 1) uniform Projection")
                 && hand.convertedTessEvaluation().contains("chimeraRenderedItemId = chimeraRenderedItemIdTC[0];")
                 && !hand.convertedTessControl().contains("ChimeraTerrainPackUniforms"), hand.convertedTessEvaluation());
         PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(hand, analysis.plan().advancedResources(),
