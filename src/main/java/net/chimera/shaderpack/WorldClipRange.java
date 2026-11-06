@@ -95,10 +95,17 @@ enum WorldClipRange {
         return laterStageConverts ? GL : of(stripped);
     }
 
-    /** A converted vertex stage with its clip depth converted, unless a later stage converts it. */
+    /**
+     * A converted vertex stage with its clip depth converted, unless a later stage converts it. A
+     * stage ahead of another that writes no position (Shrimple's Nether and End shadow.vsh, whose
+     * shadow.gsh only voxelizes) writes a zero one: GL leaves the next stage's gl_in position
+     * undefined, and Vulkan pairs that stage's input with a written output.
+     */
     String vertexBody(String converted, boolean shadowStage, boolean laterStageConverts) {
-        if (shadowStage) return ShadowStageBuiltins.vertexClipRange(converted, laterStageConverts);
-        return laterStageConverts ? withHelpers(converted) : convert(converted);
+        String body = laterStageConverts && !GlslTokenRewriter.containsIdentifier(converted, "gl_Position")
+                ? LegacyGlslConverter.injectMainPrologue(converted, "gl_Position = vec4(0.0);") : converted;
+        if (shadowStage) return ShadowStageBuiltins.vertexClipRange(body, laterStageConverts);
+        return laterStageConverts ? withHelpers(body) : convert(body);
     }
 
     /** Whether {@code converted} is a stage {@link #convert} took into GL's range. */

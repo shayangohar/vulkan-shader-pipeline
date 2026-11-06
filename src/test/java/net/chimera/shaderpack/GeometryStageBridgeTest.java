@@ -1,7 +1,11 @@
 package net.chimera.shaderpack;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -208,5 +212,34 @@ final class GeometryStageBridgeTest {
         IllegalArgumentException failure = assertThrows(IllegalArgumentException.class,
                 () -> GeometryStageBridge.convertShadow(GEOMETRY, vertex, fragment, null, false, false));
         assertTrue(failure.getMessage().contains("vert_survived"), failure.getMessage());
+    }
+
+    /**
+     * Shrimple's Nether and End shadow pass only voxelizes: shadow.vsh writes no gl_Position there,
+     * and shadow.gsh emits nothing. GL runs a vertex stage that leaves the position to the stage after
+     * it, as Iris does; Chimera refused the program ("modern terrain vertex main or position is
+     * missing"). The vertex stage now writes a zero position for the geometry stage's gl_in.
+     */
+    @Test
+    void aShadowVertexStageMayLeaveThePositionToItsGeometryStage(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 430 compatibility
+                out vec2 vert_texcoord;
+                void main() { vert_texcoord = gl_MultiTexCoord0.xy; }
+                """);
+        Files.writeString(shaders.resolve("shadow.gsh"), GEOMETRY.replace("in uint vert_survived[3];\n", "")
+                .replace("in vec3 vert_unused[];\n", "")
+                .replace("bool(vert_survived[0] & vert_survived[1] & vert_survived[2])", "vert_texcoord[0].x > 2.0")
+                .replace("frag_material = vert_survived[i];", "frag_material = 0u;"));
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 430 compatibility
+                in vec2 frag_texcoord;
+                flat in uint frag_material;
+                void main() { gl_FragData[0] = vec4(frag_texcoord, float(frag_material), 1.0); }
+                """);
+        PackProgramPlan shadow = PackProbe.analyze(root).plan().program("shadow");
+        assertTrue(shadow.executable(), shadow.deviations().toString());
+        assertTrue(shadow.convertedVertex().contains("gl_Position = vec4(0.0);"), shadow.convertedVertex());
     }
 }

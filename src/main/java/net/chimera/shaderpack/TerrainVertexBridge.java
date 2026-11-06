@@ -192,7 +192,7 @@ final class TerrainVertexBridge {
         if (entityInputs) {
             vertex = EntityDeclarations.removeEntityIdDeclarations(vertex, interfacePlan);
         }
-        requireSupportedModernVertex(stripComments(vertex), allowStorageBuffers);
+        requireSupportedModernVertex(stripComments(vertex), allowStorageBuffers, laterStageConverts);
         LegacyGlslConverter.TerrainVaryingLayout layout = modernVaryingLayout(vertex, fragment, entityIdTypes);
 
         // The prepared source keeps one version directive so the shared
@@ -285,10 +285,16 @@ final class TerrainVertexBridge {
         return FragmentConverter.qualifyShadowUniformReferences(source, interfacePlan.executableUniforms());
     }
 
-    /** The strict modern subset: a main that writes gl_Position, and no unsupported resource or stage. */
-    private static void requireSupportedModernVertex(String stripped, boolean allowStorageBuffers) {
+    /**
+     * The strict modern subset: a main that writes gl_Position, unless a later stage takes the position
+     * ({@code laterStageConverts}: GL and Iris run a vertex stage that writes none ahead of a geometry
+     * stage), and no unsupported resource or stage.
+     */
+    private static void requireSupportedModernVertex(String stripped, boolean allowStorageBuffers,
+                                                     boolean laterStageConverts) {
         GlslTree tree = GlslTree.parse(stripped);
-        if (GlslDeclarations.main(tree) == null || !GlslTokenRewriter.containsIdentifier(stripped, "gl_Position")) {
+        if (GlslDeclarations.main(tree) == null
+                || !laterStageConverts && !GlslTokenRewriter.containsIdentifier(stripped, "gl_Position")) {
             throw new IllegalArgumentException("modern terrain vertex main or position is missing");
         }
         if (!allowStorageBuffers && GlslTokenRewriter.containsIdentifier(stripped, "buffer")) {
