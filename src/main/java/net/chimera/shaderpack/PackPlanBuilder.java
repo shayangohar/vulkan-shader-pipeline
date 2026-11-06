@@ -497,12 +497,13 @@ public final class PackPlanBuilder {
 
         /**
          * Whether the program's stages between vertex and fragment run: a geometry stage alone, on
-         * every shadow lane, and on the terrain or water lane after a modern vertex stage (Spring's
-         * gbuffers_terrain). The hands' geometry stages stay refused (TASK-648).
+         * every shadow lane, on the hand lanes, and on the terrain or water lane after a modern
+         * vertex stage (Spring's gbuffers_terrain and gbuffers_hand).
          */
         private boolean geometryStageRuns() {
             return geometry != null && geometryStages.equals(List.of("geometry"))
-                    && (FamilyAdapterRegistry.isShadowFamily(name) || modernWorldTerrain());
+                    && (FamilyAdapterRegistry.isShadowFamily(name) || FamilyAdapterRegistry.isHandFamily(name)
+                    || modernWorldTerrain());
         }
 
         /**
@@ -552,6 +553,9 @@ public final class PackPlanBuilder {
                 GeometryStageBridge.Conversion conversion = FamilyAdapterRegistry.isShadowFamily(name)
                         ? GeometryStageBridge.convertShadow(geometry, vertexLayout, fragment, geometryPlan,
                                 allowStorageBuffers, !FamilyAdapterRegistry.isShadowTerrain(name))
+                        : FamilyAdapterRegistry.isHandFamily(name)
+                        ? GeometryStageBridge.convertHand(geometry, vertexLayout, fragment, geometryPlan,
+                                allowStorageBuffers)
                         : GeometryStageBridge.convertTerrain(geometry, vertexLayout, fragment, geometryPlan,
                                 allowStorageBuffers);
                 convertedGeometry = conversion.source();
@@ -777,8 +781,8 @@ public final class PackPlanBuilder {
                         stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                         : FamilyAdapterRegistry.isHandFamily(name)
                         ? EntityVertexBridge.convertHandVertexChecked(vertex, vertexFile(),
-                        new EntityVertexBridge.Consumer(vertexConsumer(), tessellationRuns()), fragment,
-                        stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
+                        new EntityVertexBridge.Consumer(vertexConsumer(), tessellationRuns() || geometryStageRuns()),
+                        fragment, stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                         : EntityVertexBridge.convertEntityVertexChecked(vertex, vertexFile(), fragment,
                         stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers);
             } catch (IllegalArgumentException failure) {

@@ -287,16 +287,17 @@ public final class EntityVertexBridge {
     }
 
     /**
-     * The stage the vertex stage's outputs feed: the fragment stage, or the tessellation control
-     * stage as TessellationStageBridge.consumerView declares it. After that the evaluation stage
-     * converts the clip depth ({@code laterStageConverts}).
+     * The stage the vertex stage's outputs feed: the fragment stage, the tessellation control
+     * stage as TessellationStageBridge.consumerView declares it, or a geometry stage as
+     * GeometryStageBridge.consumerView declares it. After either, a later stage converts the clip
+     * depth ({@code laterStageConverts}).
      */
     record Consumer(String source, boolean laterStageConverts) {}
 
     /**
      * Hand vertex conversion feeding {@code consumer}, adding what {@code fragmentSource} reads. A
-     * hand ahead of its tessellation stages keeps its position in GL's clip range: the control
-     * stage reads it as under Iris, and the evaluation stage converts its depth.
+     * hand ahead of its tessellation or geometry stage keeps its position in GL's clip range: the
+     * next stage reads it as under Iris, and the last before the rasterizer converts its depth.
      */
     public static LegacyGlslConverter.TerrainVertexConversion convertHandVertexChecked(
             String source, Path sourceFile, Consumer consumer, String fragmentSource,

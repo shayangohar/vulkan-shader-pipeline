@@ -158,9 +158,10 @@ final class TessellationStageBridge {
      * each with its type and qualifier, which a hand's tessellation stages pass on. The control
      * stage copies each per vertex. The evaluation stage writes a smooth float as the pack's own
      * values are, at the evaluated point. It writes any other value as the patch's first vertex's,
-     * as Iris reads iris_entityInfo[0].
+     * as Iris reads iris_entityInfo[0]. A hand's geometry stage passes the same values on
+     * (GeometryStageBridge.convertHand).
      */
-    private record PassedOn(Map<String, String> types, Map<String, String> qualifiers) {
+    record PassedOn(Map<String, String> types, Map<String, String> qualifiers) {
         static final PassedOn NONE = new PassedOn(Map.of(), Map.of());
         /** The suffix of a value's per-vertex copy; the evaluation stage writes the vertex stage's name. */
         static final String PATCH_SUFFIX = "TC";
@@ -279,8 +280,11 @@ final class TessellationStageBridge {
         return "#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES + host + uniforms + converted;
     }
 
-    /** The host's transform and projection blocks a hand stage reads its draw's matrices from, each where read. */
-    private static String handHostBlocks(String converted) {
+    /**
+     * The host's transform and projection blocks a hand stage reads its draw's matrices from, each where read; a
+     * hand's geometry stage declares them alike (GeometryStageBridge.convertHand).
+     */
+    static String handHostBlocks(String converted) {
         String blocks = GlslTokenRewriter.containsIdentifier(converted, "ModelViewMat")
                 || GlslTokenRewriter.containsIdentifier(converted, "TextureMat")
                 ? GlslVertexPreambles.DYNAMIC_TRANSFORMS_BLOCK : "";

@@ -319,4 +319,75 @@ final class GeometryStageBridgeTest {
                 prepared.between().geometry());
         assertNull(PackCompileTest.compile(prepared.fragment(), false), prepared.fragment());
     }
+
+    /**
+     * Spring's gbuffers_hand runs the same kind of pass-through geometry stage, after the entity
+     * vertex bridge; Chimera refused it and drew the held item with the fixed shader. The values
+     * that bridge adds for the fragment stage (here the held item's id) pass on from each
+     * primitive's first vertex, as Iris passes iris_entityInfo[0]. A stage that reads the draw's
+     * matrices declares the host's blocks, and the layout serves them there.
+     */
+    @Test
+    void aHandGeometryStageRuns(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_hand.vsh"), """
+                #version 450 compatibility
+                out vec2 v_texcoord;
+                out vec4 v_viewPos;
+                out mat3 v_tbnMatrix;
+                void main() {
+                    v_texcoord = (gl_TextureMatrix[0] * gl_MultiTexCoord0).xy;
+                    v_viewPos = gl_ModelViewMatrix * gl_Vertex;
+                    v_tbnMatrix = mat3(gl_NormalMatrix);
+                    gl_Position = ftransform();
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_hand.gsh"), """
+                #version 450 compatibility
+                layout(triangles) in;
+                layout(triangle_strip, max_vertices = 3) out;
+                uniform float frameTimeCounter;
+                in vec2 v_texcoord[];
+                in vec4 v_viewPos[];
+                in mat3 v_tbnMatrix[];
+                out vec2 texcoord;
+                out mat3 tbnMatrix;
+                void main() {
+                    for (int i = 0; i < 3; ++i) {
+                        texcoord = v_texcoord[i] + vec2(frameTimeCounter * 0.0);
+                        tbnMatrix = v_tbnMatrix[i];
+                        gl_Position = i == 3 ? gl_ProjectionMatrix * v_viewPos[i] : gl_in[i].gl_Position;
+                        EmitVertex();
+                    }
+                    EndPrimitive();
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_hand.fsh"), """
+                #version 450 compatibility
+                uniform sampler2D texture;
+                uniform float frameTimeCounter;
+                uniform int currentRenderedItemId;
+                in vec2 texcoord;
+                in mat3 tbnMatrix;
+                void main() {
+                    gl_FragData[0] = texture2D(texture, texcoord) * float(currentRenderedItemId)
+                            * tbnMatrix[0].x * frameTimeCounter;
+                }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackProgramPlan hand = analysis.plan().program("gbuffers_hand");
+        assertTrue(hand.executable(), hand.deviations().toString());
+        String geometry = hand.convertedGeometry();
+        assertTrue(geometry.contains("chimeraRenderedItemIdGS = chimeraRenderedItemId[0];")
+                && geometry.contains("uniform Projection") && geometry.contains("chimeraHandProjection()")
+                && geometry.contains("layout(binding = 2) uniform ChimeraEntityUniforms")
+                && geometry.contains("gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n"), geometry);
+        PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(hand, analysis.plan().advancedResources(),
+                UniformRegistry.Stage.HAND, PackFamilyPipelines.familyVertex(hand));
+        PackPipelines.prepareLayout(prepared, hand.name(), analysis.plan().advancedResources());
+        assertNull(PackCompileTest.compile(prepared.vertex(), true), prepared.vertex());
+        assertNull(PackCompileTest.compileBetween(prepared.between().geometry(), "geometry"),
+                prepared.between().geometry());
+        assertNull(PackCompileTest.compile(prepared.fragment(), false), prepared.fragment());
+    }
 }
