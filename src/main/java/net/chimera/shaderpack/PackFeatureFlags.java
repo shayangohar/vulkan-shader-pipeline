@@ -29,9 +29,10 @@ public final class PackFeatureFlags {
     static final Set<String> PROVIDED = Set.of("PER_BUFFER_BLENDING", "COMPUTE_SHADERS", "ENTITY_TRANSLUCENT",
             "REVERSED_CULLING", "BLOCK_EMISSION_ATTRIBUTE", "SSBO", HIGHER_SHADOWCOLOR, SEPARATE_HARDWARE_SAMPLERS);
     /**
-     * Custom images run only where Chimera can produce them, so this flag is offered per pack once
-     * that is known ({@link PackEngineDefines#forCustomImages}) rather than promised up front. A pack
-     * that requires it still loads; the programs that need images fall back.
+     * Custom images run only where Chimera can produce them, so program sources see this flag per
+     * pack once that is known ({@link PackEngineDefines#forCustomImages}). shaders.properties always
+     * sees it, as under Iris, so the pack declares its images. A pack that requires it still loads;
+     * the programs that need images fall back.
      */
     static final String CUSTOM_IMAGES = "CUSTOM_IMAGES";
     private static final String PREFIX = "IRIS_FEATURE_";
@@ -42,10 +43,16 @@ public final class PackFeatureFlags {
     private static Map<String, String> propertyMacroTable() {
         Map<String, String> macros = new TreeMap<>();
         PROVIDED.forEach(flag -> macros.put(PREFIX + flag, "1"));
+        macros.put(PREFIX + CUSTOM_IMAGES, "1");
         return Collections.unmodifiableMap(macros);
     }
 
-    /** The feature macros shaders.properties is read with. */
+    /**
+     * The feature macros shaders.properties is read with. Iris defines every usable flag there,
+     * listed by the pack or not (ShaderPack: FeatureFlags.isUsable), custom images included: a pack
+     * declares its image.* entries under {@code IRIS_FEATURE_CUSTOM_IMAGES}, as Ebin does for its
+     * flood-fill light volume, and the programs that then lack an image fall back one by one.
+     */
     static Map<String, String> propertyMacros() {
         return PROPERTY_MACROS;
     }
