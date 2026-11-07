@@ -1,6 +1,7 @@
 package net.chimera.render.shader;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.MeshData;
 import net.chimera.render.shader.ChimeraEntityBridge.Family;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.minecraft.client.renderer.RenderType;
@@ -79,6 +80,20 @@ public final class FamilyRenderType extends RenderType {
     public void clearRenderState() {
         if (ChimeraEntityBridge.isDrawActive()) ChimeraEntityBridge.endDraw();
         super.clearRenderState();
+    }
+
+    /**
+     * RenderType.draw has no finally: a draw that throws between setup and clear would leave the
+     * family draw open, so every later ShaderInstance draw got this family's pipeline. The shadow
+     * pass catches its casters' failures and carries on, so the draw closes here whatever happens.
+     */
+    @Override
+    public void draw(MeshData mesh) {
+        try {
+            super.draw(mesh);
+        } finally {
+            if (ChimeraEntityBridge.isDrawActive()) ChimeraEntityBridge.endDraw();
+        }
     }
 
     @Override

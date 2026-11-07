@@ -355,10 +355,16 @@ public final class ChimeraEntityBridge {
 
     /** Opens the world window at LevelRenderer.renderLevel's head; world buffers route families inside it. */
     public static void beginWorldWindow() {
+        // RenderType.draw has no finally: a draw or bolt draw that threw must not carry into the frame.
+        closeOpenDraw();
         worldWindow = enabled;
         contextDepth = 0;
-        // RenderType.draw has no finally: a bolt draw that threw must not mark later lane draws.
         lightningBoltDraw = false;
+    }
+
+    /** Ends a family draw a failed RenderType.draw left open, restoring the textures it saved. */
+    static void closeOpenDraw() {
+        if (drawActive) endDraw();
     }
 
     public static void endWorldWindow() {
@@ -395,6 +401,7 @@ public final class ChimeraEntityBridge {
     }
 
     public static void endShadowCasters() {
+        closeOpenDraw();
         shadowCasterPass = false;
     }
 
