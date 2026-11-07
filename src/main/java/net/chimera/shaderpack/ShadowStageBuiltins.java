@@ -34,7 +34,7 @@ final class ShadowStageBuiltins {
     /**
      * Converts the clip depth of every vertex a geometry stage emits, just before the emit, once
      * the stage has written its final position; a terrain program's geometry stage, which reads GL's
-     * clip position too, converts its own the same way (GeometryStageBridge.convertTerrain). The
+     * clip position too, converts its own the same way (GeometryStageBridge.convertWorld). The
      * {@code passOn} statements, which write the outputs the stage passes on for the vertex stage,
      * run there too.
      *

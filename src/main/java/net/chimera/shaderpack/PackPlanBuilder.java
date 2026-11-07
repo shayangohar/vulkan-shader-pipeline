@@ -553,11 +553,8 @@ public final class PackPlanBuilder {
                 GeometryStageBridge.Conversion conversion = FamilyAdapterRegistry.isShadowFamily(name)
                         ? GeometryStageBridge.convertShadow(geometry, vertexLayout, fragment, geometryPlan,
                                 allowStorageBuffers, !FamilyAdapterRegistry.isShadowTerrain(name))
-                        : FamilyAdapterRegistry.isHandFamily(name)
-                        ? GeometryStageBridge.convertHand(geometry, vertexLayout, fragment, geometryPlan,
-                                allowStorageBuffers)
-                        : GeometryStageBridge.convertTerrain(geometry, vertexLayout, fragment, geometryPlan,
-                                allowStorageBuffers);
+                        : GeometryStageBridge.convertWorld(geometry, vertexLayout, fragment, geometryPlan,
+                                allowStorageBuffers, FamilyAdapterRegistry.isHandFamily(name));
                 convertedGeometry = conversion.source();
                 geometryLayout = conversion.outputLayout();
             } catch (RuntimeException failure) {

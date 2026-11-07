@@ -77,7 +77,7 @@ final class PackDescriptorContracts {
      * The stages between the vertex and fragment stages that every host block of a pipeline JSON
      * layout reaches: a tessellated program's evaluation stage reads the host's view block
      * (TessellationStageBridge), and so does a terrain geometry stage that declares it
-     * (GeometryStageBridge.convertTerrain).
+     * (GeometryStageBridge.convertWorld).
      */
     private static int hostBlockStages(PackProgramPlan plan) {
         return (plan.betweenStages().tessellated() ? TESSELLATION_STAGES : 0)

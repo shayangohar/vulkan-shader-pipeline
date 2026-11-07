@@ -1,5 +1,7 @@
 package net.chimera.shaderpack;
 
+import net.chimera.shaderpack.WorldBetweenStages.PassedOn;
+
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -8,12 +10,14 @@ import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static net.chimera.shaderpack.WorldBetweenStages.arraySuffix;
+import static net.chimera.shaderpack.WorldBetweenStages.qualified;
+
 /**
  * A pack program's geometry stage (.gsh), which Iris runs between the vertex and fragment stages.
  * Its per-vertex inputs pair with the vertex stage's outputs and its outputs with the fragment
  * stage's inputs, each pair by name at one shared location (GlslInterfaceScanner.Stage.GEOMETRY).
- * A terrain or water program's stage is converted as {@link #convertTerrain} says, a hand's as
- * {@link #convertHand} says; on a shadow lane
+ * A terrain, water or hand program's stage is converted as {@link #convertWorld} says; on a shadow lane
  * the stage reads the program's uniforms through the shadow block the other stages declare, binds
  * its samplers as they do, and converts GL's clip depth for each vertex it emits, as the vertex
  * stage does when nothing follows it (ShadowStageBuiltins). On a lane drawn with the draw's own
@@ -108,100 +112,38 @@ final class GeometryStageBridge {
     }
 
     /**
-     * Converts a terrain or water program's geometry stage (Spring's gbuffers_terrain, which
-     * passes each triangle through with its texture resolution). {@code inputLayout} holds the
-     * vertex stage's output locations; the fragment stage's inputs decide the output layout. The
-     * vertex stage hands it GL's clip position, as under Iris, and the stage reads the legacy
-     * matrices as a tessellation stage does, in GL's range (TessellationStageBridge); it converts
-     * the clip depth of each vertex it emits. A stage that reads the host's matrices declares the
-     * terrain view block the vertex stage reads them from.
+     * Converts a terrain, water or hand program's geometry stage (Spring's gbuffers_terrain and
+     * gbuffers_hand, which pass each triangle through). {@code inputLayout} holds the vertex stage's
+     * output locations; the fragment stage's inputs decide the output layout. The vertex stage hands
+     * it GL's clip position, as under Iris, and the stage reads the legacy matrices, its samplers and
+     * the pack's uniforms as the program's tessellation stages do (WorldBetweenStages): a terrain
+     * stage the host's matrices in GL's clip range, a {@code hand} stage its draw's own and the entity
+     * family's block. It converts the clip depth of each vertex it emits. A hand's stage passes on the
+     * values the entity vertex bridge adds for the fragment stage (WorldBetweenStages.PassedOn), each
+     * from the primitive's first vertex, as Iris's EntityPatcher passes iris_entityInfo[0] through.
      *
      * @throws IllegalArgumentException as {@link #convertShadow}, but for the draw matrices
      */
-    static Conversion convertTerrain(String geometry, LegacyGlslConverter.TerrainVaryingLayout inputLayout,
-                                     String fragment, UniformRegistry.ProgramInterface interfacePlan,
-                                     boolean allowStorageBuffers) {
+    static Conversion convertWorld(String geometry, LegacyGlslConverter.TerrainVaryingLayout inputLayout,
+                                   String fragment, UniformRegistry.ProgramInterface interfacePlan,
+                                   boolean allowStorageBuffers, boolean hand) {
         String source = LegacyGlslConverter.expandModernVaryingLists(TerrainVertexBridge.normalizeModernTerrain(
                 geometry));
-        LegacyGlslConverter.TerrainVaryingLayout outputLayout = TerrainVertexBridge.modernVaryingLayout(
-                producerView(source), LegacyGlslConverter.expandModernVaryingLists(
-                        TerrainVertexBridge.normalizedFragment(fragment, false)), Map.of());
+        PassedOn passedOn = hand ? PassedOn.of(inputLayout) : PassedOn.NONE;
+        LegacyGlslConverter.TerrainVaryingLayout outputLayout = passedOn.outputLayout(producerView(source), fragment);
         String converted = TerrainVertexBridge.withoutUnreachableFunctions(
                 LegacyGlslConverter.withoutVersionLines(source));
         converted = interfacePlan == null ? TerrainVertexBridge.stripShadowUniformDeclarations(converted)
                 : UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
         requireSupported(converted, allowStorageBuffers);
         converted = located(converted, inputLayout, outputLayout);
-        converted = GlslTokenRewriter.replaceIdentifiers(converted,
-                WorldClipRange.GL.builtins(GlslVertexPreambles.terrainMatrixBuiltins()));
-        converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted)
-                .replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", "mat4(1.0)");
-        converted = TerrainVertexBridge.rewriteModernTerrainSamplers(converted, interfacePlan, false);
-        converted = LegacyGlslConverter.convertTextureCalls(converted);
-        converted = ShadowStageBuiltins.emitClipRange(converted, List.of());
+        converted = WorldBetweenStages.builtins(converted, interfacePlan, hand);
+        converted = ShadowStageBuiltins.emitClipRange(converted, passedOn.geometryStatements(PASSED_ON_SUFFIX));
         if (GlslTokenRewriter.containsIdentifier(converted, "chimeraGlClip")) {
             converted = WorldClipRange.GL.withHelpers(converted);
         }
-        String host = GlslTokenRewriter.containsIdentifier(converted, "MVP") ? GlslVertexPreambles.TERRAIN_VIEW_BLOCK
-                : "";
-        return new Conversion("#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES + host
-                + TerrainVertexBridge.modernUniformBlock(interfacePlan, false) + converted, outputLayout);
-    }
-
-    /**
-     * Converts a hand program's geometry stage (Spring's gbuffers_hand, which passes each triangle
-     * through), after the entity vertex bridge. The stage reads the legacy matrices as the hand's
-     * vertex stage does, from the host's own blocks, the projection in GL's clip range
-     * (GlslVertexPreambles.handMatrixBuiltins), and the pack's uniforms through the entity family's
-     * block. The values that bridge adds to the vertex stage's outputs for the fragment stage
-     * (TessellationStageBridge.PassedOn) pass on from each primitive's first vertex, as Iris's
-     * EntityPatcher passes iris_entityInfo[0] through. The vertex stage leaves GL's clip depth, and
-     * the stage converts that of each vertex it emits.
-     *
-     * @throws IllegalArgumentException as {@link #convertTerrain}
-     */
-    static Conversion convertHand(String geometry, LegacyGlslConverter.TerrainVaryingLayout inputLayout,
-                                  String fragment, UniformRegistry.ProgramInterface interfacePlan,
-                                  boolean allowStorageBuffers) {
-        String source = LegacyGlslConverter.expandModernVaryingLists(TerrainVertexBridge.normalizeModernTerrain(
-                geometry));
-        TessellationStageBridge.PassedOn passedOn = TessellationStageBridge.PassedOn.of(inputLayout);
-        String producer = producerView(source);
-        LegacyGlslConverter.TerrainVaryingLayout outputLayout = passedOn.appendedTo(
-                TerrainVertexBridge.modernVaryingLayout(producer, LegacyGlslConverter.expandModernVaryingLists(
-                        TerrainVertexBridge.normalizedFragment(fragment, false)), Map.of()),
-                EntityVertexBridge.parseEntityVaryingDeclarations(producer, true).slots().values().stream()
-                        .mapToInt(Integer::intValue).sum(), "");
-        String converted = TerrainVertexBridge.withoutUnreachableFunctions(
-                LegacyGlslConverter.withoutVersionLines(source));
-        converted = interfacePlan == null ? TerrainVertexBridge.stripShadowUniformDeclarations(converted)
-                : UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
-        requireSupported(converted, allowStorageBuffers);
-        converted = located(converted, inputLayout, outputLayout);
-        converted = GlslTokenRewriter.replaceIdentifiers(converted, GlslVertexPreambles.handMatrixBuiltins());
-        // Iris gives the hand the draw's texture matrix (iris_TextureMat), as its vertex stage reads it.
-        converted = LegacyGlslConverter.replaceLightmapTextureMatrices(converted)
-                .replaceAll("\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", "TextureMat");
-        converted = TerrainVertexBridge.rewriteModernTerrainSamplers(converted, interfacePlan, false);
-        converted = LegacyGlslConverter.convertTextureCalls(converted);
-        Collection<String> names = passedOn.types().keySet();
-        converted = ShadowStageBuiltins.emitClipRange(converted, names.stream()
-                .map(name -> name + PASSED_ON_SUFFIX + " = " + name + "[0];").toList());
-        StringBuilder declarations = new StringBuilder();
-        for (String name : names) {
-            String qualifier = qualified(passedOn.qualifiers().get(name));
-            String type = passedOn.types().get(name);
-            declarations.append("layout(location = ").append(inputLayout.location(name)).append(") ")
-                    .append(qualifier).append("in ").append(type).append(' ').append(name).append("[];\n")
-                    .append("layout(location = ").append(outputLayout.location(name)).append(") ")
-                    .append(qualifier).append("out ").append(type).append(' ').append(name)
-                    .append(PASSED_ON_SUFFIX).append(";\n");
-        }
-        return new Conversion("#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
-                + TessellationStageBridge.handHostBlocks(converted)
-                + GlslVertexPreambles.entityCameraUniformBlock(converted,
-                        interfacePlan == null ? null : interfacePlan.executableUniforms())
-                + declarations + converted, outputLayout);
+        return new Conversion(WorldBetweenStages.preamble(converted, interfacePlan, hand)
+                + passedOn.geometryDeclarations(inputLayout, outputLayout, PASSED_ON_SUFFIX) + converted, outputLayout);
     }
 
     /**
@@ -305,13 +247,5 @@ final class GeometryStageBridge {
             return "layout(location = " + outputs.location(declaration.name()) + ") " + qualified(interpolation)
                     + "out " + declaration.type() + " " + declaration.declarator() + ";\n";
         });
-    }
-
-    private static String qualified(String qualifier) {
-        return qualifier == null || qualifier.isEmpty() ? "" : qualifier + " ";
-    }
-
-    private static String arraySuffix(GlslInterfaceScanner.Declaration declaration) {
-        return declaration.arraySize() == 0 ? "" : "[" + declaration.arraySize() + "]";
     }
 }
