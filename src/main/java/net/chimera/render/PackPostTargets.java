@@ -69,6 +69,8 @@ public final class PackPostTargets {
     private final VulkanImage[] worldImages = new VulkanImage[TARGET_COUNT];
     /** The targets the drawing post pass stores to as colorimgN, held in GENERAL for its draw. */
     private final PostTargetStorage storage = new PostTargetStorage();
+    /** The targets the drawing hand lane stores to as colorimgN, held in GENERAL for its run. */
+    private final PostTargetStorage worldStorage = new PostTargetStorage();
 
     private VulkanImage hdrIdentitySource;
     private PackTargetGraphPlan graph;
@@ -516,7 +518,7 @@ public final class PackPostTargets {
             claimOutputSides(stack, commandBuffer, step);
             // After the copies above, which move images through VulkanMod's tracked layouts, and
             // outside the render pass: VulkanMod moves no image out of GENERAL ("Unexpected value:1").
-            this.storage.begin(commandBuffer, this, post.storageTargets());
+            this.storage.begin(commandBuffer, target -> storageSource(commandBuffer, target), post.storageTargets());
             PostAttachments attachments = colorAttachments(stack, commandBuffer, plan, step);
             int renderWidth = attachments.width();
             int renderHeight = attachments.height();
@@ -701,6 +703,37 @@ public final class PackPostTargets {
      */
     static VulkanImage worldImage(int target, VulkanImage source, boolean used, VulkanImage held) {
         return source != null || target == 0 || !used ? source : held;
+    }
+
+    /**
+     * The image a hand program stores to as colorimgN: the one world programs read as colortexN
+     * (Iris binds gbuffers programs the texture of their flip state, IrisImages.addRenderTargetImages).
+     */
+    public VulkanImage worldStorageImage(int target) {
+        if (target <= 0 || target >= TARGET_COUNT) return null;
+        return worldImage(target, this.sourceImages[target], this.used[target],
+                imageFor(target, this.activeSide[target]));
+    }
+
+    /** Holds {@code targets}' world images in GENERAL for a hand lane's run. Recorded outside a render pass. */
+    public void holdWorldStorage(VkCommandBuffer commandBuffer, List<Integer> targets) {
+        this.worldStorage.begin(commandBuffer, this::worldStorageImage, targets);
+    }
+
+    /** Whether a hand lane's run holds any target in GENERAL. */
+    public boolean holdsWorldStorage() {
+        return this.worldStorage.holding();
+    }
+
+    /** Whether a hand lane's run already holds each of {@code targets} that has an image. */
+    public boolean holdsWorldStorage(List<Integer> targets) {
+        return targets.stream().map(this::worldStorageImage).allMatch(image -> image == null
+                || this.worldStorage.holds(image));
+    }
+
+    /** Returns the targets a hand lane's run held to the sampled layout. Recorded outside a render pass. */
+    public void releaseWorldStorage(VkCommandBuffer commandBuffer) {
+        this.worldStorage.end(commandBuffer);
     }
 
     public boolean areInputsAvailable(List<Integer> requiredTargets) {

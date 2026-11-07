@@ -33,6 +33,8 @@ final class GraphicsImageScan {
     private final Set<String> imageSamplerNames;
     /** The selector slots the program being scanned samples through (addTargetWriter). */
     private Set<Integer> sampledSlots = Set.of();
+    /** The colour targets the world program being scanned draws to (addTargetWriter). */
+    private Set<Integer> drawnTargets = Set.of();
 
     private GraphicsImageScan(PackPlan plan, Map<String, PackAdvancedResourcePlan.ImageSpec> images,
                               List<String> deviations) {
@@ -86,6 +88,8 @@ final class GraphicsImageScan {
         sampledSlots = program.interfacePlan() == null ? Set.of()
                 : program.interfacePlan().effective(UniformRegistry.Stage.POST).samplers().stream()
                         .map(UniformRegistry.SamplerBinding::slot).collect(Collectors.toSet());
+        drawnTargets = !TargetImages.world(program.name()) || program.geometryOutputPlan() == null ? Set.of()
+                : Set.copyOf(program.geometryOutputPlan().targetSlots());
         for (Map.Entry<String, PreparedShaderSource> stageEntry : program.stages().entrySet()) {
             PreparedShaderSource stage = stageEntry.getValue();
             if (stage == null || stage.source() == null) continue;
@@ -144,8 +148,8 @@ final class GraphicsImageScan {
                 if (referenced) addTargetWriter(program, stage, declared, target);
                 return;
             }
-            // Not a pack image: Iris's shadowcolorimgN, and colorimgN outside the post passes,
-            // which no draw here binds.
+            // Not a pack image: Iris's shadowcolorimgN, and colorimgN outside the post passes and
+            // the hand programs, which no draw here binds.
             if (referenced) deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + symbol);
             return;
         }
@@ -162,10 +166,13 @@ final class GraphicsImageScan {
     }
 
     /**
-     * colorimgN in a post pass: target N as a storage image at the slot the pass would sample it
-     * through, in the target's format or a same-size view the declaration names, as for a pass
-     * compute (StorageForm). A format of another size has no such view, and a pass that also
-     * samples the target would read one image in two layouts: either refuses the program.
+     * colorimgN in a post pass or a hand program: target N as a storage image at the slot the
+     * program would sample it through, in the target's format or a same-size view the declaration
+     * names, as for a pass compute (StorageForm). A format of another size has no such view, and a
+     * program that also samples the target would read one image in two layouts: either refuses the
+     * program. So does a world program that also draws to the target, which would hold it as an
+     * attachment and a storage image at once; colortex0 counts as drawn, since the HDR image world
+     * programs render into stands in for it.
      */
     private void addTargetWriter(String program, String stage, Declared declared, int target) {
         String symbol = declared.symbol();
@@ -177,7 +184,9 @@ final class GraphicsImageScan {
         if (sampledSlots.contains(slot)) {
             deviations.add("TARGET_IMAGE_ALSO_SAMPLED:" + program + ":" + TargetImages.resource(target));
         }
-        if (form == null || sampledSlots.contains(slot)) {
+        boolean drawn = TargetImages.world(program) && (target == 0 || drawnTargets.contains(target));
+        if (drawn) deviations.add("TARGET_IMAGE_ALSO_DRAWN:" + program + ":" + TargetImages.resource(target));
+        if (form == null || sampledSlots.contains(slot) || drawn) {
             deviations.add(PackAdvancedResourcePlan.UNSERVED_IMAGE + program + ":" + symbol);
             return;
         }

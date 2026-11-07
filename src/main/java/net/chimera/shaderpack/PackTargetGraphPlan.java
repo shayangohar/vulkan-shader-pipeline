@@ -232,18 +232,29 @@ public final class PackTargetGraphPlan {
                 continue;
             }
             program.geometryOutputPlan().targetSlots().stream().filter(inputs::allocatable).forEach(used::add);
-            for (String sampler : geometrySamplerNames(program)) {
-                Integer target = colorTarget(program, sampler, inputs.resources());
-                if (inputs.allocatable(target)) {
-                    geometryReads.add(target);
-                    used.add(target);
-                }
+            for (int target : geometryReadTargets(inputs, program)) {
+                geometryReads.add(target);
+                used.add(target);
             }
         }
         // Resource identity resolution can recognize targets beyond this backend's
         // capability. Such references remain diagnostic inputs, never allocations.
         used.removeIf(target -> target < 0 || target > MAX_TARGET);
         return used;
+    }
+
+    /**
+     * The allocatable targets a world program reads: those its samplers read, and a hand program's
+     * colorimgN, the image world programs read as colortexN (TargetImages).
+     */
+    private static Set<Integer> geometryReadTargets(GraphInputs inputs, PackProgramPlan program) {
+        Set<Integer> reads = new TreeSet<>(TargetImages.referenced(program));
+        for (String sampler : geometrySamplerNames(program)) {
+            Integer target = colorTarget(program, sampler, inputs.resources());
+            if (target != null) reads.add(target);
+        }
+        reads.removeIf(target -> !inputs.allocatable(target));
+        return reads;
     }
 
     /** Each used target's declared size, format and clear policy, clamped to what the device allows. */

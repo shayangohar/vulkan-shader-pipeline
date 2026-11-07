@@ -56,23 +56,32 @@ final class PackFamilyWindows {
         return batch instanceof FamilyRenderType family ? pass.laneWindowOutputs(family.family()) : null;
     }
 
+    /**
+     * Draws one run inside its window. The targets a hand program stores to as colorimgN, which
+     * preparing its images held in the general layout, go back to the sampled layout once the run
+     * ends, drawn or discarded.
+     */
     private void drawRun(List<RenderType> run, GeometryOutputPlan outputs, Consumer<RenderType> draw,
                          Consumer<RenderType> discard) {
-        for (RenderType batch : run) {
-            if (batch instanceof FamilyRenderType family) {
-                pass.prepareProgramImages(ChimeraEntityBridge.lanePipeline(family.family(), family.format()));
-            }
-        }
-        if (outputs != null && !beginPackFamilyWindow(outputs)) {
-            run.forEach(discard);
-            return;
-        }
-        // Rendering reopens inside the window before the first batch draws.
-        if (outputs != null) pass.rebindMainTarget();
         try {
-            run.forEach(draw);
+            for (RenderType batch : run) {
+                if (batch instanceof FamilyRenderType family) {
+                    pass.prepareProgramImages(ChimeraEntityBridge.lanePipeline(family.family(), family.format()));
+                }
+            }
+            if (outputs != null && !beginPackFamilyWindow(outputs)) {
+                run.forEach(discard);
+                return;
+            }
+            // Rendering reopens inside the window before the first batch draws.
+            if (outputs != null) pass.rebindMainTarget();
+            try {
+                run.forEach(draw);
+            } finally {
+                if (outputs != null) endPackFamilyWindow(outputs);
+            }
         } finally {
-            if (outputs != null) endPackFamilyWindow(outputs);
+            pass.images.releaseWorldStorage();
         }
     }
 

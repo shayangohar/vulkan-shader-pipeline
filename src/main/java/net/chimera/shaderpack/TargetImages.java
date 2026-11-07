@@ -6,10 +6,12 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Iris's colorimgN: colour target N as a storage image, the texture the pass samples as colortexN
- * (IrisImages.addRenderTargetImages, the flip state before the pass). Chimera binds it in the
- * prepare, deferred and composite passes, as pass computes bind it (PassComputePlan). Iris also
- * gives it to gbuffers and final programs, where Chimera still refuses it (KNOW-826).
+ * Iris's colorimgN: colour target N as a storage image, the texture the program samples as
+ * colortexN (IrisImages.addRenderTargetImages, the flip state before the pass). Chimera binds it in
+ * the prepare, deferred and composite passes, as pass computes bind it (PassComputePlan), and in
+ * the hand programs, which draw in their own lane runs (PackFamilyWindows) that hold the target for
+ * them. Iris also gives it to the other gbuffers programs and to final, where Chimera still refuses
+ * it (KNOW-826).
  */
 public final class TargetImages {
     private static final Pattern SYMBOL = Pattern.compile("colorimg(1[0-5]|[0-9])");
@@ -28,14 +30,20 @@ public final class TargetImages {
         return "colortex" + target;
     }
 
-    /** Whether Chimera binds colorimgN in {@code program}: a post pass other than final. */
+    /** Whether Chimera binds colorimgN in {@code program}: a post pass other than final, or a hand program. */
     public static boolean servedIn(String program) {
-        return PostTargetPlan.isPostProgramName(program) && !"final".equals(program);
+        return PostTargetPlan.isPostProgramName(program) && !"final".equals(program)
+                || FamilyAdapterRegistry.isHandFamily(program);
+    }
+
+    /** Whether {@code program} draws the world, where it reads the targets as world programs do. */
+    static boolean world(String program) {
+        return !PostTargetPlan.isPostProgramName(program);
     }
 
     /**
-     * The targets a post pass names as colorimgN in a declaration its stage references, ascending,
-     * which the pass reads as its samplers read their targets (PackTargetGraphPlan.readTargets).
+     * The targets a program names as colorimgN in a declaration its stage references, ascending,
+     * which it reads as its samplers read their targets (PackTargetGraphPlan.readTargets).
      */
     static Set<Integer> referenced(PackProgramPlan program) {
         Set<Integer> targets = new TreeSet<>();
