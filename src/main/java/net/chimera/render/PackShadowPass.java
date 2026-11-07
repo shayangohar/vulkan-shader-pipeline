@@ -237,7 +237,7 @@ final class PackShadowPass {
         VRenderSystem.applyProjectionMatrix(frame.projection());
         VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
         VRenderSystem.calculateMVP();
-        beginShadowSections(frame.cameraX(), frame.cameraY(), frame.cameraZ());
+        beginShadowSections(frame.cameraX(), frame.cameraY(), frame.cameraZ(), packShadow);
         // Iris tests solid and cutout shadow casters at alpha 0.1 and
         // translucent ones not at all; foliage quads otherwise cast
         // their whole square.
@@ -422,16 +422,18 @@ final class PackShadowPass {
     }
 
     /**
-     * Chooses the shadow pass's sections from the light volume and Iris's terrain
-     * shadow frustum. The pack projection carries GL clip depth, which the frustum
-     * test expects; both projections cover the same volume.
+     * Chooses the shadow pass's sections with Iris's terrain shadow frustum. The host's own shadow
+     * is also bounded by the light volume; a pack's is not, as in Iris, since its shadow vertex
+     * stage may scale depth to reach past the ortho's planes. The pack projection carries GL clip
+     * depth, which the frustum test expects; both projections cover the same volume.
      */
-    void beginShadowSections(double cameraX, double cameraY, double cameraZ) {
+    void beginShadowSections(double cameraX, double cameraY, double cameraZ, boolean pack) {
         if (!(WorldRenderer.getInstance() instanceof ChimeraSectionGridAccess access)) return;
         var grid = access.chimera$sectionGrid();
         if (grid == null) return;
-        ShadowSectionQueue.begin(grid, grid.getChunkAreaManager().size,
-                this.shadowMap.getPackLightProjection(), this.shadowMap.getLightView(),
+        Matrix4f lightVolume = pack ? null
+                : new Matrix4f(this.shadowMap.getPackLightProjection()).mul(this.shadowMap.getLightView());
+        ShadowSectionQueue.begin(grid, grid.getChunkAreaManager().size, lightVolume,
                 shadowCullingFrustum(false), cameraX, cameraY, cameraZ);
     }
 
@@ -454,8 +456,8 @@ final class PackShadowPass {
      * HDR pass (load ops) for the sky and terrain.
      *
      * Timing matters: VulkanMod's section setup for this frame has run by this point (it resets
-     * the indirect draws this pass records). The shadow phase draws its own sections chosen from
-     * the light volume ({@link ShadowSectionQueue}), not the camera's culled queues.
+     * the indirect draws this pass records). The shadow phase draws its own sections chosen with
+     * the shadow culling ({@link ShadowSectionQueue}), not the camera's culled queues.
      */
     public void renderShadowSegment(double cameraX, double cameraY, double cameraZ) {
         if (!this.shadowMap.isInitialized() || !this.shadowFrameReady || !shadowAttachmentsLive()) {
