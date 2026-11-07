@@ -356,8 +356,7 @@ final class PackFrameState {
         this.relativeEyePosition.set((float) position.x - this.eyePosition.x,
                 (float) position.y - this.eyePosition.y,
                 (float) position.z - this.eyePosition.z);
-        this.isEyeInWater = CameraEffects.eyeInWater(camera.getFluidInCamera(),
-                minecraft.player != null && minecraft.player.isSpectator());
+        this.isEyeInWater = CameraEffects.eyeInWater(camera.getFluidInCamera());
         this.nightVision = CameraEffects.nightVision(minecraft, cameraEntity, partialTick);
         this.darknessLightFactor = CameraEffects.darknessLightFactor(minecraft, partialTick);
         this.screenBrightness = minecraft.options.gamma().get().floatValue();

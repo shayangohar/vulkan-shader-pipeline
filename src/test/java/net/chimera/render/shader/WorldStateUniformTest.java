@@ -15,6 +15,7 @@ import net.chimera.shaderpack.PackRuntimeSettings;
 import net.chimera.shaderpack.UniformRegistry;
 import net.chimera.testing.TestPacks;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.material.FogType;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -263,6 +264,15 @@ final class WorldStateUniformTest {
             assertNear(0.0f, (float) pale.evaluate((name, component) -> id, pale.newState(), 0.05f),
                     1.0e-6f, "no 1.21.1 biome is the pale garden");
         }
+    }
+
+    /** Iris 1.8.14 CommonUniforms.isEyeInWater has no spectator case: a spectator in lava reads 2. */
+    @Test
+    void eyeInWaterFollowsTheCameraFluidAlone() {
+        assertEquals(1, CameraEffects.eyeInWater(FogType.WATER));
+        assertEquals(2, CameraEffects.eyeInWater(FogType.LAVA));
+        assertEquals(3, CameraEffects.eyeInWater(FogType.POWDER_SNOW));
+        assertEquals(0, CameraEffects.eyeInWater(FogType.NONE));
     }
 
     private static int biomeId(String namespace, String path) {

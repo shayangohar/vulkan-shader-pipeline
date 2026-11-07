@@ -50,14 +50,17 @@ final class CameraEffects {
                 : clamp(effect.getDuration() / 20.0f, 0.0f, 1.0f);
     }
 
-    static int eyeInWater(FogType type, boolean spectator) {
-        if (type == FogType.WATER) {
-            return 1;
-        }
-        if (!spectator && type == FogType.LAVA) {
-            return 2;
-        }
-        return type == FogType.POWDER_SNOW ? 3 : 0;
+    /**
+     * Iris 1.8.14 CommonUniforms.isEyeInWater: the camera's fluid, a spectator's lava included
+     * (newer Iris leaves a spectator's lava at 0).
+     */
+    static int eyeInWater(FogType type) {
+        return switch (type) {
+            case WATER -> 1;
+            case LAVA -> 2;
+            case POWDER_SNOW -> 3;
+            default -> 0;
+        };
     }
 
     private static float clamp(float value, float min, float max) {
