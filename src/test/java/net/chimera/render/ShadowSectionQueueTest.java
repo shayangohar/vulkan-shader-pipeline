@@ -35,4 +35,16 @@ final class ShadowSectionQueueTest {
         assertFalse(ShadowSectionQueue.kept(hostVolume, box, 0.0F, 120.0F, 0.0F), "and at near");
         assertTrue(ShadowSectionQueue.kept(hostVolume, box, 0.0F, -40.0F, 0.0F), "a section inside casts in both");
     }
+
+    /**
+     * VulkanMod's StaticQueue.clear keeps its slots, so the queues held the last world's sections
+     * (and through them its level) after the player left it. A level change releases them.
+     */
+    @Test
+    void aLevelChangeReleasesTheQueues() {
+        ShadowSectionQueue.release();
+        assertTrue(ShadowSectionQueue.areas() == null, "the area queues are dropped");
+        assertFalse(ShadowSectionQueue.active(), "and the queue is inactive");
+        assertTrue(ShadowSectionQueue.blockEntitySections().isEmpty());
+    }
 }

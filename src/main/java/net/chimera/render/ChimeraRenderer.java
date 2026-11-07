@@ -410,6 +410,7 @@ public final class ChimeraRenderer {
 
     /** Level went away mid-screen: host takes over until a live level returns. */
     public static void onLevelUnloaded() {
+        ShadowSectionQueue.release();
         if (!screenOpen || screenMode || !installed) {
             return;
         }
@@ -425,6 +426,7 @@ public final class ChimeraRenderer {
 
     /** Re-selects the pack variant before applying the screen lifecycle state. */
     public static void onLevelLoaded(ClientLevel level) {
+        ShadowSectionQueue.release();
         if (chimeraPass != null && level != null) {
             chimeraPass.onLevelChanged(level.dimension().location().toString());
         }

@@ -79,6 +79,17 @@ public final class ShadowSectionQueue {
         INSTANCE.blockEntitySections.clear();
     }
 
+    /**
+     * Drops the queues when a level goes away. VulkanMod's StaticQueue.clear resets its indices
+     * but keeps its slots, so the queues would otherwise hold the last world's sections, and through
+     * them its block entities and level, until the shadow pass next filled as many slots.
+     */
+    static void release() {
+        end();
+        INSTANCE.areas = null;
+        INSTANCE.sections = null;
+    }
+
     private boolean fill(SectionGrid grid, int areaCount, Matrix4fc lightVolume,
                          ShadowCullingFrustum culling, double cameraX, double cameraY, double cameraZ) {
         this.active = false;
