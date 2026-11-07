@@ -17,7 +17,6 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
-import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -44,8 +43,6 @@ public final class PackUniformProvider {
     private final PackFrameState frameState = new PackFrameState();
     private PackRuntimeSettings runtimeSettings = PackRuntimeSettings.empty();
     private long lastFrameNanos;
-    /** The game time the PER_TICK bindings were last written for. */
-    private long lastTick = Long.MIN_VALUE;
     private boolean catalogLogged;
 
     private PackUniformProvider() {}
@@ -66,11 +63,7 @@ public final class PackUniformProvider {
         return () -> binding.buffer;
     }
 
-    /**
-     * The shared binding of a uniform, made with its current value when first asked for. An
-     * existing one keeps what it holds: a PER_TICK value changes only when the tick does, however
-     * many pipelines are built in between (Iris's ProgramUniforms update by tick).
-     */
+    /** The shared binding of a uniform, made with its current value when first asked for. */
     private Binding binding(UniformRegistry.UniformDescriptor descriptor, String name, String type) {
         return bindings.computeIfAbsent(new UniformKey(name, type), key -> {
             Binding created = new Binding(descriptor, type, createBuffer(type));
@@ -237,7 +230,7 @@ public final class PackUniformProvider {
     /** Publishes the exact shadow state used by the shadow render. */
     public static void updateShadowState(Matrix4f modelView, Matrix4f projection) {
         INSTANCE.frameState.updateShadow(modelView, projection);
-        INSTANCE.refreshBindings(false);
+        INSTANCE.refreshBindings();
     }
 
     /**
@@ -325,7 +318,7 @@ public final class PackUniformProvider {
     /** Prevents stale pack matrices from describing a host-produced or invalid shadow image. */
     public static void clearShadowState() {
         INSTANCE.frameState.clearShadowState();
-        INSTANCE.refreshBindings(false);
+        INSTANCE.refreshBindings();
     }
 
     /** Installs the immutable runtime settings for the active pack session. */
@@ -342,7 +335,7 @@ public final class PackUniformProvider {
         INSTANCE.loggedValueFailures.clear();
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
         INSTANCE.resolveBindings();
-        INSTANCE.refreshBindings(true);
+        INSTANCE.refreshBindings();
     }
 
     /** The pack's scalar directives: the wetness and eye-brightness smoothing half-lives. */
@@ -354,13 +347,12 @@ public final class PackUniformProvider {
     public static void resetSession() {
         setRenderingPhase(PackRenderingPhase.NONE);
         INSTANCE.lastFrameNanos = 0L;
-        INSTANCE.lastTick = Long.MIN_VALUE;
         INSTANCE.runtimeSettings = PackRuntimeSettings.empty();
         INSTANCE.frameState.installRuntimeSettings(INSTANCE.runtimeSettings);
         INSTANCE.frameState.installDirectives(PackDirectives.DEFAULTS);
         INSTANCE.frameState.resetSession();
         INSTANCE.resolveBindings();
-        INSTANCE.refreshBindings(true);
+        INSTANCE.refreshBindings();
     }
 
     /** Writes the same captured frame values into a compute uniform block. */
@@ -384,15 +376,7 @@ public final class PackUniformProvider {
             duplicate.position(offsets[index]);
             duplicate.limit(offsets[index] + sizes[index]);
             MappedBuffer mapped = MappedBuffer.createFromBuffer(duplicate.slice());
-            // A PER_TICK value reads what its binding holds this tick, as a compute program's
-            // ProgramUniforms refresh it; the binding is made the first time a program asks.
-            Binding held = UniformRegistry.perTick(descriptor)
-                    ? INSTANCE.binding(descriptor, declaration.name(), declaration.glslType()) : null;
-            if (held != null) {
-                MemoryUtil.memCopy(held.buffer.ptr, mapped.ptr, Math.min(sizes[index], held.buffer.buffer.capacity()));
-            } else {
-                INSTANCE.frameState.write(descriptor, declaration.glslType(), mapped);
-            }
+            INSTANCE.frameState.write(descriptor, declaration.glslType(), mapped);
         }
     }
 
@@ -412,10 +396,7 @@ public final class PackUniformProvider {
         IrisWorldState.beginFrame();
         frameState.begin(minecraft, camera, partialTick, modelView, projection, deltaSeconds);
         logDerivedValueFailures();
-        // Iris ProgramUniforms.getCurrentTick: the level's game time, 0 without a level.
-        long tick = level == null ? 0L : level.getGameTime();
-        refreshBindings(tick != lastTick);
-        lastTick = tick;
+        refreshBindings();
     }
 
     /**
@@ -434,20 +415,16 @@ public final class PackUniformProvider {
     }
 
     /**
-     * Rewrites every binding from the frame state; a PER_TICK value only with {@code newTick}, so it
-     * holds the value Iris last refreshed it to (UniformRegistry.perTick).
+     * Rewrites every binding from the frame state, every frame. Iris 1.8.14 registers only its
+     * dynamic uniforms per program; every other one, rainStrength and cloudTime among them, reaches
+     * a program through CustomUniforms (IrisRenderingPipeline: CustomUniforms.Builder.build over
+     * addNonDynamicUniforms), which updates each frame whatever the uniform's frequency
+     * (CachedUniform.update). Newer Iris refreshes its PER_TICK uniforms only on a new tick.
      */
-    private void refreshBindings(boolean newTick) {
+    private void refreshBindings() {
         for (Binding binding : bindings.values()) {
-            if (refreshes(binding.descriptor, newTick)) {
-                frameState.write(binding.descriptor, binding.type, binding.buffer);
-            }
+            frameState.write(binding.descriptor, binding.type, binding.buffer);
         }
-    }
-
-    /** Whether a frame-state refresh rewrites a binding: every binding but a PER_TICK one between ticks. */
-    static boolean refreshes(UniformRegistry.UniformDescriptor descriptor, boolean newTick) {
-        return newTick || !UniformRegistry.perTick(descriptor);
     }
 
     private void logCatalogOnce() {
