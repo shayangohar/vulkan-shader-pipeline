@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.TreeMap;
 import java.util.function.Function;
 
@@ -451,18 +452,16 @@ public final class GlslInterfaceScanner {
     }
 
     /**
-     * The length of a type's or a declarator's array sizes: 0 without one, the literal {@code N} of
-     * one {@code [N]}, or -1 for anything else (a named or unsized length, more than one dimension).
+     * The length of a type's or a declarator's array sizes: 0 without one, the positive value of
+     * one {@code [N]} whose N is a constant expression of literals ({@link GlslIntConstant}), or -1
+     * for anything else (a named or unsized length, more than one dimension).
      */
     private static int arrayLength(GlslTree tree, List<GlslTree.Range> arrays) {
         if (arrays.isEmpty()) return 0;
         if (arrays.size() > 1) return -1;
         GlslTree.Range array = arrays.get(0);
-        int size = GlslLexer.nextSignificant(tree.tokens(), array.start());
-        int close = size < 0 ? -1 : GlslLexer.nextSignificant(tree.tokens(), size);
-        if (close != array.end() - 1) return -1;
-        int length = arraySize(tree.tokens().get(size));
-        return length > 0 ? length : -1;
+        OptionalInt length = GlslIntConstant.value(tree.tokens(), array.start() + 1, array.end() - 1);
+        return length.isPresent() && length.getAsInt() > 0 ? length.getAsInt() : -1;
     }
 
     /**
@@ -501,18 +500,6 @@ public final class GlslInterfaceScanner {
             }
         }
         return total;
-    }
-
-    /** A literal array length; a named length is not resolved here. */
-    private static int arraySize(GlslLexer.Token token) {
-        if (token.kind() != GlslLexer.Kind.NUMBER) {
-            return -1;
-        }
-        try {
-            return Integer.parseInt(token.text().replaceAll("[uU]$", ""));
-        } catch (NumberFormatException failure) {
-            return -1;
-        }
     }
 
     private static Map<String, Integer> builtinSlots() {

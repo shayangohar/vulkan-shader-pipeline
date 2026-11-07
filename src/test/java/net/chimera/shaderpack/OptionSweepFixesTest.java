@@ -216,4 +216,44 @@ final class OptionSweepFixesTest {
         assertTrue(result.contains("#define MULT_M 25 * 0.01;"), result);
         assertTrue(PackCompileTest.compile(result, false) == null, PackCompileTest.compile(result, false));
     }
+
+    /**
+     * Photon DEBUG_VIEW_HISTOGRAM: composite4 passes {@code flat out vec4[HISTOGRAM_BINS / 4]
+     * histogram_pdf}, which reaches translation as {@code vec4[32 / 4]}. GL sizes an array with any
+     * constant integral expression, so each stage declares eight locations and the pair links; a
+     * named length is still not read.
+     */
+    @Test
+    void aConstantExpressionSizesAnInterfaceArray() {
+        String vertex = """
+                #version 400 compatibility
+                flat out vec4[32 / 4] histogram_pdf;
+                out vec2 uv;
+                void main() {
+                    for (int i = 0; i < 8; ++i) histogram_pdf[i] = vec4(i);
+                    uv = gl_MultiTexCoord0.xy;
+                    gl_Position = ftransform();
+                }
+                """;
+        String fragment = """
+                #version 400 compatibility
+                flat in vec4[32 / 4] histogram_pdf;
+                in vec2 uv;
+                layout(location = 0) out vec4 result;
+                void main() { result = histogram_pdf[int(uv.x * 8.0)]; }
+                """;
+        GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
+        GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
+        assertEquals(List.of(), vs.deviations());
+        assertEquals(List.of(), fs.deviations());
+        GlslInterfaceScanner.Declaration pdf = fs.input("histogram_pdf");
+        assertEquals(8, pdf.arraySize());
+        assertEquals(8, pdf.slots());
+        assertEquals("vec4[8]", vs.output("histogram_pdf").typeWithArray());
+        GlslInterfaceScanner.ProgramMatch match = GlslInterfaceScanner.match(vs, fs);
+        assertTrue(match.executable(), match.deviations().toString());
+        assertEquals(Map.of("histogram_pdf", 0, "uv", 8), match.locations());
+        assertEquals(List.of("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED"), GlslInterfaceScanner.scan(
+                fragment.replace("32 / 4", "BINS"), false).deviations());
+    }
 }
