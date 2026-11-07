@@ -164,7 +164,7 @@ final class CrossStageRepairTest {
                 "the vertex feeds the geometry stage, which converts the clip depth: " + shadow.convertedVertex());
         assertTrue(shadow.convertedGeometry().contains("layout(location = 0) in vec4 v_glColor[];")
                 && shadow.convertedGeometry().contains("layout(location = 0) out vec4 glColor;")
-                && shadow.convertedGeometry().contains(ShadowStageBuiltins.SHADOW_EMIT + "();"),
+                && shadow.convertedGeometry().contains(GeometryStageBridge.EMIT + "();"),
                 shadow.convertedGeometry());
         assertTrue(shadow.convertedFragment().contains("layout(location = 0) in vec4 glColor;"),
                 shadow.convertedFragment());

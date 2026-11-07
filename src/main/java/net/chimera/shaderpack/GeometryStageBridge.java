@@ -30,6 +30,10 @@ final class GeometryStageBridge {
 
     /** The suffix of a passed-on identity's output; its input keeps the vertex stage's name. */
     private static final String PASSED_ON_SUFFIX = "GS";
+    /** The function a geometry stage's EmitVertex calls become: the clip-depth conversion, then the emit. */
+    static final String EMIT = "chimeraEmitVertex";
+    /** The prefix of the global that keeps a geometry stage output's value across an emit. */
+    static final String KEPT_PREFIX = "chimeraKept_";
     /**
      * The legacy matrices of the entity and host-layout shadow lanes: the draw's own, which the
      * host serves to the vertex stage alone (EntityVertexBridge.entityShadowMatrixBuiltinReplacements).
@@ -105,7 +109,7 @@ final class GeometryStageBridge {
         converted = TerrainVertexBridge.rewriteModernTerrainSamplers(converted, interfacePlan, true);
         converted = LegacyGlslConverter.convertTextureCalls(converted);
         converted = TerrainVertexBridge.qualifyPlannedShadowUniforms(converted, interfacePlan);
-        converted = ShadowStageBuiltins.emitClipRange(converted, passOnStatements(identities.keySet()));
+        converted = emitClipRange(converted, passOnStatements(identities.keySet()));
         return new Conversion("#version 460\n" + FragmentConverter.SHADOW_RENDER_STAGE_DEFINES
                 + TerrainVertexBridge.modernUniformBlock(interfacePlan, true)
                 + identityDeclarations(identities.keySet(), inputLayout, outputLayout) + converted, outputLayout);
@@ -138,12 +142,61 @@ final class GeometryStageBridge {
         requireSupported(converted, allowStorageBuffers);
         converted = located(converted, inputLayout, outputLayout);
         converted = WorldBetweenStages.builtins(converted, interfacePlan, hand);
-        converted = ShadowStageBuiltins.emitClipRange(converted, passedOn.geometryStatements(PASSED_ON_SUFFIX));
+        converted = emitClipRange(converted, passedOn.geometryStatements(PASSED_ON_SUFFIX));
         if (GlslTokenRewriter.containsIdentifier(converted, "chimeraGlClip")) {
             converted = WorldClipRange.GL.withHelpers(converted);
         }
         return new Conversion(WorldBetweenStages.preamble(converted, interfacePlan, hand)
                 + passedOn.geometryDeclarations(inputLayout, outputLayout, PASSED_ON_SUFFIX) + converted, outputLayout);
+    }
+
+    /**
+     * Converts the clip depth of every vertex the stage emits, just before the emit, once the stage
+     * has written its final position: the vertex stage leaves GL's clip range when a geometry stage
+     * follows it (ShadowStageBuiltins.vertexClipRange, and GL's range for a world program). The
+     * {@code passOn} statements, which write the values the stage passes on to the fragment stage,
+     * run there too.
+     *
+     * <p>GLSL leaves every output undefined after EmitVertex. NVIDIA's GL driver, which Iris runs on,
+     * keeps each output's last value, and NVIDIA's Vulkan driver does not: Spring's terrain stage writes
+     * its flat textureResolution once and emits three vertices, and RenderDoc read garbage on the last
+     * two (KNOW-1088). So the emit keeps every output of {@code source}, and the position the stage
+     * wrote, and writes them back after the emit: a later emit reads what GL would, and a position
+     * emitted twice is converted once each time. Other built-in outputs (gl_Layer, gl_PrimitiveID,
+     * gl_PointSize, gl_ClipDistance) are not kept, and EmitStreamVertex is left as written; no
+     * corpus pack writes one once before its emits or emits to a stream.</p>
+     *
+     * <p>The emit is declared ahead of the stage's first function, which may call it, and defined at
+     * the end, after every output: Rethinking Voxels declares its outputs below included functions.</p>
+     */
+    private static String emitClipRange(String source, List<String> passOn) {
+        List<GlslInterfaceScanner.Declaration> outputs = GlslInterfaceScanner.scan(source,
+                GlslInterfaceScanner.Stage.GEOMETRY).outputs();
+        String renamed = GlslTokenRewriter.replaceIdentifiers(source, Map.of("EmitVertex", EMIT));
+        StringBuilder helper = new StringBuilder("\n");
+        for (GlslInterfaceScanner.Declaration output : outputs) {
+            helper.append(output.type()).append(' ').append(KEPT_PREFIX).append(output.name())
+                    .append(arraySuffix(output)).append(";\n");
+        }
+        helper.append("void " + EMIT + "() {\n");
+        passOn.forEach(statement -> helper.append("    ").append(statement).append('\n'));
+        outputs.forEach(output -> helper.append("    ").append(KEPT_PREFIX).append(output.name()).append(" = ")
+                .append(output.name()).append(";\n"));
+        helper.append("    vec4 chimeraKeptPosition = gl_Position;\n")
+                .append("    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n")
+                .append("    EmitVertex();\n")
+                .append("    gl_Position = chimeraKeptPosition;\n");
+        outputs.forEach(output -> helper.append("    ").append(output.name()).append(" = ").append(KEPT_PREFIX)
+                .append(output.name()).append(";\n"));
+        helper.append("}\n");
+        GlslTree tree = GlslTree.parse(renamed);
+        for (GlslTree.External external : tree.externals()) {
+            if (external instanceof GlslTree.Function) {
+                int at = tree.offset(external.range().start());
+                return renamed.substring(0, at) + "void " + EMIT + "();\n" + renamed.substring(at) + helper;
+            }
+        }
+        throw new IllegalArgumentException("geometry stage has no function to emit from");
     }
 
     /**

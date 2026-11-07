@@ -102,8 +102,8 @@ final class GeometryStageBridgeTest {
         assertTrue(source.contains("layout(location = 1) out vec2 frag_texcoord;")
                 && source.contains("layout(location = 0) flat out uint frag_material;"), source);
         assertTrue(source.contains("gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n    EmitVertex();")
-                && source.contains(ShadowStageBuiltins.SHADOW_EMIT + "();\n")
-                && source.indexOf("void " + ShadowStageBuiltins.SHADOW_EMIT) < source.indexOf("void main"), source);
+                && source.contains(GeometryStageBridge.EMIT + "();\n")
+                && source.indexOf("void " + GeometryStageBridge.EMIT) < source.indexOf("void main"), source);
         assertEquals(1, conversion.outputLayout().location("frag_texcoord"));
     }
 
@@ -131,7 +131,7 @@ final class GeometryStageBridgeTest {
                 in vec3 frag_tint;
                 void main() { gl_FragData[0] = vec4(frag_tint * frag_texcoord.x, float(frag_material)); }
                 """, null, false, false).source();
-        String kept = ShadowStageBuiltins.KEPT_PREFIX;
+        String kept = GeometryStageBridge.KEPT_PREFIX;
         assertTrue(source.contains("uint " + kept + "frag_material;") && source.contains("vec3 " + kept + "frag_tint;"),
                 source);
         assertTrue(source.contains("    " + kept + "frag_tint = frag_tint;\n")
