@@ -976,7 +976,8 @@ public final class PackPlanBuilder {
          * directive as a named gap.
          */
         private PackBlendPlan blendPlan() {
-            PackBlendPlan blendPlan = PackBlendPlan.forProgram(directiveProgram, settings()).withIrisDefault(name);
+            PackBlendPlan blendPlan = PackBlendPlan.forProgram(directiveProgram, settings())
+                    .withIrisDefault(directiveProgram);
             if (stage == UniformRegistry.Stage.POST) {
                 blendPlan = blendPlan.forFullscreenPass(name);
             } else if (blendPlan.overridesAnything() && geometryOutputPlan == null && !stage.shadowPass()) {

@@ -692,6 +692,27 @@ final class HostFamilyTest {
         assertTrue(entities.contains("in ivec2 UV2;"), entities);
     }
 
+    /**
+     * Iris attaches SpiderEyes' additive default blend to the source read from gbuffers_spidereyes;
+     * when the eyes fall back to gbuffers_textured, that source carries none and the host's blend
+     * stays (I Like Vanilla, Pegasus, RedHat and Sildur's ship no gbuffers_spidereyes).
+     */
+    @Test
+    void spiderEyesBlendAdditivelyOnlyWithTheirOwnProgram(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        String vertex = "#version 120\nvoid main() { gl_Position = ftransform(); }\n";
+        String fragment = "#version 120\n/* DRAWBUFFERS:0 */\nvoid main() { gl_FragColor = vec4(1.0); }\n";
+        Files.writeString(shaders.resolve("gbuffers_textured.vsh"), vertex);
+        Files.writeString(shaders.resolve("gbuffers_textured.fsh"), fragment);
+        PackProgramPlan aliased = executablePlan(PackProbe.analyze(root), "gbuffers_spidereyes", "aliased eyes");
+        assertTrue(aliased.blendPlan().program() == null, aliased.deviations().toString());
+        Files.writeString(shaders.resolve("gbuffers_spidereyes.vsh"), vertex);
+        Files.writeString(shaders.resolve("gbuffers_spidereyes.fsh"), fragment);
+        PackProgramPlan own = executablePlan(PackProbe.analyze(root), "gbuffers_spidereyes", "eyes");
+        assertTrue(own.blendPlan().program() != null
+                && own.deviations().contains("BLEND_PROGRAM_DEFAULT:gbuffers_spidereyes"), own.deviations().toString());
+    }
+
     @Test
     void skyAndCloudKeysHaveNoLight() {
         for (VertexFormat format : List.of(DefaultVertexFormat.POSITION, DefaultVertexFormat.POSITION_COLOR,

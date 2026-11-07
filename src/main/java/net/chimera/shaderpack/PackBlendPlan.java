@@ -100,13 +100,15 @@ public record PackBlendPlan(Mode program, Map<Integer, Mode> buffers, List<Strin
     }
 
     /**
-     * Iris ProgramId's built-in BlendModeOverride for the requested program, applied when the
-     * pack sets no program-level blend: SpiderEyes draws additively (SRC_ALPHA, ONE, ZERO, ONE).
+     * Iris ProgramId's built-in BlendModeOverride for the program whose source runs, applied when
+     * the pack sets no program-level blend: SpiderEyes draws additively (SRC_ALPHA, ONE, ZERO, ONE).
+     * Iris attaches it to the source read from gbuffers_spidereyes (ProgramSet.readProgramSource,
+     * ProgramDirectives); a fallback to gbuffers_textured carries none, so eyes keep the host's blend.
      */
-    PackBlendPlan withIrisDefault(String requestedProgram) {
-        if (program != null || !"gbuffers_spidereyes".equals(requestedProgram)) return this;
+    PackBlendPlan withIrisDefault(String sourceProgram) {
+        if (program != null || !"gbuffers_spidereyes".equals(sourceProgram)) return this;
         List<String> next = new ArrayList<>(deviations);
-        next.add("BLEND_PROGRAM_DEFAULT:" + requestedProgram);
+        next.add("BLEND_PROGRAM_DEFAULT:" + sourceProgram);
         return new PackBlendPlan(new Mode(true, FACTORS.get("SRC_ALPHA"), FACTORS.get("ONE"),
                 FACTORS.get("ZERO"), FACTORS.get("ONE")), buffers, next);
     }
