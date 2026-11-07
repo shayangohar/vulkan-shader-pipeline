@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkCommandBuffer;
@@ -17,6 +18,8 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT;
+import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 
 /**
@@ -34,9 +37,14 @@ import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_VERTEX_SHADER_BIT;
 final class PostTargetStorage {
     private final List<VulkanImage> held = new ArrayList<>();
 
-    /** The stages that store to a held target: the hand's geometry stage too, where the device runs one. */
+    /**
+     * The stages that may store to a held target: a hand's tessellation and geometry stages too,
+     * where the device runs them (a stage the device lacks may not appear in a barrier).
+     */
     private static int shaderStages() {
         return VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+                | (DeviceManager.isTessellationEnabled() ? VK_PIPELINE_STAGE_TESSELLATION_CONTROL_SHADER_BIT
+                        | VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT : 0)
                 | (ChimeraDevice.geometryShader() ? VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT : 0);
     }
 

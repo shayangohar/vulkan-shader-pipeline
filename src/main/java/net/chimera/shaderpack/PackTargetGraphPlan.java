@@ -639,7 +639,10 @@ public final class PackTargetGraphPlan {
         return requiresInitialSeed(target(target), steps, unorderedReads);
     }
 
-    /** Targets a world program samples. */
+    /**
+     * Targets a world program reads: those it samples, and those a hand program stores to as
+     * colorimgN, which bind the image world programs read (TargetImages). Iris reads both unordered.
+     */
     public Set<Integer> geometryReads() {
         return geometryReads;
     }

@@ -36,8 +36,11 @@ public final class TargetImages {
                 || FamilyAdapterRegistry.isHandFamily(program);
     }
 
-    /** Whether {@code program} draws the world, where it reads the targets as world programs do. */
-    static boolean world(String program) {
+    /**
+     * Whether {@code program} draws the world, where its colorimgN binds the image world programs
+     * read (PackPostTargets.worldStorageImage), not the post chain's source.
+     */
+    public static boolean world(String program) {
         return !PostTargetPlan.isPostProgramName(program);
     }
 

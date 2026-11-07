@@ -5,6 +5,7 @@ import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.chimera.shaderpack.TargetImages;
 import net.vulkanmod.gl.GlSampler;
 import net.vulkanmod.gl.GlTexture;
 import net.vulkanmod.vulkan.Renderer;
@@ -132,7 +133,7 @@ final class PackImageBindings {
             return pass.materials.materialMapOwner.resolveDrawMaterial(drawContext, entry.resourceKey());
         }
         VulkanImage image = entry.kind() == ProgramImageBindingManifest.Kind.TARGET_IMAGE
-                && !PostTargetPlan.isFullscreenProgramName(bound.name())
+                && TargetImages.world(bound.name())
                 ? pass.packPostTargets.worldStorageImage(PackResourcePlan.targetIndex(entry.resourceKey()))
                 : entryImage(entry, colors, fallback);
         return new ChimeraTextureBindingState.Snapshot(image,
@@ -278,7 +279,7 @@ final class PackImageBindings {
 
     /** The targets a world program stores to as colorimgN (a hand program, TargetImages), ascending. */
     private static List<Integer> worldStorageTargets(ChimeraMainPass.ProgramImages program) {
-        if (PostTargetPlan.isFullscreenProgramName(program.name())) return List.of();
+        if (!TargetImages.world(program.name())) return List.of();
         return program.manifest().entries().stream()
                 .filter(entry -> entry.kind() == ProgramImageBindingManifest.Kind.TARGET_IMAGE)
                 .map(entry -> PackResourcePlan.targetIndex(entry.resourceKey())).distinct().sorted().toList();
