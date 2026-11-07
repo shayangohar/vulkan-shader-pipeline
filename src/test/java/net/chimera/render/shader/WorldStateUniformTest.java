@@ -246,6 +246,30 @@ final class WorldStateUniformTest {
      * the raw world time and its {@code timeAngle} is the raw time over the day.
      */
     @Test
+    void biomesAreNumberedAsIrisRegistersThem() {
+        // Iris numbers biomes in Biomes' registration order (MixinBiomes), and Bliss writes the numbers.
+        assertEquals(0, biomeId("minecraft", "the_void"));
+        assertEquals(5, biomeId("minecraft", "desert"));
+        assertEquals(63, biomeId("minecraft", "end_barrens"));
+        PackExpression.Program swamps = PackExpression.parse("if(in(biome, 6, 52, 7), 1, 0)", BiomeIds.constants());
+        int swamp = biomeId("minecraft", "swamp");
+        assertNear(1.0f, (float) swamps.evaluate((name, component) -> swamp, swamps.newState(), 0.05f),
+                1.0e-6f, "Bliss's isSwamps names the swamp by its Iris number");
+        // A later biome a pack names is a number no 1.21.1 biome reads, as Iris's dropped uniform reads 0.
+        PackExpression.Program pale = PackExpression.parse("if(in(biome, BIOME_PALE_GARDEN), 1, 0)",
+                BiomeIds.constants());
+        for (int biome = 0; biome < 64; biome++) {
+            int id = biome;
+            assertNear(0.0f, (float) pale.evaluate((name, component) -> id, pale.newState(), 0.05f),
+                    1.0e-6f, "no 1.21.1 biome is the pale garden");
+        }
+    }
+
+    private static int biomeId(String namespace, String path) {
+        return BiomeIds.id(ResourceLocation.fromNamespaceAndPath(namespace, path));
+    }
+
+    @Test
     void derivedLanguage() {
         String caveFactor = "smooth(4, eyeBrightness.y / 240.0, 5, 5)";
         assertNear(0.0f, (float) smoothedValue(caveFactor, 0.0, 1, 0.05f), 1.0e-6f,
@@ -309,10 +333,8 @@ final class WorldStateUniformTest {
                 1.0e-6f, "a named biome constant must match the biome it names");
         assertNear(0.0f, (float) biome.evaluate((name, component) -> 1.0, biomeState, 0.05f),
                 1.0e-6f, "a biome outside the constants must not match one");
-        assertTrue(BiomeIds.id(null) == BiomeIds.UNKNOWN
-                        && BiomeIds.id(ResourceLocation.fromNamespaceAndPath(
-                        "other", "desert")) == BiomeIds.UNKNOWN,
-                "an unlisted or foreign biome must match no constant");
+        assertTrue(BiomeIds.id(null) == 0 && biomeId("other", "desert") == 0,
+                "an unlisted or foreign biome reads 0, as Iris's biome map answers a key it lacks");
 
         assertRejected("sinh(frameTime)", "CUSTOM_EXPRESSION_UNKNOWN_FUNCTION");
         assertRejected("smooth()", "CUSTOM_EXPRESSION_ARITY");
