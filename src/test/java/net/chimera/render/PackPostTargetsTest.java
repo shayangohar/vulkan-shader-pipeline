@@ -65,6 +65,25 @@ final class PackPostTargetsTest {
         assertEquals(hdr, PackPostChain.resolvePackColorInput(0, colors, hdr));
     }
 
+    /**
+     * Glimmer's prepare2 builds colortex7's mips (its sky), and its translucents and composite3
+     * read them with textureLod. Iris resets a target's filter only after final
+     * (FinalPassRenderer.resetRenderTarget), so the chain is still sampled through its mips in
+     * every later window and in final. Chimera reset it as each window opened.
+     */
+    @Test
+    void mipSamplingLastsUntilTheFrameEnds() {
+        PackPostTargets targets = new PackPostTargets();
+        VulkanImage sky = MaterialMapFixtures.markerImage();
+        targets.noteMipSampling(sky);
+        for (PackFrameSchedulePlan.PostWindow window : PackFrameSchedulePlan.PostWindow.values()) {
+            targets.openPostWindow(null, window);
+            assertTrue(targets.samplesMips(sky), "still mip-sampled as " + window + " opens");
+        }
+        targets.generateMipmaps(null, "final");
+        assertTrue(targets.samplesMips(sky), "still mip-sampled at final");
+    }
+
     @Test
     void feedbackSeeding() {
         TargetSpec persistent = new TargetSpec(2, 97, 16, 16, false,

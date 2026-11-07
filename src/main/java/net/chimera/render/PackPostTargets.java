@@ -78,7 +78,7 @@ public final class PackPostTargets {
     private boolean configured;
     private boolean rendering;
     private final PackTemporalState temporal = new PackTemporalState();
-    /** Images whose sampler reads their generated mip chain until the window ends. */
+    /** Images whose sampler reads their generated mip chain until the frame ends. */
     private final Set<VulkanImage> mipSampling = Collections.newSetFromMap(new IdentityHashMap<>());
     private TargetStep currentStep;
     private PostTargetPlan currentPlan;
@@ -414,8 +414,8 @@ public final class PackPostTargets {
     /**
      * Iris CompositeRenderer.setupMipmapping: before a program that declares
      * colortexNMipmapEnabled, rebuild the chain of the image the program
-     * reads and sample that image through its mips until
-     * {@link #resetMipmapSampling()}. Call before the program's images are bound.
+     * reads and sample that image through its mips until the next frame starts. Call before the
+     * program's images are bound.
      */
     public void generateMipmaps(VkCommandBuffer commandBuffer, String programName) {
         TargetStep step = this.graph == null ? null : this.graph.step(programName);
@@ -428,7 +428,7 @@ public final class PackPostTargets {
                 if (!needsMipChain(image == null || graphImage == null ? 0 : graphImage.mipLevels)) continue;
                 if (image == this.hdrIdentitySource) image = adoptIdentitySource(stack, commandBuffer, target, image);
                 PackTargetImages.buildMipChain(stack, commandBuffer, image);
-                this.mipSampling.add(image);
+                noteMipSampling(image);
             }
         }
         trace("mipmaps program=" + programName + " targets=" + step.mipmapTargets());
@@ -440,15 +440,26 @@ public final class PackPostTargets {
     }
 
     /**
-     * Flips the targets {@code window}'s pass group names in a {@code flip.<group>_pre} directive,
-     * as Iris's CompositeRenderer does once as the group opens, before any of its passes.
+     * Opens {@code window}'s pass group: flips the targets it names in a {@code flip.<group>_pre}
+     * directive, as Iris's CompositeRenderer does once as the group opens, before any of its passes.
+     * Mip sampling carries on. Iris resets a target's filter only after final
+     * (FinalPassRenderer.resetRenderTarget), so a chain built in prepare is still read through its
+     * mips by deferred, the translucents, composite and final (Glimmer's sky in colortex7).
      */
-    public void flipBeforeGroup(VkCommandBuffer commandBuffer, PackFrameSchedulePlan.PostWindow window) {
+    public void openPostWindow(VkCommandBuffer commandBuffer, PackFrameSchedulePlan.PostWindow window) {
         if (this.graph != null) flip(commandBuffer, this.graph.preFlips(window));
     }
 
-    /** Iris resets every target's filter after each deferred, composite and final renderer. */
-    public void resetMipmapSampling() {
+    void noteMipSampling(VulkanImage image) {
+        this.mipSampling.add(image);
+    }
+
+    boolean samplesMips(VulkanImage image) {
+        return this.mipSampling.contains(image);
+    }
+
+    /** Iris resets every target's filter after final; Chimera does it as the next frame starts. */
+    private void resetMipmapSampling() {
         for (VulkanImage image : this.mipSampling) {
             PackTargetImages.sampleWith(image, PackTargetImages.baseLevelSampler(image));
         }

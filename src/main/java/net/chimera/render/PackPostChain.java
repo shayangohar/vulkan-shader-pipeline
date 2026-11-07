@@ -209,9 +209,7 @@ final class PackPostChain {
                 throw new IllegalStateException("PACK_TARGET_FRAME_NOT_STARTED:post window " + window);
             }
             pass.packPostTargets.requireFrameStarted();
-            // Each Iris composite renderer starts with every target base-level sampled, and its group's pre-flips.
-            pass.packPostTargets.resetMipmapSampling();
-            pass.packPostTargets.flipBeforeGroup(commandBuffer, window);
+            pass.packPostTargets.openPostWindow(commandBuffer, window);
             ChimeraMainPass.preparePackFullscreenState();
             boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {
@@ -387,7 +385,6 @@ final class PackPostChain {
         Renderer.getInstance().endRenderPass(commandBuffer);
         // No pack target is written between the last post output check and final.
         // Re-reading every target/history/depth here adds cost but no new evidence.
-        pass.packPostTargets.resetMipmapSampling();
         pass.packPostTargets.generateMipmaps(commandBuffer, pass.pipelines.finalPost.name());
         Renderer.getInstance().beginRendering(pass.targets.packFinalRenderPass, pass.targets.packFinalFramebuffer);
         ChimeraMainPass.PackRenderState finalState = pass.capturePackRenderState();
