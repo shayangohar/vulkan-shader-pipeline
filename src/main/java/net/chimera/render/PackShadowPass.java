@@ -95,8 +95,8 @@ final class PackShadowPass {
     }
 
     /**
-     * Records the shadow pass: re-renders terrain sections inside the light
-     * volume, with every facing, into the shadow framebuffer, then binds the shadow texture
+     * Records the shadow pass: re-renders the terrain sections the shadow culling
+     * keeps, with every facing, into the shadow framebuffer, then binds the shadow texture
      * for sampling by the terrain shader. Runs with no render pass open;
      * renderSectionLayer's rebindMainTarget opens the shadow pass (via the
      * shadowPassActive redirect) and this method closes it afterward.

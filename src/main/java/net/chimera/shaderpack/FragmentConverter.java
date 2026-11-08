@@ -445,7 +445,7 @@ public final class FragmentConverter {
         int main = GlslTokenRewriter.mainDefinition(tree).range().start();
         String withHelpers = tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(main, main),
                 helpers.toString())));
-        // At the end of main's body, ahead of the alpha test Iris appends there too (PackAlphaTestPlan).
+        // At the end of main's body, after the alpha test PackAlphaTestPlan appended: a NaN alpha is discarded first.
         return GlslTokenRewriter.appendMainBody(withHelpers, statements.toString().strip());
     }
 

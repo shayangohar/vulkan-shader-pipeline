@@ -239,16 +239,9 @@ final class WorldStateUniformTest {
         assertNear(z, actual.z, 1.0e-4f, message + " at component 2");
     }
 
-    /**
-     * The pack-authored language at the values the pinned packs depend on. Complementary's
-     * {@code eyeBrightnessM} smooths the raw sky brightness over its full nought-to-two-hundred-
-     * and-forty range and its cave factor clamps against the result, so a synthetic fifteen put
-     * that clamp outside its own domain; BSL's {@code timeBrightness} is a half-rectified sine of
-     * the raw world time and its {@code timeAngle} is the raw time over the day.
-     */
+    /** Iris numbers biomes in Biomes' registration order (MixinBiomes), and Bliss writes the numbers. */
     @Test
     void biomesAreNumberedAsIrisRegistersThem() {
-        // Iris numbers biomes in Biomes' registration order (MixinBiomes), and Bliss writes the numbers.
         assertEquals(0, biomeId("minecraft", "the_void"));
         assertEquals(5, biomeId("minecraft", "desert"));
         assertEquals(63, biomeId("minecraft", "end_barrens"));
@@ -279,6 +272,13 @@ final class WorldStateUniformTest {
         return BiomeIds.id(ResourceLocation.fromNamespaceAndPath(namespace, path));
     }
 
+    /**
+     * The pack-authored language at the values the pinned packs depend on. Complementary's
+     * {@code eyeBrightnessM} smooths the raw sky brightness over its full nought-to-two-hundred-
+     * and-forty range and its cave factor clamps against the result, so a synthetic fifteen put
+     * that clamp outside its own domain; BSL's {@code timeBrightness} is a half-rectified sine of
+     * the raw world time and its {@code timeAngle} is the raw time over the day.
+     */
     @Test
     void derivedLanguage() {
         String caveFactor = "smooth(4, eyeBrightness.y / 240.0, 5, 5)";
@@ -342,7 +342,7 @@ final class WorldStateUniformTest {
         assertNear(3.0f, (float) biome.evaluate((name, component) -> desert, biomeState, 0.05f),
                 1.0e-6f, "a named biome constant must match the biome it names");
         assertNear(0.0f, (float) biome.evaluate((name, component) -> 1.0, biomeState, 0.05f),
-                1.0e-6f, "a biome outside the constants must not match one");
+                1.0e-6f, "plains (1) is neither grove nor desert");
         assertTrue(BiomeIds.id(null) == 0 && biomeId("other", "desert") == 0,
                 "an unlisted or foreign biome reads 0, as Iris's biome map answers a key it lacks");
 

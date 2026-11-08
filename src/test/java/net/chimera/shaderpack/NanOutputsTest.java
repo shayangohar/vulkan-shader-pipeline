@@ -60,7 +60,7 @@ final class NanOutputsTest {
                 converted);
         assertTrue(converted.indexOf("colortex4 = 1.0 / tint.r;") < converted.indexOf("colortex1 = chimeraNoNan")
                         && !converted.contains("chimeraAuthoredMain"),
-                "the guard ends main's own body, where the alpha test follows it: " + converted);
+                "the guard ends main's own body, after the alpha test: " + converted);
         // RTX 5080: the half output compiles as vec3; AMD's GPU keeps it.
         for (String profile : List.of("nvidia", "amd")) {
             PackDevice before = PackDevice.current();

@@ -35,7 +35,7 @@ import java.util.SequencedMap;
  * Entities and block entities in the pack shadow map, as Iris ShadowRenderer draws them: after
  * the opaque terrain, so shadowtex1 holds them, and before the translucent layer.
  *
- * <p>Like Iris it owns its buffers, draws every entity the light's view holds (the camera entity
+ * <p>Like Iris it owns its buffers, draws every entity its shadow frustum keeps (the camera entity
  * included, so the player casts in first person) and the block entities of the sections the shadow
  * culling keeps, with the light view on the model-view stack and the light projection as the
  * projection. The bridge's caster window routes each caster batch to its shadow family:
