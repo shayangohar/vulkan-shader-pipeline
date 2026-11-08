@@ -20,12 +20,7 @@ final class ShadowStageBuiltins {
      * (GeometryStageBridge.emitClipRange).
      */
     static String vertexClipRange(String source, boolean geometryNext) {
-        if (geometryNext) return source;
-        return GlslTokenRewriter.replaceIdentifiers(source, Map.of("main", AUTHORED_SHADOW_ENTRY))
-                + "\nvoid main() {\n"
-                + "    " + AUTHORED_SHADOW_ENTRY + "();\n"
-                + "    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n"
-                + "}\n";
+        return geometryNext ? source : ClipDepth.afterEntry(source, AUTHORED_SHADOW_ENTRY);
     }
 
     /**

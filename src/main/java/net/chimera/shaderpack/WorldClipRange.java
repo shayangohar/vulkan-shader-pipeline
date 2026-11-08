@@ -69,11 +69,7 @@ enum WorldClipRange {
     /** The converted stage, and in GL's range the helpers ahead of it and its clip depth converted after it. */
     String convert(String converted) {
         if (this == HOST) return converted;
-        return HELPERS + GlslTokenRewriter.replaceIdentifiers(converted, Map.of("main", AUTHORED_ENTRY))
-                + "\nvoid main() {\n"
-                + "    " + AUTHORED_ENTRY + "();\n"
-                + "    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n"
-                + "}\n";
+        return HELPERS + ClipDepth.afterEntry(converted, AUTHORED_ENTRY);
     }
 
     /**
