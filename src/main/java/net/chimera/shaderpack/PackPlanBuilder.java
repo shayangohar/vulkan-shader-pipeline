@@ -363,14 +363,23 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * Iris repairs every adjacent stage pair before anything matches their interfaces. With a
-         * geometry or tessellation stage between them, the vertex and fragment stages are not a pair.
+         * Iris repairs every pair of adjacent stages, in the order GL links them, before anything
+         * matches their interfaces (CompatibilityTransformer.transformGrouped): vertex and fragment,
+         * or each pair through a geometry or tessellation stage between them. Chimera repaired only
+         * a vertex/fragment pair, and refused a geometry program with an unwritten input Iris runs.
          */
         private void repairStageInterfaces() {
-            if (!geometryStages.isEmpty()) return;
-            CrossStageRepair.Result repaired = CrossStageRepair.repair(vertex, fragment);
-            vertex = repaired.vertex();
-            deviations.addAll(repaired.deviations());
+            GlslInterfaceScanner.Stage earlier = null;
+            for (GlslInterfaceScanner.Stage later : GlslInterfaceScanner.Stage.values()) {
+                if (source(later) == null) continue;
+                if (earlier != null) {
+                    CrossStageRepair.Result repaired = CrossStageRepair.repair(source(earlier), earlier,
+                            source(later), later);
+                    setSource(earlier, repaired.earlier());
+                    deviations.addAll(repaired.deviations());
+                }
+                earlier = later;
+            }
         }
 
         /**

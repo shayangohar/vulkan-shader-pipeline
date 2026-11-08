@@ -9,21 +9,24 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 /**
- * Iris's cross-stage repair (CompatibilityTransformer.transformGrouped), applied to a program's
- * vertex stage from the inputs its fragment stage declares. For each non-array fragment input of
- * a numeric type, gl_ names aside:
+ * Iris's cross-stage repair (CompatibilityTransformer.transformGrouped), applied to each pair of
+ * adjacent stages: the earlier stage, from the inputs the later stage declares. For each numeric
+ * input, gl_ names aside, that is not an array (beyond the one dimension, one element per vertex,
+ * that a tessellation or geometry stage's input takes):
  * <ul>
- *   <li>No vertex output of its name, and the fragment reads it: the vertex gains an output with
- *   the input's qualifiers and type, set to zero at the start of main (VARYING_UNWRITTEN_ZEROED).
- *   Bloop's overworld shadow writes lmtexcoord without declaring it.</li>
- *   <li>An output of its type that the vertex never names again: the output is set to zero at
+ *   <li>No output of its name, and the later stage reads it: the earlier stage gains an output with
+ *   the input's qualifiers and element type, set to zero at the start of main
+ *   (VARYING_UNWRITTEN_ZEROED). Bloop's overworld shadow writes lmtexcoord without declaring it.</li>
+ *   <li>An output of its type that the earlier stage never names again: the output is set to zero at
  *   the start of main (VARYING_UNASSIGNED_ZEROED).</li>
  *   <li>A non-array output of another type of the same kind (scalar, vector, matrix): the output
- *   takes the input's type, and the vertex writes a global of the old type that the end of main
- *   converts into it (VARYING_TYPE_CONVERTED).</li>
+ *   takes the input's type, and the earlier stage writes a global of the old type that the end of
+ *   main converts into it (VARYING_TYPE_CONVERTED).</li>
  * </ul>
  * An output array, or an output of another kind, stays as written; the stage match refuses it,
- * as Iris's link does.
+ * as Iris's link does. So do the edits Iris makes that would not compile or would never reach a
+ * vertex: a tessellation control stage's outputs are arrays, which the outputs Iris adds are not,
+ * and a geometry stage would convert a retyped output after its last EmitVertex.
  */
 final class CrossStageRepair {
     private CrossStageRepair() {}
@@ -36,45 +39,58 @@ final class CrossStageRepair {
     private static final Pattern VECTOR = Pattern.compile("[iub]?vec[234]");
     private static final Pattern MATRIX = Pattern.compile("mat[234](?:x[234])?");
 
-    /** The repaired vertex source, and one deviation per name it repaired. */
-    record Result(String vertex, List<String> deviations) {}
+    /** The repaired source of the earlier stage, and one deviation per name it repaired. */
+    record Result(String earlier, List<String> deviations) {}
 
     /** One interface variable: the declaration and declarator that make it, its name and type. */
     private record Variable(GlslTree.Declaration declaration, GlslTree.Declarator declarator, String name,
                             String type) {
-        boolean array() {
-            return !declarator.arrays().isEmpty() || !declaration.type().arrays().isEmpty();
+        /** Whether the variable is an array beyond the one dimension a per-vertex input takes. */
+        boolean array(boolean perVertex) {
+            int dimensions = declarator.arrays().size() + declaration.type().arrays().size();
+            return dimensions > (perVertex ? 1 : 0);
         }
     }
 
+    /** The repair of a program's vertex stage from its fragment stage, with nothing between them. */
     static Result repair(String vertex, String fragment) {
-        Result unchanged = new Result(vertex, List.of());
-        if (vertex == null || fragment == null) return unchanged;
-        GlslTree vertexTree = GlslDeclarations.parseOrNull(vertex);
-        GlslTree fragmentTree = GlslDeclarations.parseOrNull(fragment);
-        GlslTree.Function main = vertexTree == null || fragmentTree == null
-                ? null : GlslDeclarations.mainDefinition(vertexTree);
+        return repair(vertex, GlslInterfaceScanner.Stage.VERTEX, fragment, GlslInterfaceScanner.Stage.FRAGMENT);
+    }
+
+    /** The repair of {@code earlier} from the inputs of {@code later}, the stage GL links after it. */
+    static Result repair(String earlier, GlslInterfaceScanner.Stage earlierStage, String later,
+                         GlslInterfaceScanner.Stage laterStage) {
+        Result unchanged = new Result(earlier, List.of());
+        if (earlier == null || later == null || earlierStage == GlslInterfaceScanner.Stage.TESS_CONTROL) {
+            return unchanged;
+        }
+        GlslTree earlierTree = GlslDeclarations.parseOrNull(earlier);
+        GlslTree laterTree = GlslDeclarations.parseOrNull(later);
+        GlslTree.Function main = earlierTree == null || laterTree == null
+                ? null : GlslDeclarations.mainDefinition(earlierTree);
         if (main == null) return unchanged;
-        Map<String, Variable> outputs = variables(vertexTree, Set.of("out", "varying"));
-        Edits edits = new Edits(vertexTree, outputStorage(vertexTree, outputs.values(), vertex));
-        for (Variable input : variables(fragmentTree, Set.of("in", "varying")).values()) {
-            if (!input.name().startsWith("gl_") && kind(input.type()) >= 0 && !input.array()) {
-                repairInput(edits, vertexTree, fragmentTree, input, outputs.get(input.name()));
+        Map<String, Variable> outputs = variables(earlierTree, Set.of("out", "varying"));
+        Edits edits = new Edits(earlierTree, outputStorage(earlierTree, outputs.values(), earlier));
+        boolean converts = earlierStage != GlslInterfaceScanner.Stage.GEOMETRY;
+        for (Variable input : variables(laterTree, Set.of("in", "varying")).values()) {
+            if (!input.name().startsWith("gl_") && kind(input.type()) >= 0
+                    && !input.array(laterStage.perVertexInputs())) {
+                repairInput(edits, earlierTree, laterTree, input, outputs.get(input.name()), converts);
             }
         }
         return edits.result(main);
     }
 
-    /** Iris's repair of one fragment input against the vertex output of its name, null when none. */
-    private static void repairInput(Edits edits, GlslTree vertexTree, GlslTree fragmentTree, Variable input,
-                                    Variable output) {
+    /** Iris's repair of one input against the earlier stage's output of its name, null when none. */
+    private static void repairInput(Edits edits, GlslTree earlierTree, GlslTree laterTree, Variable input,
+                                    Variable output, boolean converts) {
         if (output == null) {
-            if (referenced(fragmentTree, input)) edits.declare(fragmentTree, input);
-        } else if (output.array()) {
+            if (referenced(laterTree, input)) edits.declare(laterTree, input);
+        } else if (output.array(false)) {
             return;
         } else if (output.type().equals(input.type())) {
-            if (!referenced(vertexTree, output)) edits.zeroUnassigned(output);
-        } else if (kind(output.type()) == kind(input.type())) {
+            if (!referenced(earlierTree, output)) edits.zeroUnassigned(output);
+        } else if (converts && kind(output.type()) == kind(input.type())) {
             edits.convert(output, input.type());
         }
     }
@@ -125,7 +141,7 @@ final class CrossStageRepair {
     }
 
     /**
-     * The storage an added output takes: the vertex's own outputs' storage, or for a vertex that
+     * The storage an added output takes: the earlier stage's own outputs' storage, or for a stage that
      * declares none, {@code varying} before GLSL 1.30 and {@code out} from it. A modern post vertex
      * whose version line the normalizer dropped keeps its {@code out}.
      */
@@ -146,10 +162,10 @@ final class CrossStageRepair {
         return type + "(0)";
     }
 
-    /** A retyped output: the input's type it takes, and the global of its old type the vertex writes. */
+    /** A retyped output: the input's type it takes, and the global of its old type the stage writes. */
     private record Retype(String type, String internal) {}
 
-    /** The edits the repair makes to the vertex source, applied in one print. */
+    /** The edits the repair makes to the earlier stage's source, applied in one print. */
     private static final class Edits {
         private final GlslTree tree;
         private final String outputStorage;
@@ -165,7 +181,7 @@ final class CrossStageRepair {
             this.outputStorage = outputStorage;
         }
 
-        /** An output for a fragment input no vertex output declares, zero until the vertex writes it. */
+        /** An output for an input the earlier stage does not declare, zero until that stage writes it. */
         void declare(GlslTree fragmentTree, Variable input) {
             GlslTree.Qualifier storage = storage(fragmentTree, input.declaration(), Set.of("in", "varying"));
             for (GlslTree.Qualifier qualifier : input.declaration().qualifiers()) {
@@ -177,7 +193,7 @@ final class CrossStageRepair {
             deviations.add(UNWRITTEN_ZEROED + input.name());
         }
 
-        /** An output the vertex declares but never names again starts main at zero. */
+        /** An output the earlier stage declares but never names again starts main at zero. */
         void zeroUnassigned(Variable output) {
             initialize(output);
             deviations.add(UNASSIGNED_ZEROED + output.name());
@@ -187,7 +203,7 @@ final class CrossStageRepair {
             prologue.append(variable.name()).append(" = ").append(zero(variable.type())).append(";\n");
         }
 
-        /** The output takes the input's type; the vertex writes a global of its old type instead. */
+        /** The output takes the input's type; the earlier stage writes a global of its old type instead. */
         void convert(Variable output, String inputType) {
             String internal = GlslTokenRewriter.uniqueIdentifier(tree.source(), "chimeraVarying_" + output.name());
             retyped.computeIfAbsent(output.declaration(), key -> new LinkedHashMap<>())
