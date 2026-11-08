@@ -1,7 +1,7 @@
 {
   "slice": "M7.5",
   "supportedReportSha256": "d0ef559472892a31c4f81cc55f7279c88815422c3f4b45cd0a84bca43cd8882a",
-  "supportedResourceFingerprint": "118eb1b051f17d9db6380c23dd7dc3d04d2589a3ac637087c886fbc30c3294ca",
+  "supportedResourceFingerprint": "84d449c5ff14c8ee2de831142fe1a8b1aa8d00259ad1a70b7f87bdcf62fbc9a0",
   "unsupportedReportSha256": "4c2f89d69974e3b0d83478f96ec626db566a0fa8412d53e3ca02bfc40cf09fb6",
   "unsupportedResourceFingerprint": "dfd098c029d9d92ae3859f0c1884e40fa55aca17a45c8bc33a7853db7b6a5404"
 }

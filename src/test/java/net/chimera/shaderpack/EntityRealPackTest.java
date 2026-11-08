@@ -357,9 +357,10 @@ final class EntityRealPackTest {
         boolean requireNoise = declaresNoise
                 || (expectation.pack().equals("bsl") && expectation.program().equals("gbuffers_block"));
         if (requireNoise) {
+            // "noisetex" is the generated noise; a declared one is "noisetex:<source>" (BSL's texture.noise).
             boolean noiseOk = manifest.entries().stream().anyMatch(entry -> entry.slot() == 7
                     && entry.kind() == ProgramImageBindingManifest.Kind.PACK_TEXTURE
-                    && entry.resourceKey().equals("noisetex"));
+                    && entry.resourceKey().startsWith("noisetex"));
             assertTrue(noiseOk, what + " declares noisetex but the manifest has no "
                     + "slot-7 PACK_TEXTURE noisetex entry: " + manifest.entries());
         }

@@ -339,7 +339,10 @@ public final class PackResourcePlan {
             return rawBinding(program, name, slot, declaration, shadersDir, deviations);
         }
         boolean game = isNamespacedSource(declaration.source());
-        String key = name.equals("noisetex") ? "noisetex" : declaration.key();
+        // A declared noise is its own image: "noisetex" alone names the generated one, which the
+        // programs no declaration covers still read (Spring declares it for deferred and composite).
+        String key = name.equals("noisetex") ? "noisetex:" + declaration.source() : declaration.key();
+        String label = name.equals("noisetex") ? name : key;
         PackResourceKind kind = name.equals("noisetex")
                 ? PackResourceKind.NOISE : PackResourceKind.PACK_TEXTURE;
         String filter = name.equals("noisetex") ? "linear" : "nearest";
@@ -352,21 +355,21 @@ public final class PackResourcePlan {
                     "linear", "repeat", PackResourceStatus.HOST_ALIAS, deviations);
         }
         if (game) {
-            deviations.add("PACK_TEXTURE_DECLARED:" + key);
+            deviations.add("PACK_TEXTURE_DECLARED:" + label);
             return new PackResourceBinding(program, name, key, kind,
                     declaration.source(), resolvedSlot, filter, wrap,
                     PackResourceStatus.GAME_RESOURCE, deviations);
         }
         Path packFile = resolvePath(shadersDir, declaration.source());
         if (packFile != null) {
-            deviations.add("PACK_TEXTURE_APPLIED:" + key);
+            deviations.add("PACK_TEXTURE_APPLIED:" + label);
             return new PackResourceBinding(program, name, key, kind,
                     declaration.source(), resolvedSlot, mcmetaFilter(packFile, filter),
                     mcmetaWrap(packFile, wrap), PackResourceStatus.PACK_FILE, deviations);
         }
         deviations.add(isUnsafePath(declaration.source())
-                ? "PACK_TEXTURE_PATH_UNSAFE:" + key
-                : "PACK_TEXTURE_MISSING:" + key);
+                ? "PACK_TEXTURE_PATH_UNSAFE:" + label
+                : "PACK_TEXTURE_MISSING:" + label);
         return new PackResourceBinding(program, name, key, kind,
                 declaration.source(), resolvedSlot, filter, wrap,
                 PackResourceStatus.UNAVAILABLE, deviations);

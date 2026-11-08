@@ -46,6 +46,35 @@ final class SampledResourcePlanTest {
         verifyBaseline(root.resolve("baselines/m7_5.json"), supported, unsupported);
     }
 
+    /**
+     * Spring declares texture.deferred.noisetex and texture.composite.noisetex but no texture.noise,
+     * so its gbuffers programs read Iris's generated noise. Every noisetex shared one resource key,
+     * and the owner loaded whichever binding came first for all of them.
+     */
+    @Test
+    void aDeclaredNoiseIsItsOwnImage(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.createDirectories(shaders.resolve("texture"));
+        Files.write(shaders.resolve("texture/Noise2D.png"), new byte[] {0});
+        Files.writeString(shaders.resolve("shaders.properties"), "texture.deferred.noisetex = texture/Noise2D.png\n");
+        String vertex = "#version 120\nvarying vec2 uv;\n"
+                + "void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }\n";
+        String fragment = "#version 120\nuniform sampler2D noisetex;\nvarying vec2 uv;\n"
+                + "void main() { gl_FragData[0] = texture2D(noisetex, uv); }\n";
+        for (String program : List.of("gbuffers_terrain", "deferred")) {
+            Files.writeString(shaders.resolve(program + ".vsh"), vertex);
+            Files.writeString(shaders.resolve(program + ".fsh"), fragment);
+        }
+        PackResourcePlan resources = PackProbe.analyze(root).plan().resources();
+        PackResourceBinding generated = resources.binding("gbuffers_terrain", "noisetex");
+        PackResourceBinding declared = resources.binding("deferred", "noisetex");
+        assertTrue(generated != null && generated.status() == PackResourceStatus.GENERATED
+                && generated.resourceKey().equals("noisetex"), String.valueOf(generated));
+        assertTrue(declared != null && declared.status() == PackResourceStatus.PACK_FILE
+                && declared.resourceKey().equals("noisetex:texture/Noise2D.png") && declared.slot() == 7,
+                String.valueOf(declared));
+    }
+
     private static void verifySupported(PackProbe.Analysis analysis) {
         PackPlan plan = analysis.plan();
         PackResourcePlan resources = plan.resources();
