@@ -45,6 +45,17 @@ public final class GlslInterfaceScanner {
             return this == TESS_CONTROL || this == TESS_EVALUATION || this == GEOMETRY;
         }
 
+        /** The program stage name (PackProbe's: vertex, tess_control, ...) of a stage of this kind. */
+        String programStage() {
+            return switch (this) {
+                case VERTEX -> "vertex";
+                case TESS_CONTROL -> "tess_control";
+                case TESS_EVALUATION -> "tess_evaluation";
+                case GEOMETRY -> "geometry";
+                case FRAGMENT -> "fragment";
+            };
+        }
+
         /** The stage a program stage of this name (PackProbe's: vertex, tess_control, ...) declares. */
         static Stage of(String programStage) {
             return switch (programStage) {

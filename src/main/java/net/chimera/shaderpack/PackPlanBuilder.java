@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 /** Builds the one load-time source, interface, and translation plan. */
@@ -236,24 +237,78 @@ public final class PackPlanBuilder {
             String overlay = stage == UniformRegistry.Stage.POST
                     || FamilyAdapterRegistry.isTerrainMaterialFamily(name) ? IrisCoreProfile.NO_OVERLAY : "UV1";
             IrisCoreProfile.Patch patch = irisPatch();
-            if (vertex != null && patch != IrisCoreProfile.Patch.LINES) {
-                vertex = IrisCoreProfile.prepareIrisCoreProfile(vertex, vertexFile(), true, overlay,
-                        IrisCoreProfile.coreMode(program.executableVertexSource()), patch);
-            }
+            // Iris's core transformers serve the core names in every stage (IrisCoreProfile.servedUniforms).
+            eachStage((programStage, source) -> {
+                boolean vertexStage = programStage == GlslInterfaceScanner.Stage.VERTEX;
+                if (vertexStage && patch == IrisCoreProfile.Patch.LINES) return source;
+                return IrisCoreProfile.prepareIrisCoreProfile(source, stageFile(programStage), vertexStage, overlay,
+                        IrisCoreProfile.coreMode(sourceAsWritten(programStage)), patch);
+            });
             if (patch == IrisCoreProfile.Patch.SODIUM) vertex = IrisCoreProfile.withChunkFade(vertex);
-            if (fragment != null) {
-                fragment = IrisCoreProfile.prepareIrisCoreProfile(fragment, fragmentFile(), false, overlay,
-                        IrisCoreProfile.coreMode(program.executableFragmentSource()), patch);
-            }
             if (stage.shadowPass()) {
                 fragment = PostTargetPlan.withShadowTargetsWithin(fragment, shadowTargetCount(), deviations);
             }
-            vertex = UnitZeroSampler.apply(CenterDepthSmooth.apply(vertex, name), config, deviations, name);
-            geometry = UnitZeroSampler.apply(CenterDepthSmooth.apply(geometry, name), config, deviations, name);
-            tessControl = UnitZeroSampler.apply(CenterDepthSmooth.apply(tessControl, name), config, deviations, name);
-            tessEvaluation = UnitZeroSampler.apply(CenterDepthSmooth.apply(tessEvaluation, name), config, deviations,
-                    name);
-            fragment = UnitZeroSampler.apply(CenterDepthSmooth.apply(fragment, name), config, deviations, name);
+            eachStage((programStage, source) ->
+                    UnitZeroSampler.apply(CenterDepthSmooth.apply(source, name), config, deviations, name));
+        }
+
+        /**
+         * Runs one preparation over every stage the program has, in the order GL links them. A
+         * preparation written stage by stage missed the stages added after it (KNOW-847).
+         */
+        private void eachStage(BiFunction<GlslInterfaceScanner.Stage, String, String> preparation) {
+            for (GlslInterfaceScanner.Stage programStage : GlslInterfaceScanner.Stage.values()) {
+                String source = source(programStage);
+                if (source != null) setSource(programStage, preparation.apply(programStage, source));
+            }
+        }
+
+        /** A stage's source as prepared so far; null when the program has no such stage. */
+        private String source(GlslInterfaceScanner.Stage programStage) {
+            return switch (programStage) {
+                case VERTEX -> vertex;
+                case TESS_CONTROL -> tessControl;
+                case TESS_EVALUATION -> tessEvaluation;
+                case GEOMETRY -> geometry;
+                case FRAGMENT -> fragment;
+            };
+        }
+
+        private void setSource(GlslInterfaceScanner.Stage programStage, String source) {
+            switch (programStage) {
+                case VERTEX -> vertex = source;
+                case TESS_CONTROL -> tessControl = source;
+                case TESS_EVALUATION -> tessEvaluation = source;
+                case GEOMETRY -> geometry = source;
+                case FRAGMENT -> fragment = source;
+            }
+        }
+
+        /**
+         * A stage's source as the pack wrote it, where Iris reads whether the stage compiles in core
+         * mode: before the modern post and terrain normalizations drop its version line.
+         */
+        private String sourceAsWritten(GlslInterfaceScanner.Stage programStage) {
+            return switch (programStage) {
+                case VERTEX -> program.executableVertexSource();
+                case FRAGMENT -> program.executableFragmentSource();
+                default -> {
+                    PreparedShaderSource prepared = program.preparedSources().get(programStage.programStage());
+                    yield prepared == null ? source(programStage) : prepared.source();
+                }
+            };
+        }
+
+        /**
+         * The file a stage's includes resolve against. The stages between vertex and fragment are
+         * prepared with their includes already expanded, as is every stage of a prepared snapshot.
+         */
+        private Path stageFile(GlslInterfaceScanner.Stage programStage) {
+            return switch (programStage) {
+                case VERTEX -> vertexFile();
+                case FRAGMENT -> fragmentFile();
+                default -> null;
+            };
         }
 
         /**
@@ -277,9 +332,7 @@ public final class PackPlanBuilder {
                         : IrisCoreProfile.prepareHostLayoutSource(vertex, vertexFile());
                 fragment = IrisCoreProfile.prepareHostLayoutSource(fragment, fragmentFile());
                 if (!FamilyAdapterRegistry.readsEntityIdsPerVertex(name)) {
-                    vertex = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
-                    geometry = IrisCoreProfile.prepareHostLayoutIdentity(geometry);
-                    fragment = IrisCoreProfile.prepareHostLayoutIdentity(fragment);
+                    eachStage((programStage, source) -> IrisCoreProfile.prepareHostLayoutIdentity(source));
                 }
             } catch (RuntimeException failure) {
                 hostLayoutFailure = VertexBridgeDeviations.safeReason(failure);
@@ -289,16 +342,15 @@ public final class PackPlanBuilder {
         /**
          * The entity-style vertex preambles declare the host's inputs under vanilla's core names
          * (GlslVertexPreambles.hostNameCollisions). A pack identifier of such a name is renamed in
-         * both stages before their interfaces are matched, so a varying keeps its pair: Mellow's
-         * entities and Reverie's shadow lanes write their own Normal.
+         * every stage before their interfaces are matched, so a varying keeps its pair: Mellow's
+         * entities and Reverie's shadow lanes write their own Normal, and a tessellated hand's
+         * control stage reads it.
          */
         private void renameHostNameCollisions() {
             if (vertex == null || !usesEntityPreamble()) return;
             Map<String, String> renames = GlslVertexPreambles.hostNameCollisions(vertex);
             if (renames.isEmpty()) return;
-            vertex = GlslTokenRewriter.replaceIdentifiers(vertex, renames);
-            if (geometry != null) geometry = GlslTokenRewriter.replaceIdentifiers(geometry, renames);
-            if (fragment != null) fragment = GlslTokenRewriter.replaceIdentifiers(fragment, renames);
+            eachStage((programStage, source) -> GlslTokenRewriter.replaceIdentifiers(source, renames));
         }
 
         /** The lanes whose vertex preamble declares the host's inputs under vanilla's core names. */
@@ -326,12 +378,8 @@ public final class PackPlanBuilder {
          * can execute (entity families need a vertex stage) receives the host alpha test.
          */
         private void injectAlphaTest() {
-            vertex = servedStageValues(vertex, vertexFile());
-            // Every stage reads Iris's values alike; the stages between are prepared with their includes expanded.
-            geometry = servedStageValues(geometry, null);
-            tessControl = servedStageValues(tessControl, null);
-            tessEvaluation = servedStageValues(tessEvaluation, null);
-            fragment = servedStageValues(fragment, fragmentFile());
+            // Every stage reads Iris's values alike.
+            eachStage((programStage, source) -> servedStageValues(source, stageFile(programStage)));
             if (vertex == null) {
                 return;
             }
