@@ -602,13 +602,18 @@ public final class PackTargetGraphPlan {
         }
     }
 
-    private static int parseDimension(String token, int window) {
+    /**
+     * One size.buffer dimension: an absolute size, or a relative one as Iris's TextureScaleOverride
+     * makes it, {@code (int) (window * factor)} with the factor a float. A factor past 16 is refused,
+     * a guard Iris lacks.
+     */
+    static int parseDimension(String token, int window) {
         if (token.contains(".")) {
-            double factor = Double.parseDouble(token);
-            if (!Double.isFinite(factor) || factor <= 0.0 || factor > 16.0) {
+            float factor = Float.parseFloat(token);
+            if (!Float.isFinite(factor) || factor <= 0.0F || factor > 16.0F) {
                 throw new NumberFormatException();
             }
-            return Math.max(1, (int) Math.round(window * factor));
+            return Math.max(1, (int) (window * factor));
         }
         return Integer.parseInt(token);
     }
