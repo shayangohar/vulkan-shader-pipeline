@@ -6,6 +6,7 @@ import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.SpirvLocalInitializer;
 import net.chimera.shaderpack.SpirvLocalSize;
 import net.chimera.shaderpack.UniformRegistry;
+import net.vulkanmod.config.Config;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.device.DeviceManager;
@@ -117,8 +118,17 @@ final class ComputeKernel implements AutoCloseable {
         }
     }
 
+    /**
+     * Slots for every frame VulkanMod can have in flight. The kernel lives for the pack session, and
+     * the player can raise the frame queue size within it; slots sized to the count at build would
+     * then hand one slot to two frames still in flight, rewriting a set and block the other uses.
+     */
+    static int slotCount(int framesInFlight) {
+        return Math.max(Math.max(1, framesInFlight), Config.MAX_FRAME_QUEUE_SIZE);
+    }
+
     private boolean build(MemoryStack stack, ByteBuffer code) {
-        int frameCount = Math.max(1, Renderer.getFramesNum());
+        int frameCount = slotCount(Renderer.getFramesNum());
         frames = new FrameSlot[frameCount];
         for (int index = 0; index < frameCount; index++) {
             frames[index] = new FrameSlot();
