@@ -82,6 +82,8 @@ public final class PackPostTargets {
     private final Set<VulkanImage> mipSampling = Collections.newSetFromMap(new IdentityHashMap<>());
     private TargetStep currentStep;
     private PostTargetPlan currentPlan;
+    /** The post window now running (openPostWindow); null before the frame's first. */
+    private PackFrameSchedulePlan.PostWindow openWindow;
 
     /** Installs the validated graph and allocates only required physical sides. */
     public boolean configure(PackTargetGraphPlan graph) {
@@ -176,6 +178,7 @@ public final class PackPostTargets {
             throw new IllegalStateException("pack target graph is not configured");
         }
         this.hdrIdentitySource = hdrColor;
+        this.openWindow = null;
         this.temporal.beginFrame(hdrColor != null);
         resetMipmapSampling();
         Arrays.fill(this.pendingImages, null);
@@ -447,6 +450,7 @@ public final class PackPostTargets {
      * mips by deferred, the translucents, composite and final (Glimmer's sky in colortex7).
      */
     public void openPostWindow(VkCommandBuffer commandBuffer, PackFrameSchedulePlan.PostWindow window) {
+        this.openWindow = window;
         if (this.graph != null) flip(commandBuffer, this.graph.preFlips(window));
     }
 
@@ -567,7 +571,8 @@ public final class PackPostTargets {
 
     /**
      * Picks each output's write side and, when the step also reads it, copies its source in first.
-     * A target the step leaves unwritten takes its other side as that side stands, as Iris's flip does.
+     * A target the step leaves unwritten takes its other side as that side stands, as Iris's flip
+     * does, except where that flip lands on the world's side ({@link #keepsWorldDraws}).
      */
     private void claimOutputSides(MemoryStack stack, VkCommandBuffer commandBuffer, TargetStep step) {
         for (int target : step.outputTargets()) {
@@ -580,11 +585,27 @@ public final class PackPostTargets {
             this.pendingWriteSide[target] = side;
             VulkanImage destination = imageFor(target, side);
             this.pendingImages[target] = destination;
-            if (!unwritten && step.reads(target) && this.sourceImages[target] != null
-                    && this.sourceImages[target] != destination) {
-                PackTargetImages.copyImage(stack, commandBuffer, this.sourceImages[target], destination);
+            VulkanImage source = this.sourceImages[target];
+            boolean copyIn = unwritten
+                    ? keepsWorldDraws(this.openWindow, source != null && source == this.hdrIdentitySource)
+                    : step.reads(target);
+            if (copyIn && source != null && source != destination) {
+                PackTargetImages.copyImage(stack, commandBuffer, source, destination);
             }
         }
+    }
+
+    /**
+     * Whether a prepare pass that leaves colortex0 unwritten hands back the world image, which still
+     * holds colortex0. Iris draws the world into the side its prepare flips end on
+     * (flippedAfterPrepare), the sky it draws before prepare included, so that flip lands on what the
+     * world drew. Glimmer's prepare2 writes nothing; its deferred sky adds colortex0 under the sky,
+     * where the pre-prepare sky draw left zero. Handed last frame's final image instead, the horizon
+     * no geometry covers summed frame after frame up to the half-float limit. Later windows flip onto
+     * the older side, as Iris's do.
+     */
+    static boolean keepsWorldDraws(PackFrameSchedulePlan.PostWindow window, boolean heldByWorldImage) {
+        return window == PackFrameSchedulePlan.PostWindow.PREPARE && heldByWorldImage;
     }
 
     /** The side a step writes a target to: the other side of one it leaves unwritten, else the next or current. */

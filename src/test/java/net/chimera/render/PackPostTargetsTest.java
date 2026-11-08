@@ -84,6 +84,25 @@ final class PackPostTargetsTest {
         assertTrue(targets.samplesMips(sky), "still mip-sampled at final");
     }
 
+    /**
+     * Glimmer's prepare2 names colortex0 and writes nothing. Iris's flip there lands on the side the
+     * world draws into, where its pre-prepare sky draw left zero; Chimera handed back last frame's
+     * final image, which Glimmer's deferred sky adds under the sky, so the horizon glowed red and
+     * green. Later windows flip onto the older side, and a prepare pass that wrote colortex0 first
+     * has moved it off the world image.
+     */
+    @Test
+    void anUnwrittenColortex0InPrepareKeepsTheWorldDraws() {
+        assertTrue(PackPostTargets.keepsWorldDraws(PackFrameSchedulePlan.PostWindow.PREPARE, true));
+        for (PackFrameSchedulePlan.PostWindow window : PackFrameSchedulePlan.PostWindow.values()) {
+            if (window == PackFrameSchedulePlan.PostWindow.PREPARE) continue;
+            assertTrue(!PackPostTargets.keepsWorldDraws(window, true), window + " flips onto the older side");
+        }
+        assertTrue(!PackPostTargets.keepsWorldDraws(PackFrameSchedulePlan.PostWindow.PREPARE, false),
+                "colortex0 a prepare pass wrote is off the world image");
+        assertTrue(!PackPostTargets.keepsWorldDraws(null, true), "no window has opened");
+    }
+
     @Test
     void feedbackSeeding() {
         TargetSpec persistent = new TargetSpec(2, 97, 16, 16, false,
