@@ -9,6 +9,7 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -24,6 +25,8 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     private final Map<String, PackStorageImage> images = new TreeMap<>();
     private final Map<String, String> failures = new TreeMap<>();
     private final Set<String> reportedLimits = new HashSet<>();
+    /** Each relative image's last size whose refit allocation failed (refit). */
+    private final Map<String, String> failedRefits = new HashMap<>();
     private int generation;
     private boolean closed;
 
@@ -87,10 +90,38 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
                 if (reportedLimits.add(limit)) ChimeraMod.LOGGER.warn("[chimera] {}", limit);
                 continue;
             }
-            if (current != null) MemoryManager.getInstance().addFrameOp(current::free);
-            allocate(spec, extent);
-            generation++;
+            if (refit(spec, extent, current)) generation++;
         }
+    }
+
+    /**
+     * Replaces a relative image with one at {@code extent}, made first: a failed allocation keeps
+     * the old image bound at its old size, as a size past the device's limit does, logged once per
+     * size and tried again when the size changes. Retired first, the failure dropped the image
+     * and recorded a load failure, so every program binding it fell back for the session.
+     */
+    private boolean refit(PackAdvancedResourcePlan.ImageSpec spec, int[] extent, PackStorageImage current) {
+        String size = extent[0] + "x" + extent[1];
+        if (!refitDue(failedRefits.get(spec.name()), size)) return false;
+        PackStorageImage replacement;
+        try {
+            replacement = PackStorageImage.create(spec, extent, viewFormats(spec));
+        } catch (RuntimeException failure) {
+            failedRefits.put(spec.name(), size);
+            ChimeraMod.LOGGER.warn("[chimera] advanced image {} could not be recreated at {}; keeping {}: {}",
+                    spec.name(), size, current == null ? "none" : current.width + "x" + current.height,
+                    failure.toString());
+            return false;
+        }
+        failedRefits.remove(spec.name());
+        if (current != null) MemoryManager.getInstance().addFrameOp(current::free);
+        images.put(spec.name(), replacement);
+        return true;
+    }
+
+    /** Whether to allocate a refit at {@code size}: not again at the size whose allocation last failed. */
+    public static boolean refitDue(String failedSize, String size) {
+        return !size.equals(failedSize);
     }
 
     /** Counts the images replaced since load, so a compute's descriptors can follow them. */

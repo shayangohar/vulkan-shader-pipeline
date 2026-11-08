@@ -253,14 +253,27 @@ final class PackSessionLifecycle {
         pass.packHdrFormat = 97;
         pass.packNeedsHdrDepth = false;
         pass.depth.hdrDepthReadable = false;
+        resetHostDirectives();
+        PackUniformProvider.resetSession();
+    }
+
+    /**
+     * Returns every host-side directive a pack installs to vanilla's: the terrain overrides,
+     * material map, material plan and shading, the pack atlas mips, and the held and rendered item
+     * ids. Pack cleanup, the no-pack load and the host fallback after a failed rollback all run
+     * this one list; the fallback ran none, so a pack whose load and rollback both failed kept its
+     * terrain directives under vanilla. A material map change inside a frame-boundary handoff
+     * rebuilds the level once, at its end (ChimeraTerrainPipelines.rebuildingOnce).
+     */
+    static void resetHostDirectives() {
         ChimeraTerrainPipelines.setGeometryOverride(null);
         ChimeraTerrainPipelines.setTranslucentOverride(null);
+        ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
         ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
         ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
         PackAtlasMipmaps.setPackInstalled(false);
         PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
         RenderedItemIds.install(PackItemIdResolver.empty());
-        PackUniformProvider.resetSession();
     }
 
     /** Records a dimension change for application at the next safe frame boundary. */
@@ -338,6 +351,7 @@ final class PackSessionLifecycle {
                 this.loggedPendingPackDimension = null;
                 markPackVariantFallback();
                 ChimeraRenderer.fallbackToHostRenderer();
+                resetHostDirectives();
                 reportPackChangeFailure(request.path(), rebuildFailure, "Vanilla rendering restored; rollback failed.");
                 return false;
             }
@@ -461,6 +475,7 @@ final class PackSessionLifecycle {
                 this.loggedPendingPackDimension = null;
                 markPackVariantFallback();
                 ChimeraRenderer.fallbackToHostRenderer();
+                resetHostDirectives();
                 return false;
             }
         }
@@ -503,12 +518,7 @@ final class PackSessionLifecycle {
         Path dir = this.packPath;
         if (dir == null || pass.packFrameUnsupported != null) {
             if (dir == null) LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
-            ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
-            ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
-            ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
-            PackAtlasMipmaps.setPackInstalled(false);
-            PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
-            RenderedItemIds.install(PackItemIdResolver.empty());
+            resetHostDirectives();
             PackUniformProvider.installRuntimeSettings(null);
             PackUniformProvider.installDirectives(null);
             pass.packNeedsHdrDepth = false;

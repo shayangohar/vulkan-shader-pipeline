@@ -29,12 +29,18 @@ public final class PackStorageBuffer extends UniformBuffer {
     public void checkCapacity(int size) {}
 
     /**
-     * Replaces the device buffer with an empty one of {@code size} bytes, as VulkanMod resizes its
-     * own uniform buffers: the old one is freed once the frames that use it finish, and every
-     * descriptor attached to this object binds the new one from its next draw.
+     * Replaces the device buffer with an empty one of {@code size} bytes. The new one is allocated
+     * first, so a failed allocation throws with this object still holding its old buffer; freed
+     * first, as VulkanMod resizes its own uniform buffers, the old handle stayed here, queued for
+     * freeing, and a later free would free it twice. The old one is freed once the frames that use
+     * it finish, and every descriptor attached to this object binds the new one from its next draw.
      */
     public void recreate(int size) {
+        PackStorageBuffer replacement = new PackStorageBuffer(size);
         freeBuffer();
-        createBuffer(size);
+        this.id = replacement.id;
+        this.allocation = replacement.allocation;
+        this.bufferSize = replacement.bufferSize;
+        this.data = replacement.data;
     }
 }

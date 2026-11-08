@@ -88,6 +88,18 @@ final class AdvancedImagePlanTest {
     }
 
     /**
+     * A relative image whose refit allocation fails keeps its old image and is tried again only at
+     * another size. Retired before allocating, the failure dropped the image for the session and
+     * every program binding it hit RESOURCE_BINDING_UNAVAILABLE.
+     */
+    @Test
+    void aFailedRefitIsRetriedOnlyAtAnotherSize() {
+        assertTrue(PackAdvancedImageOwner.refitDue(null, "1920x1080"), "no refit has failed");
+        assertTrue(!PackAdvancedImageOwner.refitDue("3840x2160", "3840x2160"), "not every frame at the failed size");
+        assertTrue(PackAdvancedImageOwner.refitDue("3840x2160", "1920x1080"), "a new size tries again");
+    }
+
+    /**
      * A custom image takes any InternalTextureFormat Iris knows (ShaderProperties, GlImage): Chimera
      * knew only r8ui, r16ui and rgba16f, so Pegasus's R32UI and RGBA8 images were refused.
      */

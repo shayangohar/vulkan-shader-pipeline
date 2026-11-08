@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -25,6 +26,30 @@ final class EntityDrawWindowTest {
             assertFalse(drawActive(), "the next frame's world window closes it too");
         } finally {
             field("drawActive").setBoolean(null, false);
+            ChimeraEntityBridge.endWorldWindow();
+        }
+    }
+
+    /**
+     * ItemRenderer.render has no finally either: an item whose renderer throws stays current, and
+     * every later entity draw carried its currentRenderedItemId.
+     */
+    @Test
+    void anItemLeftCurrentUnwindsAsTheCasterPassAndTheNextFrameBegin() {
+        try {
+            RenderedItemIds.push(5, 0);
+            RenderedItemIds.push(7, 0);
+            ChimeraEntityBridge.endShadowCasters();
+            assertEquals(0, RenderedItemIds.current(), "the caster window unwinds items its failed draws left");
+            RenderedItemIds.push(3, 0);
+            RenderedItemIds.pop();
+            assertEquals(0, RenderedItemIds.current(), "a later item pops back to none, not to a stale item");
+
+            RenderedItemIds.push(9, 0);
+            ChimeraEntityBridge.beginWorldWindow();
+            assertEquals(0, RenderedItemIds.current(), "the next frame's world window unwinds it too");
+        } finally {
+            RenderedItemIds.install(null);
             ChimeraEntityBridge.endWorldWindow();
         }
     }

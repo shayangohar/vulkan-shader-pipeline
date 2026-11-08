@@ -15,6 +15,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.IntConsumer;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
@@ -128,7 +129,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     /**
      * Recreates each relative buffer for the main target's new size and zero-fills it, as Iris's
      * ShaderStorageBufferHolder.hasResizedScreen does: contents do not survive a resize. Recorded
-     * outside a render pass. A size past the device's range keeps the old buffer and is logged.
+     * outside a render pass. A buffer that cannot take the new size keeps its old one ({@link #refit}).
      */
     public void fitRelativeBuffers(VkCommandBuffer commandBuffer, int width, int height) {
         if (commandBuffer == null || closed || (width == screenWidth && height == screenHeight)) return;
@@ -138,13 +139,10 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         for (Map.Entry<Integer, PackStorageBuffer> entry : buffers.entrySet()) {
             PackAdvancedResourcePlan.BufferSpec spec = plan.buffers().get(entry.getKey());
             if (spec == null || !spec.relative()) continue;
-            long bytes = spec.bytes(width, height);
-            if (bytes > maxRange()) {
-                ChimeraMod.LOGGER.warn("[chimera] storage buffer {} needs {} bytes at {}x{}, past the device range",
-                        entry.getKey(), bytes, width, height);
+            String size = width + "x" + height;
+            if (!refit(entry.getKey(), spec.bytes(width, height), maxRange(), size, entry.getValue()::recreate)) {
                 continue;
             }
-            entry.getValue().recreate((int) bytes);
             // Before the session's first fill (initialize), that fill covers the new buffer.
             if (initialized) {
                 vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, VK_WHOLE_SIZE, 0);
@@ -152,6 +150,27 @@ public final class PackStorageBufferOwner implements AutoCloseable {
             }
         }
         if (filled) PackVulkanBarriers.afterStorageBufferTransfer(commandBuffer);
+    }
+
+    /**
+     * Recreates one relative buffer at {@code bytes} through {@code recreate}, and says whether it
+     * did. A size past the device's range, or one the device cannot allocate, keeps the old buffer
+     * and is logged: the pack reads within the old size, never a freed buffer.
+     */
+    static boolean refit(int index, long bytes, long maxRange, String size, IntConsumer recreate) {
+        if (bytes > maxRange) {
+            ChimeraMod.LOGGER.warn("[chimera] storage buffer {} needs {} bytes at {}, past the device range",
+                    index, bytes, size);
+            return false;
+        }
+        try {
+            recreate.accept((int) bytes);
+            return true;
+        } catch (RuntimeException failure) {
+            ChimeraMod.LOGGER.warn("[chimera] storage buffer {} could not be recreated at {} ({} bytes): {}",
+                    index, size, bytes, failure.toString());
+            return false;
+        }
     }
 
     /** Returns the session-owned buffer for an admitted logical index. */
