@@ -237,15 +237,14 @@ public final class PackPlanBuilder {
             String overlay = stage == UniformRegistry.Stage.POST
                     || FamilyAdapterRegistry.isTerrainMaterialFamily(name) ? IrisCoreProfile.NO_OVERLAY : "UV1";
             IrisCoreProfile.Patch patch = irisPatch();
-            if (vertex != null && patch != IrisCoreProfile.Patch.LINES) {
-                vertex = IrisCoreProfile.prepareIrisCoreProfile(vertex, vertexFile(), true, overlay,
-                        IrisCoreProfile.coreMode(program.executableVertexSource()), patch);
-            }
+            // Iris's core transformers serve the core names in every stage (IrisCoreProfile.servedUniforms).
+            eachStage((programStage, source) -> {
+                boolean vertexStage = programStage == GlslInterfaceScanner.Stage.VERTEX;
+                if (vertexStage && patch == IrisCoreProfile.Patch.LINES) return source;
+                return IrisCoreProfile.prepareIrisCoreProfile(source, stageFile(programStage), vertexStage, overlay,
+                        IrisCoreProfile.coreMode(sourceAsWritten(programStage)), patch);
+            });
             if (patch == IrisCoreProfile.Patch.SODIUM) vertex = IrisCoreProfile.withChunkFade(vertex);
-            if (fragment != null) {
-                fragment = IrisCoreProfile.prepareIrisCoreProfile(fragment, fragmentFile(), false, overlay,
-                        IrisCoreProfile.coreMode(program.executableFragmentSource()), patch);
-            }
             if (stage.shadowPass()) {
                 fragment = PostTargetPlan.withShadowTargetsWithin(fragment, shadowTargetCount(), deviations);
             }
@@ -283,6 +282,21 @@ public final class PackPlanBuilder {
                 case GEOMETRY -> geometry = source;
                 case FRAGMENT -> fragment = source;
             }
+        }
+
+        /**
+         * A stage's source as the pack wrote it, where Iris reads whether the stage compiles in core
+         * mode: before the modern post and terrain normalizations drop its version line.
+         */
+        private String sourceAsWritten(GlslInterfaceScanner.Stage programStage) {
+            return switch (programStage) {
+                case VERTEX -> program.executableVertexSource();
+                case FRAGMENT -> program.executableFragmentSource();
+                default -> {
+                    PreparedShaderSource prepared = program.preparedSources().get(programStage.programStage());
+                    yield prepared == null ? source(programStage) : prepared.source();
+                }
+            };
         }
 
         /**

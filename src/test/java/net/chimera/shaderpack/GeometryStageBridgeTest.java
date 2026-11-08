@@ -424,4 +424,63 @@ final class GeometryStageBridgeTest {
                 prepared.between().geometry());
         assertNull(PackCompileTest.compile(prepared.fragment(), false), prepared.fragment());
     }
+
+    /**
+     * Iris compiles a #version 150-or-later stage with no profile in core mode and serves the core
+     * uniforms in every stage (VanillaCoreTransformer). Chimera served them in the vertex and
+     * fragment stages only: a core geometry stage's projectionMatrix stayed a uniform nothing set,
+     * and the stage projected every vertex through a zero matrix.
+     */
+    @Test
+    void aCoreGeometryStageReadsTheDrawsProjection(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_hand.vsh"), """
+                #version 450 compatibility
+                out vec2 v_texcoord;
+                out vec4 v_viewPos;
+                void main() {
+                    v_texcoord = gl_MultiTexCoord0.xy;
+                    v_viewPos = gl_ModelViewMatrix * gl_Vertex;
+                    gl_Position = ftransform();
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_hand.gsh"), """
+                #version 450
+                layout(triangles) in;
+                layout(triangle_strip, max_vertices = 3) out;
+                uniform mat4 projectionMatrix;
+                in vec2 v_texcoord[];
+                in vec4 v_viewPos[];
+                out vec2 texcoord;
+                void main() {
+                    for (int i = 0; i < 3; ++i) {
+                        texcoord = v_texcoord[i];
+                        gl_Position = projectionMatrix * v_viewPos[i];
+                        EmitVertex();
+                    }
+                    EndPrimitive();
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_hand.fsh"), """
+                #version 450 compatibility
+                uniform sampler2D texture;
+                in vec2 texcoord;
+                void main() {
+                    gl_FragData[0] = texture2D(texture, texcoord);
+                }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackProgramPlan hand = analysis.plan().program("gbuffers_hand");
+        assertTrue(hand.executable(), hand.deviations().toString());
+        assertTrue(hand.deviations().stream().noneMatch(deviation -> deviation.contains("projectionMatrix")),
+                hand.deviations().toString());
+        String geometry = hand.convertedGeometry();
+        assertTrue(!GlslTokenRewriter.containsIdentifier(geometry, "projectionMatrix")
+                && geometry.contains("chimeraHandProjection()"), geometry);
+        PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(hand, analysis.plan().advancedResources(),
+                UniformRegistry.Stage.HAND, PackFamilyPipelines.familyVertex(hand));
+        PackPipelines.prepareLayout(prepared, hand.name(), analysis.plan().advancedResources());
+        assertNull(PackCompileTest.compileBetween(prepared.between().geometry(), "geometry"),
+                prepared.between().geometry());
+    }
 }
