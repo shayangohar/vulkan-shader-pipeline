@@ -30,6 +30,41 @@ final class PackAtlasMipmapsWiringTest {
                 "loading leaves no pack without one, and installs one with its terrain directives");
     }
 
+    /**
+     * When a pack load and its rollback both fail, Chimera falls back to the host renderer. That
+     * path reset none of the pack's host directives, so vanilla kept the pack's atlas mips and its
+     * block.properties layers (glass drawn translucent, through ItemBlockRenderTypes).
+     */
+    @Test
+    void aFailedRollbackFallsBackWithThePacksHostDirectivesReset() throws IOException {
+        var lifecycle = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
+        int fallbacks = 0;
+        for (var method : lifecycle.methods) {
+            boolean fellBack = false;
+            boolean atlasReset = false;
+            boolean materialMapReset = false;
+            for (AbstractInsnNode instruction : MixinBytecode.instructionsThrough(lifecycle, method.name)) {
+                if (!(instruction instanceof MethodInsnNode call)) continue;
+                if (call.name.equals("fallbackToHostRenderer")) {
+                    if (fellBack) assertTrue(atlasReset && materialMapReset, method.name);
+                    fellBack = true;
+                    fallbacks++;
+                    atlasReset = false;
+                    materialMapReset = false;
+                }
+                if (fellBack && call.owner.equals(OWNER) && call.name.equals("setPackInstalled")) {
+                    atlasReset = call.getPrevious().getOpcode() == Opcodes.ICONST_0;
+                }
+                if (fellBack && call.name.equals("setMaterialResolver")) materialMapReset = true;
+            }
+            if (fellBack) {
+                assertTrue(atlasReset, method.name + ": the fallback leaves the pack atlas mips wanted");
+                assertTrue(materialMapReset, method.name + ": the fallback leaves the pack's block layers on");
+            }
+        }
+        assertTrue(fallbacks >= 2, "the pack change and dimension variant rollbacks both fall back");
+    }
+
     @Test
     void theFrameBoundaryReconcilesAfterAnyPackChange() throws IOException {
         var renderer = MixinBytecode.nativeClass("net/chimera/render/ChimeraRenderer");
