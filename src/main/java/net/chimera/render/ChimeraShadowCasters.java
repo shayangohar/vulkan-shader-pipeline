@@ -26,6 +26,8 @@ import net.vulkanmod.render.chunk.RenderSection;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fStack;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.SequencedMap;
 
@@ -101,7 +103,7 @@ public final class ChimeraShadowCasters implements AutoCloseable {
     /**
      * Iris ShadowRenderer.renderEntities: every entity the shadow frustum keeps, without vanilla's
      * camera-entity exclusion; spectators cast nothing. With shadowEntities off, shadowPlayer
-     * still draws the player and its vehicle.
+     * still draws the player with its passengers and vehicle ({@link #playerCasters}).
      */
     private void drawEntities(Minecraft minecraft, ClientLevel level, Frustum frustum, DeltaTracker delta,
                               ShadowCasterDirectives directives, PoseStack poses,
@@ -118,13 +120,25 @@ public final class ChimeraShadowCasters implements AutoCloseable {
             }
         } else if (directives.player() && minecraft.player != null) {
             Player player = minecraft.player;
-            if (!player.isSpectator() && !player.isInvisible()) {
-                draw(renderer, level, delta, player, poses, cameraX, cameraY, cameraZ);
-            }
-            if (player.getVehicle() != null) {
-                draw(renderer, level, delta, player.getVehicle(), poses, cameraX, cameraY, cameraZ);
+            boolean casts = !player.isSpectator()
+                    && dispatcher.shouldRender(player, frustum, cameraX, cameraY, cameraZ);
+            for (Entity caster : playerCasters(casts, player, player.getPassengers(), player.getVehicle())) {
+                draw(renderer, level, delta, caster, poses, cameraX, cameraY, cameraZ);
             }
         }
+    }
+
+    /**
+     * Iris ShadowRenderer.renderPlayerEntity, for shadowPlayer without shadowEntities: nothing for a
+     * spectator or a player outside the shadow frustum, else the player's passengers, its vehicle and
+     * the player, in that order. An invisible player still draws: its armour and held items cast.
+     */
+    static <E> List<E> playerCasters(boolean casts, E player, List<? extends E> passengers, E vehicle) {
+        if (!casts) return List.of();
+        List<E> casters = new ArrayList<>(passengers);
+        if (vehicle != null) casters.add(vehicle);
+        casters.add(player);
+        return casters;
     }
 
     /** One entity as LevelRenderer.renderLevel draws it, without the outline source a glowing one takes. */

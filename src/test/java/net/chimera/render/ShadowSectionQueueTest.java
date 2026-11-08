@@ -6,6 +6,9 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -34,6 +37,20 @@ final class ShadowSectionQueueTest {
         assertFalse(ShadowSectionQueue.kept(hostVolume, box, 0.0F, -180.0F, 0.0F), "the host shadow stops at far");
         assertFalse(ShadowSectionQueue.kept(hostVolume, box, 0.0F, 120.0F, 0.0F), "and at near");
         assertTrue(ShadowSectionQueue.kept(hostVolume, box, 0.0F, -40.0F, 0.0F), "a section inside casts in both");
+    }
+
+    /**
+     * Iris's renderPlayerEntity (shadowPlayer without shadowEntities, Solas at its defaults): the
+     * passengers, the vehicle, then the player, an invisible one too; nothing for a spectator or a
+     * player outside the frustum. Chimera skipped an invisible player and its passengers.
+     */
+    @Test
+    void thePlayerOnlyPathDrawsAsIrisDoes() {
+        assertEquals(List.of("parrot", "boat", "player"),
+                ChimeraShadowCasters.playerCasters(true, "player", List.of("parrot"), "boat"));
+        assertEquals(List.of("player"),
+                ChimeraShadowCasters.playerCasters(true, "player", List.of(), null));
+        assertTrue(ChimeraShadowCasters.playerCasters(false, "player", List.of("parrot"), "boat").isEmpty());
     }
 
     /**
