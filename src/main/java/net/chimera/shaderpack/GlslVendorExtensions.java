@@ -39,9 +39,12 @@ public final class GlslVendorExtensions {
      */
     private static final List<String> VULKAN = List.of("GL_AMD_gpu_shader_half_float", "GL_AMD_gpu_shader_int16",
             "GL_ARB_gpu_shader_int64");
-    /** An {@code #extension name : behaviour} line: the text before the name, the name, the rest. */
+    /**
+     * An {@code #extension name : behaviour} line: the text before the name, the name, the rest, and
+     * a trailing line comment ({@code : require // AMD path}), which the rewrite keeps.
+     */
     private static final Pattern EXTENSION = Pattern.compile(
-            "(?m)^([ \\t]*#[ \\t]*extension[ \\t]+)(\\w+)([ \\t]*:[ \\t]*\\w+[ \\t]*)$");
+            "(?m)^([ \\t]*#[ \\t]*extension[ \\t]+)(\\w+)([ \\t]*:[ \\t]*\\w+[ \\t]*?)([ \\t]*//.*)?$");
 
     private static final String TRINARY = "GL_AMD_shader_trinary_minmax";
     /**
@@ -73,13 +76,17 @@ public final class GlslVendorExtensions {
         StringBuilder result = new StringBuilder();
         while (line.find()) {
             String name = line.group(2);
-            List<String> lines;
+            List<String> lines = new ArrayList<>();
             if (nvidia && name.equals(NVIDIA)) {
-                lines = VULKAN.stream().map(vulkan -> line.group(1) + vulkan + line.group(3)).toList();
+                VULKAN.forEach(vulkan -> lines.add(line.group(1) + vulkan + line.group(3)));
             } else if (trinary && name.equals(TRINARY)) {
-                lines = TRINARY_BUILT_INS;
-            } else {
-                lines = List.of(line.group());
+                lines.addAll(TRINARY_BUILT_INS);
+            }
+            if (lines.isEmpty()) {
+                lines.add(line.group());
+            } else if (line.group(4) != null) {
+                // The directive's comment stays on the first line written in its place.
+                lines.set(0, lines.get(0) + line.group(4));
             }
             line.appendReplacement(result, Matcher.quoteReplacement(String.join("\n", lines)));
         }
