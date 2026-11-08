@@ -320,6 +320,21 @@ final class TessellationStageBridgeTest {
         assertNull(PackCompileTest.compile(prepared.fragment(), false), prepared.fragment());
     }
 
+    /**
+     * A commented layout above the real one took the swap, and the real one kept GL's ccw: every
+     * tessellated triangle faced the other way. An order in a second layout statement kept GL's
+     * beside the cw the first gained, and the stage failed to compile.
+     */
+    @Test
+    void theWindingSwapReadsOnlyLiveLayoutsAndEveryOrderInThem() {
+        assertEquals("// layout(triangles, ccw) in;\nlayout(triangles, cw) in;",
+                TessellationStageBridge.swappedWinding("// layout(triangles, ccw) in;\nlayout(triangles, ccw) in;"));
+        assertEquals("/* layout(triangles) in; */\nlayout(triangles, cw) in;",
+                TessellationStageBridge.swappedWinding("/* layout(triangles) in; */\nlayout(triangles) in;"));
+        assertEquals("layout(triangles, equal_spacing) in;\nlayout(cw) in;",
+                TessellationStageBridge.swappedWinding("layout(triangles, equal_spacing) in;\nlayout(ccw) in;"));
+    }
+
     /** GL's ccw is Vulkan's cw under the upper-left domain origin, and GL's default is ccw. */
     @Test
     void theWindingIsReversed() {
