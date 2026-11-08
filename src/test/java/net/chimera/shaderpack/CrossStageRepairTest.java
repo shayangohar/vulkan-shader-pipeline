@@ -37,9 +37,9 @@ final class CrossStageRepairTest {
                 void main() { gl_FragData[0] = vec4(lmtexcoord, isflower, 1.0); }
                 """);
         assertEquals(List.of("VARYING_UNWRITTEN_ZEROED:lmtexcoord"), repaired.deviations());
-        assertTrue(repaired.vertex().contains("out vec2 lmtexcoord;\nout float isflower;"), repaired.vertex());
-        assertTrue(repaired.vertex().contains("{\nlmtexcoord = vec2(0);\n"), repaired.vertex());
-        assertTrue(!repaired.vertex().contains("neverRead"), "an input the fragment never reads gets nothing");
+        assertTrue(repaired.earlier().contains("out vec2 lmtexcoord;\nout float isflower;"), repaired.earlier());
+        assertTrue(repaired.earlier().contains("{\nlmtexcoord = vec2(0);\n"), repaired.earlier());
+        assertTrue(!repaired.earlier().contains("neverRead"), "an input the fragment never reads gets nothing");
     }
 
     @Test
@@ -55,7 +55,7 @@ final class CrossStageRepairTest {
                 void main() { color = vec4(material); }
                 """);
         assertEquals(List.of("VARYING_UNASSIGNED_ZEROED:material"), repaired.deviations());
-        assertTrue(repaired.vertex().contains("{\nmaterial = int(0);\n"), repaired.vertex());
+        assertTrue(repaired.earlier().contains("{\nmaterial = int(0);\n"), repaired.earlier());
     }
 
     /**
@@ -84,7 +84,7 @@ final class CrossStageRepairTest {
                 void main() { color = uv + vec4(other, tint.xy); }
                 """);
         assertEquals(List.of("VARYING_TYPE_CONVERTED:uv", "VARYING_TYPE_CONVERTED:tint"), repaired.deviations());
-        String vertex = repaired.vertex();
+        String vertex = repaired.earlier();
         assertTrue(vertex.contains("vec2 chimeraVarying_uv;\nout vec4 uv;\nout vec2 other;"), vertex);
         assertTrue(vertex.contains("float uv = 1.0; return uv;"), "a local of the same name stays: " + vertex);
         assertTrue(vertex.contains("chimeraVarying_uv = vec2(helper());")
@@ -118,7 +118,7 @@ final class CrossStageRepairTest {
                 out vec4 color;
                 void main() { color = vec4(fade, corners[0].xy); }
                 """);
-        assertEquals(vertex, repaired.vertex());
+        assertEquals(vertex, repaired.earlier());
         assertTrue(repaired.deviations().isEmpty(), repaired.deviations().toString());
     }
 
@@ -177,6 +177,101 @@ final class CrossStageRepairTest {
                 entities.convertedGeometry());
         PackProgramPlan lines = plan.program("shadow_lines");
         assertTrue(lines.executable() && lines.convertedGeometry() != null, lines.deviations().toString());
+    }
+
+    /**
+     * Iris repairs each pair of adjacent stages, so a geometry stage that reads an input its vertex
+     * never declares gets a zeroed vertex output, as a fragment's would. Chimera repaired only the
+     * vertex/fragment pair and refused the program (PROGRAM_VARYING_UNMATCHED:v_tint).
+     */
+    @Test
+    void aGeometryInputTheVertexNeverWritesGetsAZeroedOutput(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 150 compatibility
+                out vec4 v_glColor;
+                void main() { v_glColor = gl_Color; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.gsh"), """
+                #version 150 compatibility
+                layout(triangles) in;
+                layout(triangle_strip, max_vertices = 3) out;
+                in vec4 v_glColor[];
+                in vec4 v_tint[];
+                out vec4 glColor;
+                void main() {
+                    for (int i = 0; i < 3; i++) {
+                        glColor = v_glColor[i] + v_tint[i];
+                        gl_Position = gl_in[i].gl_Position;
+                        EmitVertex();
+                    }
+                    EndPrimitive();
+                }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 150 compatibility
+                in vec4 glColor;
+                void main() { gl_FragData[0] = glColor; }
+                """);
+        PackProgramPlan shadow = PackProbe.analyze(root).plan().program("shadow");
+        assertTrue(shadow.executable(), shadow.deviations().toString());
+        assertTrue(shadow.deviations().contains(CrossStageRepair.UNWRITTEN_ZEROED + "v_tint"),
+                shadow.deviations().toString());
+        assertTrue(shadow.convertedVertex().contains("out vec4 v_tint;"), shadow.convertedVertex());
+    }
+
+    /**
+     * A geometry stage gains the outputs its fragment reads, zeroed before its emit loop, which keeps
+     * them for every vertex it emits. It converts no retyped output: Iris would write it after the
+     * last EmitVertex, where it reaches no vertex, so the stage match refuses it.
+     */
+    @Test
+    void aGeometryStageGainsMissingOutputsAndConvertsNone() {
+        String geometry = """
+                #version 150 compatibility
+                layout(triangles) in;
+                layout(triangle_strip, max_vertices = 3) out;
+                out vec3 tint;
+                void main() {
+                    for (int i = 0; i < 3; i++) { tint = vec3(1.0); gl_Position = gl_in[i].gl_Position; EmitVertex(); }
+                    EndPrimitive();
+                }
+                """;
+        String fragment = """
+                #version 150 compatibility
+                in vec4 tint;
+                flat in float fade;
+                void main() { gl_FragData[0] = tint * fade; }
+                """;
+        CrossStageRepair.Result repaired = CrossStageRepair.repair(geometry, GlslInterfaceScanner.Stage.GEOMETRY,
+                fragment, GlslInterfaceScanner.Stage.FRAGMENT);
+        assertEquals(List.of(CrossStageRepair.UNWRITTEN_ZEROED + "fade"), repaired.deviations());
+        assertTrue(repaired.earlier().contains("flat out float fade;")
+                && repaired.earlier().contains("{\nfade = float(0);\n")
+                && repaired.earlier().contains("out vec3 tint;"), repaired.earlier());
+    }
+
+    /**
+     * A tessellation control stage's outputs are arrays, one element per output vertex. The outputs
+     * Iris adds are not, so its edit would not compile; the pair stays as written.
+     */
+    @Test
+    void aTessellationControlStageIsLeftAsWritten() {
+        String control = """
+                #version 400 compatibility
+                layout(vertices = 3) out;
+                void main() { gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position; }
+                """;
+        String evaluation = """
+                #version 400 compatibility
+                layout(triangles) in;
+                in vec2 uvTc[];
+                void main() { gl_Position = vec4(uvTc[0], 0.0, 1.0); }
+                """;
+        CrossStageRepair.Result repaired = CrossStageRepair.repair(control, GlslInterfaceScanner.Stage.TESS_CONTROL,
+                evaluation, GlslInterfaceScanner.Stage.TESS_EVALUATION);
+        assertEquals(control, repaired.earlier());
+        assertEquals(List.of(), repaired.deviations());
     }
 
     /** A host-layout shadow lane reads the per-draw entityId in every stage, its geometry stage too. */
@@ -256,7 +351,7 @@ final class CrossStageRepairTest {
                 in float exposure;
                 void main() { gl_FragColor = vec4(texcoord, exposure, 1.0); }
                 """);
-        assertTrue(repaired.vertex().contains("out float exposure;"), repaired.vertex());
+        assertTrue(repaired.earlier().contains("out float exposure;"), repaired.earlier());
     }
 
     /** In a pack, the repaired shadow is admitted and compiles. */

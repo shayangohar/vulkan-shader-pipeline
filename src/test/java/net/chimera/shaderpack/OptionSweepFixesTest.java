@@ -73,9 +73,9 @@ final class OptionSweepFixesTest {
                 GlslInterfaceScanner.scan(fragment, false)).executable(), "unrepaired, the pair is refused");
         CrossStageRepair.Result repaired = CrossStageRepair.repair(vertex, fragment);
         assertEquals(List.of("VARYING_UNWRITTEN_ZEROED:exposure"), repaired.deviations());
-        assertTrue(repaired.vertex().contains("flat varying float exposure;"), repaired.vertex());
-        assertTrue(repaired.vertex().contains("exposure = float(0);"), repaired.vertex());
-        var match = GlslInterfaceScanner.match(GlslInterfaceScanner.scan(repaired.vertex(), true),
+        assertTrue(repaired.earlier().contains("flat varying float exposure;"), repaired.earlier());
+        assertTrue(repaired.earlier().contains("exposure = float(0);"), repaired.earlier());
+        var match = GlslInterfaceScanner.match(GlslInterfaceScanner.scan(repaired.earlier(), true),
                 GlslInterfaceScanner.scan(fragment, false));
         assertTrue(match.executable(), match.deviations().toString());
         String converted = PostVertexBridge.convertPostVaryings(fragment, new PostVertexBridge.PostVaryingLayout(
