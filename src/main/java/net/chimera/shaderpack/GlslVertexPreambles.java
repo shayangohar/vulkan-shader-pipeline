@@ -209,13 +209,38 @@ final class GlslVertexPreambles {
 
             """;
 
+    /**
+     * A preamble derived from another by exact edits ({@link #derive}). Each target must occur
+     * exactly once. A target that went missing left an input of the base bound at its location in
+     * the derived preamble, silently; now the class fails to load, which fails every test that
+     * reads a preamble.
+     */
+    private record Derived(String text) {
+        Derived replace(String target, String replacement) {
+            return new Derived(replaceOnce(text, target, replacement));
+        }
+    }
+
+    private static Derived derive(String base) {
+        return new Derived(base);
+    }
+
+    /** {@code source} with its one occurrence of {@code target} replaced; it throws unless there is exactly one. */
+    static String replaceOnce(String source, String target, String replacement) {
+        int at = source.indexOf(target);
+        if (at < 0 || source.indexOf(target, at + 1) >= 0) {
+            throw new IllegalStateException("a preamble edit's target must occur exactly once: " + target.strip());
+        }
+        return source.substring(0, at) + replacement + source.substring(at + target.length());
+    }
+
     /** Modern material inputs with the shadow pass's single MVP matrix. */
     static final String MODERN_SHADOW_VERTEX_PREAMBLE =
-            MODERN_TERRAIN_VERTEX_PREAMBLE.replace("mat4 LightMVP;\n", "");
+            derive(MODERN_TERRAIN_VERTEX_PREAMBLE).replace("mat4 LightMVP;\n", "").text();
 
     /** The shadow config exposes only the single host MVP matrix at binding 0. */
-    static final String SHADOW_VERTEX_PREAMBLE = TERRAIN_VERTEX_PREAMBLE
-            .replace("mat4 LightMVP;\n", "");
+    static final String SHADOW_VERTEX_PREAMBLE = derive(TERRAIN_VERTEX_PREAMBLE)
+            .replace("mat4 LightMVP;\n", "").text();
 
     /**
      * The mid-coordinate of a host format Iris does not widen. Iris binds mc_midTexCoord only in
@@ -373,12 +398,12 @@ final class GlslVertexPreambles {
             };
             """;
 
-    static final String HAND_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String HAND_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("vec4 chimeraEntityVertexValue()", HAND_PROJECTION + "vec4 chimeraEntityVertexValue()")
-            .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat");
+            .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat").text();
 
     /** Iris VanillaTransformer supplies +Z for a host format without a normal. */
-    static final String PARTICLE_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String PARTICLE_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")
             .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
@@ -387,14 +412,14 @@ final class GlslVertexPreambles {
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);").text();
 
     /**
      * DefaultVertexFormat.POSITION_COLOR_NORMAL, each segment drawn as a quad. Iris supplies the
      * missing inputs as for any host format: UV0 (0.5, 0.5) and full light (240, 240). The
      * line offset is zero except while {@link #prepareLineVertex} widens a fallback program.
      */
-    static final String LINE_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String LINE_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
@@ -405,7 +430,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);").text();
 
     /** Iris VanillaTransformer VIEW_SHRINK, applied to the model-view matrix of widened lines. */
     static final String LINE_WIDEN_GLOBALS = """
@@ -453,7 +478,7 @@ final class GlslVertexPreambles {
      * normal and full light; gl_Color is the host ColorModulator with the glint strength in
      * its alpha ({@link #prepareGlintVertex}).
      */
-    static final String GLINT_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String GLINT_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 1) in vec4 Color;", "const vec4 Color = vec4(1.0);")
             .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
@@ -462,18 +487,18 @@ final class GlslVertexPreambles {
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);").text();
 
     /** The glint layout under the hand's legacy projection, as {@link #HAND_VERTEX_PREAMBLE}. */
-    static final String GLINT_HAND_VERTEX_PREAMBLE = GLINT_VERTEX_PREAMBLE
+    static final String GLINT_HAND_VERTEX_PREAMBLE = derive(GLINT_VERTEX_PREAMBLE)
             .replace("vec4 chimeraEntityVertexValue()", HAND_PROJECTION + "vec4 chimeraEntityVertexValue()")
-            .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat");
+            .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat").text();
 
     /**
      * DefaultVertexFormat.POSITION_COLOR lightning and dragon rays. Iris supplies the missing
      * inputs as for any host format: UV0 (0.5, 0.5), full light (240, 240) and +Z.
      */
-    static final String LIGHTNING_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String LIGHTNING_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
@@ -481,7 +506,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);").text();
 
     /**
      * Beacon beams on DefaultVertexFormat.BLOCK widened to EXTENDED_BLOCK, as Iris widens it to
@@ -490,20 +515,20 @@ final class GlslVertexPreambles {
      * modulator applies as for any native layout. The entity ids are uniforms there.
      */
     static final String BEACON_VERTEX_PREAMBLE = "// DefaultVertexFormat.BLOCK beacon beam, widened\n"
-            + ENTITY_VERTEX_PREAMBLE
+            + derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 3) in ivec2 UV1;\n", "const ivec2 UV1 = ivec2(0);\n")
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "layout(location = 4) in vec3 Normal;")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", "layout(location = 6) in vec2 MidTexCoord;")
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "layout(location = 7) in vec4 ChimeraPackedTangent;");
+                    "layout(location = 7) in vec4 ChimeraPackedTangent;").text();
 
     /**
      * DefaultVertexFormat.POSITION_COLOR_LIGHTMAP leads. Iris supplies UV0 (0.5, 0.5) and +Z;
      * the light coordinates are the lead's own.
      */
-    static final String LEASH_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String LEASH_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 2) in ivec2 UV2;")
@@ -511,7 +536,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);").text();
 
     /**
      * DefaultVertexFormat.POSITION_TEX world draws (Iris TEXTURED and SHADOW_TEX) on the glint's
@@ -521,7 +546,7 @@ final class GlslVertexPreambles {
     static final String TEXTURED_VERTEX_PREAMBLE = "// DefaultVertexFormat.POSITION_TEX\n" + GLINT_VERTEX_PREAMBLE;
 
     /** DefaultVertexFormat.POSITION_TEX_COLOR world draws (Iris TEXTURED_COLOR and SHADOW_TEX_COLOR). */
-    static final String TEXTURED_COLOR_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String TEXTURED_COLOR_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")
             .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
@@ -530,7 +555,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);").text();
 
     /**
      * DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP glyph quads in the shadow pass. Iris draws
@@ -538,20 +563,20 @@ final class GlslVertexPreambles {
      * per quad; the host mesh has none of them, so they read +Z (VanillaTransformer's normal for
      * a layout without one), 0, 0 and (0, 0, 0, 1).
      */
-    static final String TEXT_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String TEXT_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);").text();
 
     /**
      * DefaultVertexFormat.POSITION boat water mask. Iris supplies the host colour modulator,
      * UV0 (0.5, 0.5), full light (240, 240) and +Z.
      */
-    static final String WATER_MASK_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String WATER_MASK_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 1) in vec4 Color;", "const vec4 Color = vec4(1.0);")
             .replace("layout(location = 2) in vec2 UV0;", "const vec2 UV0 = vec2(0.5);")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
@@ -560,7 +585,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);").text();
 
     /**
      * The shadow bridge's input preamble for a host-layout shadow lane: the layout's inputs, then
@@ -702,8 +727,8 @@ final class GlslVertexPreambles {
             int location = host.getElementAttributeNames().indexOf(names[i]);
             String declaration = location < 0 ? "const " + types[i] + " " + names[i] + " = " + defaults[i] + ";"
                     : "layout(location = " + location + ") in " + types[i] + " " + names[i] + ";";
-            preamble = preamble.replace("layout(location = " + (i + 1) + ") in " + types[i] + " " + names[i] + ";",
-                    declaration);
+            preamble = replaceOnce(preamble,
+                    "layout(location = " + (i + 1) + ") in " + types[i] + " " + names[i] + ";", declaration);
         }
         return preamble;
     }
@@ -715,7 +740,7 @@ final class GlslVertexPreambles {
      * texel coordinate, the face colour (the face shade, times the cloud colour in ColorModulator),
      * the face's axis normal and full light (240, 240).
      */
-    static final String CLOUD_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+    static final String CLOUD_VERTEX_PREAMBLE = derive(ENTITY_VERTEX_PREAMBLE)
             .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")
             .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
             .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
@@ -724,5 +749,5 @@ final class GlslVertexPreambles {
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
             .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);").text();
 }

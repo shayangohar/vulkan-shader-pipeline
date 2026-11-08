@@ -76,6 +76,29 @@ final class HostFamilyTest {
     }
 
     /**
+     * Each derived preamble edits its base by exact text. A target that went missing left the base's
+     * input bound where the derived layout has none, and nothing said so; each target must now occur
+     * exactly once, or the preambles fail to load.
+     */
+    @Test
+    void aPreambleEditsTargetsThatOccurExactlyOnce() {
+        assertEquals("const ivec2 UV1 = ivec2(0);\nin vec3 Normal;",
+                GlslVertexPreambles.replaceOnce("in ivec2 UV1;\nin vec3 Normal;", "in ivec2 UV1;",
+                        "const ivec2 UV1 = ivec2(0);"));
+        for (String source : List.of("in vec3 Normal;", "in ivec2 UV1; in ivec2 UV1;")) {
+            try {
+                GlslVertexPreambles.replaceOnce(source, "in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);");
+                throw new AssertionError("edited " + source);
+            } catch (IllegalStateException expected) {
+                assertTrue(expected.getMessage().contains("in ivec2 UV1;"), expected.getMessage());
+            }
+        }
+        assertTrue(GlslVertexPreambles.PARTICLE_VERTEX_PREAMBLE.contains("const ivec2 UV1 = ivec2(0);")
+                && !GlslVertexPreambles.PARTICLE_VERTEX_PREAMBLE.contains("in ivec2 UV1;"),
+                GlslVertexPreambles.PARTICLE_VERTEX_PREAMBLE);
+    }
+
+    /**
      * A commented main ahead of the real one took the overlay fetch and varying: the inserted text
      * landed in the line comment, its line break ended the comment, and the rest became code.
      */
