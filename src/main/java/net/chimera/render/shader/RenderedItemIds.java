@@ -55,7 +55,7 @@ public final class RenderedItemIds {
                 ? BLOCK_ITEM_ENTITY_ID : ChimeraEntityBridge.currentBlockEntityId());
     }
 
-    private static void push(int itemId, int blockEntityId) {
+    static void push(int itemId, int blockEntityId) {
         if (depth < previousItems.length) {
             previousItems[depth] = current;
             previousBlockEntities[depth] = ChimeraEntityBridge.replaceBlockEntityId(blockEntityId);
@@ -73,6 +73,18 @@ public final class RenderedItemIds {
         boolean saved = depth < previousItems.length;
         current = saved ? previousItems[depth] : 0;
         ChimeraEntityBridge.replaceBlockEntityId(saved ? previousBlockEntities[depth] : 0);
+    }
+
+    /**
+     * Restores what the outermost {@link #beginItem} replaced, as if every open item had popped.
+     * ItemRenderer.render has no finally: a renderer that throws skips the pop at its return, and
+     * its item and block-item blockEntityId stayed on every later entity draw.
+     */
+    static void unwind() {
+        if (depth <= 0) return;
+        current = previousItems[0];
+        ChimeraEntityBridge.replaceBlockEntityId(previousBlockEntities[0]);
+        depth = 0;
     }
 
     /** The item EntityIds.z carries for the vertex being written. */
