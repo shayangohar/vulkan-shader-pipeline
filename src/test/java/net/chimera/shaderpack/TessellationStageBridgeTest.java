@@ -275,4 +275,16 @@ final class TessellationStageBridgeTest {
         assertTrue(body.contains("vec4 chimeraGlClip(vec4 clip)") && !body.contains(WorldClipRange.AUTHORED_ENTRY),
                 body);
     }
+
+    /**
+     * A storage-buffer rewrite that fails on one tessellation stage leaves no pair: BetweenStages
+     * refuses a lone stage, and the half pair threw from the reports and failed the whole pack.
+     */
+    @Test
+    void aHalfConvertedTessellationPairIsNoPair() {
+        assertNull(TessellationStageBridge.paired("control", null, null));
+        assertNull(TessellationStageBridge.paired(null, "evaluation", null));
+        TessellationStageBridge.Conversion both = TessellationStageBridge.paired("control", "evaluation", null);
+        assertTrue(both != null && both.control().equals("control") && both.evaluation().equals("evaluation"));
+    }
 }

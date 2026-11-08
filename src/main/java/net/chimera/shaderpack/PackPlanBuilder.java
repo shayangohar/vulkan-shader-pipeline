@@ -936,7 +936,7 @@ public final class PackPlanBuilder {
                 String control = advancedResources.rewriteStorageBuffers(name, convertedTessellation.control());
                 String evaluation = advancedResources.rewriteStorageBuffers(name, convertedTessellation.evaluation());
                 geometryRewritten &= control != null && evaluation != null;
-                convertedTessellation = new TessellationStageBridge.Conversion(control, evaluation,
+                convertedTessellation = TessellationStageBridge.paired(control, evaluation,
                         convertedTessellation.outputLayout());
             }
             if (convertedFragment == null || (program.vertexSource() != null && convertedVertex == null)

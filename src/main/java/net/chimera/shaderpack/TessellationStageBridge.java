@@ -35,6 +35,16 @@ final class TessellationStageBridge {
     record Conversion(String control, String evaluation, LegacyGlslConverter.TerrainVaryingLayout outputLayout) {}
 
     /**
+     * Both converted stages, or null when either failed: BetweenStages refuses a control stage
+     * without its evaluation stage, and a half pair would throw from every report that reads the
+     * program, failing the whole pack where only this program should fall back.
+     */
+    static Conversion paired(String control, String evaluation,
+                             LegacyGlslConverter.TerrainVaryingLayout outputLayout) {
+        return control == null || evaluation == null ? null : new Conversion(control, evaluation, outputLayout);
+    }
+
+    /**
      * The control stage as the vertex stage's consumer: each per-vertex input declared as the one
      * vertex's value it reads, and no output, so the vertex bridge pairs with it as with a fragment.
      */
