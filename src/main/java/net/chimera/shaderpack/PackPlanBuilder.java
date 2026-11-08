@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
 /** Builds the one load-time source, interface, and translation plan. */
@@ -248,12 +249,52 @@ public final class PackPlanBuilder {
             if (stage.shadowPass()) {
                 fragment = PostTargetPlan.withShadowTargetsWithin(fragment, shadowTargetCount(), deviations);
             }
-            vertex = UnitZeroSampler.apply(CenterDepthSmooth.apply(vertex, name), config, deviations, name);
-            geometry = UnitZeroSampler.apply(CenterDepthSmooth.apply(geometry, name), config, deviations, name);
-            tessControl = UnitZeroSampler.apply(CenterDepthSmooth.apply(tessControl, name), config, deviations, name);
-            tessEvaluation = UnitZeroSampler.apply(CenterDepthSmooth.apply(tessEvaluation, name), config, deviations,
-                    name);
-            fragment = UnitZeroSampler.apply(CenterDepthSmooth.apply(fragment, name), config, deviations, name);
+            eachStage((programStage, source) ->
+                    UnitZeroSampler.apply(CenterDepthSmooth.apply(source, name), config, deviations, name));
+        }
+
+        /**
+         * Runs one preparation over every stage the program has, in the order GL links them. A
+         * preparation written stage by stage missed the stages added after it (KNOW-847).
+         */
+        private void eachStage(BiFunction<GlslInterfaceScanner.Stage, String, String> preparation) {
+            for (GlslInterfaceScanner.Stage programStage : GlslInterfaceScanner.Stage.values()) {
+                String source = source(programStage);
+                if (source != null) setSource(programStage, preparation.apply(programStage, source));
+            }
+        }
+
+        /** A stage's source as prepared so far; null when the program has no such stage. */
+        private String source(GlslInterfaceScanner.Stage programStage) {
+            return switch (programStage) {
+                case VERTEX -> vertex;
+                case TESS_CONTROL -> tessControl;
+                case TESS_EVALUATION -> tessEvaluation;
+                case GEOMETRY -> geometry;
+                case FRAGMENT -> fragment;
+            };
+        }
+
+        private void setSource(GlslInterfaceScanner.Stage programStage, String source) {
+            switch (programStage) {
+                case VERTEX -> vertex = source;
+                case TESS_CONTROL -> tessControl = source;
+                case TESS_EVALUATION -> tessEvaluation = source;
+                case GEOMETRY -> geometry = source;
+                case FRAGMENT -> fragment = source;
+            }
+        }
+
+        /**
+         * The file a stage's includes resolve against. The stages between vertex and fragment are
+         * prepared with their includes already expanded, as is every stage of a prepared snapshot.
+         */
+        private Path stageFile(GlslInterfaceScanner.Stage programStage) {
+            return switch (programStage) {
+                case VERTEX -> vertexFile();
+                case FRAGMENT -> fragmentFile();
+                default -> null;
+            };
         }
 
         /**
@@ -326,12 +367,8 @@ public final class PackPlanBuilder {
          * can execute (entity families need a vertex stage) receives the host alpha test.
          */
         private void injectAlphaTest() {
-            vertex = servedStageValues(vertex, vertexFile());
-            // Every stage reads Iris's values alike; the stages between are prepared with their includes expanded.
-            geometry = servedStageValues(geometry, null);
-            tessControl = servedStageValues(tessControl, null);
-            tessEvaluation = servedStageValues(tessEvaluation, null);
-            fragment = servedStageValues(fragment, fragmentFile());
+            // Every stage reads Iris's values alike.
+            eachStage((programStage, source) -> servedStageValues(source, stageFile(programStage)));
             if (vertex == null) {
                 return;
             }
