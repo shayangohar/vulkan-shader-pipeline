@@ -40,18 +40,22 @@ import java.util.stream.Stream;
 
 /**
  * Measures the Java sources and fails when they regress past the recorded baseline. A regression
- * is a method newly over the complexity or length limit, or worse than recorded; a file newly over
- * the length limit, or longer than recorded; more inline qualified names or lines over 120
- * characters; or more duplicated code. Every method and file the baseline lists must also carry a
- * reason to stay over its limit. {@code record} rewrites the baseline from the sources and keeps
- * each recorded reason.
+ * is a method newly over the complexity or length limit, or worse than recorded; a file newly at
+ * {@link #MAX_FILE_LINES} lines or more, or longer than recorded; more inline qualified names or
+ * lines over 120 characters; or more duplicated code. Every method and file the baseline lists must
+ * also carry a reason to stay over its limit. {@code record} rewrites the baseline from the sources
+ * and keeps each recorded reason.
+ *
+ * <p>A file of {@link #WARN_FILE_LINES} lines or more only warns. Its length is a prompt to look,
+ * not a verdict: a file earns a split when it does two jobs, not when it reaches a number.
  *
  * <p>Usage: {@code CodeMetrics check|record <baseline> <source root>...}
  */
 public final class CodeMetrics {
     static final int MAX_COMPLEXITY = 15;
     static final int MAX_METHOD_LINES = 80;
-    static final int MAX_FILE_LINES = 1000;
+    static final int WARN_FILE_LINES = 1000;
+    static final int MAX_FILE_LINES = 2000;
     static final int MAX_LINE_LENGTH = 120;
     static final int CLONE_TOKENS = 100;
     static final double MAX_MAIN_DUPLICATION = 3.0;
@@ -90,6 +94,7 @@ public final class CodeMetrics {
         }
         List<String> regressions = current.regressionsFrom(recorded);
         System.out.println("Code metrics: " + current.summary());
+        metrics.warnLongFiles();
         if (!regressions.isEmpty()) {
             regressions.forEach(regression -> System.err.println("  " + regression));
             System.err.println(regressions.size() + " metric regressions: fix them, or run metricsRecord after a"
@@ -124,9 +129,19 @@ public final class CodeMetrics {
             }
             int body = unit.getTypeDecls().isEmpty() ? source.length()
                     : (int) positions.getStartPosition(unit, unit.getTypeDecls().get(0));
-            files.add(new SourceFile(path, path.contains("src/test/"), lines.length, longLines, qualifiedNames[0],
+            // Lines as wc -l counts them: a final newline ends the last line rather than starting one.
+            int lineCount = source.endsWith("\n") ? lines.length - 1 : lines.length;
+            files.add(new SourceFile(path, path.contains("src/test/"), lineCount, longLines, qualifiedNames[0],
                     tokens(source.substring(body))));
         }
+    }
+
+    /** Names each file between the warning and the limit; the check still passes. */
+    private void warnLongFiles() {
+        files.stream().filter(file -> file.lines() >= WARN_FILE_LINES && file.lines() < MAX_FILE_LINES)
+                .forEach(file -> System.out.println("  warning: " + file.path() + " has " + file.lines()
+                        + " lines (warns at " + WARN_FILE_LINES + ", fails at " + MAX_FILE_LINES
+                        + "): split it if it does two jobs, not to get under a number"));
     }
 
     private void measureType(CompilationUnitTree unit, SourcePositions positions, String path, ClassTree type,
@@ -322,7 +337,7 @@ public final class CodeMetrics {
             }
         }
         for (SourceFile file : files) {
-            if (file.lines() > MAX_FILE_LINES) baseline.fileLines.put(file.path(), file.lines());
+            if (file.lines() >= MAX_FILE_LINES) baseline.fileLines.put(file.path(), file.lines());
         }
         return baseline;
     }
@@ -372,7 +387,8 @@ public final class CodeMetrics {
             text.append("# A listed method or file may shrink, not grow. Rewrite with gradlew metricsRecord.\n");
             text.append("# method <file> <Type.method/arity> <complexity> <lines> <reason>: over ")
                     .append(MAX_COMPLEXITY).append(" complexity or ").append(MAX_METHOD_LINES).append(" lines\n");
-            text.append("# file <file> <lines> <reason>: over ").append(MAX_FILE_LINES).append(" lines\n");
+            text.append("# file <file> <lines> <reason>: ").append(MAX_FILE_LINES).append(" lines or more (")
+                    .append(WARN_FILE_LINES).append(" or more only warns)\n");
             text.append("main-duplication-percent ").append(mainDuplication).append('\n');
             text.append("test-duplication-percent ").append(testDuplication).append('\n');
             text.append("qualified-names ").append(qualifiedNames).append('\n');
@@ -418,7 +434,7 @@ public final class CodeMetrics {
             fileLines.forEach((file, lines) -> {
                 Integer limit = recorded.fileLines.get(file);
                 if (limit == null) {
-                    regressions.add("new file over " + MAX_FILE_LINES + " lines: " + file + " (" + lines + ")");
+                    regressions.add("new file at " + MAX_FILE_LINES + " lines or more: " + file + " (" + lines + ")");
                 } else if (lines > limit) {
                     regressions.add(file + " grew to " + lines + " lines from " + limit);
                 }
@@ -431,7 +447,7 @@ public final class CodeMetrics {
         }
 
         String summary() {
-            return String.format(Locale.ROOT, "%d methods over limits, %d files over %d lines, duplication main %.1f%%"
+            return String.format(Locale.ROOT, "%d methods over limits, %d files at %d+ lines, duplication main %.1f%%"
                             + " test %.1f%%, %d qualified names, %d lines over %d characters",
                     methods.size(), fileLines.size(), MAX_FILE_LINES, mainDuplication, testDuplication,
                     qualifiedNames, longLines, MAX_LINE_LENGTH);

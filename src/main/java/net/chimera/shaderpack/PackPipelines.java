@@ -18,6 +18,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -48,17 +49,20 @@ import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
  */
 public final class PackPipelines {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
+    /**
+     * An image declaration's qualifiers, a layout among them in any order (GLSL 4.20): RenderPearl
+     * writes {@code uniform layout(rg8) restrict writeonly image2D edge}.
+     */
+    static final String IMAGE_QUALIFIERS =
+            "(?:layout\\s*\\([^)]*\\)\\s*|(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*";
+    /** A sampler declaration's {@code uniform}, with a layout before or after it. */
+    static final String UNIFORM_QUALIFIERS = "(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+(?:layout\\s*\\([^)]*\\)\\s*)?";
     static final Pattern STORAGE_IMAGE_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
-                    + "(?:(?:uniform|writeonly|readonly|coherent|volatile|restrict)\\s+)*"
-                    + "(u?i?image3D)\\s+([A-Za-z_]\\w*)\\s*;");
+            "(?m)^[ \\t]*" + IMAGE_QUALIFIERS
+                    + "(u?i?image(?:1D|2D|3D)(?:Array)?)\\s+([A-Za-z_]\\w*)\\s*;");
     static final Pattern STORAGE_SAMPLER_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
-                    + "(u?sampler3D)\\s+([A-Za-z_]\\w*)\\s*;");
-    static final Pattern SAMPLER_DECLARATION = Pattern.compile(
-            "(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
-                    + "((?:[iu]?sampler3D|sampler2D(?:Shadow)?))\\s+"
-                    + "([A-Za-z_]\\w*)\\s*;");
+            "(?m)^[ \\t]*" + UNIFORM_QUALIFIERS
+                    + "([iu]?sampler(?:1D|2D|3D))\\s+([A-Za-z_]\\w*)\\s*;");
 
     private PackPipelines() {}
 
@@ -68,8 +72,14 @@ public final class PackPipelines {
         return contract != null ? contract : PackDescriptorContracts.ordinaryDescriptorContract(plan, Set.of());
     }
 
-    record PreparedPipeline(OrdinaryDescriptorContract ordinary, String vertex, String fragment,
-            ProgramBindingLayout layout, ProgramImageBindingManifest imageBindings) {}
+    /** A program's bound stage sources and descriptors, with the bound stages it runs between vertex and fragment. */
+    record PreparedPipeline(OrdinaryDescriptorContract ordinary, String vertex, BetweenStages between,
+            String fragment, ProgramBindingLayout layout, ProgramImageBindingManifest imageBindings) {
+        /** The bound geometry stage; null without one. */
+        String geometry() {
+            return between.geometry();
+        }
+    }
 
     static PreparedPipeline prepareShadow(PackProgramPlan plan, PackAdvancedResourcePlan resources) {
         return prepare(plan, resources, UniformRegistry.Stage.SHADOW, plan.convertedVertex());
@@ -100,9 +110,18 @@ public final class PackPipelines {
         return new PreparedPipeline(ordinary,
                 PackDescriptorContracts.bindPackShader(vertex, plan.name(), resources, layout,
                         plan.interfacePlan().project("vertex", stage), stage, VK_SHADER_STAGE_VERTEX_BIT),
+                bindBetween(plan, plan.betweenStages(), resources, layout, plan.interfacePlan(), stage),
                 PackDescriptorContracts.bindPackShader(fragment, plan.name(), resources, layout,
                         plan.interfacePlan().project("fragment", stage), stage, VK_SHADER_STAGE_FRAGMENT_BIT), layout,
                 ProgramImageBindingManifest.from(layout, ordinary));
+    }
+
+    /** Each stage {@code between} the vertex and fragment stages bound as the plan's interface projects it. */
+    private static BetweenStages bindBetween(PackProgramPlan plan, BetweenStages between,
+            PackAdvancedResourcePlan resources, ProgramBindingLayout layout,
+            UniformRegistry.ProgramInterfacePlan interfacePlan, UniformRegistry.Stage stage) {
+        return between.map(each -> PackDescriptorContracts.bindPackShader(each.source(), plan.name(), resources,
+                layout, interfacePlan.project(each.name(), stage), stage, each.stageBit()));
     }
 
     /**
@@ -115,7 +134,7 @@ public final class PackPipelines {
         PackDescriptorLayout layout = PackDescriptorContracts.withAdvancedDescriptors(
                 prepared.ordinary().layout(), program, resources);
         String mismatch = PackAdvancedResourcePlan.layoutMismatch(prepared.layout(),
-                prepared.vertex(), prepared.fragment(), layout.descriptorBindings());
+                prepared.vertex(), prepared.between(), prepared.fragment(), layout.descriptorBindings());
         if (mismatch != null) throw new PreparationFailure("descriptor-contract", mismatch);
         prepared.imageBindings().verify(layout.descriptorBindings());
         return layout;
@@ -152,9 +171,15 @@ public final class PackPipelines {
     /** Compiles a pack program's stages and creates its pipeline; pack uniforms come from the frame state. */
     static GraphicsPipeline createNative(String name, VertexFormat format, PackDescriptorLayout layout,
             String vertex, String fragment, ProgramImageBindingManifest imageBindings) {
+        return createNative(name, format, layout, vertex, BetweenStages.NONE, fragment, imageBindings);
+    }
+
+    /** The same with the stages {@code between} the vertex and fragment stages. */
+    static GraphicsPipeline createNative(String name, VertexFormat format, PackDescriptorLayout layout,
+            String vertex, BetweenStages between, String fragment, ProgramImageBindingManifest imageBindings) {
         imageBindings.verify(layout.descriptorBindings());
         try {
-            return HostPipelineLayout.create(name, format, layout, vertex, fragment,
+            return HostPipelineLayout.create(name, format, layout, vertex, between, fragment,
                     PackUniformProvider.shared()::supplier, true);
         } catch (HostPipelineLayout.LayoutFailure failure) {
             throw new PreparationFailure("descriptor-contract", "BUILDER_CONFIG_REJECTED", failure);
@@ -179,23 +204,41 @@ public final class PackPipelines {
         LOGGER.warn("[chimera] pack {}: build failed phase={} exception={} reason={}",
                 program, phase, cause.getClass().getName(), reason, cause);
     }
-    /** A successfully built pack post pipeline plus the slots its samplers occupy. */
+    /**
+     * A successfully built pack post pipeline plus the slots its samplers occupy, the frame
+     * resources they read (PackResourcePlan.frameResource), and the blend its pass draws with
+     * (PackBlendPlan.forFullscreenPass).
+     */
     public record PackPost(
             String name,
             GraphicsPipeline pipeline,
             int[] samplerSlots,
             List<String> samplerNames,
-            List<Integer> requiredColorInputs,
+            List<String> frameInputs,
             String convertedFragment,
             PostTargetPlan targetPlan,
-            ProgramImageBindingManifest imageBindings
+            ProgramImageBindingManifest imageBindings,
+            PackBlendPlan blendPlan
     ) {
         public PackPost {
             Objects.requireNonNull(imageBindings);
+            blendPlan = blendPlan == null ? PackBlendPlan.empty() : blendPlan;
             samplerNames = samplerNames == null ? List.of() : List.copyOf(samplerNames);
-            requiredColorInputs = requiredColorInputs == null
-                    ? List.of()
-                    : requiredColorInputs.stream().distinct().sorted().toList();
+            frameInputs = frameInputs == null ? List.of() : frameInputs.stream().distinct().sorted().toList();
+        }
+
+        /** The colour targets the pass reads from the frame, sampled or stored to, ascending. */
+        public List<Integer> requiredColorInputs() {
+            List<Integer> inputs = new ArrayList<>(colorInputTargets(frameInputs));
+            inputs.addAll(storageTargets());
+            return inputs.stream().distinct().sorted().toList();
+        }
+
+        /** The colour targets the pass stores to as colorimgN (TargetImages), ascending. */
+        public List<Integer> storageTargets() {
+            return imageBindings.entries().stream()
+                    .filter(entry -> entry.kind() == ProgramImageBindingManifest.Kind.TARGET_IMAGE)
+                    .map(entry -> PackResourcePlan.targetIndex(entry.resourceKey())).distinct().sorted().toList();
         }
     }
 
@@ -385,6 +428,10 @@ public final class PackPipelines {
             String vertexSource = PackDescriptorContracts.bindPackShader(
                     convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
+            PackAdvancedResourcePlan resources = advancedResources;
+            BetweenStages geometry = plan.betweenStages().map(each -> PackDescriptorContracts.bindPackShader(
+                    EntityVertexBridge.fragmentForFormat(each.source(), format), plan.name(), resources, layout,
+                    interfacePlan, stage, each.stageBit()));
             String fragmentSource = PackDescriptorContracts.bindPackShader(
                     EntityVertexBridge.fragmentForFormat(plan.convertedFragment(), format), plan.name(),
                     advancedResources, layout, interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -394,17 +441,17 @@ public final class PackPipelines {
             PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
                     plan.name(), advancedResources);
             PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertexSource,
-                    fragmentSource, storageOwner);
+                    geometry, fragmentSource, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             GeometryOutputPlan outputPlan = stage.shadowPass() ? null : plan.geometryOutputPlan();
-            int[] attachmentFormats = stage.shadowPass() ? shadowAttachmentFormats()
+            int[] attachmentFormats = stage.shadowPass() ? shadowAttachmentFormats(plan)
                     : outputPlan != null && outputPlan.requiresDynamicAttachments()
                     ? outputPlan.outputFormatsArray() : null;
             PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
-                    ? new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF, PackBlendPlan.Mode.OFF}
-                    : attachmentFormats == null ? null : plan.blendPlan().attachments(outputPlan.targetSlots());
-            GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, fragmentSource,
-                    imageBindings, attachmentFormats, attachmentBlends);
+                    ? plan.blendPlan().shadowAttachments(attachmentFormats.length)
+                    : routedBlends(plan.blendPlan(), outputPlan, attachmentFormats);
+            GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, geometry,
+                    fragmentSource, imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(pipelineName, e);
@@ -420,37 +467,79 @@ public final class PackPipelines {
     }
 
     /**
+     * The blend a pipeline with no attachment contract draws with in VulkanMod's render pass, one
+     * mode for that pass's single attachment (colortex0): the program's {@code blend.<program>}, or
+     * its {@code blend.<program>.colortex0}, as Iris's BlendModeOverride replaces the host blend for
+     * every draw of the program. Null keeps the host blend. Kappa's glint (SRC_ALPHA ONE ZERO ONE)
+     * otherwise drew with vanilla's SRC_COLOR, ONE, which squares its dim colour.
+     */
+    static PackBlendPlan.Mode[] hostPassBlends(PackBlendPlan blendPlan) {
+        return blendPlan == null ? null : blendPlan.attachments(List.of(0));
+    }
+
+    /**
+     * The blend modes for a world pipeline's attachments: the authored route's when it takes its own
+     * attachments, none for a coverage build's colour-plus-depth pair, and the host pass's otherwise.
+     */
+    private static PackBlendPlan.Mode[] routedBlends(PackBlendPlan blendPlan, GeometryOutputPlan outputPlan,
+                                                     int[] attachmentFormats) {
+        if (attachmentFormats == null) return hostPassBlends(blendPlan);
+        return outputPlan != null && outputPlan.requiresDynamicAttachments()
+                ? blendPlan.attachments(outputPlan.targetSlots()) : null;
+    }
+
+    /**
      * Creates the pipeline under its attachment contract, when it has one, and registers that
-     * contract for the variants VulkanMod creates lazily.
+     * contract for the variants VulkanMod creates lazily. Without a contract, {@code attachmentBlends}
+     * holds the modes for VulkanMod's render pass (hostPassBlends). The program's
+     * {@code blend.<program>} directive is registered for its draws' blendFunc.
      */
     private static GraphicsPipeline createRouted(
-            String name, VertexFormat format, PackDescriptorLayout layout, String vertex, String fragment,
-            ProgramImageBindingManifest imageBindings, int[] attachmentFormats, PackBlendPlan.Mode[] attachmentBlends
+            String name, VertexFormat format, PackDescriptorLayout layout, String vertex, BetweenStages between,
+            String fragment, ProgramImageBindingManifest imageBindings, int[] attachmentFormats,
+            PackBlendPlan.Mode[] attachmentBlends, PackBlendPlan.Mode programBlend
     ) {
         if (attachmentFormats != null) {
             MrtPipelineContext.begin(attachmentFormats, deviceMaxColorAttachments(), attachmentBlends);
         }
         GraphicsPipeline pipeline;
         try {
-            pipeline = createNative(name, format, layout, vertex, fragment, imageBindings);
+            pipeline = createNative(name, format, layout, vertex, between, fragment, imageBindings);
         } finally {
             if (attachmentFormats != null) MrtPipelineContext.end();
         }
         if (attachmentFormats != null) {
             MrtPipelineContext.register(pipeline, attachmentFormats, attachmentBlends);
+        } else {
+            MrtPipelineContext.registerHostPassBlends(pipeline, attachmentBlends);
         }
+        PackUniformProvider.registerProgramBlend(pipeline, programBlend);
         return pipeline;
+    }
+
+    /**
+     * The blend a program's draws report as blendFunc in place of the host's, or null to report
+     * the host blend. SodiumShader applies a {@code blend.<program>} directive before its uniforms
+     * update, so an off directive reads zero there. ExtendedShader updates its uniforms first, and
+     * only an enabled directive's glBlendFuncSeparate notifies the uniform.
+     */
+    private static PackBlendPlan.Mode blendFuncOverride(PackProgramPlan plan, UniformRegistry.Stage stage) {
+        PackBlendPlan.Mode directive = plan.blendPlan().program();
+        if (directive == null) return null;
+        boolean sodium = IrisCoreProfile.patchFor(plan.name(), stage, false) == IrisCoreProfile.Patch.SODIUM;
+        return sodium || directive.enabled() ? directive : null;
     }
 
     /** Builds a post pipeline from the already prepared and translated plan. */
     public static PackPost buildPost(PackProgramPlan plan, String fixedVertexSource) {
-        return buildPost(plan, fixedVertexSource, PackAdvancedResourcePlan.empty(), null);
+        return buildPost(plan, fixedVertexSource, PackResourcePlan.empty(), PackAdvancedResourcePlan.empty(), null);
     }
 
-    /** Builds a post pipeline with the session's advanced-resource contract. */
+    /** Builds a post pipeline with the session's resource and advanced-resource contracts. */
     public static PackPost buildPost(
             PackProgramPlan plan,
             String fixedVertexSource,
+            PackResourcePlan resources,
             PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
         if (plan == null || !plan.executable() || plan.targetPlan() == null
@@ -467,6 +556,9 @@ public final class PackPipelines {
                     .toArray();
             List<String> samplerNames = interfacePlan.samplers().stream()
                     .map(UniformRegistry.SamplerBinding::name).toList();
+            PackResourcePlan frame = resources == null ? PackResourcePlan.empty() : resources;
+            List<String> frameInputs = samplerNames.stream().map(name -> frame.frameResource(plan.name(), name))
+                    .filter(Objects::nonNull).toList();
             PreparedPipeline prepared = preparePost(plan, fixedVertexSource, advancedResources);
             String vertexSource = prepared.vertex();
             String fragmentSource = prepared.fragment();
@@ -475,8 +567,8 @@ public final class PackPipelines {
                     fragmentSource, storageOwner);
             GraphicsPipeline pipeline = createNative("pack_" + plan.name(), CustomVertexFormat.NONE, layout,
                     vertexSource, fragmentSource, prepared.imageBindings());
-            return new PackPost(plan.name(), pipeline, slots, samplerNames,
-                    colorInputTargets(samplerNames), fragmentSource, plan.targetPlan(), prepared.imageBindings());
+            return new PackPost(plan.name(), pipeline, slots, samplerNames, frameInputs,
+                    fragmentSource, plan.targetPlan(), prepared.imageBindings(), plan.blendPlan());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
             return null;
@@ -589,10 +681,13 @@ public final class PackPipelines {
             String fragmentSource = prepared.fragment();
             PackDescriptorLayout layout = prepareLayout(prepared, plan.name(), advancedResources);
             PackDescriptorContracts.verifyAdvancedLayout(layout, plan.name(), advancedResources, vertexSource,
-                    fragmentSource, storageOwner);
+                    prepared.between(), fragmentSource, storageOwner);
+            int[] attachmentFormats = shadowAttachmentFormats(plan);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
-                    ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, fragmentSource,
-                    prepared.imageBindings(), shadowAttachmentFormats(), null);
+                    ChimeraVertexFormats.terrainFormat(materialPlan), layout, vertexSource, prepared.between(),
+                    fragmentSource, prepared.imageBindings(), attachmentFormats,
+                    plan.blendPlan().shadowAttachments(attachmentFormats.length),
+                    blendFuncOverride(plan, UniformRegistry.Stage.SHADOW));
             return new PackShadow(pipeline, slots, fragmentSource, prepared.imageBindings());
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -600,9 +695,14 @@ public final class PackPipelines {
         }
     }
 
-    /** ChimeraShadowMap's colour attachments, shadowcolor0 and shadowcolor1: both VK_FORMAT_R8G8B8A8_UNORM. */
-    private static int[] shadowAttachmentFormats() {
-        return new int[] {37, 37};
+    /**
+     * ChimeraShadowMap's colour attachments in the pack's shadowcolor formats (PackProgramPlan);
+     * a plan made without pack settings gets Iris's default, two RGBA8 targets.
+     */
+    private static int[] shadowAttachmentFormats(PackProgramPlan plan) {
+        List<Integer> formats = plan.shadowAttachmentFormats();
+        if (formats.isEmpty()) return new int[] {37, 37};
+        return formats.stream().mapToInt(Integer::intValue).toArray();
     }
 
     /**
@@ -640,16 +740,6 @@ public final class PackPipelines {
             String fixedVertexSource,
             Map<Integer, Integer> targetFormats
     ) {
-        return buildPost(program, fixedVertexSource, targetFormats, Map.of());
-    }
-
-    /** Builds a post pipeline with the same parsed pack constants used by probing. */
-    public static PackPost buildPost(
-            PackProgram program,
-            String fixedVertexSource,
-            Map<Integer, Integer> targetFormats,
-            Map<String, String> packConstants
-    ) {
         try {
             String fragmentSource = program.executableFragmentSource();
             Path sourcePath = program.preparedFragmentSource() == null
@@ -663,7 +753,7 @@ public final class PackPipelines {
                 throw new IllegalStateException("pack interface is unsupported: " + interfacePlan.deviations());
             }
             String converted = FragmentConverter.convertPostFragment(
-                    fragmentSource, sourcePath, interfacePlan, targetPlan, packConstants);
+                    fragmentSource, sourcePath, interfacePlan, targetPlan);
             if (converted == null) {
                 throw new IllegalStateException("legacy GLSL conversion failed");
             }
@@ -674,7 +764,7 @@ public final class PackPipelines {
             List<String> samplerNames = interfacePlan.samplers().stream()
                     .map(UniformRegistry.SamplerBinding::name)
                     .toList();
-            List<Integer> requiredColorInputs = colorInputTargets(samplerNames);
+            List<String> frameInputs = samplerNames.stream().map(PackResourcePlan::canonicalResource).toList();
             // One fragment block for the pack's uniforms at binding 0, its samplers after it.
             var blocks = PackDescriptorContracts.packUniformBlock(interfacePlan, 0, VK_SHADER_STAGE_FRAGMENT_BIT);
             PackDescriptorLayout layout = new PackDescriptorLayout(blocks,
@@ -686,7 +776,7 @@ public final class PackPipelines {
                     fixedVertexSource, converted, imageBindings);
 
             return new PackPost(program.name(), pipeline, slots, samplerNames,
-                    requiredColorInputs, converted, targetPlan, imageBindings);
+                    frameInputs, converted, targetPlan, imageBindings, PackBlendPlan.empty());
         } catch (Exception e) {
             handleBuildFailure(program.name(), e);
             return null;
@@ -730,10 +820,12 @@ public final class PackPipelines {
             if (vertex == null) {
                 throw new IllegalStateException("advanced terrain vertex image declaration rejected");
             }
+            BetweenStages between = bindBetween(plan, plan.betweenStages(), advancedResources, layout,
+                    plan.interfacePlan(), stage);
             PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
                     plan.name(), advancedResources);
-            PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertex, fragment,
-                    storageOwner);
+            PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertex, between,
+                    fragment, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             // An authored route takes its own attachments; otherwise a coverage build writes the
             // pack colour plus a coverage depth.
@@ -741,11 +833,10 @@ public final class PackPipelines {
             boolean dynamicAttachments = outputPlan != null && outputPlan.requiresDynamicAttachments();
             int[] attachmentFormats = dynamicAttachments ? outputPlan.outputFormatsArray()
                     : coverage ? new int[] {targetFormat, VK10.VK_FORMAT_R32_SFLOAT} : null;
-            PackBlendPlan.Mode[] attachmentBlends = dynamicAttachments
-                    ? plan.blendPlan().attachments(outputPlan.targetSlots()) : null;
+            PackBlendPlan.Mode[] attachmentBlends = routedBlends(plan.blendPlan(), outputPlan, attachmentFormats);
             GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
-                    ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, fragment, imageBindings,
-                    attachmentFormats, attachmentBlends);
+                    ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, between, fragment,
+                    imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
         } catch (Exception e) {
             handleBuildFailure(plan.name(), e);
@@ -853,23 +944,10 @@ public final class PackPipelines {
         return PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson("chimera_shadow.json"));
     }
 
-    /** Derives the logical post color inputs once from the shared interface plan. */
-    static List<Integer> colorInputTargets(List<String> samplerNames) {
-        TreeSet<Integer> targets = new TreeSet<>();
-        for (String sampler : samplerNames) {
-            if (!sampler.startsWith("colortex")) {
-                continue;
-            }
-            try {
-                int target = Integer.parseInt(sampler.substring("colortex".length()));
-                if (target >= 0 && target <= PostTargetPlan.MAX_TARGET) {
-                    targets.add(target);
-                }
-            } catch (NumberFormatException ignored) {
-                // The interface plan rejects malformed sampler names.
-            }
-        }
-        return List.copyOf(targets);
+    /** The colour targets a post pass's frame inputs name, legacy aliases included (gaux3 is 6), ascending. */
+    static List<Integer> colorInputTargets(List<String> frameInputs) {
+        return frameInputs.stream().map(PackResourcePlan::targetIndex).filter(Objects::nonNull)
+                .filter(target -> target <= PostTargetPlan.MAX_TARGET).distinct().sorted().toList();
     }
 
     private static int[] prepend(int value, int[] values) {

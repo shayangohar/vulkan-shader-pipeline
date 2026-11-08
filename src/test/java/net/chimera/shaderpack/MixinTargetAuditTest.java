@@ -15,9 +15,12 @@ import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.TypeInsnNode;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -84,6 +87,22 @@ final class MixinTargetAuditTest {
             }
         }
         assertTrue(problems.isEmpty(), problems.size() + " unresolved mixin targets:\n" + String.join("\n", problems));
+    }
+
+    /** Every class in Chimera's mixin package is registered: one left out never applies, and nothing says so. */
+    @Test
+    void everyMixinSourceIsRegistered() throws IOException {
+        Path directory = Path.of("src/main/java/net/chimera/mixin");
+        List<String> sources;
+        try (Stream<Path> files = Files.list(directory)) {
+            sources = files.map(file -> file.getFileName().toString()).filter(name -> name.endsWith(".java"))
+                    .map(name -> "net/chimera/mixin/" + name.substring(0, name.length() - ".java".length()))
+                    .sorted().toList();
+        }
+        assertTrue(!sources.isEmpty(), "no mixin sources under " + directory.toAbsolutePath());
+        Set<String> registered = new HashSet<>(registeredMixins("chimera.mixins.json"));
+        List<String> missing = sources.stream().filter(name -> !registered.contains(name)).toList();
+        assertTrue(missing.isEmpty(), "mixins missing from chimera.mixins.json: " + missing);
     }
 
     /** One mixin against one target class. */

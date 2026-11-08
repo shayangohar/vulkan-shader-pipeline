@@ -1,12 +1,13 @@
 package net.chimera.render;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.ShadowCasterDirectives;
 import net.chimera.shaderpack.ShadowCullingPlan;
+import net.chimera.shaderpack.ShadowPassUse;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.chunk.WorldRenderer;
@@ -14,6 +15,7 @@ import net.vulkanmod.render.PipelineManager;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.VRenderSystem;
+import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
@@ -45,11 +47,12 @@ final class PackShadowPass {
     /** Iris's shadow culling for this pack session (shadow.culling and the shadow distances). */
     ShadowCullingPlan shadowCulling;
 
-    /** OpenGL name of the shadow depth on texture unit 5, for pack geometry sampling (shadowtex0); 0 when none. */
-    int packShadowGlId;
-    long packShadowSourceId;
+    /** Who observes the pack's shadow pass, and so whether it draws (Iris's ShadowRenderer rule). */
+    ShadowPassUse shadowUse = ShadowPassUse.ALWAYS;
+
     ChimeraShadowMap shadowMap = new ChimeraShadowMap();
     final PackShadowDepth packShadowDepth = new PackShadowDepth();
+    private final PackShadowComposites composites;
 
     /** Programs whose routed shadow sampler was already reported once. */
     final Set<String> loggedShadowSamplerPrograms = new HashSet<>();
@@ -62,8 +65,17 @@ final class PackShadowPass {
     boolean shadowPassActive;
 
     /**
-     * Armed at level-segment HEAD, consumed at the opaque layer's head
-     * (WorldRendererMixin): guarantees exactly one shadow segment per frame.
+     * The pack shadow program the open terrain draws run: shadow_cutout for the cutout layers and
+     * shadow_water for the translucent one where the pack has them, shadow otherwise.
+     */
+    private String shadowTerrainProgram = "shadow";
+    /** The plan colorReads was taken from, and the shadowcolor targets its shadow programs sample. */
+    private PackPlan colorReadsPlan;
+    private Set<Integer> colorReads = Set.of();
+
+    /**
+     * Armed at level-segment HEAD, consumed just before the sky
+     * (PreSkyPasses): guarantees exactly one shadow segment per frame.
      */
     boolean shadowPending;
 
@@ -79,11 +91,12 @@ final class PackShadowPass {
 
     PackShadowPass(ChimeraMainPass pass) {
         this.pass = pass;
+        this.composites = new PackShadowComposites(pass);
     }
 
     /**
-     * Records the shadow pass: re-renders terrain sections inside the light
-     * volume, with every facing, into the shadow framebuffer, then binds the shadow texture
+     * Records the shadow pass: re-renders the terrain sections the shadow culling
+     * keeps, with every facing, into the shadow framebuffer, then binds the shadow texture
      * for sampling by the terrain shader. Runs with no render pass open;
      * renderSectionLayer's rebindMainTarget opens the shadow pass (via the
      * shadowPassActive redirect) and this method closes it afterward.
@@ -116,23 +129,18 @@ final class PackShadowPass {
 
             try {
                 if (packShadow) {
-                    shadowBindings = bindPackShadowImages(cmd);
+                    // The shadow pass draws, and its programs sample, every target's main side.
+                    this.shadowMap.resetColorSides();
+                    this.shadowMap.snapshotPassReads(cmd, shadowPassColorReads());
+                    shadowBindings = bindPackShadowImages(layerPipeline(TerrainLayers.OPAQUE));
                 }
                 beginShadowDraw(frame);
-                drawShadowTerrain(frame);
+                ShadowCasterDirectives casters = packShadow && pass.packPlan != null
+                        ? pass.packPlan.shadowCasters() : ShadowCasterDirectives.DEFAULTS;
+                if (casters.terrain()) drawShadowTerrain(frame);
                 if (packShadow) {
                     renderShadowCasters(cameraX, cameraY, cameraZ);
-                    // shadowtex1 is the opaque, cutout and entity casters only;
-                    // the translucent layer below reaches shadowtex0 alone, and
-                    // packs tint through shadowcolor where the two differ.
-                    if (Renderer.getInstance().getBoundRenderPass() != null) {
-                        Renderer.getInstance().endRenderPass(cmd);
-                    }
-                    this.shadowMap.captureOpaqueDepth(cmd);
-                    PackUniformProvider.updateDrawAlphaReference(0.0F);
-                    WorldRenderer.getInstance().renderSectionLayer(
-                            RenderType.translucent(), cameraX, cameraY, cameraZ,
-                            this.shadowMap.getLightView(), projection);
+                    shadowBindings = drawShadowTranslucent(frame, shadowBindings, casters.translucent());
                 }
             } finally {
                 endShadowRecording(frame, shadowBindings);
@@ -146,20 +154,57 @@ final class PackShadowPass {
         }
     }
 
+    /** The shadowcolor targets the loaded plan's shadow programs sample (PackPlan.shadowPassColorReads). */
+    private Set<Integer> shadowPassColorReads() {
+        if (pass.packPlan != this.colorReadsPlan) {
+            this.colorReadsPlan = pass.packPlan;
+            this.colorReads = pass.packPlan == null ? Set.of() : pass.packPlan.shadowPassColorReads();
+        }
+        return this.colorReads;
+    }
+
     /** One shadow map recording: its command buffer, attachments, caster path, projection and camera. */
     private record ShadowFrame(VkCommandBuffer cmd, VulkanImage color, VulkanImage depth, boolean pack,
             Matrix4f projection, double cameraX, double cameraY, double cameraZ) {}
 
-    /** Readies the frame's advanced images and binds the pack shadow program's images for its draws. */
+    /**
+     * Binds a pack shadow terrain program's own images for its draws. The pass opens before any
+     * layer has bound its albedo, so each draw binds its host textures (bindDescriptorImages).
+     */
     private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindPackShadowImages(
-            VkCommandBuffer cmd) {
-        if (pass.packAdvancedImageOwner != null
-                && pass.packAdvancedImageOwner.capabilityEnabled()) {
-            pass.packAdvancedImageOwner.prepareFrame(cmd);
+            GraphicsPipeline pipeline) {
+        pass.prepareProgramImages(pipeline);
+        return pass.images.bindPassImages(pipeline);
+    }
+
+    /**
+     * Draws the translucent terrain layer into the shadow map, unless the pack's shadowTranslucent
+     * is off (Iris ShadowRenderer.renderShadows), with shadow_water where the pack has it, else
+     * shadow; its program's images replace the cutout layers' where the programs differ. Its alpha
+     * test is shadow_water's (Iris SHADOW_TRANS tests only as its alphaTest says). shadowtex1,
+     * captured either way, is the opaque, cutout and entity casters only; this layer reaches
+     * shadowtex0 alone, and packs tint through shadowcolor where the two differ. Returns the
+     * bindings open afterwards.
+     */
+    private ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> drawShadowTranslucent(
+            ShadowFrame frame, ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> bindings,
+            boolean draw) {
+        if (Renderer.getInstance().getBoundRenderPass() != null) {
+            Renderer.getInstance().endRenderPass(frame.cmd());
         }
-        pass.prepareProgramImages(pass.pipelines.shadowPipeline);
-        return pass.images.bindProgramImages(pass.pipelines.shadowPipeline, null, null,
-                DrawMaterialContext.captureLive());
+        this.shadowMap.captureOpaqueDepth(frame.cmd());
+        if (!draw) return bindings;
+        ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> open = bindings;
+        GraphicsPipeline translucent = layerPipeline(TerrainRenderType.TRANSLUCENT);
+        if (translucent != layerPipeline(TerrainLayers.OPAQUE)) {
+            if (open != null) open.close();
+            open = bindPackShadowImages(translucent);
+        }
+        this.shadowTerrainProgram = layerProgram(TerrainRenderType.TRANSLUCENT);
+        PackUniformProvider.updateDrawAlphaReference(0.0F);
+        WorldRenderer.getInstance().renderSectionLayer(RenderType.translucent(), frame.cameraX(), frame.cameraY(),
+                frame.cameraZ(), this.shadowMap.getLightView(), frame.projection());
+        return open;
     }
 
     /**
@@ -169,16 +214,18 @@ final class PackShadowPass {
     private void beginShadowDraw(ShadowFrame frame) {
         boolean packShadow = frame.pack();
         if (packShadow) {
-            PackGeometryContext.beginShadow(this.shadowMap.shadowColors(), frame.depth());
+            PackGeometryContext.beginShadow(this.shadowMap.shadowColors(), frame.depth(),
+                    this.shadowMap.colorClears(false));
             // Pack receivers read the map with GL's v = ndc * 0.5 + 0.5.
             // The fixed host receiver compensates for VulkanMod's flip.
             ChimeraRasterOrientation.markGlOriented(this.shadowMap.getShadowRenderPass());
         }
         this.shadowPassActive = true;
+        this.shadowTerrainProgram = layerProgram(TerrainLayers.OPAQUE);
         PipelineManager.setShaderGetter(rt -> {
             if (packShadow) {
                 VRenderSystem.disableBlend();
-                return pass.pipelines.shadowPipeline;
+                return layerPipeline(rt);
             }
             return this.shadowMap.getShadowPipeline();
         });
@@ -190,13 +237,41 @@ final class PackShadowPass {
         VRenderSystem.applyProjectionMatrix(frame.projection());
         VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
         VRenderSystem.calculateMVP();
-        beginShadowSections(frame.cameraX(), frame.cameraY(), frame.cameraZ());
+        beginShadowSections(frame.cameraX(), frame.cameraY(), frame.cameraZ(), packShadow);
         // Iris tests solid and cutout shadow casters at alpha 0.1 and
         // translucent ones not at all; foliage quads otherwise cast
         // their whole square.
         if (packShadow) {
             PackUniformProvider.updateDrawAlphaReference(SHADOW_CUTOUT_ALPHA);
         }
+    }
+
+    /**
+     * The program a pack shadow terrain draw of {@code type} runs, as Iris's SodiumPrograms pick it,
+     * where the pack has it: shadow_cutout's for the cutout and cutout_mipped layers (SHADOW_CUTOUT),
+     * shadow_water's for the translucent one (SHADOW_TRANS); shadow's otherwise.
+     */
+    static <P> P shadowTerrainProgram(TerrainRenderType type, P shadow, P cutout, P water) {
+        P layer = switch (type) {
+            case CUTOUT, CUTOUT_MIPPED -> cutout;
+            case TRANSLUCENT -> water;
+            default -> null;
+        };
+        return layer != null ? layer : shadow;
+    }
+
+    /** The pack shadow pipeline a terrain layer draws with. */
+    private GraphicsPipeline layerPipeline(TerrainRenderType type) {
+        PackPipelineSet pipelines = pass.pipelines;
+        return shadowTerrainProgram(type, pipelines.shadowPipeline, pipelines.shadowCutoutPipeline,
+                pipelines.shadowWaterPipeline);
+    }
+
+    /** The name of the pack shadow program a terrain layer draws with. */
+    private String layerProgram(TerrainRenderType type) {
+        PackPipelineSet pipelines = pass.pipelines;
+        return shadowTerrainProgram(type, "shadow", pipelines.shadowCutoutPipeline == null ? null : "shadow_cutout",
+                pipelines.shadowWaterPipeline == null ? null : "shadow_water");
     }
 
     /** Draws the opaque terrain layer, then the cutout layer unless the host merged it into opaque. */
@@ -215,9 +290,15 @@ final class PackShadowPass {
         }
     }
 
-    /** Closes the shadow sections, the shadow pass, the pack's shadow geometry scope and its bindings. */
+    /**
+     * Closes the shadow sections, the shadow pass, the pack's shadow geometry scope and its bindings.
+     * The pass's copies of the targets its programs sample close first, with its last draw recorded:
+     * shadowcomp and the receivers read and write the targets themselves, as in Iris. Rethinking
+     * Voxels' shadowcomp2 steps its interactive water in shadowcolor2, and on a copy each step was lost.
+     */
     private void endShadowRecording(ShadowFrame frame,
             ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> shadowBindings) {
+        this.shadowMap.closePassReads();
         ShadowSectionQueue.end();
         if (Renderer.getInstance().getBoundRenderPass() != null) {
             Renderer.getInstance().endRenderPass(frame.cmd());
@@ -247,12 +328,15 @@ final class PackShadowPass {
                     VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             frame.color().transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             if (frame.pack()) {
-                this.shadowMap.shadowColor(1).transitionImageLayout(stack, cmd,
-                        VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+                this.shadowMap.publishColorTargets(stack, cmd);
             }
             frame.depth().transitionImageLayout(stack, cmd, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
         }
-        dispatchShadowCompute(cmd);
+        if (frame.pack() && pass.packAdvancedImageOwner != null) {
+            pass.packAdvancedImageOwner.afterImageWrites(cmd);
+        }
+        // Iris runs shadowcomp only inside its ShadowRenderer, over the pack's own map.
+        if (frame.pack()) runShadowComposites(cmd);
         this.shadowMap.markInitialSamplingLayoutReady();
         if (frame.pack()) {
             this.shadowMap.commitRenderedMap(frame.cameraX(), frame.cameraY(), frame.cameraZ());
@@ -263,18 +347,15 @@ final class PackShadowPass {
         }
 
         this.shadowMap.bindShadowTexture();
-        maintainPackShadowGoal();
     }
 
-    /** Runs the pack's shadowcomp over the new map when its advanced images are live. */
-    private void dispatchShadowCompute(VkCommandBuffer cmd) {
-        if (pass.packAdvancedImageOwner != null
-                && pass.packAdvancedImageOwner.capabilityEnabled()
-                && pass.packShadowCompute != null && pass.packShadowCompute.isInstalled()) {
-            if (pass.packShadowCompute.dispatch(cmd)) {
-                if (pass.packStorageBufferOwner != null) pass.packStorageBufferOwner.recordDispatch();
-            } else LOGGER.warn("[chimera] shadowcomp dispatch failed; dependent advanced resources use fallback");
-        }
+    /**
+     * Runs the shadowcomp passes over the new map, in pass order (ShadowCompositeRenderer.renderAll):
+     * each pass's computes at the main target's size, then its program at the map's.
+     */
+    private void runShadowComposites(VkCommandBuffer cmd) {
+        VulkanImage screen = pass.targets.hdrFramebuffer.getColorAttachment();
+        this.composites.run(cmd, screen.width, screen.height);
     }
 
     /**
@@ -341,16 +422,18 @@ final class PackShadowPass {
     }
 
     /**
-     * Chooses the shadow pass's sections from the light volume and Iris's terrain
-     * shadow frustum. The pack projection carries GL clip depth, which the frustum
-     * test expects; both projections cover the same volume.
+     * Chooses the shadow pass's sections with Iris's terrain shadow frustum. The host's own shadow
+     * is also bounded by the light volume; a pack's is not, as in Iris, since its shadow vertex
+     * stage may scale depth to reach past the ortho's planes. The pack projection carries GL clip
+     * depth, which the frustum test expects; both projections cover the same volume.
      */
-    void beginShadowSections(double cameraX, double cameraY, double cameraZ) {
+    void beginShadowSections(double cameraX, double cameraY, double cameraZ, boolean pack) {
         if (!(WorldRenderer.getInstance() instanceof ChimeraSectionGridAccess access)) return;
         var grid = access.chimera$sectionGrid();
         if (grid == null) return;
-        ShadowSectionQueue.begin(grid, grid.getChunkAreaManager().size,
-                this.shadowMap.getPackLightProjection(), this.shadowMap.getLightView(),
+        Matrix4f lightVolume = pack ? null
+                : new Matrix4f(this.shadowMap.getPackLightProjection()).mul(this.shadowMap.getLightView());
+        ShadowSectionQueue.begin(grid, grid.getChunkAreaManager().size, lightVolume,
                 shadowCullingFrustum(false), cameraX, cameraY, cameraZ);
     }
 
@@ -368,16 +451,13 @@ final class PackShadowPass {
     }
 
     /**
-     * Renders the shadow map at the head of the opaque section layer, before
-     * any terrain draw samples it, as Iris renders shadows first. Closes the
-     * HDR pass opened at HEAD, draws the casters from the light's perspective
-     * into the shadow map, then reopens the HDR pass (load ops) so the
-     * terrain layers draw into it.
+     * Renders the shadow map just before the sky, as Iris does (PreSkyPasses). Closes the HDR
+     * pass, draws the casters from the light's perspective into the shadow map, then reopens the
+     * HDR pass (load ops) for the sky and terrain.
      *
-     * Timing matters: by this point cullTerrain has updated VulkanMod's
-     * section graph for this frame. The shadow phase draws its own sections
-     * chosen from the light volume ({@link ShadowSectionQueue}), not the
-     * camera's culled queues.
+     * Timing matters: VulkanMod's section setup for this frame has run by this point (it resets
+     * the indirect draws this pass records). The shadow phase draws its own sections chosen with
+     * the shadow culling ({@link ShadowSectionQueue}), not the camera's culled queues.
      */
     public void renderShadowSegment(double cameraX, double cameraY, double cameraZ) {
         if (!this.shadowMap.isInitialized() || !this.shadowFrameReady || !shadowAttachmentsLive()) {
@@ -441,28 +521,49 @@ final class PackShadowPass {
 
     /**
      * Readies the frame's shadow map at level-segment HEAD: computes the light once before any
-     * terrain draw (the shadow pass at the opaque layer's head reuses this exact state), arms the
-     * shadow segment, and binds the map for the terrain shaders' first draw.
+     * terrain draw (the shadow pass before the sky reuses this exact state), arms the shadow
+     * segment, and binds the map for the terrain shaders' first draw.
      */
     void beginShadowFrame(double cameraX, double cameraY, double cameraZ) {
+        boolean drawn = shadowPassObserved();
         if (this.shadowMap.isInitialized()) {
             this.shadowMap.updateLight(PackUniformProvider.currentShadowLightRotation(),
-                    cameraX, cameraY, cameraZ);
+                    cameraX, cameraY, cameraZ, Minecraft.getInstance().options.getEffectiveRenderDistance());
             this.shadowFrameReady = prepareShadowForSampling(cameraX, cameraY, cameraZ);
-            if (this.shadowFrameReady && this.shadowMap.hasMapSnapshot()) {
+            if (this.shadowFrameReady && !drawn) {
+                // No map is drawn, so none moves: Iris still recomputes shadowModelView and
+                // shadowProjection every frame (MatrixUniforms), so the current light goes out.
+                this.shadowMap.publishCurrentDrawState();
+            } else if (this.shadowFrameReady && this.shadowMap.hasMapSnapshot()) {
                 this.shadowMap.publishMapState(cameraX, cameraY, cameraZ);
             } else {
                 PackUniformProvider.clearShadowState();
             }
         }
 
-        // Arm this frame's shadow segment; consumed at the opaque layer's head.
-        this.shadowPending = this.shadowFrameReady;
+        // Arm this frame's shadow segment when something observes it; consumed just before the sky (PreSkyPasses).
+        this.shadowPending = this.shadowFrameReady && drawn;
 
         // Terrain shaders sample the shadow map from their first draw.
         if (this.shadowFrameReady) {
+            clearComputeColors();
             this.shadowMap.bindShadowTexture();
-            maintainPackShadowGoal();
+        }
+    }
+
+    /**
+     * Clears the shadowcolor targets only computes name as the frame opens, before setup and begin
+     * run, as Iris clears its shadow targets in beginLevelRendering. The shadow pass clears the
+     * targets it draws when it opens (KNOW-810).
+     */
+    private void clearComputeColors() {
+        if (!Renderer.isRecording()) return;
+        if (Renderer.getInstance().getBoundRenderPass() != null) {
+            recordShadowTransitionFallback("compute shadowcolor clear inside a render pass");
+            return;
+        }
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            this.shadowMap.clearComputeColors(stack, Renderer.getCommandBuffer(), false);
         }
     }
 
@@ -473,9 +574,10 @@ final class PackShadowPass {
         return p;
     }
 
+    /** Records a pack shadow terrain draw against the program running it, for storage-buffer ordering. */
     public void recordShadowDraw() {
         if (this.shadowPassActive && usePackShadowRuntime() && pass.packStorageBufferOwner != null) {
-            pass.packStorageBufferOwner.recordDraw("shadow", VK_SHADER_STAGE_VERTEX_BIT);
+            pass.packStorageBufferOwner.recordDraw(this.shadowTerrainProgram, VK_SHADER_STAGE_VERTEX_BIT);
         }
     }
 
@@ -493,13 +595,23 @@ final class PackShadowPass {
             VulkanImage image) {
         boolean compareRequired = entry.kind() == ProgramImageBindingManifest.Kind.SHADOW_DEPTH
                 && program.shadowSamplerSymbols().contains(entry.sourceSymbol());
-        long sampler = this.packShadowDepth.samplerFor(image, compareRequired);
+        long sampler = shadowSamplerFor(entry.resourceKey(), image, compareRequired);
         if (compareRequired && this.loggedShadowSamplerPrograms.add(program.name())) {
             LOGGER.info("[chimera] pack shadow sampler: program={} symbol={} slot={} image={} "
                             + "sampler={} compareOp=LESS_OR_EQUAL",
                     program.name(), entry.sourceSymbol(), entry.slot(), image.getId(), sampler);
         }
         return sampler;
+    }
+
+    /**
+     * The sampler a shadow image reads through, for a program or a pass compute: a comparison one
+     * for a {@code sampler2DShadow}, filtering as the pack's shadowtexNNearest says, otherwise the
+     * image's own.
+     */
+    long shadowSamplerFor(String resource, VulkanImage image, boolean compare) {
+        boolean linear = !this.shadowMap.depthNearest(resource.equals("shadowtex1") ? 1 : 0);
+        return this.packShadowDepth.samplerFor(image, compare, linear);
     }
 
     /**
@@ -524,34 +636,6 @@ final class PackShadowPass {
     }
 
     /**
-     * Keeps RenderSystem texture unit 5 (the sampler slot pack geometry declares as
-     * shadowtex0) pointing at the shadow map's depth. Terrain draws bind sampler
-     * slots from those units (VTextureSelector.bindShaderTextures), unlike post
-     * seams which bind through boundTextures; the alias is renamed only when the
-     * shadow attachment is recreated (id change).
-     */
-    void maintainPackShadowGoal() {
-        boolean geometryUsesShadow = pass.pipelines.terrainPipeline != null
-                && pass.pipelines.terrainSlots != null && ChimeraMainPass.containsSlot(pass.pipelines.terrainSlots, 5);
-        boolean translucentUsesShadow = pass.pipelines.waterPipeline != null
-                && pass.pipelines.waterSlots != null && ChimeraMainPass.containsSlot(pass.pipelines.waterSlots, 5);
-        if (!geometryUsesShadow && !translucentUsesShadow) {
-            return;
-        }
-        if (!this.shadowMap.isInitialized() || this.shadowMap.getShadowFramebuffer() == null) {
-            return;
-        }
-        VulkanImage shadowDepth = this.shadowMap.getShadowFramebuffer().getDepthAttachment();
-        if (this.packShadowGlId == 0 || shadowDepth.getId() != this.packShadowSourceId) {
-            // A recreated shadow attachment retires the old name.
-            releasePackShadowView();
-            this.packShadowGlId = GlImageAlias.create(shadowDepth);
-            this.packShadowSourceId = shadowDepth.getId();
-        }
-        RenderSystem.setShaderTexture(5, this.packShadowGlId);
-    }
-
-    /**
      * Pack shadow depth is only valid when the matching pack terrain adapter
      * consumes it.  A pack shadow caster paired with host terrain has no
      * compatible depth semantics, so retain VulkanMod's fixed shadow path.
@@ -562,11 +646,17 @@ final class PackShadowPass {
     }
 
     /**
-     * True while the pack renders its own shadow map. Iris then suppresses vanilla entity
-     * ground shadows (IrisRenderingPipeline.shouldDisableVanillaEntityShadows: shadowRenderer != null).
+     * True while the pack has a shadow map Iris would build its ShadowRenderer for. Iris then
+     * suppresses vanilla entity ground shadows (IrisRenderingPipeline.shouldDisableVanillaEntityShadows:
+     * shadowRenderer != null); a pass that only writes pack images keeps them (ShadowPassUse).
      */
     public boolean packShadowPassActive() {
-        return usePackShadowRuntime();
+        return usePackShadowRuntime() && this.shadowUse.replacesEntityShadows();
+    }
+
+    /** Whether this frame draws a shadow map: the host's fixed path always, the pack's when observed. */
+    private boolean shadowPassObserved() {
+        return !usePackShadowRuntime() || this.shadowUse.runs();
     }
 
     /** Makes newly created shadow images valid shader inputs exactly once. */
@@ -601,9 +691,8 @@ final class PackShadowPass {
         }
         VulkanImage color = this.shadowMap.getShadowFramebuffer().getColorAttachment();
         VulkanImage depth = this.shadowMap.getShadowFramebuffer().getDepthAttachment();
-        VulkanImage color1 = this.shadowMap.shadowColor(1);
-        return color != null && color1 != null && depth != null
-                && color.getId() != 0L && color1.getId() != 0L && depth.getId() != 0L;
+        return color != null && depth != null && color.getId() != 0L && depth.getId() != 0L
+                && this.shadowMap.shadowColors().stream().allMatch(target -> target != null && target.getId() != 0L);
     }
 
     void recordShadowTransitionFallback(String detail) {
@@ -626,11 +715,5 @@ final class PackShadowPass {
         }
         LOGGER.info("[chimera] pack shadow cutout path: {}",
                 merged ? "merged by uniqueOpaqueLayer" : "separate");
-    }
-
-    void releasePackShadowView() {
-        GlImageAlias.retire(this.packShadowGlId);
-        this.packShadowGlId = 0;
-        this.packShadowSourceId = 0L;
     }
 }

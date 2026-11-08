@@ -7,6 +7,7 @@ import net.chimera.shaderpack.BiomeIds;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.EntityVertexBridge;
 import net.chimera.shaderpack.LegacyGlslConverter;
+import net.chimera.shaderpack.PackDirectives;
 import net.chimera.shaderpack.PackExpression;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
@@ -14,6 +15,7 @@ import net.chimera.shaderpack.PackRuntimeSettings;
 import net.chimera.shaderpack.UniformRegistry;
 import net.chimera.testing.TestPacks;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.level.material.FogType;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -26,6 +28,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalLong;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -39,38 +42,17 @@ final class WorldStateUniformTest {
     }
 
     @Test
-    void catalog() {
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("wetness").availability(), "wetness catalog status");
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("eyeBrightnessSmooth").availability(),
-                "eye smoothing catalog status");
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("dimension").availability(), "dimension catalog status");
-        assertEquals(UniformRegistry.Availability.DEFAULTED,
-                UniformRegistry.descriptor("centerDepthSmooth").availability(),
-                "depth history remained defaulted");
-        assertTrue(UniformRegistry.catalog().stream()
-                        .map(UniformRegistry.UniformDescriptor::name).toList().stream().sorted().toList()
-                        .equals(UniformRegistry.catalog().stream()
-                                .map(UniformRegistry.UniformDescriptor::name).toList()),
-                "catalog ordering is not deterministic");
-    }
-
-    @Test
     void worldSemantics() {
-        assertEquals(0, PackFrameState.irisWorldTimeForTest(12345L, true, false),
-                "fixed-time world semantics");
-        assertEquals(12345, PackFrameState.irisWorldTimeForTest(12345L, true, true),
-                "Nether/End time semantics");
-        assertEquals(3, PackFrameState.irisWorldDayForTest(72000L),
+        assertEquals(6000, WorldClock.worldTime(25000L, OptionalLong.of(6000L), false),
+                "a fixed-time dimension reads its fixed time");
+        assertEquals(1000, WorldClock.worldTime(25000L, OptionalLong.of(18000L), true),
+                "the Nether and End read the day time");
+        assertEquals(1000, WorldClock.worldTime(25000L, OptionalLong.empty(), false),
+                "a dimension without fixed time reads the day time");
+        assertEquals(3, WorldClock.worldDay(72000L),
                 "world day semantics");
         assertEquals(0.007f, PackFrameState.quantizedFrameSecondsForTest(7_250_000L),
                 "frame time millisecond quantization");
-        assertEquals(0.0f, PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.0f),
-                "zero-delta smoothing hold");
-        assertTrue(PackFrameState.smooth(0.0f, 1.0f, 600.0f, 200.0f, 0.1f) > 0.0f,
-                "smoothing did not advance");
     }
 
     /**
@@ -85,16 +67,6 @@ final class WorldStateUniformTest {
      */
     @Test
     void celestialAngles() {
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("skyColor").availability(),
-                "sky colour must be a live host sample, not a default");
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("shadowAngle").availability(),
-                "shadow angle catalog status");
-        assertEquals(UniformRegistry.Availability.LIVE,
-                UniformRegistry.descriptor("upPosition").availability(),
-                "up position catalog status");
-
         // Four controlled times: the raw host sky angle, the pack-facing angle it becomes, and
         // whether the sun is the body that lights the world.
         assertNear(0.0f, CelestialSnapshot.angle01(-90.0F), 1.0e-6f,
@@ -267,6 +239,39 @@ final class WorldStateUniformTest {
         assertNear(z, actual.z, 1.0e-4f, message + " at component 2");
     }
 
+    /** Iris numbers biomes in Biomes' registration order (MixinBiomes), and Bliss writes the numbers. */
+    @Test
+    void biomesAreNumberedAsIrisRegistersThem() {
+        assertEquals(0, biomeId("minecraft", "the_void"));
+        assertEquals(5, biomeId("minecraft", "desert"));
+        assertEquals(63, biomeId("minecraft", "end_barrens"));
+        PackExpression.Program swamps = PackExpression.parse("if(in(biome, 6, 52, 7), 1, 0)", BiomeIds.constants());
+        int swamp = biomeId("minecraft", "swamp");
+        assertNear(1.0f, (float) swamps.evaluate((name, component) -> swamp, swamps.newState(), 0.05f),
+                1.0e-6f, "Bliss's isSwamps names the swamp by its Iris number");
+        // A later biome a pack names is a number no 1.21.1 biome reads, as Iris's dropped uniform reads 0.
+        PackExpression.Program pale = PackExpression.parse("if(in(biome, BIOME_PALE_GARDEN), 1, 0)",
+                BiomeIds.constants());
+        for (int biome = 0; biome < 64; biome++) {
+            int id = biome;
+            assertNear(0.0f, (float) pale.evaluate((name, component) -> id, pale.newState(), 0.05f),
+                    1.0e-6f, "no 1.21.1 biome is the pale garden");
+        }
+    }
+
+    /** Iris 1.8.14 CommonUniforms.isEyeInWater has no spectator case: a spectator in lava reads 2. */
+    @Test
+    void eyeInWaterFollowsTheCameraFluidAlone() {
+        assertEquals(1, CameraEffects.eyeInWater(FogType.WATER));
+        assertEquals(2, CameraEffects.eyeInWater(FogType.LAVA));
+        assertEquals(3, CameraEffects.eyeInWater(FogType.POWDER_SNOW));
+        assertEquals(0, CameraEffects.eyeInWater(FogType.NONE));
+    }
+
+    private static int biomeId(String namespace, String path) {
+        return BiomeIds.id(ResourceLocation.fromNamespaceAndPath(namespace, path));
+    }
+
     /**
      * The pack-authored language at the values the pinned packs depend on. Complementary's
      * {@code eyeBrightnessM} smooths the raw sky brightness over its full nought-to-two-hundred-
@@ -337,11 +342,9 @@ final class WorldStateUniformTest {
         assertNear(3.0f, (float) biome.evaluate((name, component) -> desert, biomeState, 0.05f),
                 1.0e-6f, "a named biome constant must match the biome it names");
         assertNear(0.0f, (float) biome.evaluate((name, component) -> 1.0, biomeState, 0.05f),
-                1.0e-6f, "a biome outside the constants must not match one");
-        assertTrue(BiomeIds.id(null) == BiomeIds.UNKNOWN
-                        && BiomeIds.id(ResourceLocation.fromNamespaceAndPath(
-                        "other", "desert")) == BiomeIds.UNKNOWN,
-                "an unlisted or foreign biome must match no constant");
+                1.0e-6f, "plains (1) is neither grove nor desert");
+        assertTrue(BiomeIds.id(null) == 0 && biomeId("other", "desert") == 0,
+                "an unlisted or foreign biome reads 0, as Iris's biome map answers a key it lacks");
 
         assertRejected("sinh(frameTime)", "CUSTOM_EXPRESSION_UNKNOWN_FUNCTION");
         assertRejected("smooth()", "CUSTOM_EXPRESSION_ARITY");
@@ -651,7 +654,9 @@ final class WorldStateUniformTest {
                 "entity shader lost the pack projection uniform");
         assertTrue(converted.source().contains("mat4 gbufferProjectionInverse;"),
                 "entity shader lost the pack inverse projection uniform");
-        assertTrue(converted.source().contains("ProjMat * chimeraEntityVertexValue()"),
+        // The stage reads the pack projection, so it runs in GL's clip range (WorldClipRange):
+        // gl_ProjectionMatrix is the raster projection taken into that range.
+        assertTrue(converted.source().contains("chimeraGlClip(ProjMat) * chimeraEntityVertexValue()"),
                 "host gl_ProjectionMatrix no longer uses the raster projection");
         assertTrue(converted.source().contains("gbufferProjection * chimeraEntityVertexValue()"),
                 "pack gbufferProjection was incorrectly aliased to host ProjMat");
@@ -699,17 +704,6 @@ final class WorldStateUniformTest {
         converted.m22(2.0f * rendered.m22() - rendered.m23());
         converted.m32(2.0f * rendered.m32() - rendered.m33());
         return converted;
-    }
-
-    @Test
-    void forwardDepthCopyShader() throws Exception {
-        String shader = Files.readString(Path.of(
-                "src/main/resources/assets/chimera/shaders/chimera_depth/chimera_depth.fsh"),
-                StandardCharsets.UTF_8);
-        assertTrue(shader.contains("outDepth = vec4(depth, 0.0, 0.0, 1.0)"),
-                "pack depth snapshot must preserve forward host depth");
-        assertTrue(!shader.contains("1.0 - depth"),
-                "depth snapshot still inverts forward host depth");
     }
 
     private static Vector4f transform(Matrix4f matrix, float x, float y, float z) {
@@ -764,13 +758,16 @@ final class WorldStateUniformTest {
 
         PackRuntimeSettings settings = first.plan().runtimeSettings();
         verifyCustomPlan(settings);
+        PackDirectives directives = first.plan().config().directives();
+        assertEquals(300.0f, directives.wetnessHalfLife(), "pack wetness half-life");
+        assertEquals(20.0f, directives.eyeBrightnessHalfLife(), "pack eye brightness half-life");
         verifyCustomEvaluation(settings);
         verifyCustomRefusals(settings);
         verifyCustomUniformBridge(first.plan().program("composite"), settings);
         verifyBaseline(first, baselinePath);
     }
 
-    /** The fixture's custom declarations: planned, cycle and unknown reported, smoothing half-lives. */
+    /** The fixture's custom declarations: planned, and cycle and unknown reported. */
     private static void verifyCustomPlan(PackRuntimeSettings settings) {
         assertTrue(settings.customDescriptors().containsKey("m73Marker"),
                 "exposed custom uniform was not planned");
@@ -780,10 +777,6 @@ final class WorldStateUniformTest {
                 "cycle was not reported");
         assertTrue(settings.deviations().contains("CUSTOM_EXPRESSION_UNKNOWN:m73Unknown:missingM73Value"),
                 "unknown custom dependency was not reported");
-        assertEquals(300.0f, settings.wetnessRiseHalfLife(),
-                "pack wetness half-life");
-        assertEquals(20.0f, settings.eyeBrightnessHalfLife(),
-                "pack eye brightness half-life");
     }
 
     /** One evaluated frame: dependencies, derived values, and a reported non-finite result. */

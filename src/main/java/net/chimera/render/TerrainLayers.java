@@ -20,12 +20,25 @@ public final class TerrainLayers {
                 ? TerrainRenderType.COMPACT_RENDER_TYPES : TerrainRenderType.SEMI_COMPACT_RENDER_TYPES).contains(type);
     }
 
-    /** Iris's rendering phase for the layer LevelRenderer is drawing. */
+    /**
+     * The alpha-test reference Iris gives the layer's pack terrain (SodiumPrograms.getAlphaTest):
+     * 0.1 for its cutout pass, which holds cutout and cutout_mipped blocks, and none (0) for solid
+     * and translucent. This layer split holds solid blocks in cutout_mipped too, which Iris draws
+     * untested; their opaque texels pass 0.1 alike.
+     */
+    public static float irisAlphaReference(TerrainRenderType type) {
+        return type == TerrainRenderType.CUTOUT || type == TerrainRenderType.CUTOUT_MIPPED ? 0.1F : 0.0F;
+    }
+
+    /**
+     * Iris's rendering phase (renderStage) for the blocks a layer draws. Iris sets the phase from the
+     * layer LevelRenderer asks for, and Sodium draws its solid and cutout passes in the solid call
+     * (SodiumWorldRenderer.drawChunkLayer), so every opaque block reads TERRAIN_SOLID; the cutout
+     * calls draw nothing. Packs voxelize and light only that stage (Glimmer's flood-fill light).
+     */
     public static PackRenderingPhase phase(TerrainRenderType type) {
         return switch (type) {
-            case SOLID -> PackRenderingPhase.TERRAIN_SOLID;
-            case CUTOUT_MIPPED -> PackRenderingPhase.TERRAIN_CUTOUT_MIPPED;
-            case CUTOUT -> PackRenderingPhase.TERRAIN_CUTOUT;
+            case SOLID, CUTOUT_MIPPED, CUTOUT -> PackRenderingPhase.TERRAIN_SOLID;
             case TRANSLUCENT -> PackRenderingPhase.TERRAIN_TRANSLUCENT;
             case TRIPWIRE -> PackRenderingPhase.TRIPWIRE;
         };

@@ -3,7 +3,6 @@ package net.chimera.shaderpack;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ShadowCullingFrustum;
-import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.HostLayoutLane;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
@@ -14,8 +13,10 @@ import org.objectweb.asm.tree.MethodInsnNode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -36,6 +37,7 @@ final class ShadowPassTest {
                 shadowPlayer=true
                 shadowBlockEntities=0
                 shadowLightBlockEntities=maybe
+                shadowTranslucent=0
                 """);
         var analysis = PackProbe.analyze(root);
         assertEquals("shadow", analysis.resolution().resolution("shadow_entities").selectedProgram(),
@@ -51,7 +53,8 @@ final class ShadowPassTest {
         assertTrue(compiled.failures().isEmpty(), "shadow_entities compilation: " + compiled.failures());
 
         ShadowCasterDirectives directives = analysis.plan().shadowCasters();
-        assertTrue(directives.entities() && directives.player() && !directives.blockEntities()
+        assertTrue(directives.terrain() && !directives.translucent()
+                        && directives.entities() && directives.player() && !directives.blockEntities()
                         && !directives.lightBlockEntities()
                         && directives.deviations().contains("SHADOW_DIRECTIVE_MALFORMED:shadowLightBlockEntities"),
                 "Iris reads true/1 and false/0 and keeps its default otherwise: " + directives);
@@ -61,6 +64,132 @@ final class ShadowPassTest {
                         + " * entityShadowDistanceMul)");
         assertEquals(ShadowCasterDirectives.DEFAULTS, ShadowCasterDirectives.fromProperties(Map.of()),
                 "Iris defaults: entities and block entities on, player and light block entities off");
+    }
+
+    /**
+     * entityColor on the shadow pass's entity casters (KNOW-520): Iris patches it from the overlay
+     * there as on gbuffers_entities. Rethinking Voxels' shadow geometry stage reads it to light
+     * primed TNT while it flashes; the stage reads the first vertex's overlay, whose coordinates the
+     * vertex stage forwards from UV1. Without a geometry stage the fragment reads its own. The
+     * terrain shadow program keeps the uniform, which reads zero: Iris's terrain layout has no overlay.
+     */
+    @Test
+    void shadowEntityCastersReadEntityColor(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 430 compatibility
+                out vec2 texCoordV;
+                void main() { texCoordV = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.gsh"), """
+                #version 430 compatibility
+                layout(triangles) in;
+                layout(triangle_strip, max_vertices = 3) out;
+                uniform vec4 entityColor;
+                in vec2 texCoordV[];
+                out vec2 texCoord;
+                out vec4 tint;
+                void main() {
+                    for (int i = 0; i < 3; i++) {
+                        gl_Position = gl_in[i].gl_Position;
+                        texCoord = texCoordV[i];
+                        tint = mix(vec4(1.0), entityColor, entityColor.a);
+                        EmitVertex();
+                    }
+                    EndPrimitive();
+                }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 430 compatibility
+                uniform sampler2D tex;
+                in vec2 texCoord;
+                in vec4 tint;
+                void main() { gl_FragData[0] = texture(tex, texCoord) * tint; }
+                """);
+        var analysis = PackProbe.analyze(root);
+        assertOverlayServed(root, analysis, "texelFetch(chimeraOverlay, chimeraOverlayUV[0], 0)", true);
+        assertTrue(analysis.plan().program("shadow_entities").convertedGeometry()
+                .contains("flat in ivec2 chimeraOverlayUV[];"), "the geometry stage reads the forwarded overlay");
+
+        Files.delete(shaders.resolve("shadow.gsh"));
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 430 compatibility
+                out vec2 texCoord;
+                void main() { texCoord = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 430 compatibility
+                uniform sampler2D tex;
+                uniform vec4 entityColor;
+                in vec2 texCoord;
+                void main() { gl_FragData[0] = mix(texture(tex, texCoord), entityColor, entityColor.a); }
+                """);
+        assertOverlayServed(root, PackProbe.analyze(root), "texelFetch(chimeraOverlay, chimeraOverlayUV, 0)", false);
+    }
+
+    /**
+     * A shadow program samples a shadowcolor target (KNOW-1055): Iris binds every target to the
+     * shadow pass's samplers. Rethinking Voxels' interactive water reads shadowcolor2, which its
+     * shadowcomp2 stores, in every shadow program, and Chimera refused them all. The program now
+     * binds the target, and the plan names it among those the pass copies as it opens
+     * (ChimeraShadowMap.snapshotPassReads). A target nothing in the pass samples is not copied.
+     */
+    @Test
+    void shadowProgramsSampleShadowColorTargets(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "iris.features.optional=HIGHER_SHADOWCOLOR\n");
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 430 compatibility
+                out vec2 texCoord;
+                void main() { texCoord = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 430 compatibility
+                uniform sampler2D tex;
+                uniform sampler2D shadowcolor1;
+                uniform sampler2D shadowcolor2;
+                in vec2 texCoord;
+                void main() {
+                    /* RENDERTARGETS: 0 */
+                    gl_FragData[0] = texture(tex, texCoord) * texture(shadowcolor2, texCoord);
+                }
+                """);
+        var analysis = PackProbe.analyze(root);
+        for (String program : List.of("shadow", "shadow_entities")) {
+            PackProgramPlan plan = analysis.plan().program(program);
+            assertTrue(plan != null && plan.executable(), program + " rejected: "
+                    + (plan == null ? "missing" : plan.deviations()));
+            var samplers = plan.interfacePlan().samplers();
+            assertTrue(samplers.stream().anyMatch(sampler -> sampler.name().equals("shadowcolor2")
+                    && sampler.slot() == SelectorNamespace.shadowColorSlot(2)), samplers.toString());
+        }
+        assertEquals(Set.of(2), analysis.plan().shadowPassColorReads(), "shadowcolor1 is declared, never read");
+        assertTrue(analysis.config().shadowSettings().colorTargetCount() >= 3,
+                "the pass attaches every target up to the highest a program names");
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
+    }
+
+    /** shadow_entities and shadow_block read the overlay through {@code fetch}; the terrain shadow program does not. */
+    private static void assertOverlayServed(Path root, PackProbe.Analysis analysis, String fetch, boolean geometry) {
+        for (String program : List.of("shadow_entities", "shadow_block")) {
+            PackProgramPlan plan = analysis.plan().program(program);
+            assertTrue(plan != null && plan.executable(), program + " rejected: "
+                    + (plan == null ? "missing" : plan.deviations()));
+            String reader = geometry ? plan.convertedGeometry() : plan.convertedFragment();
+            assertTrue(reader.contains(fetch) && plan.convertedVertex().contains("chimeraOverlayUV = UV1;"),
+                    program + " must read entityColor from the forwarded overlay: " + reader);
+            // A moving block's shadow draws on the block layout, which has no overlay: entityColor is zero.
+            String movingBlock = EntityVertexBridge.fragmentForFormat(reader, DefaultVertexFormat.BLOCK);
+            assertTrue(!movingBlock.contains(fetch)
+                    && movingBlock.contains("vec4 chimeraOverlayTexel = vec4(0.0, 0.0, 0.0, 1.0);"), movingBlock);
+            assertTrue(!analysis.report().program(program).deviations().contains("UNIFORM_DEFAULTED:entityColor"),
+                    analysis.report().program(program).deviations().toString());
+        }
+        assertTrue(analysis.report().program("shadow").deviations().contains("UNIFORM_DEFAULTED:entityColor"),
+                "the terrain shadow program keeps the zero uniform");
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
     }
 
     /** The shadow program converted onto the entity layout: host matrices, per-vertex ids, per-draw alpha. */
@@ -101,6 +230,29 @@ final class ShadowPassTest {
     }
 
     /**
+     * The copies the shadow pass's programs sample close before shadowcomp runs, so shadowcomp reads and
+     * writes the targets themselves. Rethinking Voxels' shadowcomp2 steps its interactive water in
+     * shadowcolor2; on the copy each step was lost, and its water read a flat 1.0 as full-strength waves.
+     */
+    @Test
+    void shadowcompRunsOnTheTargetsNotThePassCopies() throws IOException {
+        var shadowPass = MixinBytecode.nativeClass("net/chimera/render/PackShadowPass");
+        boolean snapshot = false;
+        boolean closed = false;
+        boolean shadowcomp = false;
+        for (var instruction : MixinBytecode.instructionsThrough(shadowPass, "renderShadowMap")) {
+            if (!(instruction instanceof MethodInsnNode call)) continue;
+            if (call.name.equals("snapshotPassReads")) snapshot = true;
+            if (snapshot && call.name.equals("closePassReads")) closed = true;
+            if (call.name.equals("runShadowComposites")) {
+                shadowcomp = true;
+                assertTrue(closed, "the shadow pass's read copies must close before shadowcomp runs");
+            }
+        }
+        assertTrue(snapshot && shadowcomp, "renderShadowMap must snapshot the pass's reads and run shadowcomp");
+    }
+
+    /**
      * A shadow-pass draw tries its shadow lane first; one without a lane is dropped, never drawn with
      * its host shader.
      */
@@ -120,11 +272,11 @@ final class ShadowPassTest {
     }
 
     /**
-     * The shadow pass's host-layout lanes (Iris IrisPipelines.assignToShadow): each key runs the
-     * Iris program it names through the fallback chain, never a pack file of its own name, on its
-     * host layout with Iris's inputs. Leads, lines, lightning, text backgrounds and the water mask
-     * read entityId per draw and blockEntityId -1; glint and text read the unbound per-vertex 0.
-     * Lines are widened. Every lane tests alpha per draw and compiles.
+     * The shadow pass's host-layout lanes: each key runs the Iris program it names through the
+     * fallback chain, never a pack file of its own name, on its host layout with Iris's inputs.
+     * Leads, lines, lightning, text backgrounds and the water mask read entityId per draw and
+     * blockEntityId -1; text reads the unbound per-vertex 0. Lines are widened. Every lane tests
+     * alpha per draw and compiles.
      */
     @Test
     void shadowLaneRoutes() {
@@ -134,7 +286,6 @@ final class ShadowPassTest {
                 new Draw("rendertype_lines", DefaultVertexFormat.POSITION_COLOR_NORMAL), HostLayoutLane.SHADOW_LINES,
                 new Draw("rendertype_leash", DefaultVertexFormat.POSITION_COLOR_LIGHTMAP), HostLayoutLane.SHADOW_LEASH,
                 new Draw("rendertype_lightning", DefaultVertexFormat.POSITION_COLOR), HostLayoutLane.SHADOW_LIGHTNING,
-                new Draw("rendertype_glint", DefaultVertexFormat.POSITION_TEX), HostLayoutLane.SHADOW_GLINT,
                 new Draw("rendertype_text", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP),
                 HostLayoutLane.SHADOW_TEXT,
                 new Draw("rendertype_text_see_through", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP),
@@ -150,12 +301,16 @@ final class ShadowPassTest {
         // Iris cancels beacon beams in the shadow pass: they stay out of the map.
         assertTrue(HostLayoutLane.forDraw("rendertype_beacon_beam", DefaultVertexFormat.BLOCK, shadowPass) == null,
                 "beacon beams have no shadow lane");
+        // Iris 1.21.1 keys glint to GLINT in every pass, so its main program draws there and no
+        // glint reaches the shadow map: glint has no shadow lane and its draws are dropped.
+        for (String glint : HostLayoutLane.GLINT.shaders()) {
+            assertTrue(HostLayoutLane.forDraw(glint, DefaultVertexFormat.POSITION_TEX, shadowPass) == null,
+                    glint + " has no shadow lane");
+        }
         assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT.alphaReference(),
                 "Iris SHADOW_TEXT: NON_ZERO_ALPHA");
         assertEquals(0.0001F, HostLayoutLane.SHADOW_TEXT_BG.alphaReference(),
                 "Iris SHADOW_TEXT_BG: NON_ZERO_ALPHA");
-        assertEquals(0.1F, HostLayoutLane.SHADOW_GLINT.alphaReference(),
-                "Iris GLINT in the shadow pass: SHADOW_ENTITIES_CUTOUT, ONE_TENTH_ALPHA");
         for (var lane : List.of(HostLayoutLane.SHADOW_LINES,
                 HostLayoutLane.SHADOW_LEASH,
                 HostLayoutLane.SHADOW_LIGHTNING,
@@ -179,9 +334,7 @@ final class ShadowPassTest {
                 "shadow_lightning", List.of("layout(location = 1) in vec4 Color;", "const ivec2 UV2 = ivec2(240);"),
                 "shadow_text_bg", List.of("layout(location = 2) in ivec2 UV2;", "const vec2 UV0 = vec2(0.5);"),
                 "shadow_basic", List.of("const vec4 Color = vec4(1.0);", "const ivec2 UV2 = ivec2(240);"),
-                "shadow_text", List.of("layout(location = 2) in vec2 UV0;", "layout(location = 3) in ivec2 UV2;"),
-                "shadow_glint", List.of("layout(location = 1) in vec2 UV0;",
-                        "const vec4 Color = vec4(0.0, 0.0, 0.0, 1.0);"));
+                "shadow_text", List.of("layout(location = 2) in vec2 UV0;", "layout(location = 3) in ivec2 UV2;"));
         for (var entry : inputs.entrySet()) {
             assertShadowLaneProgram(analysis, entry.getKey(), entry.getValue());
         }
@@ -195,7 +348,7 @@ final class ShadowPassTest {
         for (String key : List.of("shadow_lines", "shadow_leash", "shadow_basic")) {
             assertEquals("shadow", authored.resolution(key).selectedProgram(), key + " is Iris ProgramId.Shadow");
         }
-        for (String key : List.of("shadow_text", "shadow_text_bg", "shadow_glint", "shadow_lightning")) {
+        for (String key : List.of("shadow_text", "shadow_text_bg", "shadow_lightning")) {
             assertEquals("shadow_entities", authored.resolution(key).selectedProgram(),
                     key + " is Iris ProgramId.ShadowEntities (shadow_lightning falls back to it)");
         }
@@ -241,23 +394,6 @@ final class ShadowPassTest {
                             && fragment.contains("(-1) / 100 == 155"),
                     key + " must read the per-draw entityId and blockEntityId -1: " + vertex + "\n" + fragment);
         }
-    }
-
-    /** Burning-entity fire draws through the entity family, its block-sheet cutout, with Iris's entity_flame id. */
-    @Test
-    void burningEntityFireDrawsThroughEntityFamily() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraEntityRenderDispatcherMixin");
-        assertTrue(MixinBytecode.injects(mixin, "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;",
-                        "render", "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;renderFlame("
-                                + "Lcom/mojang/blaze3d/vertex/PoseStack;"
-                                + "Lnet/minecraft/client/renderer/MultiBufferSource;"
-                                + "Lnet/minecraft/world/entity/Entity;Lorg/joml/Quaternionf;)V"),
-                "burning-entity fire must be wrapped where the dispatcher draws it");
-        assertTrue(MixinBytecode.instructionsThrough(mixin, "chimera$flameId").stream().anyMatch(instruction ->
-                        instruction instanceof MethodInsnNode call && call.name.equals("flameEntityId")),
-                "burning-entity fire must draw with Iris's entity_flame id");
-        assertEquals(ChimeraEntityBridge.Family.ENTITY, ChimeraEntityBridge.worldFamily("rendertype_entity_cutout",
-                DefaultVertexFormat.NEW_ENTITY, ChimeraEntityBridge.Family.ENTITY), "fire's cutout is an entity draw");
     }
 
     /** Iris ShadowRenderer.createShadowFrustum: the culling each shadow.culling state picks, with its distances. */
@@ -364,28 +500,36 @@ final class ShadowPassTest {
         return frustum.visible(x, y, z, x + 1.0F, y + 1.0F, z + 1.0F);
     }
 
-    /** Iris renders shadows before any terrain: the shadow segment runs before the opaque layer draws. */
+    /**
+     * Iris's order before the sky (IrisRenderingPipeline.renderShadows): VulkanMod's section setup,
+     * whose indirect-buffer reset must precede the shadow draws, then the shadow pass, then the
+     * prepare passes. The frame's later setup call is skipped, and the terrain layers no longer
+     * render shadows.
+     */
     @Test
     void shadowPassOrder() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/WorldRendererMixin");
-        assertTrue(MixinBytecode.injects(mixin, "Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;",
-                "renderSectionLayer", null), "the terrain layers must be wrapped");
-        var hook = mixin.methods.stream().filter(method -> method.name.equals("chimera$terrainLayer")).findFirst()
-                .orElseThrow();
-        int shadow = -1;
-        int layer = -1;
-        int index = 0;
-        for (var instruction : hook.instructions) {
-            if (instruction instanceof MethodInsnNode call) {
-                if (call.name.equals("renderShadowSegment") && shadow < 0) shadow = index;
-                if (shadow >= 0 && layer < 0 && call.name.equals("call")
-                        && call.owner.equals("com/llamalad7/mixinextras/injector/wrapoperation/Operation")) {
-                    layer = index;
-                }
+        var levelRenderer = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLevelRendererMixin");
+        assertTrue(MixinBytecode.injects(levelRenderer, "Lorg/spongepowered/asm/mixin/injection/Inject;",
+                "renderLevel", "Lnet/minecraft/client/renderer/LevelRenderer;renderSky(Lorg/joml/Matrix4f;"
+                        + "Lorg/joml/Matrix4f;FLnet/minecraft/client/Camera;ZLjava/lang/Runnable;)V"),
+                "the shadow and prepare passes must run at the sky call");
+        List<String> calls = new ArrayList<>();
+        for (var instruction : MixinBytecode.instructionsThrough(
+                MixinBytecode.nativeClass("net/chimera/render/PreSkyPasses"), "render")) {
+            if (instruction instanceof MethodInsnNode call
+                    && List.of("setupRenderer", "renderShadowSegment", "runPrepareWindow").contains(call.name)) {
+                calls.add(call.name);
             }
-            index++;
         }
-        assertTrue(shadow >= 0 && layer > shadow, "the shadow map must render before the opaque layer samples it");
+        assertEquals(List.of("setupRenderer", "renderShadowSegment", "runPrepareWindow"), calls,
+                "section setup, then shadows, then prepare");
+        var worldRenderer = MixinBytecode.nativeClass("net/chimera/mixin/WorldRendererMixin");
+        assertTrue(MixinBytecode.injects(worldRenderer, "Lcom/llamalad7/mixinextras/injector/wrapmethod/WrapMethod;",
+                "setupRenderer", null), "the frame's second section setup must be skippable");
+        assertTrue(MixinBytecode.instructionsThrough(worldRenderer, "chimera$terrainLayer").stream()
+                        .noneMatch(instruction -> instruction instanceof MethodInsnNode call
+                                && call.name.equals("renderShadowSegment")),
+                "the terrain layers must not render shadows after the sky");
     }
 
     /** BSL-style legacy shadow program: terrain attributes, both identities and both shadow colours. */
@@ -400,9 +544,6 @@ final class ShadowPassTest {
                     uniform mat4 shadowModelViewInverse;
                     uniform mat4 shadowProjection;
                     uniform mat4 shadowProjectionInverse;
-                    const float entityShadowDistanceMul = 0.25;
-                    const float shadowDistanceRenderMul = 1.0;
-                    const float shadowDistance = 128.0;
                     varying vec2 texCoord;
                     varying vec4 color;
                     varying float mat;
@@ -419,6 +560,9 @@ final class ShadowPassTest {
         Files.writeString(shaders.resolve("shadow.fsh"), """
                     #version 120
                     /* DRAWBUFFERS:01 */
+                    const float entityShadowDistanceMul = 0.25;
+                    const float shadowDistanceRenderMul = 1.0;
+                    const float shadowDistance = 128.0;
                     uniform sampler2D tex;
                     uniform int blockEntityId;
                     varying vec2 texCoord;

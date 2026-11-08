@@ -3,7 +3,7 @@
   "fixture": "terrain_water",
   "fixtures": {
     "terrain_water": {
-      "reportSha256": "2cded5c0f60d9499a4551c391ab031c7d1b26bedbe6be5789059540a82004724",
+      "reportSha256": "2663822af479aed04d3a1670a37620b8a18b4b269fb70a5f2dd76f060e5e63c7",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "43ef485420ed767c1393cb977d83031a15055eb10a391d1ffca7c9f3ab4cbb2e",
         "gbuffers_terrain.vsh": "2676df91cf379cc1e94efdb6c1aa319a119f823ebef6e52d6bd223e14912d7c6",
@@ -13,12 +13,11 @@
       "expectedExecutablePrograms": [
         "gbuffers_block",
         "gbuffers_block_translucent",
+        "gbuffers_damagedblock",
         "gbuffers_terrain",
         "gbuffers_water"
       ],
-      "expectedFallbackPrograms": [
-        "gbuffers_damagedblock"
-      ],
+      "expectedFallbackPrograms": [],
       "expectedUnsupportedPrograms": [],
       "expectedDeviations": [
         "ALPHA_TEST_DYNAMIC:gbuffers_terrain",
@@ -26,12 +25,10 @@
         "BLOCK_ENTITY_ID_DEFAULTED",
         "BLOCK_TRANSLUCENT_INSTALLED",
         "BLOCK_VERTEX_BRIDGE",
-        "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
-        "BLOCK_VERTEX_CONVERSION_FAILED:crumbling BLOCK has no material mid-coordinate or tangent attribute",
+        "DAMAGED_BLOCK_INSTALLED",
         "ENTITY_STATE_FIXED_TO_HOST",
         "ENTITY_VERTEX_FORMAT_EXTENDED",
         "FAMILY_ADAPTER_INSTALLED",
-        "FIXED_VERTEX_SUBSTITUTION",
         "MODERN_GLSL_TRANSLATED",
         "MODERN_TERRAIN_VERTEX_BRIDGE",
         "MODERN_WATER_VERTEX_BRIDGE",
@@ -44,7 +41,7 @@
       ]
     },
     "unsupported_terrain": {
-      "reportSha256": "e50665bf59616cb8a5ad769e741adf95c67eb7d8c3049a0385e4b795c4725728",
+      "reportSha256": "0f1ace04a676d5f1c82ecfa8abe1700e0034831ac39a7ba43cc8b056c3c6ec70",
       "sourceHashes": {
         "gbuffers_terrain.fsh": "d4b257c6f083b143879e04c04cd6eadbc1443615eff684a2ca527dfefbff60bb",
         "gbuffers_terrain.vsh": "244c2f59bb81a169c09d178e2b50107035cc206db26e38ef087d0095629240e1"
@@ -61,9 +58,7 @@
       "expectedDeviations": [
         "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
         "BLOCK_VERTEX_CONVERSION_FAILED:entity vertex requires a desktop GLSL version from 110 to 460, not 300 es",
-        "FIXED_VERTEX_SUBSTITUTION",
         "FRAGMENT_OUTPUT_DISCARDED:1",
-        "LIVE_UNIFORM_BRIDGE",
         "MODERN_GLSL_UNSUPPORTED",
         "PROGRAM_ALIAS_RECORDED:gbuffers_block->gbuffers_terrain",
         "PROGRAM_ALIAS_RECORDED:gbuffers_block_translucent->gbuffers_terrain",

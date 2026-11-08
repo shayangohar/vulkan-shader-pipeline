@@ -16,7 +16,6 @@ import org.objectweb.asm.tree.MethodNode;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,10 +23,66 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** Sky, weather and rain programs, the horizon fan, and the end portal hooks. */
+/** Sky, weather and rain programs, the horizon, the frame's fog colour, and the end portal hooks. */
 final class SkyWeatherTest {
+    /**
+     * Without a gbuffers_skybasic Iris draws the sky disc with its SKY_BASIC fallback, the sky colour
+     * unfogged; only the sky window's position draws take that path.
+     */
+    @Test
+    void aPackWithoutSkyBasicDrawsTheSkyDiscUnfogged() {
+        ChimeraSkyBridge.disable();
+        assertFalse(ChimeraSkyBridge.drawsUnfoggedSky("position"), "outside the sky window");
+        ChimeraSkyBridge.beginSky();
+        try {
+            assertTrue(ChimeraSkyBridge.drawsUnfoggedSky("position"));
+            assertFalse(ChimeraSkyBridge.drawsUnfoggedSky("position_color"), "the sunrise fan has no fog");
+            assertFalse(ChimeraSkyBridge.drawsUnfoggedSky("position_tex"), "the sun and moon have no fog");
+        } finally {
+            ChimeraSkyBridge.endSky();
+        }
+    }
+
+    /**
+     * Iris draws the horizon in beginLevelRendering, right after the world clear: before the sky's
+     * fog setup and the shadow pass, not inside renderSky.
+     */
+    @Test
+    void theHorizonDrawsAfterTheWorldClear() throws IOException {
+        assertTrue(callsDrawPackHorizon("net/chimera/mixin/ChimeraLevelRendererMixin", "chimera$openWorld"));
+        assertFalse(callsDrawPackHorizon("net/chimera/mixin/ChimeraSkyRendererMixin", "chimera$skyWindow"));
+    }
+
+    private static boolean callsDrawPackHorizon(String owner, String method) throws IOException {
+        return MixinBytecode.instructionsThrough(MixinBytecode.nativeClass(owner), method).stream()
+                .anyMatch(insn -> insn instanceof MethodInsnNode call && call.name.equals("drawPackHorizon"));
+    }
+
+    /**
+     * Chimera's per-frame fogColor is this frame's, as the world clear finds it. The colour is latched
+     * before openLevelSegment, whose begin passes are a frame's first programs.
+     */
+    @Test
+    void theWorldClearLatchesTheFogColourFirst() throws IOException {
+        var calls = MixinBytecode.instructionsThrough(
+                MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLevelRendererMixin"), "chimera$openWorld").stream()
+                .filter(MethodInsnNode.class::isInstance).map(call -> ((MethodInsnNode) call).name).toList();
+        assertTrue(calls.contains("latchFogColor")
+                && calls.indexOf("latchFogColor") < calls.indexOf("openLevelSegment"), calls.toString());
+    }
+
+    /** The shadow pass hands renderSky back the shader vanilla set for the sky disc (Iris iris$beginSky). */
+    @Test
+    void thePreSkyPassesRestoreTheHostShader() throws IOException {
+        var calls = MixinBytecode.instructionsThrough(MixinBytecode.nativeClass("net/chimera/render/PreSkyPasses"),
+                "render").stream().filter(MethodInsnNode.class::isInstance).map(MethodInsnNode.class::cast)
+                .filter(call -> call.owner.equals("com/mojang/blaze3d/systems/RenderSystem"))
+                .map(call -> call.name).toList();
+        assertEquals(List.of("getShader", "setShader"), calls.stream().distinct().toList());
+    }
     @Test
     void rainContracts(@TempDir Path root) throws IOException {
         for (int target : List.of(10, 12, 15)) {
@@ -53,84 +108,118 @@ final class SkyWeatherTest {
                     "normalization concealed malformed target: " + malformed);
         }
 
-        float[] cone = ChimeraHorizonRenderer.vertices(32);
-        assertEquals(30, cone.length, "Iris fan must have ten POSITION vertices");
-        assertTrue(cone[0] == 0 && cone[1] == -16 && cone[2] == 0, "horizon apex must be below camera");
-        for (int i = 1; i < 10; i++) {
-            float x = cone[i * 3], z = cone[i * 3 + 2];
-            assertTrue(cone[i * 3 + 1] == 16 && Math.abs(Math.hypot(x, z) - 256) < 0.001,
-                    "Iris horizon radius/height changed");
-        }
-        assertTrue(cone[8] < 0, "horizon must use inward Iris winding");
-        assertTrue(Math.abs(cone[3] - cone[27]) < 0.001 && Math.abs(cone[5] - cone[29]) < 0.001,
-                "horizon rim must close");
-        assertTrue(ChimeraHorizonRenderer.vertices(8)[3] == 128, "horizon must track render distance");
-
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        try {
-            String vertex = "#version 130\nflat out vec4 tint;\nout vec2 uv;\n"
-                    + "void main(){ tint=gl_Color; uv=gl_MultiTexCoord0.xy; gl_Position=ftransform(); }";
-            String fragment = "#version 130\nflat in vec4 tint;\nin vec2 uv;\n"
-                    + "void main(){gl_FragData[0]=tint+vec4(uv,0,0);}";
-            for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured")) {
-                Files.writeString(shaders.resolve(name + ".vsh"), vertex);
-                Files.writeString(shaders.resolve(name + ".fsh"), fragment);
-            }
-            Files.writeString(shaders.resolve("gbuffers_weather.vsh"), vertex);
-            Files.writeString(shaders.resolve("gbuffers_weather.fsh"), "/* RENDERTARGETS:12 */\n" + fragment);
-            Files.writeString(shaders.resolve("shaders.properties"), "blend.gbuffers_weather.colortex12=off\n");
-            var analysis = PackProbe.analyze(root);
-            for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_weather")) {
-                var plan = analysis.plan().program(name);
-                assertTrue(analysis.plan().shouldAttempt(name), name + " plan rejected: " + plan.deviations());
-                assertTrue(analysis.report().shouldAttempt(name),
-                        name + " report rejected: " + analysis.report().program(name).deviations());
-                assertTrue(PackCompileTest.compile(plan.convertedVertex(), true) == null, name + " vertex compile");
-                assertTrue(PackCompileTest.compile(plan.convertedFragment(), false) == null,
-                        name + " fragment compile");
-                assertTrue(plan.convertedFragment().matches("(?s).*\\b(?:flat\\s+in|in\\s+flat)\\s+vec4\\b.*"),
-                        name + " flat interpolation lost");
-            }
-            var weather = analysis.plan().program("gbuffers_weather");
-            assertEquals(List.of(12), weather.geometryOutputPlan().targetSlots(), "rain data route");
-            assertEquals(PackBlendPlan.Mode.OFF, weather.blendPlan().attachments(List.of(12))[0],
-                    "rain data blend override");
-            Files.writeString(shaders.resolve("gbuffers_skybasic.fsh"), "#version 130\n"
-                    + "uniform samplerCube unsupportedCube; void main(){gl_FragColor=texture(unsupportedCube,vec3(1));"
-                            + "}");
-            assertTrue(!PackProbe.analyze(root).plan().shouldAttempt("gbuffers_skybasic"),
-                    "sky admission bypassed resource validation");
-        } finally {
-            try (var files = Files.walk(root)) {
-                for (Path file : files.sorted(Comparator.reverseOrder()).toList()) Files.delete(file);
-            }
+        String vertex = "#version 130\nflat out vec4 tint;\nout vec2 uv;\n"
+                + "void main(){ tint=gl_Color; uv=gl_MultiTexCoord0.xy; gl_Position=ftransform(); }";
+        String fragment = "#version 130\nflat in vec4 tint;\nin vec2 uv;\n"
+                + "void main(){gl_FragData[0]=tint+vec4(uv,0,0);}";
+        for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured")) {
+            Files.writeString(shaders.resolve(name + ".vsh"), vertex);
+            Files.writeString(shaders.resolve(name + ".fsh"), fragment);
         }
+        Files.writeString(shaders.resolve("gbuffers_weather.vsh"), vertex);
+        Files.writeString(shaders.resolve("gbuffers_weather.fsh"), "/* RENDERTARGETS:12 */\n" + fragment);
+        Files.writeString(shaders.resolve("shaders.properties"), "blend.gbuffers_weather.colortex12=off\n");
+        var analysis = PackProbe.analyze(root);
+        for (String name : List.of("gbuffers_skybasic", "gbuffers_skytextured", "gbuffers_weather")) {
+            var plan = analysis.plan().program(name);
+            assertTrue(analysis.plan().shouldAttempt(name), name + " plan rejected: " + plan.deviations());
+            assertTrue(analysis.report().shouldAttempt(name),
+                    name + " report rejected: " + analysis.report().program(name).deviations());
+            assertTrue(PackCompileTest.compile(plan.convertedVertex(), true) == null, name + " vertex compile");
+            assertTrue(PackCompileTest.compile(plan.convertedFragment(), false) == null,
+                    name + " fragment compile");
+            assertTrue(plan.convertedFragment().matches("(?s).*\\b(?:flat\\s+in|in\\s+flat)\\s+vec4\\b.*"),
+                    name + " flat interpolation lost");
+        }
+        var weather = analysis.plan().program("gbuffers_weather");
+        assertEquals(List.of(12), weather.geometryOutputPlan().targetSlots(), "rain data route");
+        assertEquals(PackBlendPlan.Mode.OFF, weather.blendPlan().attachments(List.of(12))[0],
+                "rain data blend override");
+        Files.writeString(shaders.resolve("gbuffers_skybasic.fsh"), "#version 130\n"
+                + "uniform samplerCube unsupportedCube; void main(){gl_FragColor=texture(unsupportedCube,vec3(1));"
+                        + "}");
+        assertTrue(!PackProbe.analyze(root).plan().shouldAttempt("gbuffers_skybasic"),
+                "sky admission bypassed resource validation");
     }
 
     /**
-     * The horizon is Iris's ten-vertex fan in a vertex buffer, drawn with the position shader so the
-     * sky window gives it gbuffers_skybasic. VulkanMod's vertex buffer expands an unindexed fan with
-     * its own index buffer into eight triangles.
+     * Iris 1.8.14's horizon: eight walls at the render distance's radius, capped at 256, that face
+     * the axes and diagonals and close into a ring, then the top plane and the bottom plane as
+     * 64-block grids from -384 to 448. Every quad faces the camera, so back-face culling keeps it.
+     */
+    @Test
+    void horizonGeometry() {
+        float[] horizon = ChimeraHorizonRenderer.vertices(32);
+        assertEquals(ChimeraHorizonRenderer.VERTEX_COUNT * 3, horizon.length, "horizon vertex count");
+        for (int quad = 0; quad < horizon.length / 12; quad++) {
+            assertTrue(facesOrigin(horizon, quad * 12), "horizon quad " + quad + " faces away from the camera");
+        }
+        for (int wall = 0; wall < 8; wall++) {
+            int at = wall * 12;
+            for (int corner = 0; corner < 4; corner++) {
+                int v = at + corner * 3;
+                assertEquals(256, Math.hypot(horizon[v], horizon[v + 2]), 0.001, "wall corner radius");
+                assertEquals(corner == 1 || corner == 2 ? 16 : -16, horizon[v + 1], "wall height");
+            }
+            double x = (horizon[at] + horizon[at + 6]) / 2;
+            double z = (horizon[at + 2] + horizon[at + 8]) / 2;
+            assertEquals(0, Math.IEEEremainder(Math.toDegrees(Math.atan2(z, x)), 45), 0.001,
+                    "walls must face the axes and diagonals");
+            int previous = (wall + 7) % 8 * 12;
+            assertTrue(horizon[at + 9] == horizon[previous] && horizon[at + 11] == horizon[previous + 2],
+                    "the walls must close into a ring");
+        }
+        int planeStart = 8 * 4;
+        int cells = 13 * 13 * 4;
+        for (int v = planeStart; v < planeStart + 2 * cells; v++) {
+            assertEquals(v < planeStart + cells ? 16 : -16, horizon[v * 3 + 1], "the top plane draws first");
+            for (int axis : new int[] {0, 2}) {
+                float coordinate = horizon[v * 3 + axis];
+                assertTrue(coordinate >= -384 && coordinate <= 448 && coordinate % 64 == 0, "plane grid");
+            }
+        }
+        assertEquals(128, Math.hypot(ChimeraHorizonRenderer.vertices(8)[0], ChimeraHorizonRenderer.vertices(8)[2]),
+                0.001, "the walls must track the render distance");
+    }
+
+    /** True when the quad at offset is counterclockwise seen from the origin: its normal points back. */
+    private static boolean facesOrigin(float[] v, int at) {
+        double ux = v[at + 3] - v[at], uy = v[at + 4] - v[at + 1], uz = v[at + 5] - v[at + 2];
+        double wx = v[at + 6] - v[at], wy = v[at + 7] - v[at + 1], wz = v[at + 8] - v[at + 2];
+        double nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+        double dot = 0;
+        for (int corner = 0; corner < 4; corner++) {
+            int c = at + corner * 3;
+            dot += nx * v[c] + ny * v[c + 1] + nz * v[c + 2];
+        }
+        return dot < 0;
+    }
+
+    /**
+     * The horizon is Iris 1.8.14's quads in a vertex buffer, drawn with the position shader so the
+     * sky window gives it gbuffers_skybasic. VulkanMod's quad index buffer draws its 346 quads with
+     * Iris's 2076 indices.
      */
     @Test
     void horizonSubmission() throws IOException {
-        assertEquals(24, AutoIndexBuffer.DrawType.getTriangleStripIndexCount(ChimeraHorizonRenderer.VERTEX_COUNT),
-                "horizon fan must expand to eight triangles");
+        assertEquals(2076, AutoIndexBuffer.DrawType.getQuadIndexCount(ChimeraHorizonRenderer.VERTEX_COUNT),
+                "the horizon must draw Iris's 346 quads");
         var draw = MixinBytecode.nativeClass("net/chimera/render/ChimeraHorizonRenderer").methods.stream()
                 .filter(method -> method.name.equals("draw")).findFirst().orElseThrow();
-        boolean fan = false;
+        boolean quads = false;
         boolean positionShader = false;
         boolean vertexBuffer = false;
         for (var instruction : draw.instructions) {
-            if (instruction instanceof FieldInsnNode field && field.name.equals("TRIANGLE_FAN")) fan = true;
+            if (instruction instanceof FieldInsnNode field && field.name.equals("QUADS")) quads = true;
             if (instruction instanceof MethodInsnNode call) {
                 if (call.name.equals("getPositionShader")) positionShader = true;
                 if (call.owner.equals("com/mojang/blaze3d/vertex/VertexBuffer")
                         && call.name.equals("drawWithShader")) vertexBuffer = true;
             }
         }
-        assertTrue(fan && positionShader && vertexBuffer,
-                "the horizon must draw a fan from a vertex buffer with the position shader");
+        assertTrue(quads && positionShader && vertexBuffer,
+                "the horizon must draw quads from a vertex buffer with the position shader");
     }
 
     /**
@@ -311,14 +400,6 @@ final class SkyWeatherTest {
         var sky = MixinBytecode.nativeClass("net/minecraft/client/renderer/LevelRenderer").methods.stream()
                 .filter(method -> method.name.equals("renderSky")).findFirst().orElseThrow();
         assertTrue(sunPathSeamPrecedesTimeTurn(sky), "re-audit the Iris celestial sun-path rotation seam");
-        float previousRotation = PackUniformProvider.currentSunPathRotation();
-        try {
-            PackUniformProvider.installSunPath(17.5F, 0.0F);
-            assertTrue(PackUniformProvider.currentSunPathRotation() == 17.5F,
-                    "native celestial geometry must use the pack sun-path rotation");
-        } finally {
-            PackUniformProvider.installSunPath(previousRotation, 0.0F);
-        }
     }
 
     /** True when the first pose rotation after the Y axis is read comes before the X axis is read. */

@@ -20,7 +20,8 @@ final class BlockLayerTest {
 
     /**
      * Complementary names glass, panes and beacons translucent; a key's last value wins, as a
-     * properties file keeps it.
+     * properties file keeps it. Iris's preprocessing drops the '#' of a text line, so the comment's
+     * word names a block (one that does not exist).
      */
     @Test
     void layerLinesNameEachBlocksLayer() throws IOException {
@@ -38,7 +39,8 @@ final class BlockLayerTest {
                         "minecraft:glass", PackMaterialResolver.Layer.TRANSLUCENT,
                         "minecraft:glass_pane", PackMaterialResolver.Layer.TRANSLUCENT,
                         "minecraft:beacon", PackMaterialResolver.Layer.TRANSLUCENT,
-                        "minecraft:oak_leaves", PackMaterialResolver.Layer.CUTOUT_MIPPED),
+                        "minecraft:oak_leaves", PackMaterialResolver.Layer.CUTOUT_MIPPED,
+                        "minecraft:leaves", PackMaterialResolver.Layer.CUTOUT_MIPPED),
                 result.resolver().layers());
         assertEquals(32012, result.resolver().resolveName("glass_pane"), "ids still read");
         assertTrue(result.deviations().containsAll(List.of(

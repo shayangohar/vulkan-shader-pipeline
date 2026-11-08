@@ -2,37 +2,29 @@ package net.chimera.shaderpack;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
+import java.util.function.Supplier;
 
 /** Builds the one load-time source, interface, and translation plan. */
 public final class PackPlanBuilder {
     private PackPlanBuilder() {}
 
-    public static PackPlan build(
-            List<PackProgram> programs,
-            PackConfig.PackConfigData config
-    ) {
+    public static PackPlan build(List<PackProgram> programs, PackConfig.PackConfigData config) {
         return build(programs, config, PackEntityIdResolver.empty());
     }
 
-    public static PackPlan build(
-            List<PackProgram> programs,
-            PackConfig.PackConfigData config,
-            PackEntityIdResolver entityIds
-    ) {
+    public static PackPlan build(List<PackProgram> programs, PackConfig.PackConfigData config,
+                                 PackEntityIdResolver entityIds) {
         return build(programs, config, entityIds, PackResolutionPlan.empty());
     }
 
-    public static PackPlan build(
-            List<PackProgram> programs,
-            PackConfig.PackConfigData config,
-            PackEntityIdResolver entityIds,
-            PackResolutionPlan resolution
-    ) {
-        return build(programs, config, entityIds, resolution,
-                PackAdvancedResourcePlan.empty());
+    public static PackPlan build(List<PackProgram> programs, PackConfig.PackConfigData config,
+                                 PackEntityIdResolver entityIds, PackResolutionPlan resolution) {
+        return build(programs, config, entityIds, resolution, PackAdvancedResourcePlan.empty());
     }
 
     public static PackPlan build(
@@ -44,10 +36,9 @@ public final class PackPlanBuilder {
     ) {
         List<PackProgramPlan> plans = new ArrayList<>();
         if (programs != null) {
-            for (PackProgram program : (resolution == null ? PackResolutionPlan.empty() : resolution)
-                    .executablePrograms(programs)) {
-                plans.add(build(program, config, resolution, advancedResources));
-            }
+            // Each program plans from the shared, unchanging inputs alone, so the workers share them.
+            plans.addAll(PackWorkers.map((resolution == null ? PackResolutionPlan.empty() : resolution)
+                    .executablePrograms(programs), program -> build(program, config, resolution, advancedResources)));
         }
         return new PackPlan(config, plans, entityIds,
                 config == null ? PackSettingsPlan.empty() : config.settings(), resolution,
@@ -106,20 +97,32 @@ public final class PackPlanBuilder {
         private final String hostLayoutLane;
         private final PackAlphaTestPlan alphaTestPlan;
         private final boolean allowStorageBuffers;
+        /** The geometry and tessellation stages Iris would run between this program's stages. */
+        private final List<String> geometryStages;
         private final List<String> deviations = new ArrayList<>();
 
         private FamilyAdapterPlan familyAdapter;
         private String fragment;
         private String vertex;
+        /** The prepared geometry stage, run between the vertex and fragment stages; null without one. */
+        private String geometry;
+        /** The prepared tessellation stages, run between the vertex and fragment stages; null without them. */
+        private String tessControl;
+        private String tessEvaluation;
         private String hostLayoutFailure;
         private UniformRegistry.ProgramInterfacePlan interfacePlan;
+        private List<String> unboundShadowSamplers = List.of();
         private final Map<String, GlslInterfaceScanner.StageInterface> stageInterfaces = new TreeMap<>();
         private boolean pairedPostVertex;
         private GlslInterfaceScanner.ProgramMatch stageMatch;
         private boolean executable;
         private String convertedFragment;
         private String convertedVertex;
+        private String convertedGeometry;
+        private TessellationStageBridge.Conversion convertedTessellation;
         private LegacyGlslConverter.TerrainVaryingLayout vertexLayout;
+        /** The geometry stage's output locations, which the fragment stage reads from; null without one. */
+        private LegacyGlslConverter.TerrainVaryingLayout geometryLayout;
 
         private ProgramBuild(
                 PackProgram program,
@@ -132,23 +135,20 @@ public final class PackPlanBuilder {
             this.config = config;
             this.resolution = resolution;
             this.advancedResources = advancedResources;
-            Map<String, PreparedShaderSource> prepared = preparedStages(program);
-            if (FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.POST) {
-                prepared = normalizeModernPostStages(prepared);
-            } else if (isTerrainMaterialFamily(name)) {
-                prepared = normalizeModernTerrainStages(prepared);
-            }
-            this.stages = prepared;
-            this.fragment = source(stages, "fragment", program.executableFragmentSource());
-            this.vertex = source(stages, "vertex", program.executableVertexSource());
+            this.stages = ProgramStageSources.prepare(program, name,
+                    FamilyAdapterRegistry.isTerrainMaterialFamily(name), settings().readsTessellation());
+            this.fragment = ProgramStageSources.source(stages, "fragment", program.executableFragmentSource());
+            this.vertex = ProgramStageSources.source(stages, "vertex", program.executableVertexSource());
+            this.geometry = ProgramStageSources.source(stages, "geometry", null);
+            this.tessControl = ProgramStageSources.source(stages, "tess_control", null);
+            this.tessEvaluation = ProgramStageSources.source(stages, "tess_evaluation", null);
             this.familyAdapter = FamilyAdapterRegistry.forProgram(name);
             this.terrainMaterial = TerrainMaterialPlan.forProgram(name, vertex, fragment);
             this.preparedSnapshot = !program.preparedSources().isEmpty();
             this.stage = FamilyAdapterRegistry.stageFor(name);
             Map<Integer, Integer> formats = config == null ? Map.of() : config.colortexFormats();
-            this.targetPlan = PostTargetPlan.isPostProgramName(name)
-                    ? PostTargetPlan.parse(name, fragment, formats).plan() : null;
-            this.geometryOutputPlan = isGeometryOutputFamily(name)
+            this.targetPlan = PostTargetPlan.forFullscreenProgram(name, fragment, config);
+            this.geometryOutputPlan = FamilyAdapterRegistry.isGeometryOutputFamily(name)
                     ? GeometryOutputPlan.parse(name, fragment, formats) : null;
             PackProgramResolution sourceResolution = resolution == null ? null : resolution.resolution(name);
             this.directiveProgram = sourceResolution == null || sourceResolution.selectedProgram().isBlank()
@@ -163,11 +163,14 @@ public final class PackPlanBuilder {
                         .anyMatch(PackAdvancedResourcePlan.BufferSpec::supported);
             }
             this.allowStorageBuffers = storageBuffers;
+            this.geometryStages = program.geometryStages(settings().readsTessellation());
         }
 
         PackProgramPlan plan() {
             prepareIrisCoreProfile();
             prepareHostLayout();
+            renameHostNameCollisions();
+            repairStageInterfaces();
             injectAlphaTest();
             planInterface();
             collectPlanningDeviations();
@@ -177,6 +180,8 @@ public final class PackPlanBuilder {
                 if (executable && FamilyAdapterRegistry.isEntityLike(name) && vertex != null) {
                     convertEntityVertex();
                 }
+                convertTessellation();
+                convertGeometry();
                 convertFragment();
             } catch (RuntimeException e) {
                 deviations.add("TRANSLATION_UNSUPPORTED:" + VertexBridgeDeviations.safeReason(e));
@@ -189,15 +194,24 @@ public final class PackPlanBuilder {
             return new PackProgramPlan(program, stages, interfacePlan, stageInterfaces,
                     varyingLocations(), targetPlan, convertedFragment, convertedVertex,
                     vertexLayout, deviations, executable,
-                    familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan, blendPlan);
+                    familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan, blendPlan, shadowAttachments(),
+                    convertedGeometry, convertedTessellation == null ? null : convertedTessellation.control(),
+                    convertedTessellation == null ? null : convertedTessellation.evaluation());
+        }
+
+        /** The shadowcolor targets the shadow pass draws: Iris's two, or up to eight with HIGHER_SHADOWCOLOR. */
+        private int shadowTargetCount() {
+            return shadowAttachments().isEmpty() ? ShadowTargetDirectives.LEGACY_COLOR_TARGETS
+                    : shadowAttachments().size();
+        }
+
+        /** The shadow pass's colour attachment formats, which every shadow-stage pipeline declares. */
+        private List<Integer> shadowAttachments() {
+            return stage.shadowPass() && config != null ? config.shadowSettings().colorAttachmentFormats() : List.of();
         }
 
         private PackSettingsPlan settings() {
             return config == null ? PackSettingsPlan.empty() : config.settings();
-        }
-
-        private Map<String, String> packConstants() {
-            return config == null ? Map.of() : config.shaderConstants();
         }
 
         private Path vertexFile() {
@@ -213,24 +227,33 @@ public final class PackPlanBuilder {
         }
 
         /**
-         * Iris core-profile names (vaPosition, modelViewMatrix) become the compatibility built-ins
-         * every converter serves. A pack's own gbuffers_line vertex keeps Iris's unbound UVs
-         * (prepareLineVertex). In a fullscreen pass an unknown sampler2D reads colortex0, on unit 0.
+         * Iris core-profile names (vaPosition, modelViewMatrix) become the compatibility built-ins every converter
+         * serves. A pack's own gbuffers_line vertex keeps Iris's unbound UVs (prepareLineVertex). A fullscreen pass
+         * reads centerDepthSmooth from Iris's smoothed texture (CenterDepthSmooth). An unknown sampler2D reads unit 0:
+         * colortex0 in a fullscreen pass, the albedo texture in a world program (UnitZeroSampler).
          */
         private void prepareIrisCoreProfile() {
-            String overlay = stage == UniformRegistry.Stage.POST || isTerrainMaterialFamily(name)
-                    ? IrisCoreProfile.NO_OVERLAY : "UV1";
-            if (vertex != null && !(lineLayout() && directiveProgram.equals("gbuffers_line"))) {
+            String overlay = stage == UniformRegistry.Stage.POST
+                    || FamilyAdapterRegistry.isTerrainMaterialFamily(name) ? IrisCoreProfile.NO_OVERLAY : "UV1";
+            IrisCoreProfile.Patch patch = irisPatch();
+            if (vertex != null && patch != IrisCoreProfile.Patch.LINES) {
                 vertex = IrisCoreProfile.prepareIrisCoreProfile(vertex, vertexFile(), true, overlay,
-                        irisCoreMode(vertex));
+                        IrisCoreProfile.coreMode(program.executableVertexSource()), patch);
             }
+            if (patch == IrisCoreProfile.Patch.SODIUM) vertex = IrisCoreProfile.withChunkFade(vertex);
             if (fragment != null) {
                 fragment = IrisCoreProfile.prepareIrisCoreProfile(fragment, fragmentFile(), false, overlay,
-                        irisCoreMode(fragment));
+                        IrisCoreProfile.coreMode(program.executableFragmentSource()), patch);
             }
-            if (stage != UniformRegistry.Stage.POST) return;
-            vertex = FullscreenDefaultSampler.apply(vertex, settings(), deviations);
-            fragment = FullscreenDefaultSampler.apply(fragment, settings(), deviations);
+            if (stage.shadowPass()) {
+                fragment = PostTargetPlan.withShadowTargetsWithin(fragment, shadowTargetCount(), deviations);
+            }
+            vertex = UnitZeroSampler.apply(CenterDepthSmooth.apply(vertex, name), config, deviations, name);
+            geometry = UnitZeroSampler.apply(CenterDepthSmooth.apply(geometry, name), config, deviations, name);
+            tessControl = UnitZeroSampler.apply(CenterDepthSmooth.apply(tessControl, name), config, deviations, name);
+            tessEvaluation = UnitZeroSampler.apply(CenterDepthSmooth.apply(tessEvaluation, name), config, deviations,
+                    name);
+            fragment = UnitZeroSampler.apply(CenterDepthSmooth.apply(fragment, name), config, deviations, name);
         }
 
         /**
@@ -252,69 +275,199 @@ public final class PackPlanBuilder {
                         ? IrisCoreProfile.prepareLineVertex(vertex, vertexFile(),
                         directiveProgram.equals("gbuffers_line"))
                         : IrisCoreProfile.prepareHostLayoutSource(vertex, vertexFile());
-                boolean perVertexIds = FamilyAdapterRegistry.readsEntityIdsPerVertex(name);
-                if (!perVertexIds) vertex = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
-                if (fragment != null) {
-                    fragment = IrisCoreProfile.prepareHostLayoutSource(fragment, fragmentFile());
-                    if (!perVertexIds) fragment = IrisCoreProfile.prepareHostLayoutIdentity(fragment);
+                fragment = IrisCoreProfile.prepareHostLayoutSource(fragment, fragmentFile());
+                if (!FamilyAdapterRegistry.readsEntityIdsPerVertex(name)) {
+                    vertex = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
+                    geometry = IrisCoreProfile.prepareHostLayoutIdentity(geometry);
+                    fragment = IrisCoreProfile.prepareHostLayoutIdentity(fragment);
                 }
             } catch (RuntimeException failure) {
                 hostLayoutFailure = VertexBridgeDeviations.safeReason(failure);
             }
         }
 
-        /** Only a program that can execute (entity families need a vertex stage) receives the host alpha test. */
+        /**
+         * The entity-style vertex preambles declare the host's inputs under vanilla's core names
+         * (GlslVertexPreambles.hostNameCollisions). A pack identifier of such a name is renamed in
+         * both stages before their interfaces are matched, so a varying keeps its pair: Mellow's
+         * entities and Reverie's shadow lanes write their own Normal.
+         */
+        private void renameHostNameCollisions() {
+            if (vertex == null || !usesEntityPreamble()) return;
+            Map<String, String> renames = GlslVertexPreambles.hostNameCollisions(vertex);
+            if (renames.isEmpty()) return;
+            vertex = GlslTokenRewriter.replaceIdentifiers(vertex, renames);
+            if (geometry != null) geometry = GlslTokenRewriter.replaceIdentifiers(geometry, renames);
+            if (fragment != null) fragment = GlslTokenRewriter.replaceIdentifiers(fragment, renames);
+        }
+
+        /** The lanes whose vertex preamble declares the host's inputs under vanilla's core names. */
+        private boolean usesEntityPreamble() {
+            return FamilyAdapterRegistry.isEntityLike(name) || FamilyAdapterRegistry.isParticleLike(name)
+                    || FamilyAdapterRegistry.isWeatherFamily(name) || FamilyAdapterRegistry.isGlintFamily(name)
+                    || FamilyAdapterRegistry.isSkyFamily(name) || FamilyAdapterRegistry.isCloudFamily(name)
+                    || hostLayoutLane != null || FamilyAdapterRegistry.isShadowLaneFamily(name)
+                    || FamilyAdapterRegistry.isShadowEntityFamily(name);
+        }
+
+        /**
+         * Iris repairs every adjacent stage pair before anything matches their interfaces. With a
+         * geometry or tessellation stage between them, the vertex and fragment stages are not a pair.
+         */
+        private void repairStageInterfaces() {
+            if (!geometryStages.isEmpty()) return;
+            CrossStageRepair.Result repaired = CrossStageRepair.repair(vertex, fragment);
+            vertex = repaired.vertex();
+            deviations.addAll(repaired.deviations());
+        }
+
+        /**
+         * Serves the stage values Iris fixes per program (servedStageValues). Only a program that
+         * can execute (entity families need a vertex stage) receives the host alpha test.
+         */
         private void injectAlphaTest() {
+            vertex = servedStageValues(vertex, vertexFile());
+            // Every stage reads Iris's values alike; the stages between are prepared with their includes expanded.
+            geometry = servedStageValues(geometry, null);
+            tessControl = servedStageValues(tessControl, null);
+            tessEvaluation = servedStageValues(tessEvaluation, null);
+            fragment = servedStageValues(fragment, fragmentFile());
             if (vertex == null) {
                 return;
             }
+            boolean irisTests = irisAppendsAlphaTest();
             if (FamilyAdapterRegistry.isEntityLike(name) || FamilyAdapterRegistry.isParticleLike(name)
                     || FamilyAdapterRegistry.isWeatherFamily(name) || FamilyAdapterRegistry.isGlintFamily(name)) {
                 // Iris draws ENTITIES_ALPHA (the dying dragon) with gbuffers_entities alone.
-                fragment = alphaTestPlan.injectDrawTest(fragment, name.equals("gbuffers_entities"));
+                if (irisTests) fragment = alphaTestPlan.injectDrawTest(fragment, name.equals("gbuffers_entities"));
                 if (FamilyAdapterRegistry.isEntityLike(name) && !name.equals("gbuffers_damagedblock")) {
                     fragment = EntityOverlayColor.inject(fragment);
+                    vertex = EntityOverlayColor.withoutUnreadVertexDeclaration(vertex);
                 }
-            } else if (FamilyAdapterRegistry.isShadowFamily(name) || (FamilyAdapterRegistry.isCloudFamily(name)
-                    && !AuthoredOutput.producesNothing(vertex, fragment))) {
-                // Iris alpha-tests shadow terrain by layer and entity casters at 0.1; the
-                // shadow pass sets the reference per draw (ChimeraMainPass.renderShadowMap).
-                // Clouds test at a fixed reference; a cloud program that draws nothing keeps
-                // its discarding main, which is how the plan proves it (AuthoredOutput).
+            } else if (irisTests && (!FamilyAdapterRegistry.isCloudFamily(name)
+                    || !AuthoredOutput.producesNothing(vertex, fragment))) {
+                // Any other program tests as its plan says (Iris ShaderCreator: the pack's
+                // alphaTest.<program>, else its key's), and an untested one is left alone. Terrain
+                // and shadow terrain test by layer and entity casters at 0.1, set per layer by the
+                // main and shadow passes (WorldRendererMixin, PackShadowPass); the sky by format
+                // (ChimeraSkyBridge); text backgrounds by their lane (TEXT_BG); clouds at a fixed
+                // reference. A cloud program that draws nothing keeps its discarding main, which is
+                // how the plan proves it (AuthoredOutput).
                 fragment = alphaTestPlan.injectDrawTest(fragment);
+            }
+            if (!FamilyAdapterRegistry.isShadowEntityFamily(name)) return;
+            var served = EntityOverlayColor.injectShadow(vertex, geometry, fragment, geometryStageRuns());
+            vertex = served.vertex();
+            geometry = served.geometry();
+            fragment = served.fragment();
+        }
+
+        /**
+         * Whether Iris appends the alpha test to this program's fragment: only in compatibility
+         * mode (CommonTransformer.transform's {@code !core}; the Sodium and composite core
+         * transformers never call it). A core-profile fragment, and every stage of a pack's own
+         * gbuffers_line, tests itself against alphaTestRef.
+         */
+        private boolean irisAppendsAlphaTest() {
+            return fragment != null && !IrisCoreProfile.coreMode(program.executableFragmentSource())
+                    && irisPatch() != IrisCoreProfile.Patch.LINES;
+        }
+
+        /** The Iris patch that compiles this program (IrisCoreProfile.patchFor). */
+        private IrisCoreProfile.Patch irisPatch() {
+            return IrisCoreProfile.patchFor(name, stage, lineLayout() && directiveProgram.equals("gbuffers_line"));
+        }
+
+        /**
+         * A stage with the values Iris fixes for its program served into it, its includes expanded first. A world
+         * program's alphaTestRef reads its alpha-test reference; a post program reads the constants of a fullscreen
+         * pass (ServedUniforms.servePostValues) and keeps refusing alphaTestRef, which Iris leaves the last world
+         * draw's (UniformRegistry.IRIS_UNSERVED). A uniform Iris never sets reads its initializer
+         * (ServedUniforms.readInitializers). A stage whose includes do not resolve is left for the converters to
+         * refuse.
+         */
+        private String servedStageValues(String source, Path file) {
+            if (source == null) return null;
+            boolean post = stage == UniformRegistry.Stage.POST;
+            List<String> names = post ? ServedUniforms.POST_VALUES : List.of(PackAlphaTestPlan.IRIS_REFERENCE);
+            try {
+                ServedUniforms.Initialized initialized = ServedUniforms.readInitializers(
+                        IrisCoreProfile.expandIncludes(source, file),
+                        value -> UniformRegistry.irisSets(value, settings().runtimeSettings().customDescriptors()));
+                initialized.names().forEach(value -> deviations.add("UNIFORM_UNSET_INITIALIZER:" + value));
+                String expanded = initialized.source();
+                if (names.stream().noneMatch(served -> GlslTokenRewriter.containsIdentifier(expanded, served))) {
+                    return initialized.names().isEmpty() ? source : expanded;
+                }
+                // FinalPassRenderer and ShadowCompositeRenderer apply no blend directive.
+                boolean blends = !directiveProgram.equals("final") && !directiveProgram.startsWith("shadowcomp");
+                return post ? ServedUniforms.servePostValues(expanded,
+                        blends ? PackBlendPlan.forProgram(directiveProgram, settings()).program() : null)
+                        : alphaTestPlan.serveReference(expanded);
+            } catch (IllegalArgumentException unresolved) {
+                return source;
             }
         }
 
         private void planInterface() {
             PackSettingsPlan settings = config == null ? null : config.settings();
+            Map<String, String> between = runningBetweenStages();
             interfacePlan = UniformRegistry.planProgram(
-                    fragment, vertex, stage, targetPlan, !program.variantFolder().isBlank(),
+                    fragment, vertex, between, stage, targetPlan, !program.variantFolder().isBlank(),
                     settings == null ? Map.of() : settings.runtimeSettings().customDescriptors(),
                     settings == null ? Map.of() : settings.customSamplerSlots());
+            unboundShadowSamplers = ShadowTargetDirectives.unboundShadowSamplers(interfacePlan.samplers(), config,
+                    this::readsSampler);
+            List<GlslInterfaceScanner.StageInterface> chain = new ArrayList<>();
+            if (vertex != null) {
+                stageInterfaces.put("vertex", GlslInterfaceScanner.scan(vertex, true));
+                chain.add(stageInterfaces.get("vertex"));
+            }
+            between.forEach((name, source) -> {
+                stageInterfaces.put(name, GlslInterfaceScanner.scan(source, GlslInterfaceScanner.Stage.of(name)));
+                chain.add(stageInterfaces.get(name));
+            });
             if (fragment != null) {
                 stageInterfaces.put("fragment", GlslInterfaceScanner.scan(fragment, false));
             }
-            if (vertex != null) {
-                stageInterfaces.put("vertex", GlslInterfaceScanner.scan(vertex, true));
-            }
+            chain.add(stageInterfaces.get("fragment"));
             pairedPostVertex = stage == UniformRegistry.Stage.POST && vertex != null;
             boolean reconcileStages = vertex != null && (stage != UniformRegistry.Stage.POST || pairedPostVertex);
             stageMatch = !reconcileStages
                     ? new GlslInterfaceScanner.ProgramMatch(Map.of(), List.of())
-                    : GlslInterfaceScanner.match(stageInterfaces.get("vertex"), stageInterfaces.get("fragment"),
-                            pairedPostVertex);
+                    : GlslInterfaceScanner.match(chain);
+        }
+
+        /** The stages that run between the vertex and fragment stages, by stage name, in the order they run. */
+        private Map<String, String> runningBetweenStages() {
+            Map<String, String> between = new LinkedHashMap<>();
+            if (tessellationRuns()) {
+                between.put("tess_control", tessControl);
+                between.put("tess_evaluation", tessEvaluation);
+            }
+            if (geometryStageRuns()) between.put("geometry", geometry);
+            return between;
+        }
+
+        /** Whether any stage reads {@code sampler}; GL leaves one nothing reads inactive, bound or not. */
+        private boolean readsSampler(String sampler) {
+            return fragment != null && !UniformRegistry.isSamplerUnused(fragment, sampler)
+                    || vertex != null && !UniformRegistry.isSamplerUnused(vertex, sampler)
+                    || runningBetweenStages().values().stream()
+                            .anyMatch(source -> !UniformRegistry.isSamplerUnused(source, sampler));
         }
 
         private Map<String, Integer> varyingLocations() {
-            return stage == UniformRegistry.Stage.POST && !pairedPostVertex
-                    ? postVaryingLocations(stageInterfaces.get("fragment"))
-                    : stageMatch.locations();
+            GlslInterfaceScanner.StageInterface fragmentInterface = stageInterfaces.get("fragment");
+            return stage != UniformRegistry.Stage.POST || pairedPostVertex ? stageMatch.locations()
+                    : fragmentInterface == null ? Map.of() : fragmentInterface.readInputLocations();
         }
 
         private void collectPlanningDeviations() {
             deviations.addAll(program.preparationDeviations());
             stages.values().forEach(value -> deviations.addAll(value.deviations()));
             deviations.addAll(interfacePlan.deviations());
+            deviations.addAll(unboundShadowSamplers);
             stageInterfaces.values().forEach(value -> deviations.addAll(value.deviations()));
             deviations.addAll(stageMatch.deviations());
             deviations.addAll(terrainMaterial.deviations());
@@ -330,11 +483,85 @@ public final class PackPlanBuilder {
         /** Whether the planned sources may execute, recording each contract they break. */
         private boolean admitted() {
             // Every check runs, so the report names every reason a program is refused.
-            boolean admitted = interfaceAdmitted();
+            boolean admitted = geometryStages.isEmpty() || geometryStageRuns() || tessellationRuns();
+            if (!admitted) {
+                // A lane resolved to such a program (shadow_lines to Spring's shadow) too.
+                deviations.add("UNSUPPORTED_PACK_STAGE");
+            }
+            admitted &= interfaceAdmitted();
             admitted &= targetsAdmitted();
             admitted &= storageAdmitted();
             admitted &= vertexAdmitted();
             return admitted;
+        }
+
+        /**
+         * Whether the program's stages between vertex and fragment run: a geometry stage alone, on
+         * every shadow lane, on the hand lanes, and on the terrain or water lane after a modern
+         * vertex stage (Spring's gbuffers_terrain and gbuffers_hand).
+         */
+        private boolean geometryStageRuns() {
+            return geometry != null && geometryStages.equals(List.of("geometry"))
+                    && (FamilyAdapterRegistry.isShadowFamily(name) || FamilyAdapterRegistry.isHandFamily(name)
+                    || modernWorldTerrain());
+        }
+
+        /**
+         * Whether the program's tessellation stages run: both alone, on the hand lanes, or on the terrain or water lane
+         * after a modern vertex stage (TessellationStageBridge). The shadow lanes stay refused.
+         */
+        private boolean tessellationRuns() {
+            return tessControl != null && tessEvaluation != null && geometryStages.equals(List.of("tess_control",
+                    "tess_evaluation")) && (FamilyAdapterRegistry.isHandFamily(name) || modernWorldTerrain());
+        }
+
+        /** The terrain or water lane, drawn after a modern vertex stage. */
+        private boolean modernWorldTerrain() {
+            return terrainMaterial.modern() && (name.equals("gbuffers_terrain") || name.equals("gbuffers_water"));
+        }
+
+        /**
+         * What the vertex stage feeds: a running geometry or tessellation control stage, after which
+         * a later stage converts the clip depth, or the fragment.
+         */
+        private String vertexConsumer() {
+            if (tessellationRuns()) return TessellationStageBridge.consumerView(tessControl);
+            return geometryStageRuns() ? GeometryStageBridge.consumerView(geometry, fragment) : fragment;
+        }
+
+        /** Converts the tessellation stages that run between the converted vertex stage and the fragment stage. */
+        private void convertTessellation() {
+            if (!executable || !tessellationRuns()) return;
+            try {
+                convertedTessellation = TessellationStageBridge.convert(FamilyAdapterRegistry.isHandFamily(name),
+                        tessControl, tessEvaluation, vertexLayout, fragment,
+                        interfacePlan.project("tess_control", stage), interfacePlan.project("tess_evaluation", stage),
+                        allowStorageBuffers);
+            } catch (RuntimeException failure) {
+                deviations.add(VertexBridgeDeviations.conversionFailure("TESSELLATION_STAGE_BRIDGE_UNSUPPORTED",
+                        failure));
+                deviations.add("TESSELLATION_STAGE_BRIDGE_UNSUPPORTED");
+                executable = false;
+            }
+        }
+
+        /** Converts the geometry stage that runs between the converted vertex stage and the fragment stage. */
+        private void convertGeometry() {
+            if (!executable || !geometryStageRuns()) return;
+            try {
+                UniformRegistry.ProgramInterface geometryPlan = interfacePlan.project("geometry", stage);
+                GeometryStageBridge.Conversion conversion = FamilyAdapterRegistry.isShadowFamily(name)
+                        ? GeometryStageBridge.convertShadow(geometry, vertexLayout, fragment, geometryPlan,
+                                allowStorageBuffers, !FamilyAdapterRegistry.isShadowTerrain(name))
+                        : GeometryStageBridge.convertWorld(geometry, vertexLayout, fragment, geometryPlan,
+                                allowStorageBuffers, FamilyAdapterRegistry.isHandFamily(name));
+                convertedGeometry = conversion.source();
+                geometryLayout = conversion.outputLayout();
+            } catch (RuntimeException failure) {
+                deviations.add(VertexBridgeDeviations.conversionFailure("GEOMETRY_STAGE_BRIDGE_UNSUPPORTED", failure));
+                deviations.add("GEOMETRY_STAGE_BRIDGE_UNSUPPORTED");
+                executable = false;
+            }
         }
 
         /** The family, stages, interface, targets and alpha test each allow the program. */
@@ -342,13 +569,13 @@ public final class PackPlanBuilder {
             return FamilyAdapterRegistry.isExecutableFamily(name)
                     && fragment != null
                     && (!needsVertex() || vertex != null)
-                    && stages.values().stream().allMatch(PackPlanBuilder::preparedSuccessfully)
+                    && stages.values().stream().allMatch(ProgramStageSources::preparedSuccessfully)
                     && interfacePlan.executable()
+                    && unboundShadowSamplers.isEmpty()
                     && stageInterfaces.values().stream().allMatch(value -> value.deviations().isEmpty())
                     && stageMatch.executable()
                     && (targetPlan == null || targetPlan.executable())
-                    && (geometryOutputPlan == null || geometryOutputPlan.executable())
-                    && alphaTestPlan.valid();
+                    && (geometryOutputPlan == null || geometryOutputPlan.executable());
         }
 
         /** The families that draw only through their own vertex stage. */
@@ -362,7 +589,7 @@ public final class PackPlanBuilder {
                     || FamilyAdapterRegistry.isCloudFamily(name);
         }
 
-        /** A world draw samples its own outputs through snapshots; shadow outputs are shadowcolor0 and 1 only. */
+        /** A world draw samples its own outputs through snapshots; shadow outputs are the pack shadowcolor targets. */
         private boolean targetsAdmitted() {
             boolean admitted = true;
             if (geometryOutputPlan != null) {
@@ -386,15 +613,9 @@ public final class PackPlanBuilder {
                 geometryOutputPlan = geometryOutputPlan.withSnapshotTargets(snapshots);
             }
             if (stage.shadowPass()) {
-                PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", fragment).plan();
+                PostTargetPlan shadowOutputs = PostTargetPlan.parseShadow("shadow", fragment, Map.of()).plan();
                 for (String deviation : shadowOutputs.deviations()) {
                     deviations.add(deviation.replaceFirst("^POST_", "SHADOW_"));
-                }
-                for (int target : shadowOutputs.targetSlots()) {
-                    if (target < 0 || target > 1) {
-                        deviations.add("SHADOW_OUTPUT_TARGET_UNSUPPORTED:" + target);
-                        admitted = false;
-                    }
                 }
                 admitted &= shadowOutputs.executable();
             }
@@ -462,9 +683,18 @@ public final class PackPlanBuilder {
             return true;
         }
 
-        /** Records a vertex conversion, or the deviation that keeps the program from executing. */
-        private void acceptVertex(LegacyGlslConverter.TerrainVertexConversion conversion,
+        /**
+         * Records a vertex conversion, or the deviation that keeps the program from executing with
+         * the failure that names why.
+         */
+        private void acceptVertex(Supplier<LegacyGlslConverter.TerrainVertexConversion> converter,
                                   String bridged, String unsupported) {
+            LegacyGlslConverter.TerrainVertexConversion conversion = null;
+            try {
+                conversion = converter.get();
+            } catch (RuntimeException failure) {
+                deviations.add(VertexBridgeDeviations.conversionFailure(unsupported, failure));
+            }
             if (conversion == null) {
                 deviations.add(unsupported);
                 executable = false;
@@ -482,13 +712,15 @@ public final class PackPlanBuilder {
             if (vertex == null) {
                 return;
             }
+            List<UniformRegistry.UniformDeclaration> fragmentUniforms =
+                    interfacePlan.project("fragment", stage).executableUniforms();
             if (FamilyAdapterRegistry.isSkyFamily(name)) {
                 FamilyAdapterPlan.VertexContract skyContract =
                         HostLayoutVertexBridge.skyVertexContract(vertex, name.equals("gbuffers_skytextured"));
                 familyAdapter = familyAdapter.withVertexContract(skyContract);
-                acceptVertex(HostLayoutVertexBridge.convertSkyVertex(vertex, vertexFile(), fragment,
-                                skyContract, stageMatch.locations(), allowStorageBuffers,
-                                interfacePlan.project("fragment", stage).executableUniforms()),
+                acceptVertex(() -> HostLayoutVertexBridge.convertSkyVertexChecked(vertex, vertexFile(), fragment,
+                                skyContract, stageMatch.locations(), allowStorageBuffers, fragmentUniforms,
+                                vertexSamplerPlan(interfacePlan, stage, vertex)),
                         "SKY_VERTEX_BRIDGE", "SKY_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isCloudFamily(name) && AuthoredOutput.producesNothing(vertex, fragment)) {
                 // The selected branch draws no cloud at all. There is no pipeline to build; the
@@ -498,58 +730,38 @@ public final class PackPlanBuilder {
             } else if (FamilyAdapterRegistry.isCloudFamily(name)) {
                 familyAdapter = familyAdapter.withVertexContract(
                         FamilyAdapterPlan.VertexContract.CLOUD_POSITION_UV_COLOR_NORMAL);
-                acceptVertex(HostLayoutVertexBridge.convertCloudVertex(vertex, vertexFile(), fragment,
-                                stageMatch.locations(), allowStorageBuffers,
-                                interfacePlan.project("fragment", stage).executableUniforms()),
+                acceptVertex(() -> HostLayoutVertexBridge.convertCloudVertexChecked(vertex, vertexFile(), fragment,
+                                stageMatch.locations(), allowStorageBuffers, fragmentUniforms,
+                                vertexSamplerPlan(interfacePlan, stage, vertex)),
                         "CLOUD_VERTEX_BRIDGE", "CLOUD_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isShadowLaneFamily(name) && hostLayoutFailure == null) {
-                LegacyGlslConverter.TerrainVertexConversion conversion = null;
-                try {
-                    // The host-layout preparation already expanded the includes.
-                    conversion = HostLayoutVertexBridge.convertShadowLaneVertexChecked(
-                            familyAdapter.vertexContract(), vertex, fragment,
-                            interfacePlan.project("vertex", stage), allowStorageBuffers);
-                } catch (RuntimeException failure) {
-                    deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:"
-                            + VertexBridgeDeviations.safeReason(failure));
-                }
-                acceptVertex(conversion, hostLayoutLane + "_VERTEX_BRIDGE",
-                        hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
+                // The host-layout preparation already expanded the includes.
+                acceptVertex(() -> HostLayoutVertexBridge.convertShadowLaneVertexChecked(
+                                familyAdapter.vertexContract(), vertex, vertexConsumer(),
+                                interfacePlan.project("vertex", stage), allowStorageBuffers, geometryStageRuns()),
+                        hostLayoutLane + "_VERTEX_BRIDGE", hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
-                LegacyGlslConverter.TerrainVertexConversion conversion = null;
-                try {
-                    conversion = EntityVertexBridge.convertShadowEntityVertexChecked(
-                            vertex, vertexFile(), fragment, interfacePlan.project("vertex", stage),
-                            allowStorageBuffers);
-                } catch (RuntimeException failure) {
-                    deviations.add("SHADOW_ENTITY_VERTEX_CONVERSION_FAILED:"
-                            + VertexBridgeDeviations.safeReason(failure));
-                }
-                acceptVertex(conversion, "SHADOW_ENTITY_VERTEX_BRIDGE", VertexBridgeDeviations.unsupported(name));
-            } else if (isTerrainLike(name)) {
-                LegacyGlslConverter.TerrainVertexConversion conversion = null;
-                String unsupported = VertexBridgeDeviations.unsupported(name);
-                try {
-                    conversion = terrainVertexOrThrow();
-                } catch (RuntimeException failure) {
-                    deviations.add(VertexBridgeDeviations.conversionFailure(unsupported, failure));
-                }
-                acceptVertex(conversion, null, unsupported);
+                acceptVertex(() -> EntityVertexBridge.convertShadowEntityVertexChecked(
+                                vertex, vertexFile(), vertexConsumer(), interfacePlan.project("vertex", stage),
+                                allowStorageBuffers, geometryStageRuns()),
+                        "SHADOW_ENTITY_VERTEX_BRIDGE", VertexBridgeDeviations.unsupported(name));
+            } else if (FamilyAdapterRegistry.isTerrainLike(name)) {
+                acceptVertex(this::terrainVertexOrThrow, null, VertexBridgeDeviations.unsupported(name));
             }
         }
 
         /** The shadow, modern terrain or legacy terrain vertex bridge, throwing its first concrete failure. */
         private LegacyGlslConverter.TerrainVertexConversion terrainVertexOrThrow() {
             UniformRegistry.ProgramInterface vertexInterface = interfacePlan.project("vertex", stage);
-            if (name.equals("shadow")) {
-                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, vertexFile(), fragment,
+            if (FamilyAdapterRegistry.isShadowTerrain(name)) {
+                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, vertexFile(), vertexConsumer(),
                         GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, vertexInterface, true, false,
-                        allowStorageBuffers);
+                        allowStorageBuffers, geometryStageRuns());
             }
             if (terrainMaterial.modern()) {
-                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, fragment,
+                return TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, vertexConsumer(),
                         GlslVertexPreambles.MODERN_TERRAIN_VERTEX_PREAMBLE, vertexInterface, false, false,
-                        allowStorageBuffers);
+                        allowStorageBuffers, tessellationRuns() || geometryStageRuns());
             }
             return TerrainVertexBridge.convertLegacyVertexOrThrow(vertex, vertexFile(), fragment,
                     GlslVertexPreambles.TERRAIN_VERTEX_PREAMBLE, allowStorageBuffers);
@@ -561,15 +773,13 @@ public final class PackPlanBuilder {
                 List<UniformRegistry.UniformDeclaration> fragmentUniforms =
                         interfacePlan.project("fragment", stage).executableUniforms();
                 EntityVertexBridge.VertexSamplerPlan vertexSamplers = vertexSamplerPlan(interfacePlan, stage, vertex);
-                conversion = name.equals("gbuffers_damagedblock")
-                        ? EntityVertexBridge.convertCrumblingVertexChecked(vertex, vertexFile(), fragment,
-                        stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
-                        : FamilyAdapterRegistry.isBlockFamily(name)
+                conversion = FamilyAdapterRegistry.isBlockFamily(name)
                         ? EntityVertexBridge.convertBlockVertexChecked(vertex, vertexFile(), fragment,
                         stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                         : FamilyAdapterRegistry.isHandFamily(name)
-                        ? EntityVertexBridge.convertHandVertexChecked(vertex, vertexFile(), fragment,
-                        stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
+                        ? EntityVertexBridge.convertHandVertexChecked(vertex, vertexFile(),
+                        new EntityVertexBridge.Consumer(vertexConsumer(), tessellationRuns() || geometryStageRuns()),
+                        fragment, stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers)
                         : EntityVertexBridge.convertEntityVertexChecked(vertex, vertexFile(), fragment,
                         stageMatch.locations(), allowStorageBuffers, fragmentUniforms, vertexSamplers);
             } catch (IllegalArgumentException failure) {
@@ -590,31 +800,28 @@ public final class PackPlanBuilder {
             if (!executable) {
                 return;
             }
-            if (PostTargetPlan.isPostProgramName(name)) {
+            if (PostTargetPlan.isFullscreenProgramName(name)) {
                 convertPost();
             } else if (name.equals("gbuffers_terrain") || name.equals("gbuffers_water")) {
                 int[] slots = PackPipelines.interleaveLightmap(interfaceSlots(interfacePlan, stage));
                 acceptFragment(FragmentConverter.FragmentConversionRequest
                         .of(fragment, fragmentFile(), true, slots)
-                        .withTerrainLayout(vertexLayout)
+                        .withTerrainLayout(fragmentInputLayout())
                         .withInterfacePlan(interfacePlan.project("fragment", stage))
                         .withGeometryOutputPlan(geometryOutputPlan)
-                        .withPackConstants(packConstants())
                         .withAtlasSamplers(PackResourcePlan.terrainAtlasSamplers(name,
                                 interfacePlan.project("fragment", stage), config == null ? null : config.settings()))
-                        .withAlphaTestPlan(vertex != null ? alphaTestPlan : PackAlphaTestPlan.disabled())
                         .convert(), "POST_CONVERTER_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isShadowFamily(name)) {
                 int[] slots = PackPipelines.shadowSamplerSlots(interfaceSlots(interfacePlan, stage));
                 acceptFragment(FragmentConverter.FragmentConversionRequest
                         .of(fragment, fragmentFile(), true, slots)
-                        .withTerrainLayout(vertexLayout)
+                        .withTerrainLayout(fragmentInputLayout())
                         .withInterfacePlan(interfacePlan.project("fragment", stage))
-                        .withPackConstants(packConstants())
                         .convert(), "POST_CONVERTER_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isEntityLike(name)) {
-                acceptFragment(FragmentConverter.convertEntityFragment(fragment, fragmentFile(),
-                        entitySlots(), vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan),
+                acceptFragment(FragmentConverter.convertEntityFragment(fragment, fragmentFile(), entitySlots(),
+                        fragmentInputLayout(), interfacePlan.project("fragment", stage), geometryOutputPlan),
                         "ENTITY_FRAGMENT_BRIDGE_UNSUPPORTED");
             } else if (FamilyAdapterRegistry.isSkyFamily(name) || FamilyAdapterRegistry.isCloudFamily(name)) {
                 acceptFragment(FragmentConverter.convertSkyFragment(fragment, fragmentFile(), entitySlots(),
@@ -628,6 +835,12 @@ public final class PackPlanBuilder {
             } else {
                 executable = false;
             }
+        }
+
+        /** The output locations of the stage that feeds the fragment: tessellation, geometry, or the vertex stage. */
+        private LegacyGlslConverter.TerrainVaryingLayout fragmentInputLayout() {
+            if (convertedTessellation != null) return convertedTessellation.outputLayout();
+            return geometryLayout != null ? geometryLayout : vertexLayout;
         }
 
         private int[] entitySlots() {
@@ -646,7 +859,7 @@ public final class PackPlanBuilder {
             if (pairedPostVertex) {
                 PostVertexBridge.PostVertexConversion postVertex = PostVertexBridge.convertPostVertex(
                         vertex, stageInterfaces.get("vertex"), stageInterfaces.get("fragment"), stageMatch,
-                        interfacePlan.project("vertex", UniformRegistry.Stage.POST), packConstants());
+                        interfacePlan.project("vertex", UniformRegistry.Stage.POST));
                 deviations.addAll(postVertex.deviations());
                 if (postVertex.source() == null) {
                     deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -658,10 +871,10 @@ public final class PackPlanBuilder {
             if (executable) {
                 PostVertexBridge.PostVaryingLayout postLayout = !pairedPostVertex ? null
                         : new PostVertexBridge.PostVaryingLayout(
-                        stageMatch.locations(), postVaryingTypes(stageInterfaces.get("fragment")));
+                        stageMatch.locations(), stageInterfaces.get("fragment").readInputTypes());
                 convertedFragment = FragmentConverter.convertPostFragment(
                         fragment, fragmentFile(), interfacePlan.project("fragment", UniformRegistry.Stage.POST),
-                        targetPlan, packConstants(),
+                        targetPlan,
                         postLayout == null ? null : postLayout.locations(),
                         postLayout == null ? null : postLayout.types());
             }
@@ -673,37 +886,31 @@ public final class PackPlanBuilder {
         }
 
         private void convertHostLayout() {
-            LegacyGlslConverter.TerrainVertexConversion conversion = null;
-            try {
-                // The line and glint preparation already expanded the includes.
-                conversion = HostLayoutVertexBridge.convertHostLayoutVertexChecked(
-                        familyAdapter.vertexContract(), vertex, fragment, stageMatch.locations(),
-                        allowStorageBuffers, interfacePlan.effective(stage).executableUniforms(),
-                        vertexSamplerPlan(interfacePlan, stage, vertex));
-            } catch (IllegalArgumentException failure) {
-                deviations.add(hostLayoutLane + "_VERTEX_CONVERSION_FAILED:"
-                        + VertexBridgeDeviations.safeReason(failure));
-            }
-            acceptVertex(conversion, hostLayoutLane + "_VERTEX_BRIDGE", hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
-            if (conversion != null) {
-                acceptFragment(FragmentConverter.convertParticleFragment(fragment, fragmentFile(), entitySlots(),
-                                vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan),
-                        hostLayoutLane + "_FRAGMENT_BRIDGE_UNSUPPORTED");
-            }
+            // The line and glint preparation already expanded the includes.
+            acceptVertex(() -> HostLayoutVertexBridge.convertHostLayoutVertexChecked(
+                            familyAdapter.vertexContract(), vertex, fragment, stageMatch.locations(),
+                            allowStorageBuffers, interfacePlan.effective(stage).executableUniforms(),
+                            vertexSamplerPlan(interfacePlan, stage, vertex)),
+                    hostLayoutLane + "_VERTEX_BRIDGE", hostLayoutLane + "_VERTEX_BRIDGE_UNSUPPORTED");
+            convertParticleFragment(hostLayoutLane);
         }
 
         private void convertParticle() {
             String label = FamilyAdapterRegistry.isWeatherFamily(name) ? "WEATHER" : "PARTICLE";
-            LegacyGlslConverter.TerrainVertexConversion conversion = EntityVertexBridge.convertParticleVertexChecked(
-                    vertex, vertexFile(), fragment, stageMatch.locations(), allowStorageBuffers,
-                    interfacePlan.effective(stage).executableUniforms(),
-                            vertexSamplerPlan(interfacePlan, stage, vertex));
-            acceptVertex(conversion, null, label + "_VERTEX_BRIDGE_UNSUPPORTED");
-            if (conversion != null) {
-                acceptFragment(FragmentConverter.convertParticleFragment(fragment, fragmentFile(), entitySlots(),
-                                vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan),
-                        label + "_FRAGMENT_BRIDGE_UNSUPPORTED");
-            }
+            acceptVertex(() -> EntityVertexBridge.convertParticleVertexChecked(
+                            vertex, vertexFile(), fragment, stageMatch.locations(), allowStorageBuffers,
+                            interfacePlan.effective(stage).executableUniforms(),
+                            vertexSamplerPlan(interfacePlan, stage, vertex)),
+                    null, label + "_VERTEX_BRIDGE_UNSUPPORTED");
+            convertParticleFragment(label);
+        }
+
+        /** The particle-layout fragment stage of a program whose vertex stage converted. */
+        private void convertParticleFragment(String label) {
+            if (!executable) return;
+            acceptFragment(FragmentConverter.convertParticleFragment(fragment, fragmentFile(), entitySlots(),
+                            vertexLayout, interfacePlan.project("fragment", stage), geometryOutputPlan),
+                    label + "_FRAGMENT_BRIDGE_UNSUPPORTED");
         }
 
         private void rewriteStorageBuffers() {
@@ -720,7 +927,20 @@ public final class PackPlanBuilder {
             if (convertedVertex != null) {
                 convertedVertex = advancedResources.rewriteStorageBuffers(name, convertedVertex);
             }
-            if (convertedFragment == null || (program.vertexSource() != null && convertedVertex == null)) {
+            boolean geometryRewritten = true;
+            if (convertedGeometry != null) {
+                convertedGeometry = advancedResources.rewriteStorageBuffers(name, convertedGeometry);
+                geometryRewritten = convertedGeometry != null;
+            }
+            if (convertedTessellation != null) {
+                String control = advancedResources.rewriteStorageBuffers(name, convertedTessellation.control());
+                String evaluation = advancedResources.rewriteStorageBuffers(name, convertedTessellation.evaluation());
+                geometryRewritten &= control != null && evaluation != null;
+                convertedTessellation = TessellationStageBridge.paired(control, evaluation,
+                        convertedTessellation.outputLayout());
+            }
+            if (convertedFragment == null || (program.vertexSource() != null && convertedVertex == null)
+                    || !geometryRewritten) {
                 deviations.add("STORAGE_BUFFER_REWRITE_FAILED:" + name);
                 executable = false;
             }
@@ -744,200 +964,38 @@ public final class PackPlanBuilder {
                 String applied = alphaTestPlan.appliedDeviation(name);
                 if (!applied.isBlank()) deviations.add(applied);
             } else if ((vertex == null || name.equals("gbuffers_water"))
-                    && alphaTestPlan.configured()
-                    && (alphaTestPlan.active() || !alphaTestPlan.valid())) {
+                    && alphaTestPlan.configured() && alphaTestPlan.active()) {
                 deviations.add("ALPHA_TEST_PLANNED_NOT_INSTALLED:" + name);
             }
         }
 
         /**
-         * Blend directives reach the per-attachment state of the world MRT pipelines; other
-         * programs keep the directive as a named gap.
+         * The program's blend directives as Iris applies them: a world program blends each buffer
+         * through its MRT output route, a shadow program each shadow attachment, and a fullscreen
+         * pass as PackBlendPlan.forFullscreenPass says. A world program with no route keeps the
+         * directive as a named gap.
          */
         private PackBlendPlan blendPlan() {
-            PackBlendPlan blendPlan = PackBlendPlan.forProgram(directiveProgram, settings()).withIrisDefault(name);
-            if (blendPlan.overridesAnything() && geometryOutputPlan == null) {
+            PackBlendPlan blendPlan = PackBlendPlan.forProgram(directiveProgram, settings())
+                    .withIrisDefault(directiveProgram);
+            if (stage == UniformRegistry.Stage.POST) {
+                blendPlan = blendPlan.forFullscreenPass(name);
+            } else if (blendPlan.overridesAnything() && geometryOutputPlan == null && !stage.shadowPass()) {
                 deviations.add("BLEND_DIRECTIVE_UNSUPPORTED:" + name);
                 return PackBlendPlan.empty();
             }
             deviations.addAll(blendPlan.deviations());
             return blendPlan;
         }
-    }
 
-    private static Map<String, Integer> postVaryingLocations(
-            GlslInterfaceScanner.StageInterface fragment
-    ) {
-        if (fragment == null) {
-            return Map.of();
+        /** The program's samplers as its vertex stage declares them, at the fragment's bindings, and its images. */
+        private EntityVertexBridge.VertexSamplerPlan vertexSamplerPlan(
+                UniformRegistry.ProgramInterfacePlan plan, UniformRegistry.Stage stage, String vertex) {
+            if (vertex == null) return null;
+            return new EntityVertexBridge.VertexSamplerPlan(plan.project("vertex", stage),
+                    PackPipelines.entitySamplerSlots(interfaceSlots(plan, stage)),
+                    advancedResources == null ? Set.of() : advancedResources.storedImages(name, "vertex"));
         }
-        Map<String, Integer> result = new TreeMap<>();
-        for (GlslInterfaceScanner.Declaration declaration : fragment.inputs()) {
-            if (declaration.referenced()) {
-                result.put(declaration.name(), 0);
-            }
-        }
-        return result;
-    }
-
-    private static Map<String, String> postVaryingTypes(
-            GlslInterfaceScanner.StageInterface fragment
-    ) {
-        if (fragment == null) {
-            return Map.of();
-        }
-        Map<String, String> result = new TreeMap<>();
-        for (GlslInterfaceScanner.Declaration declaration : fragment.inputs()) {
-            if (declaration.referenced()) {
-                result.put(declaration.name(), declaration.typeWithArray());
-            }
-        }
-        return result;
-    }
-
-    private static boolean isTerrainLike(String name) {
-        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
-                || name.equals("shadow");
-    }
-
-    /** Programs whose modern sources are normalized like terrain: terrain, water and both shadow lanes. */
-    private static boolean isTerrainMaterialFamily(String name) {
-        return name.equals("gbuffers_terrain") || name.equals("gbuffers_water")
-                || FamilyAdapterRegistry.isShadowFamily(name);
-    }
-
-    /**
-     * Families whose active sources can write multiple outputs through
-     * DRAWBUFFERS/RENDERTARGETS. Each gets an immutable geometry output
-     * plan; single-output plans stay executable and unused directives
-     * never block the family.
-     */
-    private static boolean isGeometryOutputFamily(String name) {
-        return FamilyAdapterRegistry.isEntityLike(name)
-                || FamilyAdapterRegistry.isParticleLike(name)
-                || FamilyAdapterRegistry.isWeatherFamily(name)
-                || FamilyAdapterRegistry.isHostLayoutFamily(name)
-                || FamilyAdapterRegistry.isSkyFamily(name)
-                || FamilyAdapterRegistry.isCloudFamily(name)
-                || name.equals("gbuffers_terrain")
-                || name.equals("gbuffers_water");
-    }
-
-    private static Map<String, PreparedShaderSource> preparedStages(PackProgram program) {
-        Map<String, PreparedShaderSource> result = new TreeMap<>(program.preparedSources());
-        if (result.isEmpty()) {
-            if (program.fragmentSource() != null) {
-                result.put("fragment", new PreparedShaderSource("fragment",
-                        relative(program.sourceRoot(), program.fragmentPath()),
-                        program.executableFragmentSource(), List.of(), List.of()));
-            }
-            if (program.vertexSource() != null) {
-                result.put("vertex", new PreparedShaderSource("vertex",
-                        relative(program.sourceRoot(), program.vertexPath()),
-                        program.executableVertexSource(), List.of(), List.of()));
-            }
-        }
-        return result;
-    }
-
-    private static Map<String, PreparedShaderSource> normalizeModernPostStages(
-            Map<String, PreparedShaderSource> stages
-    ) {
-        Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
-        for (Map.Entry<String, PreparedShaderSource> entry : stages.entrySet()) {
-            PreparedShaderSource prepared = entry.getValue();
-            if (prepared.source() == null || !hasModernVersion(prepared.source())) {
-                continue;
-            }
-            String normalized = PostVertexBridge.normalizeModernPost(prepared.source());
-            List<String> deviations = new ArrayList<>(prepared.deviations());
-            deviations.add("MODERN_GLSL_TRANSLATED");
-            result.put(entry.getKey(), new PreparedShaderSource(
-                    prepared.stage(), prepared.relativePath(), normalized,
-                    prepared.dependencies(), deviations));
-        }
-        return result;
-    }
-
-    private static Map<String, PreparedShaderSource> normalizeModernTerrainStages(
-            Map<String, PreparedShaderSource> stages
-    ) {
-        Map<String, PreparedShaderSource> result = new TreeMap<>(stages);
-        boolean extended = stages.values().stream().anyMatch(value ->
-                value.source() != null && TerrainVertexBridge.requiresExtendedTerrain(value.source()));
-        if (!extended) {
-            return result;
-        }
-        for (Map.Entry<String, PreparedShaderSource> entry : stages.entrySet()) {
-            PreparedShaderSource prepared = entry.getValue();
-            if (prepared.source() == null || !TerrainVertexBridge.requiresExtendedTerrain(prepared.source())) {
-                continue;
-            }
-            String normalized;
-            try {
-                normalized = TerrainVertexBridge.normalizeModernTerrain(prepared.source());
-            } catch (IllegalArgumentException unsupportedVersion) {
-                // Leave unsupported versions authored so the program plan can
-                // record a per-program fallback instead of rejecting the pack.
-                continue;
-            }
-            List<String> deviations = new ArrayList<>(prepared.deviations());
-            deviations.add("MODERN_GLSL_TRANSLATED");
-            result.put(entry.getKey(), new PreparedShaderSource(
-                    prepared.stage(), prepared.relativePath(), normalized,
-                    prepared.dependencies(), deviations));
-        }
-        return result;
-    }
-
-    /**
-     * Iris TransformPatcher compiles a stage in core-profile mode for a core profile and for 150
-     * and above with no profile, serving the core names whether or not the stage declares them.
-     * Iris also uses that mode for any program on the line layout; there a compatibility stage
-     * only gets the core names it declares, so its own variables of those names stay its own.
-     */
-    private static boolean irisCoreMode(String source) {
-        GlslVersion version = GlslVersion.first(source);
-        return version != null && version.irisCore();
-    }
-
-    /** Post stages in modern syntax: GLSL 140 and later, where in/out and layouts appear. */
-    private static boolean hasModernVersion(String source) {
-        GlslVersion version = GlslVersion.first(source);
-        return version != null && version.supported() && version.number() >= 140;
-    }
-
-    private static String source(
-            Map<String, PreparedShaderSource> stages,
-            String stage,
-            String fallback
-    ) {
-        PreparedShaderSource prepared = stages.get(stage);
-        return prepared == null ? fallback : prepared.source();
-    }
-
-    private static String relative(Path root, Path path) {
-        if (root == null || path == null) {
-            return "";
-        }
-        try {
-            return root.toAbsolutePath().normalize()
-                    .relativize(path.toAbsolutePath().normalize())
-                    .toString().replace('\\', '/');
-        } catch (RuntimeException ignored) {
-            return "";
-        }
-    }
-
-    /** The program's samplers as its vertex stage declares them, at the fragment stage's bindings. */
-    private static EntityVertexBridge.VertexSamplerPlan vertexSamplerPlan(
-            UniformRegistry.ProgramInterfacePlan plan,
-            UniformRegistry.Stage stage,
-            String vertex
-    ) {
-        if (vertex == null) return null;
-        return new EntityVertexBridge.VertexSamplerPlan(plan.project("vertex", stage),
-                PackPipelines.entitySamplerSlots(interfaceSlots(plan, stage)));
     }
 
     private static int[] interfaceSlots(
@@ -947,15 +1005,5 @@ public final class PackPlanBuilder {
         return plan.effective(stage).samplers().stream()
                 .mapToInt(UniformRegistry.SamplerBinding::slot)
                 .toArray();
-    }
-
-    private static boolean preparedSuccessfully(PreparedShaderSource source) {
-        if (source.source() == null) {
-            return false;
-        }
-        return source.deviations().stream().noneMatch(value ->
-                ((value.startsWith("SOURCE_") || value.startsWith("PREPROCESSOR_"))
-                        && !ShaderSourcePreprocessor.isWarning(value))
-                        || value.startsWith("LEGACY_FOG_FIELD_UNSUPPORTED:"));
     }
 }

@@ -7,3 +7,6 @@ void main() {
     vec4 first = texture(colortex0, texCoord);
     fragColor = vec4((packTransform * first.rgb), 1.0);
 }
+/*
+const int colortex0Format = RGBA16F;
+*/

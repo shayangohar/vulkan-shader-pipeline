@@ -11,3 +11,7 @@ void main() {
     gl_FragData[0] = mix(world, marker, 0.20);
     gl_FragData[1] = marker;
 }
+/*
+const int colortex0Format = RGBA16F;
+const int colortex1Format = RGBA8;
+*/

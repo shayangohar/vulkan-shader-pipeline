@@ -2,7 +2,9 @@ package net.chimera.mixin;
 
 import net.chimera.render.ChimeraDevice;
 import net.chimera.render.ChimeraRenderingPass;
+import net.chimera.render.WindowBlendAttachments;
 import net.chimera.render.shader.MrtPipelineContext;
+import net.chimera.shaderpack.IrisColorFormats;
 import net.chimera.shaderpack.PackBlendPlan;
 import net.chimera.shaderpack.SpirvOutputWrites;
 import net.vulkanmod.vulkan.framebuffer.RenderPass;
@@ -22,20 +24,23 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
+import java.util.Arrays;
+
 import static org.lwjgl.system.MemoryStack.stackGet;
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
-import static org.lwjgl.vulkan.VK10.VK_BLEND_OP_ADD;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_NULL_HANDLE;
 
 /**
  * Pipelines for Chimera's dynamic-rendering windows. A variant created while a
  * {@link ChimeraRenderingPass} is bound renders without a Vulkan render pass, into the window's
- * color and depth formats, with one blend attachment per color attachment: each starts from the
- * host draw's blend (the vanilla render type's, as in Iris) and takes the pack's blend directive
- * for that buffer where the pipeline's MRT contract declares one. An attachment whose location a
- * pack fragment stage never writes gets no color writes (SpirvOutputWrites). Variants for
- * VulkanMod's own render passes are untouched.
+ * color and depth formats, with one blend attachment per color attachment (WindowBlendAttachments):
+ * each starts from the host draw's blend (the vanilla render type's, as in Iris) and takes the
+ * pack's blend directive for that buffer where the pipeline's MRT contract declares one. An
+ * attachment whose location a pack fragment stage never writes gets no color writes
+ * (SpirvOutputWrites). A variant for one of VulkanMod's own render passes keeps its render pass and
+ * takes the pack pipeline's directive for that pass's attachment, if it has one
+ * (MrtPipelineContext.hostPassBlends).
  */
 @Mixin(value = GraphicsPipeline.class, remap = false)
 public abstract class GraphicsPipelineMrtMixin {
@@ -43,10 +48,16 @@ public abstract class GraphicsPipelineMrtMixin {
     @Unique
     private ChimeraRenderingPass chimera$window;
 
+    /** The colour format of the VulkanMod render pass the variant renders into; 0 when unknown. */
+    @Unique
+    private int chimera$hostFormat;
+
     @Inject(method = "createGraphicsPipeline", at = @At("HEAD"))
     private void chimera$beginVariant(PipelineState state, CallbackInfoReturnable<Long> callback) {
-        this.chimera$window = ((ChimeraPipelineStateAccessor) state).chimera$renderPass()
-                instanceof ChimeraRenderingPass window ? window : null;
+        RenderPass renderPass = ((ChimeraPipelineStateAccessor) state).chimera$renderPass();
+        this.chimera$window = renderPass instanceof ChimeraRenderingPass window ? window : null;
+        this.chimera$hostFormat = renderPass == null || renderPass.getFramebuffer() == null
+                ? 0 : renderPass.getFramebuffer().getFormat();
         MrtPipelineContext.beginPipeline((GraphicsPipeline) (Object) this);
     }
 
@@ -84,40 +95,34 @@ public abstract class GraphicsPipelineMrtMixin {
                     + "Lorg/lwjgl/vulkan/VkPipelineColorBlendStateCreateInfo;"))
     private VkPipelineColorBlendAttachmentState.Buffer chimera$copyBlendState(
             VkPipelineColorBlendAttachmentState.Buffer attachments) {
-        if (this.chimera$window == null) return attachments;
+        if (this.chimera$window == null) return chimera$hostPassBlend(attachments);
         PackBlendPlan.Mode[] blends = MrtPipelineContext.attachmentBlends();
         int written = MrtPipelineContext.writtenOutputs();
         // A contract for another attachment set does not describe this window.
         if (blends != null && blends.length != attachments.capacity()) blends = null;
-        // Without independentBlend every attachment must blend and mask alike.
+        // Without independentBlend every attachment must blend and mask alike: one shared blend, or none.
         if (!ChimeraDevice.independentBlend()) {
-            blends = null;
+            int[] formats = this.chimera$window.colorFormats();
+            boolean[] integer = new boolean[attachments.capacity()];
+            for (int index = 0; index < integer.length; index++) {
+                integer[index] = IrisColorFormats.integer(formats[index]);
+            }
+            blends = PackBlendPlan.sharedAttachments(blends, integer);
             written = SpirvOutputWrites.ALL;
         }
-        VkPipelineColorBlendAttachmentState host = attachments.get(0);
-        for (int index = 0; index < attachments.capacity(); index++) {
-            VkPipelineColorBlendAttachmentState target = attachments.get(index);
-            PackBlendPlan.Mode mode = blends == null ? null : blends[index];
-            // An attachment the shader never writes keeps its contents, as a GL draw buffer does.
-            target.colorWriteMask((written >>> index & 1) != 0 ? host.colorWriteMask() : 0);
-            if (mode == null) {
-                target.blendEnable(host.blendEnable())
-                        .srcColorBlendFactor(host.srcColorBlendFactor())
-                        .dstColorBlendFactor(host.dstColorBlendFactor())
-                        .colorBlendOp(host.colorBlendOp())
-                        .srcAlphaBlendFactor(host.srcAlphaBlendFactor())
-                        .dstAlphaBlendFactor(host.dstAlphaBlendFactor())
-                        .alphaBlendOp(host.alphaBlendOp());
-            } else {
-                target.blendEnable(mode.enabled())
-                        .srcColorBlendFactor(mode.srcColor())
-                        .dstColorBlendFactor(mode.dstColor())
-                        .colorBlendOp(VK_BLEND_OP_ADD)
-                        .srcAlphaBlendFactor(mode.srcAlpha())
-                        .dstAlphaBlendFactor(mode.dstAlpha())
-                        .alphaBlendOp(VK_BLEND_OP_ADD);
-            }
-        }
+        WindowBlendAttachments.fill(attachments, blends, written, this.chimera$window.colorFormats());
+        return attachments;
+    }
+
+    /** A VulkanMod render pass's attachments with the pack pipeline's directive, where it has one. */
+    @Unique
+    private VkPipelineColorBlendAttachmentState.Buffer chimera$hostPassBlend(
+            VkPipelineColorBlendAttachmentState.Buffer attachments) {
+        PackBlendPlan.Mode[] blends = MrtPipelineContext.hostPassBlends();
+        if (blends == null || blends.length != attachments.capacity()) return attachments;
+        int[] formats = new int[attachments.capacity()];
+        Arrays.fill(formats, this.chimera$hostFormat);
+        WindowBlendAttachments.fill(attachments, blends, SpirvOutputWrites.ALL, formats);
         return attachments;
     }
 

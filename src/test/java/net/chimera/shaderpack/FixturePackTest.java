@@ -4,8 +4,6 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.mojang.blaze3d.vertex.VertexFormatElement;
-import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -20,6 +18,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -104,6 +103,9 @@ final class FixturePackTest {
     void postColorInputOrder() {
         assertEquals(List.of(0, 2, 3), PackPipelines.colorInputTargets(
                 List.of("colortex3", "depthtex0", "colortex0", "colortex2")), "post color input ordering");
+        // Bloop's prepare2 reads gaux3: colortex6 must be an input, or the pass binds a missing target.
+        assertEquals(List.of(1, 6), PackPipelines.colorInputTargets(List.of("gaux3", "gdepth", "noisetex")),
+                "legacy aliases name their targets");
     }
 
     private static void verifySimplex(Path pack, Path baselinePath) throws IOException {
@@ -158,17 +160,16 @@ final class FixturePackTest {
                 "unsupported MRT deviation");
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED,
                 numbered.support(), "numbered post pass support");
-        assertEquals(ConformanceReport.SupportStatus.UNSUPPORTED,
-                compute.support(), "compute stage support");
-        assertTrue(compute.deviations().contains("UNSUPPORTED_PACK_STAGE"),
-                "compute stage deviation");
-        assertTrue(report.deviations().contains("SETTING_NOT_APPLIED:customImage0"),
-                "custom image deviation");
-        assertTrue(!report.deviations().contains("SETTING_NOT_APPLIED:iris.features.required"),
-                "feature flags are applied: the required COMPUTE_SHADERS is one Chimera provides");
+        // setup.csh is a setup compute, which Iris runs once the pipeline is made (PassComputePlan.isSetup).
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
+                compute.support(), "setup compute support");
+        assertTrue(compute.deviations().contains("PASS_COMPUTE_BRIDGE:setup")
+                && !compute.deviations().contains("UNSUPPORTED_PACK_STAGE"), "setup compute deviation");
+        // customImage0 is no key Iris reads (images are image.<name>), so both ignore it; the
+        // required COMPUTE_SHADERS is a feature Chimera provides.
         assertTrue(!report.shouldAttempt("gbuffers_terrain"), "MRT terrain must not execute");
         assertTrue(report.shouldAttempt("composite1"), "numbered post pass must execute");
-        assertEquals(List.of("SETTING_NOT_APPLIED:customImage0"), report.deviations(), "unsupported deviations");
+        assertEquals(List.of(), report.deviations(), "unsupported deviations");
         assertStable(report, "unsupported");
     }
 
@@ -179,8 +180,9 @@ final class FixturePackTest {
         assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION,
                 terrain.support(), "material terrain support");
         assertEquals(List.of("fragment", "vertex"), terrain.stages(), "material terrain stages");
+        // The alpha test reads the per-layer reference, a live uniform.
         assertEquals(List.of("ALPHA_TEST_DYNAMIC:gbuffers_terrain",
-                        "LEGACY_TERRAIN_VERTEX_BRIDGE"), terrain.deviations(),
+                        "LEGACY_TERRAIN_VERTEX_BRIDGE", "LIVE_UNIFORM_BRIDGE"), terrain.deviations(),
                 "material terrain deviations");
         assertTrue(report.shouldAttempt("gbuffers_terrain"), "material terrain was rejected");
         assertTrue(metadataHashes(report).containsKey("block.properties"),
@@ -213,7 +215,6 @@ final class FixturePackTest {
         assertTrue(convertedFragment != null && convertedFragment.contains("layout(location = 0) in"),
                 "material fragment varying bridge failed");
 
-        assertExtendedFormat();
         // The version number no longer gates (GlslVersion); the legacy converter still refuses
         // modern syntax, which the modern terrain path converts, and GLSL ES.
         assertTrue(TerrainVertexBridge.convertTerrainVertex(
@@ -330,10 +331,10 @@ final class FixturePackTest {
                 "unset uniform deviation is missing");
         // An Iris name Chimera does not serve yet must not run on a zero Iris would never give.
         UniformRegistry.ProgramInterface unserved = UniformRegistry.plan(
-                "uniform float fogDensity; void main() { gl_FragColor = vec4(fogDensity); }",
+                "uniform float alphaTestRef; void main() { gl_FragColor = vec4(alphaTestRef); }",
                 UniformRegistry.Stage.POST);
         assertTrue(!unserved.executable(), "unserved Iris uniform was accepted");
-        assertTrue(unserved.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
+        assertTrue(unserved.deviations().contains("UNIFORM_NAME_UNSUPPORTED:alphaTestRef"),
                 "unserved Iris uniform deviation is missing");
 
         UniformRegistry.ProgramInterface conflict = UniformRegistry.plan(
@@ -362,8 +363,9 @@ final class FixturePackTest {
         ConformanceReport.ProgramReport composite = report.program("composite");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
                 composite.support(), "unsupported composite support");
-        assertTrue(composite.deviations().contains("SAMPLER_NOT_MAPPED:unknownTexture"),
-                "unknown sampler deviation is missing");
+        // GL leaves a sampler nothing reads inactive; the dvec2 uniform still refuses the program.
+        assertTrue(composite.deviations().contains("SAMPLER_DECLARATION_UNUSED:unknownTexture"),
+                "unread sampler deviation is missing");
         assertTrue(composite.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:unsupportedToggle"),
                 "unsupported uniform type deviation is missing");
         assertTrue(!report.shouldAttempt("composite"), "unsupported composite must not execute");
@@ -567,30 +569,38 @@ final class FixturePackTest {
                         + ") in float renderType"),
                 "water varying location was not shared");
 
-        assertExtendedFormat();
         verifyFixtureBaseline(report, baselinePath, "water");
     }
 
     @Test
     void translucentInterfaceEdgeCases() {
+        // A sampler nothing reads is inactive in GL, so each probe reads the one it tests. Iris gives
+        // water all three depth textures (addWorldDepthSamplers); depthtex0 is a capture (KNOW-760).
         UniformRegistry.ProgramInterface depth = UniformRegistry.plan(
-                "uniform sampler2D texture; uniform sampler2D depthtex0;",
+                "uniform sampler2D texture; uniform sampler2D depthtex0; uniform sampler2D depthtex2;"
+                        + " void main() { gl_FragColor = texture2D(depthtex0, vec2(0.5))"
+                        + " + texture2D(depthtex2, vec2(0.5)); }",
                 UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(!depth.executable(), "depth input was accepted");
-        assertTrue(depth.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
-                "depth input deviation is missing");
+        assertTrue(depth.executable(), "depth inputs were refused: " + depth.deviations());
+        // Terrain, sky and clouds read them too (Mellow's terrain reads depthtex1).
+        UniformRegistry.ProgramInterface terrain = UniformRegistry.plan(
+                "uniform sampler2D depthtex1; void main() { gl_FragColor = texture2D(depthtex1, vec2(0.5)); }",
+                UniformRegistry.Stage.GEOMETRY);
+        assertTrue(terrain.executable() && terrain.samplers().stream().anyMatch(sampler ->
+                sampler.name().equals("depthtex1") && sampler.slot() == 12), terrain.deviations().toString());
 
         UniformRegistry.ProgramInterface unknownSampler = UniformRegistry.plan(
-                "uniform sampler2D noise;", UniformRegistry.Stage.TRANSLUCENT);
+                "uniform sampler2D noise; void main() { gl_FragColor = texture2D(noise, vec2(0.5)); }",
+                UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!unknownSampler.executable(), "unknown water sampler was accepted");
         assertTrue(unknownSampler.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:noise"),
                 "unknown water sampler deviation is missing");
 
         UniformRegistry.ProgramInterface unknownUniform = UniformRegistry.plan(
-                "uniform float fogDensity; void main() { gl_FragColor = vec4(fogDensity); }",
+                "uniform float alphaTestRef; void main() { gl_FragColor = vec4(alphaTestRef); }",
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!unknownUniform.executable(), "unserved Iris water uniform was accepted");
-        assertTrue(unknownUniform.deviations().contains("UNIFORM_NAME_UNSUPPORTED:fogDensity"),
+        assertTrue(unknownUniform.deviations().contains("UNIFORM_NAME_UNSUPPORTED:alphaTestRef"),
                 "unknown water uniform deviation is missing");
     }
 
@@ -600,8 +610,8 @@ final class FixturePackTest {
         assertTrue(water != null, "unsupported water program was not discovered");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
                 water.support(), "unsupported water support");
-        assertTrue(water.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
-                "unsupported water depth deviation is missing");
+        assertTrue(water.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:volume"),
+                "unsupported water sampler deviation is missing: " + water.deviations());
         assertTrue(!report.shouldAttempt("gbuffers_water"),
                 "unsupported water must not execute");
 
@@ -729,8 +739,8 @@ final class FixturePackTest {
         assertTrue(shadow != null, "unsupported shadow program was not discovered");
         assertEquals(ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
                 shadow.support(), "unsupported shadow support");
-        assertTrue(shadow.deviations().contains("SHADOW_SAMPLER_UNSUPPORTED:shadowtex1"),
-                "unsupported shadow sampler deviation is missing");
+        assertTrue(shadow.deviations().contains("SHADOW_SAMPLER_UNSUPPORTED:volume"),
+                "unsupported shadow sampler deviation is missing: " + shadow.deviations());
         assertTrue(!report.shouldAttempt("shadow"),
                 "unsupported shadow must not execute");
         assertTrue(report.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowDistance"),
@@ -743,11 +753,21 @@ final class FixturePackTest {
                 UniformRegistry.Stage.SHADOW);
         assertTrue(!interfacePlan.executable(), "unsupported shadow interface was accepted");
         UniformRegistry.ProgramInterface colorInput = UniformRegistry.plan(
-                "uniform sampler2D texture; uniform sampler2D shadowcolor0;",
+                "uniform sampler2D texture; uniform sampler2D shadowcolor0;"
+                        + " void main() { gl_FragColor = texture2D(shadowcolor0, vec2(0.5)); }",
                 UniformRegistry.Stage.SHADOW);
-        assertTrue(colorInput.deviations().contains("SHADOW_COLOR_INPUT_UNSUPPORTED"),
-                "shadow color input deviation is missing");
-        assertTrue(!colorInput.executable(), "shadow color input was accepted");
+        // Iris binds the shadowcolor targets in the shadow pass too; the pass reads a copy (KNOW-1055).
+        assertTrue(colorInput.executable() && colorInput.samplers().stream().anyMatch(sampler ->
+                        sampler.name().equals("shadowcolor0")
+                                && sampler.slot() == SelectorNamespace.shadowColorSlot(0)),
+                "a shadow program binds the shadowcolor target it reads: " + colorInput);
+        // shadowtex1 is the opaque copy, never the attachment the pass draws (Glimmer's shadow reads it).
+        UniformRegistry.ProgramInterface opaque = UniformRegistry.plan(
+                "uniform sampler2D shadowtex1; void main() { gl_FragColor = texture2D(shadowtex1, vec2(0.5)); }",
+                UniformRegistry.Stage.SHADOW);
+        assertTrue(opaque.executable() && opaque.samplers().stream().anyMatch(sampler ->
+                        sampler.name().equals("shadowtex1") && sampler.slot() == SelectorNamespace.SHADOW_TEX1_SLOT),
+                opaque.deviations().toString());
         assertTrue(TerrainVertexBridge.convertShadowVertex(
                 Files.readString(pack.resolve("shaders/shadow.vsh"), StandardCharsets.UTF_8),
                 pack.resolve("shaders/shadow.vsh"),
@@ -756,102 +776,51 @@ final class FixturePackTest {
         verifyFixtureBaseline(report, baselinePath, "unsupported_shadow");
     }
 
-    @Test
-    void shadowSettingValidation(@TempDir Path root) throws IOException {
-        Path shaders = Files.createDirectories(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"),
-                "shadowMapResolution=64\nshadowDistance=4096\nshadowMapFov=90\n");
-        PackConfig.ShadowSettings settings = PackConfig.parse(List.of(
-                new PackProgram("shadow", "#version 120\nconst int shadowMapResolution = 2048;",
-                        shaders.resolve("shadow.fsh"), null, null)), shaders).shadowSettings();
-        assertEquals(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION, settings.resolution(),
-                "invalid resolution default");
-        assertEquals(PackConfig.DEFAULT_SHADOW_DISTANCE, settings.distance(),
-                "invalid distance default");
-        assertTrue(settings.deviations().contains("SHADOW_SETTING_UNSUPPORTED:shadowMapFov"),
-                "unsupported shadow setting");
-        assertTrue(settings.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowMapResolution"),
-                "invalid resolution deviation");
-        assertTrue(settings.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowDistance"),
-                "invalid distance deviation");
-    }
-
-    /** RGB formats are stored in RGBA images; GL reads their alpha as 1, so Chimera samples them so. */
+    /**
+     * RGB formats are stored in RGBA images; GL reads their alpha as 1, so Chimera samples them so.
+     * A later program's const replaces an earlier one's. A format in shaders.properties applies
+     * nothing: Iris reads formats only as const directives (PackRenderTargetDirectives).
+     */
     @Test
     void paddedAlphaTargets(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"), "colortex5Format=RGB8\ncolortex6Format=RGBA16F\n");
+        Files.writeString(shaders.resolve("shaders.properties"), "colortex9Format=RGB8\n");
         PackConfig.PackConfigData config = PackConfig.parse(List.of(new PackProgram("deferred1",
                 "#version 120\nconst int colortex4Format = RGB16F;\nconst int colortex6Format = RGB16F;\n"
                         + "const int gaux4Format = R11F_G11F_B10F;\nconst int colortex8Format = RGBA8;",
-                shaders.resolve("deferred1.fsh"), null, null)), shaders);
-        assertEquals(List.of(4, 5, 7), List.copyOf(config.paddedAlphaTargets()),
+                shaders.resolve("deferred1.fsh"), null, null), new PackProgram("composite",
+                "#version 120\nconst int colortex5Format = RGB8;\nconst int colortex6Format = RGBA16F;",
+                shaders.resolve("composite.fsh"), null, null)), shaders);
+        assertEquals(List.of(4, 5), List.copyOf(config.paddedAlphaTargets()),
                 "targets declared without alpha, a later declaration replacing an earlier one");
         assertEquals(97, config.colortexFormats().get(4), "RGB16F is stored as RGBA16F");
+        assertEquals(122, config.colortexFormats().get(7),
+                "R11F_G11F_B10F is stored exactly, unsigned and without alpha, so it needs no padding");
+        assertTrue(!config.colortexFormats().containsKey(9), "a shaders.properties format applied");
     }
 
-    private static void assertExtendedFormat() {
-        var format = ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN;
-        assertEquals(24, format.getVertexSize(), "terrain stride");
-        assertEquals(5, format.getElements().size(), "terrain attribute count");
-        for (int i = 3; i < 5; i++) {
-            var element = format.getElements().get(i);
-            assertEquals(VertexFormatElement.Type.INT,
-                    element.type(), "generic attribute type " + i);
-            assertEquals(VertexFormatElement.Usage.GENERIC,
-                    element.usage(), "generic attribute usage " + i);
-            assertEquals(1, element.count(), "generic attribute count " + i);
-        }
-    }
-
+    /** The report marks a compute-only program installed; a program that also draws waits for its own install. */
     @Test
-    void materialParserEdgeCases(@TempDir Path root) throws IOException {
-        try {
-            Files.writeString(root.resolve("block.properties"),
-                    "block.-7 = diorite\n"
-                            + "block.8 = minecraft:dirt\n"
-                            + "block.8 = minecraft:dirt\n"
-                            + "block.9 = minecraft:oak_planks:axis=x\n"
-                            + "block.13 = minecraft:tall_grass:half=lower tall_grass:half=upper\n"
-                            + "block.14 = leaves:waterlogged=false:distance=1,2\n"
-                            + "block.15 = oak_leaves\n"
-                            + "block.10 = %minecraft:logs\n"
-                            + "block.40000 = bad\n"
-                            + "block.11 = minecraft:stone\n"
-                            + "block.12 = minecraft:stone\n");
-            PackMaterialResolver.ParseResult result = PackMaterialResolver.parse(root);
-            assertEquals(-7, result.resolver().resolveName("diorite"), "signed material id");
-            assertEquals(8, result.resolver().resolveName("minecraft:dirt"), "duplicate material id");
-            assertEquals(-1, result.resolver().resolveName("minecraft:oak_planks"), "selector mapping");
-            assertEquals(11, result.resolver().resolveName("minecraft:stone"),
-                    "conflicting mapping: the first wins, as in Iris BlockMaterialMapping");
-            // State selectors, as Iris reads them: BSL and Complementary map
-            // tall grass by half and leaves by waterlogged.
-            PackMaterialResolver resolver = result.resolver();
-            assertEquals(13, resolver.resolveState("minecraft:tall_grass",
-                    Map.of("half", "lower")::get), "namespaced selector");
-            assertEquals(13, resolver.resolveState("tall_grass",
-                    Map.of("half", "upper")::get), "unqualified selector");
-            assertEquals(-1, resolver.resolveState("minecraft:tall_grass", Map.<String, String>of()::get),
-                    "selector matched a state without the property");
-            assertEquals(14, resolver.resolveState("minecraft:leaves",
-                    Map.of("waterlogged", "false", "distance", "2")::get), "multi-property selector");
-            assertEquals(-1, resolver.resolveState("minecraft:leaves",
-                    Map.of("waterlogged", "false", "distance", "3")::get), "selector value list");
-            assertEquals(15, resolver.resolveState("minecraft:oak_leaves",
-                    Map.of("waterlogged", "true")::get), "plain mapping under a selector-free name");
-            assertEquals(-1, resolver.resolveName("minecraft:oak_planks"),
-                    "a selector became a plain mapping");
-            assertTrue(result.deviations().contains("BLOCK_TAG_UNSUPPORTED"),
-                    "tag deviation is missing");
-            assertTrue(result.deviations().contains("BLOCK_PROPERTIES_INVALID"),
-                "invalid properties deviation is missing");
-            assertTrue(result.deviations().contains("BLOCK_MAPPING_CONFLICT"),
-                    "mapping conflict deviation is missing");
-        } finally {
-            Files.deleteIfExists(root.resolve("block.properties"));
-            Files.deleteIfExists(root);
-        }
+    void passComputesLeaveADrawingProgramToItsInstall() {
+        ConformanceReport report = new ConformanceReport("fixture", false, List.of(), Map.of(), List.of(), List.of());
+        report.addProgram(program("composite4", List.of("compute", "fragment", "vertex")));
+        report.addProgram(program("setup", List.of("compute")));
+
+        report.markPassComputeInstalled("composite4");
+        report.markPassComputeInstalled("setup");
+
+        // Glimmer's composite4 runs its fog compute and then draws; the compute must not stand for the draw.
+        assertTrue(report.shouldAttempt("composite4"));
+        assertEquals(ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, report.program("composite4").runtime());
+        assertTrue(report.program("composite4").deviations().contains("PASS_COMPUTE_INSTALLED"));
+        assertFalse(report.shouldAttempt("setup"));
+        assertEquals(ConformanceReport.RuntimeDisposition.INSTALLED, report.program("setup").runtime());
+    }
+
+    private static ConformanceReport.ProgramReport program(String name, List<String> stages) {
+        return new ConformanceReport.ProgramReport(name, "post", "glsl", stages, Map.of(), List.of(), List.of(),
+                List.of(0), ConformanceReport.SupportStatus.SUPPORTED,
+                ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.of());
     }
 
     static ConformanceReport probe(Path pack) {

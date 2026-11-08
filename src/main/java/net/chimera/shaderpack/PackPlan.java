@@ -2,10 +2,12 @@ package net.chimera.shaderpack;
 
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 
 /** Immutable plan for the active pack variant. */
 public record PackPlan(
@@ -74,8 +76,7 @@ public record PackPlan(
                 && resources.programAllowed(name)
                 && !writesUnsupportedFormat(program)
                 && !advancedResources.declaresUnplannedResource(name)
-                && (!advancedResources.dependentPrograms().contains(name)
-                || advancedResources.imageProgramsServable())
+                && advancedResources.imagesServable(name)
                 && (!advancedResources.bufferDependentPrograms().contains(name)
                 || advancedResources.storageBufferProgramSupported(name))
                 && (!advancedResources.customImageFeaturePrograms().contains(name)
@@ -145,19 +146,39 @@ public record PackPlan(
         return settings.overriddenNames();
     }
 
+    /**
+     * Whether the pack switches a program or pass off. A pass of computes alone has no resolved
+     * program, so its switch is read directly: Iris's source provider then reads none of its files
+     * (ShaderPack), and the pass runs nothing. Shrimple switches off its compute-only composite1.
+     */
     public boolean isProgramDisabled(String name) {
         PackProgramResolution value = resolution.resolution(name);
-        return value != null && !value.enabled();
+        if (value != null) return !value.enabled();
+        return settings != null && !settings.enabled(selectedSourceFolder(), name);
+    }
+
+    /**
+     * Whether {@code name} runs as a cloud program whose selected branch draws nothing: the runtime
+     * builds no pipeline and skips the host cloud draw, as Iris's program draws no fragment. A
+     * disabled, aliased or resource-refused program falls back instead.
+     */
+    public boolean cloudRunsEmpty(String name) {
+        PackProgramPlan program = program(name);
+        return program != null && program.cloudDrawsNothing() && !isProgramDisabled(name)
+                && !isProgramAlias(name) && resources().programAllowed(name);
     }
 
     /**
      * Iris's {@code clouds} directive: "off", "fast" or "fancy", or null when
      * the pack leaves the player's setting alone (Iris logs and ignores other values).
+     * "false" also means "off": Iris and OptiFine ignore it, but RedHat v34 writes it to turn the
+     * vanilla clouds off, as it draws its own.
      */
     public String cloudSetting() {
         String value = settings.propertyValues().get("clouds");
         if (value == null) return null;
         String trimmed = value.trim();
+        if (trimmed.equals("false")) return "off";
         return trimmed.equals("off") || trimmed.equals("fast") || trimmed.equals("fancy") ? trimmed : null;
     }
 
@@ -166,14 +187,20 @@ public record PackPlan(
         return SkyDirectives.fromProperties(settings.propertyValues());
     }
 
+    /** Whether the pack's rain and snow write depth (Iris rain.depth, default off). */
+    public WeatherDirectives weatherDirectives() {
+        return WeatherDirectives.fromProperties(settings.propertyValues());
+    }
+
     /** Which entities and block entities the pack lets cast shadows (Iris shadowEntities and friends). */
     public ShadowCasterDirectives shadowCasters() {
         return ShadowCasterDirectives.fromProperties(settings.propertyValues());
     }
 
-    /** How terrain vertex colours carry block lighting (Iris oldLighting and separateAo, both default off). */
+    /** How terrain vertex colours carry block lighting (Iris oldLighting, separateAo, ambientOcclusionLevel). */
     public TerrainShadingDirectives terrainShading() {
-        return TerrainShadingDirectives.fromProperties(settings.propertyValues());
+        return TerrainShadingDirectives.fromProperties(settings.propertyValues(),
+                (config == null ? PackDirectives.DEFAULTS : config.directives()).ambientOcclusionLevel());
     }
 
     /** Whether heldBlockLightValue takes the brighter hand (Iris oldHandLight, default on). */
@@ -191,12 +218,17 @@ public record PackPlan(
         return settings.particleDirectives();
     }
 
-    /** How the shadow pass culls its casters (Iris shadow.culling and the shadow distances). */
+    /**
+     * How the shadow pass culls its casters: Iris's shadow.culling, the shadow distances, and
+     * whether the shadow program has a geometry stage.
+     */
     public ShadowCullingPlan shadowCulling() {
         PackConfig.ShadowSettings shadow = config != null ? config.shadowSettings()
                 : new PackConfig.ShadowSettings(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
                         PackConfig.DEFAULT_SHADOW_DISTANCE, Map.of(), List.of());
-        return ShadowCullingPlan.of(settings.propertyValues(), shadow);
+        PackProgramPlan program = program("shadow");
+        return ShadowCullingPlan.of(settings.propertyValues(), shadow,
+                program != null && program.stages().containsKey("geometry"));
     }
 
     /**
@@ -215,6 +247,33 @@ public record PackPlan(
 
     public PackResourcePlan resources() {
         return resources;
+    }
+
+    /**
+     * The shadowcolor targets the shadow pass's programs sample, by index: each executable shadow
+     * program's sampler that reads the target itself, not a pack texture in its place
+     * (ChimeraShadowMap.snapshotPassReads copies them as the pass opens).
+     */
+    public Set<Integer> shadowPassColorReads() {
+        Set<Integer> reads = new TreeSet<>();
+        for (PackProgramPlan program : programs) {
+            if (!program.executable() || program.interfacePlan() == null
+                    || !FamilyAdapterRegistry.isShadowFamily(program.name())) {
+                continue;
+            }
+            List<String> unread = program.interfacePlan().deviations();
+            Set<String> sampled = new HashSet<>();
+            program.interfacePlan().samplers().stream().map(UniformRegistry.SamplerBinding::name)
+                    .filter(name -> !unread.contains("SAMPLER_DECLARATION_UNUSED:" + name)).forEach(sampled::add);
+            for (PackResourceBinding binding : resources.bindings(program.name())) {
+                int index = PackResourcePlan.shadowColorIndex(binding.resourceKey());
+                if (binding.kind() == PackResourceKind.SHADOW_COLOR && index >= 0
+                        && sampled.contains(binding.sampler())) {
+                    reads.add(index);
+                }
+            }
+        }
+        return Collections.unmodifiableSet(reads);
     }
 
     public PackAdvancedResourcePlan advancedResources() {

@@ -12,7 +12,9 @@ import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.TargetStep;
 import net.vulkanmod.vulkan.Renderer;
@@ -25,16 +27,20 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import static org.lwjgl.vulkan.VK10.*;
 
 /**
  * Runs the pack's post programs in each frame window: the composite and deferred steps of the
- * target graph, the final pass before the hand, and the identity boundaries that keep the frame
- * presentable when a step cannot run.
+ * target graph, the computes of passes with no program, the final pass before the hand, and the
+ * identity boundaries that keep the frame presentable when a step cannot run.
  */
 final class PackPostChain {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
@@ -116,13 +122,48 @@ final class PackPostChain {
         }
     }
 
-    /** Runs the PREPARE window over the freshly cleared world target, then reopens it. */
+    /** Whether a frame opens with pack work: setup computes due, or a begin pass. */
+    boolean hasOpeningWork() {
+        return pass.packPassComputes != null && pass.packPassComputes.setupDue()
+                || pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.BEGIN);
+    }
+
+    /** Whether the pack has prepare passes, which run before the sky (PreSkyPasses). */
+    boolean hasPrepareWork() {
+        return pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE);
+    }
+
+    /**
+     * Runs the setup computes when due, then the BEGIN window, over the freshly cleared world
+     * target, then reopens it. Iris runs the begin passes after the clear passes, before the shadow
+     * pass and the sky.
+     */
+    void runOpeningWindows(VkCommandBuffer commandBuffer) {
+        runOverWorldTarget(commandBuffer, true, PackFrameSchedulePlan.PostWindow.BEGIN);
+    }
+
+    /** Runs the PREPARE window over the world target, after the shadow pass and before the sky. */
     void runPrepareWindow(VkCommandBuffer commandBuffer) {
+        runOverWorldTarget(commandBuffer, false, PackFrameSchedulePlan.PostWindow.PREPARE);
+    }
+
+    /**
+     * Closes the world pass, runs the setup computes when due and {@code setup} allows, then
+     * {@code window}, adopts colortex0 into the world target and reopens it.
+     */
+    private void runOverWorldTarget(VkCommandBuffer commandBuffer, boolean setup,
+                                    PackFrameSchedulePlan.PostWindow window) {
         Renderer.getInstance().endRenderPass(commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-            runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.PREPARE);
+            if (setup && pass.packPassComputes != null && pass.packPassComputes.setupDue()
+                    && pass.packPostFrameStarted) {
+                // Iris's setup computes, after a full clear of new targets and before the begin passes.
+                pass.packPassComputes.dispatchSetup(commandBuffer, computeSources(commandBuffer));
+                if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
+            }
+            if (pass.packFrameSchedule.hasWindow(window)) runPackPostWindow(commandBuffer, hdrColor, window);
             if (pass.packPostChainActive) {
                 pass.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
             }
@@ -168,14 +209,16 @@ final class PackPostChain {
                 throw new IllegalStateException("PACK_TARGET_FRAME_NOT_STARTED:post window " + window);
             }
             pass.packPostTargets.requireFrameStarted();
-            // Each Iris composite renderer starts with every target base-level sampled.
-            pass.packPostTargets.resetMipmapSampling();
+            pass.packPostTargets.openPostWindow(commandBuffer, window);
             ChimeraMainPass.preparePackFullscreenState();
             boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {
-                if (!scheduledIn(stage, window) || !stageRunnable(stage)) {
+                if (!scheduledIn(stage, window)) continue;
+                if (stage.post() == null && computeOnly(stage.name())) {
+                    runComputeOnlyStage(commandBuffer, hdrColor, stage);
                     continue;
                 }
+                if (!stageRunnable(stage)) continue;
                 if (!tripwireSwept) {
                     tripwireSwept = true;
                     sweepNanTripwire(commandBuffer, "before " + window);
@@ -212,12 +255,22 @@ final class PackPostChain {
             return false;
         }
         if (!pass.packPostTargets.areInputsAvailable(post.requiredColorInputs())
-                || !packDepthInputsAvailable(post.samplerNames())) {
+                || !packDepthInputsAvailable(post.frameInputs())) {
             markPostStageIdentityBoundary(stage,
                     unavailablePostInputs(post));
             return false;
         }
         return true;
+    }
+
+    /**
+     * Runs a pass that has computes and no program: its computes over the images the chain holds
+     * now, then the barrier Iris's renderAll records after them, and nothing drawn or flipped.
+     */
+    private void runComputeOnlyStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
+        pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(commandBuffer),
+                hdrColor.width, hdrColor.height);
+        if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
     }
 
     /** Draws one post stage into its graph targets; a failure aborts the targets it opened and rethrows. */
@@ -228,10 +281,11 @@ final class PackPostChain {
         try {
             // Iris runs a pass's computes first, over the images the pass then reads.
             if (pass.packPassComputes != null) {
-                pass.packPassComputes.dispatchBefore(post.name(), commandBuffer,
-                        pass.packPostTargets.sourceImages(), hdrColor.width, hdrColor.height);
+                pass.packPassComputes.dispatchBefore(post.name(), commandBuffer, computeSources(commandBuffer),
+                        hdrColor.width, hdrColor.height);
             }
             pass.packPostTargets.generateMipmaps(commandBuffer, post.name());
+            if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
             pass.prepareProgramImages(post.pipeline());
             previous = pass.images.bindProgramImages(post.pipeline(), pass.packPostTargets.sourceImages(),
                     hdrColor,
@@ -307,7 +361,7 @@ final class PackPostChain {
         boolean finalGraphExecutable = finalGraphStep != null && finalGraphStep.executable();
         boolean finalInputsAvailable = finalGraphExecutable
                 && pass.packPostTargets.areInputsAvailable(pass.pipelines.finalPost.requiredColorInputs())
-                && packDepthInputsAvailable(pass.pipelines.finalPost.samplerNames());
+                && packDepthInputsAvailable(pass.pipelines.finalPost.frameInputs());
         if (finalInputsAvailable) {
             return true;
         }
@@ -331,7 +385,6 @@ final class PackPostChain {
         Renderer.getInstance().endRenderPass(commandBuffer);
         // No pack target is written between the last post output check and final.
         // Re-reading every target/history/depth here adds cost but no new evidence.
-        pass.packPostTargets.resetMipmapSampling();
         pass.packPostTargets.generateMipmaps(commandBuffer, pass.pipelines.finalPost.name());
         Renderer.getInstance().beginRendering(pass.targets.packFinalRenderPass, pass.targets.packFinalFramebuffer);
         ChimeraMainPass.PackRenderState finalState = pass.capturePackRenderState();
@@ -525,22 +578,23 @@ final class PackPostChain {
     }
 
     /**
-     * Whether this frame holds every depth snapshot and shadow image a post pass reads. depthtex0
-     * also counts while the world depth can still be captured: the pass's prepare captures it.
+     * Whether this frame holds every depth snapshot and shadow image a post pass reads from the
+     * frame ({@code frameInputs}: a depth name a stage texture serves is none). depthtex0 also
+     * counts while the world depth can still be captured: the pass's prepare captures it.
      */
-    boolean packDepthInputsAvailable(List<String> samplerNames) {
-        if (samplerNames == null) return true;
-        for (String sampler : samplerNames) {
+    boolean packDepthInputsAvailable(List<String> frameInputs) {
+        if (frameInputs == null) return true;
+        for (String sampler : frameInputs) {
             if (sampler != null && sampler.startsWith("depthtex")
                     && pass.packDepthTargets.image(sampler) == null
                     && !(sampler.equals("depthtex0") && pass.depth.drawnDepthCapturable())) {
                 return false;
             }
         }
-        for (String sampler : samplerNames) {
-            if (("shadowcolor0".equals(sampler) || "shadowcolor1".equals(sampler))
-                    && (!pass.shadowPass.shadowFrameReady || pass.shadowPass.shadowMap.shadowColor(
-                    sampler.equals("shadowcolor1") ? 1 : 0) == null)) return false;
+        for (String sampler : frameInputs) {
+            int shadowColor = PackResourcePlan.shadowColorIndex(sampler);
+            if (shadowColor >= 0 && (!pass.shadowPass.shadowFrameReady
+                    || pass.shadowPass.shadowMap.shadowColor(shadowColor) == null)) return false;
         }
         return true;
     }
@@ -550,10 +604,25 @@ final class PackPostChain {
         for (int target : post.requiredColorInputs()) {
             if (!pass.packPostTargets.currentTargetAvailable(target)) missing.add("colortex" + target);
         }
-        for (String sampler : post.samplerNames()) {
+        for (String sampler : post.frameInputs()) {
             if (!packDepthInputsAvailable(List.of(sampler))) missing.add(sampler);
         }
         return "unavailable inputs " + missing;
+    }
+
+    /**
+     * The targets pass computes and post passes store to (colorimgN), each with the formats they
+     * bind it in: their images are created for storage, with a view in any other format.
+     */
+    private Map<Integer, Set<Integer>> storageTargets() {
+        Map<Integer, Set<Integer>> targets = new TreeMap<>();
+        if (pass.packPassComputes != null) {
+            pass.packPassComputes.storageTargets().forEach((target, formats) ->
+                    targets.computeIfAbsent(target, ignored -> new TreeSet<>()).addAll(formats));
+        }
+        pass.packPlan.advancedResources().targetImageFormats().forEach((target, formats) ->
+                targets.computeIfAbsent(target, ignored -> new TreeSet<>()).addAll(formats));
+        return targets;
     }
 
     void configurePackPostTargets(int width, int height) {
@@ -565,9 +634,10 @@ final class PackPostChain {
                 return;
             }
             int maxAttachments = ChimeraMainPass.deviceMaxColorAttachments();
-            pass.packTargetGraph = PackTargetGraphPlan.build(
-                    pass.packPlan.activePrograms(), pass.packConfig, pass.packPlan.resources(), width, height,
-                    maxAttachments, ChimeraMainPass.deviceMaxImageDimension());
+            pass.packTargetGraph = PackTargetGraphPlan.build(pass.packPlan.activePrograms(), pass.packConfig,
+                    pass.packPlan.resources(), new PackTargetGraphPlan.Limits(width, height, maxAttachments,
+                            ChimeraMainPass.deviceMaxImageDimension()),
+                    pass.packPassComputes == null ? PackTargetGraphPlan.ComputeUse.NONE : pass.packPassComputes.use());
             pass.coverage.packCoveragePlan = PackCoveragePlan.from(
                     pass.packTargetGraph, pass.packPlan, width, height);
             if (pass.coverage.packCoveragePlan.enabled() && pass.packCoverageRuntimeEnabled()) {
@@ -588,33 +658,15 @@ final class PackPostChain {
                         pass.coverage.packCoveragePlan.deviations());
             }
             pass.packFrameSchedule = PackFrameSchedulePlan.build(
-                    pass.packPlan.activePrograms(), pass.packTargetGraph);
+                    pass.packPlan.activePrograms(), pass.packTargetGraph, computeDepthReads());
             pass.packNeedsHdrDepth = pass.packTargetGraph.depth().any();
             pass.packDepthTargets.configure(width, height, pass.packTargetGraph.depth());
-            pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph,
-                    pass.packPassComputes == null ? Set.of() : pass.packPassComputes.storageTargets());
-            pass.packPostChainActive = pass.packTargetResourcesReady
-                    && !pass.packTargetGraph.steps().isEmpty();
-            if (pass.packPostChainActive) {
-                LOGGER.info("[chimera] pack frame schedule: phases={}, prepare={}, early={}, late={}, final={}, "
-                        + "depth={}, deviations={}",
-                        pass.packFrameSchedule.phases(),
-                        pass.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.PREPARE).stream()
-                                .map(PackFrameSchedulePlan.PostStage::name).toList(),
-                        pass.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.EARLY).stream()
-                                .map(PackFrameSchedulePlan.PostStage::name).toList(),
-                        pass.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.LATE).stream()
-                                .map(PackFrameSchedulePlan.PostStage::name).toList(),
-                        pass.packFrameSchedule.stages(PackFrameSchedulePlan.PostWindow.FINAL).stream()
-                                .map(PackFrameSchedulePlan.PostStage::name).toList(),
-                        pass.packTargetGraph.depth().names(),
-                        pass.packFrameSchedule.deviations());
-                LOGGER.info("[chimera] pack target graph: targets={}, steps={}, depth={}, "
-                        + "maxAttachments={}, fingerprint={}",
-                        pass.packTargetGraph.targets().size(), pass.packTargetGraph.steps().size(),
-                        pass.packTargetGraph.depth().names(), pass.packTargetGraph.maxAttachments(),
-                        pass.packTargetGraph.fingerprint());
-            }
+            pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph, storageTargets());
+            pass.packPostChainActive = pass.packTargetResourcesReady && runsChain(pass.packTargetGraph,
+                    pass.packPassComputes != null && pass.packPassComputes.runInPostChain());
+            // New targets, at load or after a resize: Iris runs its setup computes again.
+            if (pass.packPassComputes != null) pass.packPassComputes.requestSetup();
+            if (pass.packPostChainActive) logSchedule();
         } catch (RuntimeException e) {
             pass.packPostTargets.cleanUp();
             pass.packDepthTargets.cleanUp();
@@ -633,6 +685,89 @@ final class PackPostChain {
             }
             pass.logPackRuntimeFailure("post-resource-allocation", e);
         }
+    }
+
+    /**
+     * Whether the post chain runs: the graph has a post program's step, or {@code computes} run in
+     * the chain. Iris runs a pass with computes and no program (CompositeRenderer.ComputeOnlyPass)
+     * and, with no final program, shows colortex0; RenderPearl's passes are all such.
+     */
+    static boolean runsChain(PackTargetGraphPlan graph, boolean computes) {
+        return !graph.steps().isEmpty() || computes;
+    }
+
+    /** Logs the frame schedule's windows and the target graph the post chain runs on. */
+    private void logSchedule() {
+        Map<PackFrameSchedulePlan.PostWindow, List<String>> windows = new EnumMap<>(
+                PackFrameSchedulePlan.PostWindow.class);
+        for (PackFrameSchedulePlan.PostWindow window : PackFrameSchedulePlan.PostWindow.values()) {
+            windows.put(window, pass.packFrameSchedule.stages(window).stream()
+                    .map(PackFrameSchedulePlan.PostStage::name).toList());
+        }
+        LOGGER.info("[chimera] pack frame schedule: phases={}, windows={}, depth={}, deviations={}",
+                pass.packFrameSchedule.phases(), windows, pass.packTargetGraph.depth().names(),
+                pass.packFrameSchedule.deviations());
+        LOGGER.info("[chimera] pack target graph: targets={}, steps={}, depth={}, "
+                + "maxAttachments={}, fingerprint={}",
+                pass.packTargetGraph.targets().size(), pass.packTargetGraph.steps().size(),
+                pass.packTargetGraph.depth().names(), pass.packTargetGraph.maxAttachments(),
+                pass.packTargetGraph.fingerprint());
+    }
+
+    /** The passes the session's loaded computes run before, with the depth snapshots they read. */
+    private Map<String, Set<String>> computeDepthReads() {
+        return pass.packPassComputes == null ? Map.of() : pass.packPassComputes.depthReadsByPass();
+    }
+
+    /** The passes the session's loaded computes run before; one without a program runs only them. */
+    private Set<String> computePasses() {
+        return computeDepthReads().keySet();
+    }
+
+    /**
+     * The images a pass's computes read now: the chain's colour sources, the images they write
+     * (colortex0 moved out of the HDR image first), the depth snapshots, and the shadow images as
+     * programs sample them (PackImageBindings, PackShadowPass.shadowSamplerFor).
+     */
+    PackPassComputes.ImageSources computeSources(VkCommandBuffer commandBuffer) {
+        return new PackPassComputes.ImageSources() {
+            @Override
+            public VulkanImage[] colors() {
+                return pass.packPostTargets.sourceImages();
+            }
+
+            @Override
+            public VulkanImage storage(int target) {
+                return pass.packPostTargets.storageSource(commandBuffer, target);
+            }
+
+            @Override
+            public VulkanImage depth(String name) {
+                // A snapshot, this frame's or the last: the live world depth is depth-stencil, and
+                // only a program's draw binds a depth-only view of it (PackDepthTargets).
+                return pass.packDepthTargets.sampledImage(name);
+            }
+
+            @Override
+            public VulkanImage shadow(String resource) {
+                int colour = PackResourcePlan.shadowColorIndex(resource);
+                return colour >= 0 ? pass.shadowPass.shadowMap.shadowColor(colour)
+                        : pass.images.shadowDepthImage(resource);
+            }
+
+            @Override
+            public long shadowSampler(String resource, VulkanImage image, boolean compare) {
+                return pass.shadowPass.shadowSamplerFor(resource, image, compare);
+            }
+        };
+    }
+
+    /**
+     * Whether a pass runs only its computes: it has some, and runs alone (PassComputePlan.runsAlone),
+     * as the report shows it. A program Chimera could not install is a fallback, not such a pass.
+     */
+    private boolean computeOnly(String name) {
+        return computePasses().contains(name) && PassComputePlan.runsAlone(pass.packPlan, name);
     }
 
     /** Builds the immutable post execution order once for the active pack. */
@@ -681,6 +816,18 @@ final class PackPostChain {
                 this.packFinalExecution = execution;
             }
         }
+        addComputeOnlyExecutions();
+    }
+
+    /** A pass with computes and no program runs them at its place (CompositeRenderer.ComputeOnlyPass). */
+    private void addComputeOnlyExecutions() {
+        for (String computePass : computePasses()) {
+            if (this.packPostExecution.stream().noneMatch(stage -> stage.name().equals(computePass))) {
+                this.packPostExecution.add(new PackPostExecution(computePass, List.of(), null, false));
+            }
+        }
+        this.packPostExecution.sort(Comparator.comparing(PackPostExecution::name,
+                PostTargetPlan.programComparator()));
     }
 
     /** Discards installed post pipelines when target graph setup fails. */

@@ -13,11 +13,12 @@ import java.util.regex.Pattern;
 /**
  * Small token-safe normalization pass shared by planning and conversion.
  * It contains only legacy built-ins that Iris rewrites the same way in every
- * program: gl_Fog fields to Chimera's fog uniforms, and gl_FogFragCoord to
+ * program: gl_Fog fields to Iris's iris_Fog uniforms, and gl_FogFragCoord to
  * an ordinary varying. The legacy colour and texture-coordinate varyings
  * (gl_FrontColor and gl_Color, gl_TexCoord[n]) become ordinary varyings too,
- * which GL's compatibility profile gives packs and Vulkan does not. In the
- * vertex stage it starts every referenced output
+ * which GL's compatibility profile gives packs and Vulkan does not. A fragment
+ * stage's read of a gl_FragDepth it never writes reads the rasterized depth
+ * ({@link UnwrittenFragDepth}). In the vertex stage it starts every referenced output
  * at zero, the value GL drivers leave in one a path never writes. It also
  * gives every uniform its own declaration, so
  * per-name rewriters never meet a declarator list. Its input is already
@@ -44,6 +45,18 @@ final class LegacyShaderNormalizer {
      * pack's copy is renamed.
      */
     private static final Map<String, Integer> LATE_BUILTINS = lateBuiltins();
+
+    /**
+     * Keywords GLSL 4.x added, each with its version. Before that version the word is an ordinary
+     * name, and a pack may use one (RedHat v34's final under DOF: {@code vec4 sample}). Iris
+     * compiles that source at #version 330, where the name is still free; the #version 460
+     * Chimera compiles at reserves it, so the pack's name is renamed. Packs below those versions
+     * also write the words as keywords (Glimmer's 330 {@code layout(std430) buffer} blocks), so
+     * only a use as a name is renamed ({@link #usedAsName}).
+     */
+    private static final Map<String, Integer> LATE_KEYWORDS = Map.of("sample", 400, "patch", 400,
+            "precise", 400, "coherent", 420, "restrict", 420, "readonly", 420, "writeonly", 420,
+            "atomic_uint", 420, "buffer", 430, "shared", 430);
     /** Interface types whose {@code T(0)} constructor is zero: scalars, vectors and matrices. */
     private static final Pattern ZEROABLE_TYPE = Pattern.compile(
             "(?:float|double|int|uint|bool|[biud]?vec[234]|d?mat[234](?:x[234])?)");
@@ -103,6 +116,15 @@ final class LegacyShaderNormalizer {
         for (String name : List.of("packSnorm2x16", "unpackSnorm2x16", "packHalf2x16", "unpackHalf2x16")) {
             versions.put(name, 420);
         }
+        // Extension built-ins no GLSL version adds: GL declares them only when the source enables
+        // their extension, glslang at #version 460 whether it does or not. RenderPearl defines
+        // vec2 unpackFloat2x16(uint) when no float16 extension is on.
+        for (String name : List.of("packFloat2x16", "unpackFloat2x16", "packInt2x16", "unpackInt2x16",
+                "packUint2x16", "unpackUint2x16", "packInt4x16", "unpackInt4x16", "packUint4x16", "unpackUint4x16",
+                "packInt2x32", "unpackInt2x32", "packUint2x32", "unpackUint2x32", "float16BitsToInt16",
+                "float16BitsToUint16", "int16BitsToFloat16", "uint16BitsToFloat16", "min3", "max3", "mid3")) {
+            versions.put(name, Integer.MAX_VALUE);
+        }
         return Map.copyOf(versions);
     }
 
@@ -122,7 +144,44 @@ final class LegacyShaderNormalizer {
         }
     }
 
+    /** Renames each use as a name of a later keyword (LATE_KEYWORDS) that the authored version leaves free. */
+    private static void renameLateKeywords(List<GlslLexer.Token> tokens, int version) {
+        for (int index = 0; index < tokens.size(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.kind() == GlslLexer.Kind.IDENTIFIER && version < LATE_KEYWORDS.getOrDefault(token.text(), 0)
+                    && usedAsName(tokens, index)) {
+                tokens.set(index, new GlslLexer.Token(GlslLexer.Kind.IDENTIFIER, "chimera_" + token.text()));
+            }
+        }
+    }
+
+    /**
+     * Whether a word stands as a name: a symbol follows it ({@code sample = }, {@code sample;},
+     * {@code sample.rgb}, {@code f(sample)}). A keyword is followed by a word ({@code sample in},
+     * {@code buffer Block}, {@code restrict writeonly uniform}), apart from a struct or block
+     * brace and the default-layout declaration {@code layout(std430) buffer;}.
+     */
+    private static boolean usedAsName(List<GlslLexer.Token> tokens, int index) {
+        int next = GlslLexer.nextSignificant(tokens, index);
+        if (next < 0 || tokens.get(next).kind() != GlslLexer.Kind.SYMBOL || tokens.get(next).symbol("{")) return false;
+        int previous = GlslLexer.previousSignificant(tokens, index);
+        return !(tokens.get(next).symbol(";") && previous >= 0 && tokens.get(previous).symbol(")"));
+    }
+
     static Result normalize(String source, boolean vertexStage) {
+        return normalize(source, vertexStage, false);
+    }
+
+    /**
+     * A compute stage's normalization: Iris runs CommonTransformer on computes too, so gl_Fog
+     * reads the fog uniforms and built-ins take scalar overloads; a compute has no varyings.
+     * Rethinking Voxels' deferred1 compute reads gl_Fog.start and gl_Fog.scale.
+     */
+    static Result normalizeCompute(String source) {
+        return normalize(source, false, true);
+    }
+
+    private static Result normalize(String source, boolean vertexStage, boolean compute) {
         if (source == null) {
             return new Result(null, List.of(), false);
         }
@@ -131,15 +190,16 @@ final class LegacyShaderNormalizer {
             List<GlslLexer.Token> tokens = new ArrayList<>(split.tokens());
             int version = authoredVersion(split);
             renameLateBuiltinDefinitions(split, tokens, version);
+            renameLateKeywords(tokens, version);
             endLineCommentsAtTheirLine(tokens, version);
             Map<String, String> required = new TreeMap<>();
-            String unsupportedField = rewriteFogFields(tokens, required, declaredUniformType(split, "fogColor"));
+            String unsupportedField = rewriteFogFields(tokens, required);
             if (unsupportedField != null) {
                 return unsupported(unsupportedField);
             }
-            boolean fogFragCoord = renameFogFragCoord(tokens);
+            boolean fogFragCoord = !compute && renameFogFragCoord(tokens);
             Set<String> privateGlobals = new TreeSet<>();
-            Set<String> varyings = renameLegacyVaryings(tokens, vertexStage, privateGlobals);
+            Set<String> varyings = compute ? Set.of() : renameStageBuiltins(split, tokens, vertexStage, privateGlobals);
 
             String normalized = GlslLexer.render(tokens);
             if (!varyings.isEmpty() || !privateGlobals.isEmpty()) {
@@ -158,6 +218,7 @@ final class LegacyShaderNormalizer {
                     missing.add("uniform " + uniform.getValue() + " " + uniform.getKey() + ";");
                 }
             }
+            missing.addAll(GlslScalarReductions.overloads(split));
             if (fogFragCoord) {
                 // Iris CommonTransformer: an ordinary varying, zeroed first in the vertex stage.
                 missing.add("varying float " + FOG_FRAG_COORD + ";");
@@ -176,11 +237,10 @@ final class LegacyShaderNormalizer {
     }
 
     /**
-     * Rewrites each {@code gl_Fog.<field>} to Chimera's fog uniforms and records the uniforms the
-     * rewrites read. Returns the first field it cannot serve, or null when it serves them all.
+     * Rewrites each {@code gl_Fog.<field>} to the iris_Fog uniform it reads and records the uniforms
+     * the rewrites read. Returns the first field it cannot serve, or null when it serves them all.
      */
-    private static String rewriteFogFields(List<GlslLexer.Token> tokens, Map<String, String> required,
-                                           String fogColorType) {
+    private static String rewriteFogFields(List<GlslLexer.Token> tokens, Map<String, String> required) {
         for (int index = 0; index < tokens.size(); index++) {
             if (!tokens.get(index).identifier("gl_Fog")) {
                 continue;
@@ -192,7 +252,7 @@ final class LegacyShaderNormalizer {
                 return "unknown";
             }
             String fieldName = tokens.get(field).text();
-            String replacement = fogFieldValue(fieldName, required, fogColorType);
+            String replacement = fogFieldValue(fieldName, required);
             if (replacement == null) {
                 return fieldName;
             }
@@ -204,34 +264,28 @@ final class LegacyShaderNormalizer {
     }
 
     /**
-     * The expression that serves one gl_Fog field, or null for a field Chimera does not serve;
-     * {@code fogColorType} is the type the pack declares fogColor as, null when it does not.
+     * The expression that serves one gl_Fog field, or null for a field Chimera does not serve. Iris's
+     * CommonTransformer builds iris_Fog from its own uniforms, iris_FogStart, iris_FogEnd,
+     * iris_FogDensity and iris_FogColor (the fog RGBA), with scale 1 / (end - start). Their names
+     * are Iris's, apart from the pack's fogStart and fogDensity: a pack's own identifier of that
+     * name neither hides nor clashes with them, and the range is latched per program and frame,
+     * where fogStart follows every fog setup (IrisWorldState).
      */
-    private static String fogFieldValue(String fieldName, Map<String, String> required, String fogColorType) {
+    private static String fogFieldValue(String fieldName, Map<String, String> required) {
         return switch (fieldName) {
-            case "start" -> {
-                required.put("fogStart", "float");
-                yield "fogStart";
-            }
-            case "end" -> {
-                required.put("fogEnd", "float");
-                yield "fogEnd";
-            }
-            case "scale" -> {
-                required.put("fogStart", "float");
-                required.put("fogEnd", "float");
-                yield "(1.0 / (fogEnd - fogStart))";
-            }
-            // Iris's iris_FogParameters.color is the fog RGBA, iris_FogColor. Chimera's fogColor is
-            // the same value; a pack that already declares it vec3 keeps its declaration.
-            case "color" -> {
-                if (fogColorType == null) {
-                    required.put("fogColor", "vec4");
-                }
-                yield "vec3".equals(fogColorType) ? "vec4(fogColor, 1.0)" : "fogColor";
-            }
+            case "start" -> fogUniform(required, "iris_FogStart", "float");
+            case "end" -> fogUniform(required, "iris_FogEnd", "float");
+            case "density" -> fogUniform(required, "iris_FogDensity", "float");
+            case "color" -> fogUniform(required, "iris_FogColor", "vec4");
+            case "scale" -> "(1.0 / (" + fogUniform(required, "iris_FogEnd", "float") + " - "
+                    + fogUniform(required, "iris_FogStart", "float") + "))";
             default -> null;
         };
+    }
+
+    private static String fogUniform(Map<String, String> required, String name, String type) {
+        required.put(name, type);
+        return name;
     }
 
     /**
@@ -271,7 +325,7 @@ final class LegacyShaderNormalizer {
                 || !ZEROABLE_TYPE.matcher(output.type()).matches()) {
             return null;
         }
-        String zero = output.type() + "(0)";
+        String zero = CrossStageRepair.zero(output.type());
         if (output.arraySize() == 0) {
             return output.name() + " = " + zero + ";";
         }
@@ -289,6 +343,17 @@ final class LegacyShaderNormalizer {
             }
         }
         return found;
+    }
+
+    /**
+     * A graphics stage's built-ins Vulkan lacks: its legacy varyings ({@link #renameLegacyVaryings}),
+     * and outside the vertex stage the reads of an unwritten gl_FragDepth ({@link UnwrittenFragDepth}).
+     * Returns the varyings the source now uses.
+     */
+    private static Set<String> renameStageBuiltins(GlslTree tree, List<GlslLexer.Token> tokens, boolean vertexStage,
+                                                   Set<String> privateGlobals) {
+        if (!vertexStage) UnwrittenFragDepth.readRasterDepth(tree, tokens);
+        return renameLegacyVaryings(tokens, vertexStage, privateGlobals);
     }
 
     /**

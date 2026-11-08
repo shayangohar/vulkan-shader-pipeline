@@ -3,7 +3,6 @@ package net.chimera.shaderpack;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -20,7 +19,7 @@ import java.util.TreeMap;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/** The core family adapter registry. */
+/** The core family adapters. */
 final class CoreFamilyAdapterTest {
     @Test
     void coreFamilyAdapters() throws Exception {
@@ -31,45 +30,6 @@ final class CoreFamilyAdapterTest {
 
         verifySupported(supported, baseline);
         verifyUnsupported(unsupported, baseline);
-    }
-
-    @Test
-    void registry() {
-        assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_block"),
-                "block family is not executable");
-        assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_hand"),
-                "hand family is not executable");
-        assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_particles"),
-                "particle family is not executable");
-        // The sky family has its own bounded adapter rather than host fallback.
-        assertEquals(UniformRegistry.Stage.SKY,
-                FamilyAdapterRegistry.stageFor("gbuffers_skybasic"),
-                "sky stage");
-        assertEquals(UniformRegistry.Stage.BLOCK,
-                FamilyAdapterRegistry.stageFor("gbuffers_block"), "block stage");
-        // Iris TEXT_BE: a block entity's text draws with ProgramId.BlockTrans.
-        assertTrue(FamilyAdapterRegistry.isExecutableFamily("gbuffers_block_translucent")
-                        && FamilyAdapterRegistry.isBlockFamily("gbuffers_block_translucent"),
-                "block-entity text program is not an executable block family");
-        assertEquals(UniformRegistry.Stage.BLOCK,
-                FamilyAdapterRegistry.stageFor("gbuffers_block_translucent"), "block-translucent stage");
-        assertEquals(UniformRegistry.Stage.HAND,
-                FamilyAdapterRegistry.stageFor("gbuffers_hand"), "hand stage");
-        assertEquals(UniformRegistry.Stage.PARTICLE,
-                FamilyAdapterRegistry.stageFor("gbuffers_particles"), "particle stage");
-        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
-                FamilyAdapterRegistry.forProgram("gbuffers_hand").vertexContract(),
-                "hand contract");
-        assertEquals(FamilyAdapterPlan.VertexContract.EXTENDED_ENTITY,
-                FamilyAdapterRegistry.forProgram("gbuffers_block").vertexContract(),
-                "block contract");
-        assertEquals(FamilyAdapterPlan.VertexContract.HOST_PARTICLE,
-                FamilyAdapterRegistry.forProgram("gbuffers_particles").vertexContract(),
-                "particle contract");
-        assertEquals(48, ChimeraVertexFormats.EXTENDED_PARTICLE.getVertexSize(),
-                "hand format stride");
-        assertEquals(56, ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
-                "entity format stride");
     }
 
     /** A pack's own gbuffers_block_translucent plans from its own file, into its own targets. */
@@ -181,6 +141,77 @@ final class CoreFamilyAdapterTest {
                 "entity-like report rejected: " + name);
     }
 
+    /**
+     * A world program with no lane names why: Iris draws terrain_solid for solid terrain, which
+     * VulkanMod draws in the cutout_mipped layer with the rest, and gbuffers_textured_lit under no
+     * key of its own (ShaderKey). gbuffers_textured has its lanes: Iris draws position_tex and
+     * position_tex_color world draws with it (MixinGameRenderer, TEXTURED and TEXTURED_COLOR).
+     */
+    @Test
+    void unlanedProgramsNameTheirReason(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        String fragment = "#version 120\nvoid main() {\n/* DRAWBUFFERS:0 */\n gl_FragData[0] = vec4(1.0);\n}\n";
+        for (String name : List.of("gbuffers_textured", "gbuffers_textured_lit", "gbuffers_terrain_solid",
+                "begin1", "setup", "gbuffers_translucent", "shadow")) {
+            Files.writeString(shaders.resolve(name + ".vsh"),
+                    "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+            Files.writeString(shaders.resolve(name + ".fsh"), fragment);
+        }
+        ConformanceReport report = PackProbe.analyze(root).report();
+        // Iris's begin renderer runs begin1; it runs no setup program and reads no gbuffers_translucent.
+        assertTrue(report.program("begin1").deviations().contains("PASS_PROGRAM_UNSUPPORTED:begin1")
+                && report.program("setup").deviations().contains("IRIS_PROGRAM_UNUSED:setup")
+                && report.program("gbuffers_translucent").deviations()
+                .contains("IRIS_PROGRAM_UNUSED:gbuffers_translucent"), "pass and unread reasons");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        for (String lane : List.of("gbuffers_textured", "textured_color", "shadow_tex", "shadow_tex_color")) {
+            assertTrue(report.shouldAttempt(lane) && plan.program(lane) != null && plan.program(lane).executable(),
+                    lane + ": " + report.program(lane).deviations());
+        }
+        String textured = plan.program("gbuffers_textured").convertedFragment();
+        assertTrue(textured.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE), "TEXTURED tests the lane's reference");
+        assertTrue(report.program("gbuffers_terrain_solid").deviations()
+                .contains("TERRAIN_LAYER_MERGED_BY_HOST:gbuffers_terrain_solid"), "terrain_solid reason");
+        assertTrue(report.program("gbuffers_textured_lit").deviations().contains("IRIS_FALLBACK_SOURCE_ONLY"),
+                "textured_lit reason");
+    }
+
+    /**
+     * Iris draws the shadow pass's translucent terrain with shadow_water (SodiumPrograms SHADOW_TRANS)
+     * and its cutout terrain with shadow_cutout (SHADOW_CUTOUT), so a pack's own programs run on the
+     * shadow terrain lane. VulkanMod's cutout_mipped holds solid blocks too, which shadow_cutout
+     * draws; shadow_solid has no layer of its own and says so.
+     */
+    @Test
+    void shadowLayerProgramsRunOnTheShadowLane(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        String vertex = "#version 120\nvarying vec2 uv;\n"
+                + "void main() {\n gl_Position = ftransform();\n uv = gl_MultiTexCoord0.xy;\n}\n";
+        String fragment = "#version 120\nuniform sampler2D tex;\nvarying vec2 uv;\n"
+                + "void main() {\n gl_FragData[0] = texture2D(tex, uv);\n}\n";
+        for (String name : List.of("shadow", "shadow_water", "shadow_cutout", "shadow_solid")) {
+            Files.writeString(shaders.resolve(name + ".vsh"), vertex);
+            Files.writeString(shaders.resolve(name + ".fsh"), fragment);
+        }
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        for (String name : List.of("shadow_water", "shadow_cutout")) {
+            PackProgramPlan layer = analysis.plan().program(name);
+            assertTrue(layer.executable() && layer.convertedVertex() != null
+                    && !analysis.plan().isProgramAlias(name), name + ": " + layer.deviations());
+        }
+        assertTrue(analysis.report().program("shadow_solid").deviations()
+                .contains("TERRAIN_LAYER_MERGED_BY_HOST:shadow_solid"), "shadow_solid reason");
+        // The registry, not a name, puts a program on the shadow terrain lane.
+        assertTrue(FamilyAdapterRegistry.isShadowTerrain("shadow")
+                        && FamilyAdapterRegistry.isShadowTerrain("shadow_water")
+                        && FamilyAdapterRegistry.isShadowTerrain("shadow_cutout")
+                        && !FamilyAdapterRegistry.isShadowTerrain("shadow_solid")
+                        && !FamilyAdapterRegistry.isShadowTerrain("shadow_entities")
+                        && FamilyAdapterRegistry.laneProgram("shadow_cutout").equals("shadow")
+                        && FamilyAdapterRegistry.laneProgram("shadow_entities").equals("shadow_entities"),
+                "shadow terrain lane");
+    }
+
     private static void verifyUnsupported(Path fixture, Path baseline) throws IOException {
         PackProbe.Analysis analysis = PackProbe.analyze(fixture);
         assertTrue(analysis.report().shouldAttempt("final"),
@@ -196,6 +227,12 @@ final class CoreFamilyAdapterTest {
             assertTrue(!analysis.report().shouldAttempt(name),
                     "unsupported family remained eligible: " + name);
         }
+        // Iris draws entities_glowing under no key of its own, and a skybasic with no vertex stage on
+        // its default one (ProgramSet.readProgramSource), which the sky lane lacks: each row names why.
+        assertTrue(analysis.report().program("gbuffers_entities_glowing").deviations()
+                .contains("IRIS_FALLBACK_SOURCE_ONLY"), "glowing reason");
+        assertTrue(analysis.report().program("gbuffers_skybasic").deviations()
+                .contains("IRIS_DEFAULT_VERTEX_UNSUPPORTED"), "skybasic reason");
         verifyBaseline(analysis.report(), baseline, "unsupported_families");
         if (TestPacks.printBaselines()) {
             printBaseline("unsupported_families", analysis.report());

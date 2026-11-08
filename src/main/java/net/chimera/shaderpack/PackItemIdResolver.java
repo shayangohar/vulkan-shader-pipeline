@@ -40,15 +40,15 @@ public final class PackItemIdResolver {
     }
 
     public static ParseResult parse(Path shadersDir, Map<String, String> macros) {
-        IdMapProperties.Lines lines = IdMapProperties.read(shadersDir, "item.properties", macros);
-        if (!lines.present()) {
+        IdMapProperties.Loaded file = IdMapProperties.read(shadersDir, "item.properties", macros);
+        if (!file.present()) {
             return new ParseResult(empty(), false, List.of());
         }
-        if (lines.failure() != null) {
-            return new ParseResult(empty(), true, List.of("ITEM_PROPERTIES_" + lines.failure()));
+        if (file.failure() != null) {
+            return new ParseResult(empty(), true, List.of("ITEM_PROPERTIES_" + file.failure()));
         }
         List<String> invalidKeys = new ArrayList<>();
-        Map<String, Integer> ids = IdMapProperties.ids(IdMapProperties.entries(lines.lines()), "item.", invalidKeys);
+        Map<String, Integer> ids = IdMapProperties.ids(file.entries(), "item.", invalidKeys);
         return new ParseResult(new PackItemIdResolver(ids), true,
                 invalidKeys.stream().map(key -> "ITEM_ID_KEY_INVALID:" + key).toList());
     }

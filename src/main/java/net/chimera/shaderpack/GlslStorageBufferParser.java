@@ -7,18 +7,25 @@ import java.util.Set;
 
 /**
  * The storage blocks of a prepared source, read from the parse tree, and the binding rewrite for
- * the bounded std430 bridge. Prepared sources hold no macros (KNOW-725), so a block's qualifiers
+ * the storage buffer bridge. Prepared sources hold no macros (KNOW-725), so a block's qualifiers
  * are the ones its declaration spells.
  */
 final class GlslStorageBufferParser {
     private static final Set<String> MEMORY_QUALIFIERS = Set.of(
             "readonly", "writeonly", "coherent", "volatile", "restrict");
 
+    /**
+     * One storage block. {@code laidOut} is whether Vulkan lays it out as GL does: std430, std140,
+     * or no packing qualifier, which glslang lays out std430 for Vulkan in every stage alike, as GL
+     * lays out an unqualified (shared) block alike in every program. Shrimple qualifies none of its
+     * blocks. Explicit shared or packed has no Vulkan layout.
+     */
     record Block(
             String blockName,
             String instanceName,
             int originalBinding,
-            boolean std430
+            boolean laidOut,
+            List<String> accessNames
     ) {}
 
     /** One storage block's node and the layout qualifier directly before its memory qualifiers. */
@@ -32,18 +39,50 @@ final class GlslStorageBufferParser {
         for (Declared declared : storageBlocks(tree)) {
             GlslTree.InterfaceBlock block = declared.block();
             String instanceName = block.instances().isEmpty() ? "" : tree.text(block.instances().get(0).name());
+            List<String> accessNames = accessNames(tree, block, instanceName);
             if (declared.layout() == null) {
                 // A block without layout is inventory-only. The caller will
                 // report it as unsupported rather than inventing a binding.
-                result.add(new Block(tree.text(block.name()), instanceName, -1, false));
+                result.add(new Block(tree.text(block.name()), instanceName, -1, false, accessNames));
                 continue;
             }
             Map<String, String> arguments = GlslDeclarations.layoutArguments(tree, declared.layout());
             String binding = arguments.get("binding");
             result.add(new Block(tree.text(block.name()), instanceName, binding == null ? -1 : parseInt(binding),
-                    arguments.containsKey("std430")));
+                    !arguments.containsKey("shared") && !arguments.containsKey("packed"), accessNames));
         }
         return List.copyOf(result);
+    }
+
+    /** The names a shader reads a block by: its instance, or each member of one without an instance. */
+    private static List<String> accessNames(GlslTree tree, GlslTree.InterfaceBlock block, String instanceName) {
+        if (!instanceName.isEmpty()) return List.of(instanceName);
+        List<String> members = new ArrayList<>();
+        for (GlslTree.Declaration member : block.members()) {
+            member.declarators().forEach(declarator -> members.add(tree.text(declarator.name())));
+        }
+        return List.copyOf(members);
+    }
+
+    /** The source without its file-scope {@code buffer} blocks, whose bindings the plan rewrites. */
+    static String withoutBlocks(String source) {
+        return withoutBlocks(source, null);
+    }
+
+    /** The source without the file-scope {@code buffer} blocks whose keys {@code keys} holds; null for all. */
+    static String withoutBlocks(String source, Set<String> keys) {
+        if (keys != null && keys.isEmpty()) return source;
+        GlslTree tree = GlslTree.parse(source == null ? "" : source);
+        List<GlslTree.Edit> removals = storageBlocks(tree).stream()
+                .filter(declared -> keys == null || keys.contains(key(tree, declared.block())))
+                .map(declared -> new GlslTree.Edit(declared.block().range(), ""))
+                .toList();
+        return removals.isEmpty() ? source : tree.print(removals);
+    }
+
+    private static String key(GlslTree tree, GlslTree.InterfaceBlock block) {
+        String instanceName = block.instances().isEmpty() ? "" : tree.text(block.instances().get(0).name());
+        return tree.text(block.name()) + "\u0000" + instanceName;
     }
 
     /** The file-scope {@code buffer} blocks, each with its layout when one precedes its memory qualifiers. */
@@ -91,9 +130,7 @@ final class GlslStorageBufferParser {
         GlslTree tree = GlslTree.parse(source);
         List<GlslTree.Edit> edits = new ArrayList<>();
         for (Declared declared : storageBlocks(tree)) {
-            GlslTree.InterfaceBlock block = declared.block();
-            String instanceName = block.instances().isEmpty() ? "" : tree.text(block.instances().get(0).name());
-            Integer replacement = bindings.get(tree.text(block.name()) + "\u0000" + instanceName);
+            Integer replacement = bindings.get(key(tree, declared.block()));
             int number = declared.layout() == null ? -1 : bindingNumber(tree, declared.layout().range());
             if (replacement != null && number >= 0) {
                 edits.add(new GlslTree.Edit(new GlslTree.Range(number, number + 1), Integer.toString(replacement)));

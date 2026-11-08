@@ -6,3 +6,6 @@ varying vec2 texcoord;
 void main() {
     gl_FragColor = m71Marker(texture2D(colortex0, texcoord));
 }
+/*
+const int colortex0Format = RGBA16F;
+*/

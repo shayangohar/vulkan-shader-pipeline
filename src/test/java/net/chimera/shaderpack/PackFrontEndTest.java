@@ -11,6 +11,8 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -118,6 +120,36 @@ final class PackFrontEndTest {
         PackResourceDeclaration png = new PackResourceDeclaration("texture.composite.colortex13",
                 "composite", "colortex13", "image/galaxy.png", PackResourceKind.PACK_TEXTURE);
         assertTrue(PackResourcePlan.appliesTo(png, "sampler2D"), "a PNG declaration applies as before");
+        // TextureTransformer.isTypeValid: a rectangle texture takes only a sampler2DRect.
+        PackResourceDeclaration rectangle = new PackResourceDeclaration("texture.composite.lut",
+                "composite", "lut", "lut.dat TEXTURE_RECTANGLE R8 4 4 RED UNSIGNED_BYTE", PackResourceKind.RAW_TEXTURE);
+        assertTrue(PackResourcePlan.appliesTo(rectangle, "sampler2DRect") && !PackResourcePlan.appliesTo(rectangle,
+                "sampler2D"), "a rectangle is no sampler2D");
+    }
+
+    /**
+     * A raw texture.<stage> entry is a uniform of its own: Iris renames the declaration of its type
+     * to customtexN and every renderer registers that name (addCustomTextures), so it binds a name
+     * nothing else registers. A PNG entry on such a name binds nowhere (KNOW-801).
+     */
+    @Test
+    void aRawStageTextureBindsANameNothingRegisters(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.write(shaders.resolve("lut.dat"), new byte[16]);
+        Files.write(shaders.resolve("glow.png"), new byte[8]);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                texture.composite.lut = lut.dat TEXTURE_2D R8 4 4 RED UNSIGNED_BYTE
+                texture.composite.glow = glow.png
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D lut;\n"
+                + "uniform sampler2D glow;\nvoid main() {\n/* RENDERTARGETS: 0 */\n"
+                + " gl_FragData[0] = texture2D(lut, vec2(0.5)) + texture2D(glow, vec2(0.5));\n}\n");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackResourceBinding lut = plan.resources().binding("composite", "lut");
+        assertTrue(lut != null && lut.kind() == PackResourceKind.RAW_TEXTURE, "raw lut: " + lut);
+        assertTrue(plan.program("composite").deviations().contains("SAMPLER_UNIT0_COLORTEX0:glow")
+                && !plan.program("composite").deviations().contains("SAMPLER_UNIT0_COLORTEX0:lut"),
+                plan.program("composite").deviations().toString());
     }
 
     /** Iris raw declarations: words name the dimension; Chimera uploads only an unconverted layout. */
@@ -145,21 +177,33 @@ final class PackFrontEndTest {
         }
     }
 
-    /** A volume a deferred pass samples binds as a pack file, sampled as its .mcmeta says. */
+    /**
+     * A volume a deferred pass samples binds as a pack file, sampled as its .mcmeta says. Without
+     * one a raw texture is linear and clamped (Iris ShaderPack starts blur and clamp at true for a
+     * raw definition; Ebin's atmosphere LUT relies on it), and an integer one is nearest.
+     */
     @Test
     void rawTextureBinding(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Path lut = Files.createDirectories(shaders.resolve("image")).resolve("lut.dat");
-        Files.writeString(shaders.resolve("deferred.fsh"), "#version 120\nuniform sampler3D depthtex0;\n"
-                + "varying vec2 texcoord;\n"
-                + "void main() { gl_FragData[0] = texture3D(depthtex0, vec3(texcoord, 0.5)); }\n");
+        Files.writeString(shaders.resolve("deferred.fsh"), "#version 130\nuniform sampler3D depthtex0;\n"
+                + "uniform usampler2D colortex6;\nin vec2 texcoord;\n"
+                + "void main() { gl_FragData[0] = texture(depthtex0, vec3(texcoord, 0.5))"
+                + " + vec4(texture(colortex6, texcoord)); }\n");
         Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler3D colortex5;\n"
                 + "varying vec2 texcoord;\n"
                 + "void main() { gl_FragData[0] = texture3D(colortex5, vec3(texcoord, 0.5)); }\n");
         Files.writeString(shaders.resolve("shaders.properties"),
-                "texture.deferred.depthtex0 = image/lut.dat TEXTURE_3D RGB16F 2 2 2 RGB HALF_FLOAT\n");
-        Files.writeString(shaders.resolve("image/lut.dat.mcmeta"), "{\"texture\": {\"blur\": true, \"clamp\": true}}");
+                "texture.deferred.depthtex0 = image/lut.dat TEXTURE_3D RGB16F 2 2 2 RGB HALF_FLOAT\n"
+                        + "texture.deferred.colortex6 = image/ids.dat TEXTURE_2D R32UI 2 2 RED_INTEGER UNSIGNED_INT\n");
         Files.write(lut, new byte[48]);
+        Files.write(shaders.resolve("image/ids.dat"), new byte[16]);
+        assertSampling(root, "depthtex0", "linear", "clamp");
+        assertSampling(root, "colortex6", "nearest", "clamp");
+        Path meta = shaders.resolve("image/lut.dat.mcmeta");
+        Files.writeString(meta, "{\"texture\": {\"blur\": false, \"clamp\": false}}");
+        assertSampling(root, "depthtex0", "nearest", "repeat");
+        Files.writeString(meta, "{\"texture\": {\"blur\": true, \"clamp\": true}}");
         PackPlan plan = PackProbe.analyze(root).plan();
         PackResourceBinding volume = plan.resources().binding("deferred", "depthtex0");
         assertTrue(volume != null && volume.kind() == PackResourceKind.RAW_TEXTURE
@@ -176,6 +220,52 @@ final class PackFrontEndTest {
         assertTrue(truncated != null && truncated.status() == PackResourceStatus.UNAVAILABLE
                         && truncated.deviations().contains("PACK_RAW_TEXTURE_SIZE_MISMATCH:texture.deferred.depthtex0"),
                 "a short file must not upload: " + truncated);
+    }
+
+    /**
+     * Photon's cloud noise: Iris keeps only the sampler name of {@code texture.deferred.colortex6.1},
+     * so the deferred stage's {@code sampler3D colortex6} reads the volume while the 2D colortex6
+     * stays the render target.
+     */
+    @Test
+    void aSuffixedRawTextureKeyNamesItsSampler(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("deferred.fsh"), "#version 130\nuniform sampler3D colortex6;\n"
+                + "in vec2 texcoord;\nvoid main() { gl_FragData[0] = texture(colortex6, vec3(texcoord, 0.5)); }\n");
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 130\nuniform sampler2D colortex6;\n"
+                + "in vec2 texcoord;\nvoid main() { gl_FragData[0] = texture(colortex6, texcoord); }\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "texture.deferred.colortex6.1 = image/worley.dat TEXTURE_3D R8 4 4 4 RED UNSIGNED_BYTE\n");
+        Files.write(Files.createDirectories(shaders.resolve("image")).resolve("worley.dat"), new byte[64]);
+        PackResourcePlan resources = PackProbe.analyze(root).plan().resources();
+        PackResourceBinding volume = resources.binding("deferred", "colortex6");
+        assertTrue(volume != null && volume.kind() == PackResourceKind.RAW_TEXTURE
+                && volume.status() == PackResourceStatus.PACK_FILE, "suffixed raw volume: " + volume);
+        PackResourceBinding target = resources.binding("composite", "colortex6");
+        assertTrue(target == null || target.kind() != PackResourceKind.RAW_TEXTURE,
+                "the 2D colortex6 must stay the target: " + target);
+    }
+
+    /** Iris's clouds directive, with RedHat's clouds=false read as the "off" it means. */
+    @Test
+    void cloudsDirective(@TempDir Path root) throws IOException {
+        String[][] cases = {{"off", "off"}, {"false", "off"}, {"fast", "fast"}, {"fancy", "fancy"},
+                {"on", null}, {"true", null}};
+        for (int index = 0; index < cases.length; index++) {
+            Path shaders = Files.createDirectories(root.resolve("pack" + index).resolve("shaders"));
+            Files.writeString(shaders.resolve("composite.fsh"),
+                    "#version 130\nvoid main() { gl_FragData[0] = vec4(1.0); }\n");
+            Files.writeString(shaders.resolve("shaders.properties"), "clouds = " + cases[index][0] + "\n");
+            assertEquals(cases[index][1], PackProbe.analyze(shaders.getParent()).plan().cloudSetting(),
+                    "clouds=" + cases[index][0]);
+        }
+    }
+
+    private static void assertSampling(Path root, String sampler, String filter, String wrap) {
+        PackResourceBinding binding = PackProbe.analyze(root).plan().resources().binding("deferred", sampler);
+        assertTrue(binding != null && binding.status() == PackResourceStatus.PACK_FILE
+                        && binding.filter().equals(filter) && binding.wrap().equals(wrap),
+                sampler + " must sample " + filter + "/" + wrap + ": " + binding);
     }
 
     /** program.<folder>/<name>.enabled with a declared-but-off toggle disables, as in Iris. */
@@ -196,7 +286,7 @@ final class PackFrontEndTest {
     void boolAndAtlasNames() {
         PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
                 PackRuntimeSettings.declaration(true, "bool", "cycle", "worldTime > 10")),
-                Map.of(), List.of());
+                List.of());
         assertTrue(settings.customDescriptors().get("cycle").accepts("bool")
                 && settings.customDescriptors().get("cycle").accepts("int"), "bool custom types");
         assertTrue(UniformRegistry.GEOMETRY_NAME_TO_SLOT.get("gtexture") == 0
@@ -305,7 +395,7 @@ final class PackFrontEndTest {
                 PackRuntimeSettings.declaration(true, "float", "dir_y", "dir.y"),
                 PackRuntimeSettings.declaration(true, "vec3", "wrong", "1.0"),
                 PackRuntimeSettings.declaration(true, "float", "cell",
-                        "gbufferModelViewInverse.3.0")), Map.of(), List.of());
+                        "gbufferModelViewInverse.3.0")), List.of());
         assertTrue(settings.rejected().equals(Set.of("wrong")),
                 "only the mistyped value is refused: " + settings.rejected() + " " + settings.deviations());
         assertTrue(settings.widthOf("view_res") == 2 && settings.widthOf("dir") == 3
@@ -324,6 +414,74 @@ final class PackFrontEndTest {
         assertTrue(values[res] == 1920.0f && values[res + 1] == 1080.0f, "view_res components");
         assertTrue(values[settings.indexOf("dir_y")] == 2.0f, "a value reads a vector value's component");
         assertTrue(values[settings.indexOf("cell")] == 7.0f, "matrix element m[3][0] is lane 12");
+    }
+
+    /**
+     * Iris preprocesses shaders.properties with the pack's option values as macros
+     * (PropertiesPreprocessor), so a custom value reads an option as its value. Reverie's betaRfact
+     * reads RAYLEIGH_DENSITY_VARIANCE, which Chimera refused as an unknown name.
+     */
+    @Test
+    void aCustomValueReadsAnOptionAsItsValue(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                #define DENSITY 0.25 //[0.25 0.5]
+                uniform float density;
+                void main() { gl_FragColor = vec4(density); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), "uniform.float.density = DENSITY * 2.0\n");
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(settings.rejected().isEmpty(), settings.deviations().toString());
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> 0.0, session, 0.05f);
+        assertEquals(0.5f, session.values()[settings.indexOf("density")], 1.0e-6f);
+    }
+
+    /**
+     * Iris's function set (IrisFunctions): Alpha Piscium's values call exp2 and twenty corpus
+     * values call mix, which Chimera refused. Iris's max and min past two arguments read the second
+     * again for each further one, and Iris has no round. OptiFine's documented functions evaluate,
+     * and a declaration that reads a refused one is refused with it instead of reading zero in its
+     * place.
+     */
+    @Test
+    void theFunctionsAreIrisFunctions() {
+        double[][] cases = {
+                {value("exp2(3.0)"), 8.0}, {value("exp10(2.0)"), 100.0}, {value("log2(8.0)"), 3.0},
+                {value("log10(100.0)"), 2.0}, {value("log(2.0, 8.0)"), 3.0}, {value("mix(1.0, 3.0, 0.25)"), 1.5},
+                {value("edge(0.5, 0.2) + edge(0.5, 0.5)"), 1.0}, {value("atan2(1.0, 1.0)"), Math.PI / 4.0},
+                {value("degrees(radians(90.0)) + sign(-2.0)"), 89.0}, {value("equals(1.0, 1.0)"), 1.0},
+                {value("notEquals(1.0, 2.0) + lessThan(1.0, 2.0) + moreThanOrEquals(1.0, 2.0)"), 2.0},
+                {value("and(1.0, 0.0) + or(1.0, 0.0) + not(0.0)"), 2.0},
+                {value("add(1.0, 2.0) * subtract(5.0, 3.0) / divide(4.0, 2.0) + remainder(5.0, 3.0)"), 5.0},
+                {value("negate(2.0) + multiply(2.0, 3.0)"), 4.0}, {value("random(2.0, 2.0)"), 2.0},
+                {value("max(1.0, 2.0, 5.0)"), 2.0}, {value("min(3.0, 2.0, 0.0)"), 2.0},
+                {value("randomInt(3, 4) + randomInt(1)"), 3.0}, {value("toInt(-2.7) + toFloat(2)"), 0.0},
+                {value("frac(-0.25)"), 0.75}, {value("fmod(-1.0, 4.0)"), 3.0},
+                {value("floor(1.5) + ceil(1.5)"), 3.0}, {value("pow(2.0, 3.0)"), 8.0},
+                {value("atan(1.0, 1.0)"), Math.PI / 4.0}, {value("todeg(torad(90.0))"), 90.0},
+                {value("if(0, 1.0, 1, 2.0, 3.0)"), 2.0}, {value("if(0, 1.0, 0, 2.0, 3.0)"), 3.0},
+                {value("between(0.5, 0.0, 1.0)"), 1.0}, {value("equals(1.0, 1.05, 0.1)"), 1.0},
+                {value("signum(-3.0) + abs(-1.0)"), 0.0}};
+        for (double[] entry : cases) {
+            assertEquals(entry[1], entry[0], 1.0e-9);
+        }
+        for (String refused : List.of("round(1.5)", "random(1.0)")) {
+            assertThrows(PackExpression.Unsupported.class,
+                    () -> PackExpression.parse(refused, BiomeIds.constants()), refused);
+        }
+        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(false, "float", "broken", "noSuchFunction(1.0)"),
+                PackRuntimeSettings.declaration(true, "float", "reader", "broken + 1.0")),
+                List.of());
+        assertTrue(settings.rejected().contains("reader") && settings.indexOf("reader") < 0,
+                "a value reading a refused declaration was not refused: " + settings.deviations());
+    }
+
+    private static double value(String expression) {
+        PackExpression.Program program = PackExpression.parse(expression, BiomeIds.constants());
+        return program.evaluate((name, component) -> 0.0, program.newState(), 0.0f);
     }
 
     /** Iris's IrisDefines: CAT_* are BiomeCategories ordinals, PPT_* the precipitation codes. */
@@ -372,7 +530,7 @@ final class PackFrontEndTest {
                 "a name Iris does not serve runs on zero: " + unset.deviations());
         assertTrue(UniformRegistry.resolve("vxRenderDistance", "float", Map.of()) != null,
                 "the runtime serves the same zero");
-        assertTrue(UniformRegistry.resolve("fogDensity", "float", Map.of()) == null,
+        assertTrue(UniformRegistry.resolve("alphaTestRef", "float", Map.of()) == null,
                 "an unserved Iris name gets no substitute at runtime");
     }
 
@@ -381,7 +539,7 @@ final class PackFrontEndTest {
         // Bliss authors texelSize; Iris has no such builtin, so the pack's value stands.
         PackRuntimeSettings texel = PackRuntimeSettings.build(List.of(
                 PackRuntimeSettings.declaration(true, "vec2", "texelSize",
-                        "vec2(1.0 / viewWidth, 1.0 / viewHeight)")), Map.of(), List.of());
+                        "vec2(1.0 / viewWidth, 1.0 / viewHeight)")), List.of());
         assertTrue(texel.rejected().isEmpty(), "texelSize is the pack's own: " + texel.deviations());
         UniformRegistry.UniformDescriptor resolved =
                 UniformRegistry.resolve("texelSize", "vec2", texel.customDescriptors());
@@ -413,17 +571,27 @@ final class PackFrontEndTest {
                 "with watershadow, shadow is the opaque casters: " + both.deviations());
     }
 
+    /**
+     * CommonTransformer: gl_Fog reads Iris's own iris_Fog uniforms, so the pack's fog names stay its
+     * own: a vec3 fogColor uniform, a const fogStart and a local fogDensity meet no declaration of Chimera's.
+     */
     @Test
-    void fogColor() {
-        // CommonTransformer: gl_Fog.color is iris_FogColor, the fog RGBA.
-        LegacyShaderNormalizer.Result undeclared = LegacyShaderNormalizer.normalize(
-                "#version 120\nvoid main() { gl_FragColor = gl_Fog.color; }", false);
-        assertTrue(undeclared.successful() && undeclared.source().contains("uniform vec4 fogColor;")
-                && undeclared.source().contains("gl_FragColor = fogColor;"), "gl_Fog.color:\n" + undeclared.source());
-        LegacyShaderNormalizer.Result vec3 = LegacyShaderNormalizer.normalize(
-                "#version 120\nuniform vec3 fogColor;\nvoid main() { gl_FragColor = gl_Fog.color; }", false);
-        assertTrue(vec3.successful() && vec3.source().contains("vec4(fogColor, 1.0)")
-                && !vec3.source().contains("uniform vec4 fogColor"), "vec3 fogColor kept:\n" + vec3.source());
+    void glFogReadsIrisUniforms() {
+        LegacyShaderNormalizer.Result fog = LegacyShaderNormalizer.normalize("""
+                #version 120
+                uniform vec3 fogColor;
+                const float fogStart = 4.0;
+                void main() {
+                    float fogDensity = gl_Fog.density;
+                    gl_FragColor = gl_Fog.color * (gl_Fog.start + fogStart) + vec4(fogColor, fogDensity);
+                }
+                """, false);
+        String source = fog.source();
+        assertTrue(fog.successful() && source.contains("float fogDensity = iris_FogDensity;")
+                && source.contains("gl_FragColor = iris_FogColor * (iris_FogStart + fogStart)")
+                && source.contains("uniform vec4 iris_FogColor;") && source.contains("uniform float iris_FogStart;")
+                && source.contains("uniform float iris_FogDensity;") && source.contains("uniform vec3 fogColor;")
+                && !source.contains("uniform float fogStart"), source);
     }
 
     @Test
@@ -559,30 +727,6 @@ final class PackFrontEndTest {
     }
 
     @Test
-    void samplerMacroAliases() {
-        // Photon reaches samplers through macros; each expands while it is defined.
-        String aliased = GlslMacroExpander.expand("""
-                uniform sampler2D colortex0;
-                uniform sampler2D colortex5;
-                #define rec709_to_working_color rec709_to_rec2020
-                #define SRC_SAMPLER colortex5
-                #define LUT SRC_SAMPLER
-                #define SAMPLE(uv) texture(SRC_SAMPLER, uv)
-                vec4 a = texture(SRC_SAMPLER, vec2(0.0)) + texture(LUT, vec2(0.0)) + SAMPLE(vec2(1.0));
-                #undef SRC_SAMPLER
-                #define SRC_SAMPLER colortex0
-                vec4 b = texture(SRC_SAMPLER, vec2(0.0));
-                vec3 c = rec709_to_working_color[0];
-                """);
-        assertTrue(!aliased.contains("SRC_SAMPLER") && !aliased.contains("#define")
-                        && aliased.contains("vec4 a = texture(colortex5, vec2(0.0)) + texture(colortex5, vec2(0.0))"
-                                + " + texture(colortex5, vec2(1.0));")
-                        && aliased.contains("vec4 b = texture(colortex0, vec2(0.0));")
-                        && aliased.contains("vec3 c = rec709_to_rec2020[0];"),
-                "sampler alias expansion:\n" + aliased);
-    }
-
-    @Test
     void objectMacroReachability() {
         // Photon calls tonemap_lottes only as tonemap(x) through an object-like alias, which preparation expands.
         String reachable = GlslMacroExpander.expand("""
@@ -611,6 +755,11 @@ final class PackFrontEndTest {
                         && routed.outputLocations().equals(List.of(0, 1, 2))
                         && routed.outputType(0).equals("vec3") && routed.outputType(2).equals("vec2"),
                 "modern output locations: " + modern + " plan " + routed.outputLocations());
+        // RenderPearl redeclares gl_FragDepth with a depth layout: a built-in, not a target output.
+        String depth = "/* RENDERTARGETS: 0 */\nlayout(depth_greater) out float gl_FragDepth;\n"
+                + "layout(location = 0) out vec4 color;\nvoid main() {}\n";
+        assertEquals(List.of("color"), PostTargetPlan.modernOutputs(depth).stream()
+                .map(PostTargetPlan.ModernOutput::name).toList());
     }
 
     @Test
@@ -638,16 +787,6 @@ final class PackFrontEndTest {
                 "void main() { gl_Position = gl_ModelViewMatrix * gl_Vertex; }", UniformRegistry.Stage.GEOMETRY);
         assertTrue(legacyMatrix.uniforms().stream().anyMatch(value -> value.name().equals("gbufferModelView")),
                 "implicit gbufferModelView: " + legacyMatrix.uniforms());
-    }
-
-    @Test
-    void entityDefaultAttribute() {
-        // Iris's entity vertex format has no mc_Entity: GL reads the unbound default (0, 0, 0, 1).
-        String entity = EntityDeclarations.removeEntityAttributes(
-                "attribute vec4 mc_Entity;\nattribute vec2 mc_midTexCoord;\nvoid main() {}\n");
-        assertTrue(entity.contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);")
-                        && !entity.contains("mc_midTexCoord"),
-                "entity mc_Entity default:\n" + entity);
     }
 
     /** Iris ClearPassCreator: undeclared colortex0 clears to the fog (alpha 1), colortex1 to white. */

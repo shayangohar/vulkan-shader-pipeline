@@ -7,3 +7,7 @@ void main() {
     vec4 color = texture2D(colortex0, texcoord);
     gl_FragColor = vec4(color.rgb * vec3(0.35, 0.85, 1.0), color.a);
 }
+/*
+const int colortex0Format = RGBA16F;
+const int shadowMapResolution = 2048;
+*/

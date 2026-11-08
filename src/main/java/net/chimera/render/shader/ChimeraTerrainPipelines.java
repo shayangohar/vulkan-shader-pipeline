@@ -16,6 +16,8 @@ import net.vulkanmod.render.vertex.CustomVertexFormat;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 
+import java.util.LinkedHashSet;
+import java.util.Set;
 import java.util.function.UnaryOperator;
 
 /**
@@ -31,7 +33,8 @@ import java.util.function.UnaryOperator;
  */
 public final class ChimeraTerrainPipelines {
     private static boolean initialized;
-    private static boolean extendedMode;
+    /** True while Chimera's terrain format and pipelines are installed for a pack; chunk builders read it. */
+    private static volatile boolean extendedMode;
     /** Chimera's own terrain pipelines by vertex layout (bit 1: modern) and separateAo (bit 0). */
     private static final GraphicsPipeline[] fixedPipelines = new GraphicsPipeline[4];
     /** Read by the chunk-build threads, through the render-layer overrides; replaced on the render thread. */
@@ -47,8 +50,17 @@ public final class ChimeraTerrainPipelines {
     private static volatile boolean directionalShadingDisabled;
     /** True while the installed pack takes block brightness in the vertex colour's alpha; chunk builders read it. */
     private static volatile boolean separateAo;
+    /** The installed pack's terrain shading, whose ambient occlusion level chunk builders read. */
+    private static volatile TerrainShadingDirectives shading = TerrainShadingDirectives.VANILLA;
+    /** The rebuilds a handoff asked for (rebuildingOnce), by reason; null outside one. Render thread only. */
+    private static Set<String> heldRebuilds;
 
     private ChimeraTerrainPipelines() {}
+
+    /** A block's shade brightness under the installed pack's ambientOcclusionLevel (Iris's getShadeBrightness). */
+    public static float shadeBrightness(float original) {
+        return shading.shadeBrightness(original);
+    }
 
     /**
      * True while the installed pack lights faces itself (Iris oldLighting off), so
@@ -68,22 +80,45 @@ public final class ChimeraTerrainPipelines {
     }
 
     /**
-     * Applies the installed pack's oldLighting and separateAo, or
-     * {@link TerrainShadingDirectives#VANILLA} when no pack is installed. Chunk meshes bake
-     * both into their vertex colours, so a change rebuilds the live level once, as Iris reloads
-     * chunks when either of its WorldRenderingSettings values changes.
+     * True while Chimera meshes terrain for a pack: sections then compile as NeoForge's
+     * SectionCompiler and Sodium do where VulkanMod departs. A light-emitting block darkens its
+     * neighbours' ambient occlusion (ChimeraEmitterOcclusionMixin), and a block entity that renders
+     * off-screen joins only the level's global set (ChimeraGlobalBlockEntityMixin). The level
+     * rebuilds when it changes, with the terrain format.
+     */
+    public static boolean vanillaSectionCompile() {
+        return extendedMode;
+    }
+
+    /**
+     * True while the installed pack meshes each light block as a voxel quad (Iris
+     * voxelizeLightBlocks); chunk builders read it.
+     */
+    public static boolean voxelizeLightBlocks() {
+        return shading.voxelizeLightBlocks();
+    }
+
+    /**
+     * Applies the installed pack's oldLighting, separateAo, ambientOcclusionLevel and
+     * voxelizeLightBlocks, or {@link TerrainShadingDirectives#VANILLA} when no pack is installed.
+     * Chunk meshes bake them in, so a change rebuilds the live level once, as Iris reloads
+     * chunks when one of its WorldRenderingSettings values changes.
      */
     public static void setTerrainShading(TerrainShadingDirectives directives) {
         TerrainShadingDirectives next = directives == null ? TerrainShadingDirectives.VANILLA : directives;
         boolean shadingDisabled = next.disablesDirectionalShading();
-        if (directionalShadingDisabled == shadingDisabled && separateAo == next.separateAo()) {
+        if (directionalShadingDisabled == shadingDisabled && separateAo == next.separateAo()
+                && shading.ambientOcclusionLevel() == next.ambientOcclusionLevel()
+                && shading.voxelizeLightBlocks() == next.voxelizeLightBlocks()) {
             return;
         }
         directionalShadingDisabled = shadingDisabled;
         separateAo = next.separateAo();
-        ChimeraMod.LOGGER.info("[chimera] terrain shading: directional shading {}, ambient occlusion {}",
-                shadingDisabled ? "off (pack lights faces)" : "vanilla",
-                separateAo ? "in vertex alpha (separateAo)" : "in vertex RGB");
+        shading = next;
+        ChimeraMod.LOGGER.info("[chimera] terrain shading: directional shading {}, ambient occlusion {} at level {}"
+                        + ", light-block voxels {}", shadingDisabled ? "off (pack lights faces)" : "vanilla",
+                separateAo ? "in vertex alpha (separateAo)" : "in vertex RGB", next.ambientOcclusionLevel(),
+                next.voxelizeLightBlocks());
         if (initialized && extendedMode) {
             // Build the matching fixed pipeline here rather than on first draw.
             fixedPipeline();
@@ -260,7 +295,32 @@ public final class ChimeraTerrainPipelines {
         }
     }
 
+    /**
+     * Runs {@code handoff}, rebuilding the live level at most once, at its end. A frame boundary
+     * that hands terrain to the host, applies a pack or dimension variant and reinstalls it changes
+     * the terrain format and shading up to four times, and no frame draws in between: each change
+     * rebuilt the whole level, and the chunk builders meshed sections only to throw them away.
+     */
+    public static void rebuildingOnce(Runnable handoff) {
+        if (heldRebuilds != null) {
+            handoff.run();
+            return;
+        }
+        heldRebuilds = new LinkedHashSet<>();
+        try {
+            handoff.run();
+        } finally {
+            Set<String> reasons = heldRebuilds;
+            heldRebuilds = null;
+            if (!reasons.isEmpty()) rebuildLiveLevel(String.join(", ", reasons));
+        }
+    }
+
     private static void rebuildLiveLevel(String reason) {
+        if (heldRebuilds != null) {
+            heldRebuilds.add(reason);
+            return;
+        }
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level != null && minecraft.levelRenderer != null) {
             minecraft.levelRenderer.allChanged();

@@ -3,12 +3,13 @@ package net.chimera.shaderpack;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Predicate;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * Rejects what the entity vertex bridge cannot serve before it converts a stage: referenced custom
- * uniforms and images, unmapped built-ins, unserved attributes and pack-authored layouts. Each
- * failure names the first offender. Declarations and names are read from the parse tree.
+ * uniforms, images the plan does not bind, unmapped built-ins, unserved attributes and pack-authored
+ * layouts. Each failure names the first offender. Declarations and names are read from the parse tree.
  */
 final class EntityVertexFeatureCheck {
     private EntityVertexFeatureCheck() {}
@@ -29,8 +30,6 @@ final class EntityVertexFeatureCheck {
             "blockEntityId", Set.of("float", "int"),
             "mc_midTexCoord", Set.of("vec2", "vec4"),
             "at_tangent", Set.of("vec4"),
-            // Iris capital-T tangent names the same host input.
-            "Tangent", Set.of("vec4"),
             // Terrain inputs the entity format lacks read GL's unbound default.
             "mc_Entity", Set.of("float", "vec2", "vec3", "vec4"),
             "at_midBlock", Set.of("float", "vec2", "vec3", "vec4"));
@@ -38,27 +37,42 @@ final class EntityVertexFeatureCheck {
     /** The value types the catalog could serve; a leftover one is a custom value with no adapter. */
     private static final Pattern VALUE_TYPE = Pattern.compile("bool|int|float|vec[234]|ivec[234]|mat[234]");
     private static final Pattern SAMPLER_TYPE = Pattern.compile("[iu]?sampler\\w*|u?i?image\\w*");
-    private static final Pattern IMAGE_OR_STAGE = Pattern.compile("image\\w*|geometry|tessellation|compute");
+    /**
+     * Image types and image built-ins; not identifiers that only start with "image" (Reverie's
+     * image0Sampler is a sampler).
+     */
+    private static final Pattern IMAGE = Pattern.compile(
+            "[iu]?image(?:1D|2D|3D|Cube|2DRect|1DArray|2DArray|CubeArray|Buffer|2DMS|2DMSArray)"
+                    + "|image(?:Load|Store|Size|Samples|Atomic\\w+)");
+    private static final Set<String> OTHER_STAGES = Set.of("geometry", "tessellation", "compute");
     private static final Set<String> ATTRIBUTE_DECLARATION_TYPES = Set.of("int", "float", "vec2", "vec3", "vec4");
 
-    /** {@code source} has its comments stripped already. */
+    /**
+     * {@code source} has its comments stripped already. {@code storageImages} names the pack images
+     * the plan binds this stage (GraphicsImageScan); Iris binds images in every stage, and Pegasus
+     * stores particle light from gbuffers_particles' vertex (PARTICLES_LPV).
+     */
     static void rejectEntityVertexFeatures(
-            String source, boolean allowStorageBuffers, boolean allowSamplers
+            String source, boolean allowStorageBuffers, boolean allowSamplers, Set<String> storageImages
     ) {
         GlslTree tree = GlslTree.parse(source);
         rejectReferencedCustomUniforms(tree);
-        rejectReferencedSamplers(tree, allowSamplers);
+        rejectUnboundSamplers(tree, allowSamplers, storageImages);
         String builtin = firstIdentifier(tree, name -> name.matches("gl_[A-Za-z]\\w*")
                 && !ENTITY_SERVED_BUILTINS.contains(name));
         if (builtin != null) throw new IllegalArgumentException("unsupported entity vertex builtin: " + builtin);
-        if (firstIdentifier(tree, name -> IMAGE_OR_STAGE.matcher(name).matches()) != null) {
+        if (firstIdentifier(tree, name -> OTHER_STAGES.contains(name)
+                || storageImages.isEmpty() && IMAGE.matcher(name).matches()) != null) {
             throw new IllegalArgumentException("unsupported entity vertex feature");
         }
         if (!allowStorageBuffers && firstIdentifier(tree, "buffer"::equals) != null) {
             throw new IllegalArgumentException("storage buffer was not admitted by the program plan");
         }
         rejectUnservedAttributes(tree);
-        GlslTree withoutInterfaces = GlslTree.parse(withoutScannedInterfaces(source));
+        // An admitted storage block or image keeps its own layout; the plan rewrites its binding.
+        String interfaces = allowStorageBuffers ? GlslStorageBufferParser.withoutBlocks(source) : source;
+        interfaces = withoutImageDeclarations(interfaces, storageImages);
+        GlslTree withoutInterfaces = GlslTree.parse(withoutScannedInterfaces(interfaces));
         rejectUnservedAttributeDeclarations(withoutInterfaces);
         // Interpolation survives on scanned varyings via the shared layout. Pack-authored
         // explicit layouts would conflict with the generated locations, and interpolation
@@ -82,17 +96,31 @@ final class EntityVertexFeatureCheck {
         }
     }
 
-    /** A referenced image, or a referenced sampler when the plan binds no vertex samplers, has no binding. */
-    private static void rejectReferencedSamplers(GlslTree tree, boolean allowSamplers) {
+    /**
+     * A referenced sampler when the plan binds no vertex samplers has no binding; nor has an image
+     * the plan does not bind, referenced or not, since the stage keeps every declaration it is given.
+     */
+    private static void rejectUnboundSamplers(GlslTree tree, boolean allowSamplers, Set<String> storageImages) {
         for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
             if (!variable.qualified("uniform") || !SAMPLER_TYPE.matcher(variable.type()).matches()) continue;
             boolean image = variable.type().matches("u?i?image\\w*");
-            if ((image || !allowSamplers) && variable.declaration().declarators().stream()
-                    .anyMatch(name -> referencedOutside(tree, tree.text(name.name()), variable.declaration()))) {
+            boolean unbound = image
+                    ? variable.declaration().declarators().stream()
+                            .anyMatch(name -> !storageImages.contains(tree.text(name.name())))
+                    : !allowSamplers && variable.declaration().declarators().stream()
+                            .anyMatch(name -> referencedOutside(tree, tree.text(name.name()), variable.declaration()));
+            if (unbound) {
                 String first = tree.text(variable.declaration().declarators().get(0).name());
                 throw new IllegalArgumentException("unsupported entity vertex sampler: " + first);
             }
         }
+    }
+
+    /** The source without the declarations of the images the plan binds (PackPipelines.STORAGE_IMAGE_DECLARATION). */
+    private static String withoutImageDeclarations(String source, Set<String> storageImages) {
+        if (storageImages.isEmpty()) return source;
+        return PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(source).replaceAll(declaration ->
+                storageImages.contains(declaration.group(2)) ? "" : Matcher.quoteReplacement(declaration.group()));
     }
 
     /** Each input names a host input the bridge serves, declared as a type it serves that input as. */

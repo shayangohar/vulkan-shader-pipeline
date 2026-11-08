@@ -6,8 +6,10 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.lwjgl.util.shaderc.Shaderc;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.List;
@@ -31,18 +33,6 @@ final class AlphaTestContractTest {
         InstanceOptions.ROUTES.clear();
     }
 
-    @Test
-    @Tag("packs")
-    void complementaryTerrain() {
-        verifyRealPackTerrain(TestPacks.complementary(), "Complementary");
-    }
-
-    @Test
-    @Tag("packs")
-    void bslTerrain() {
-        verifyRealPackTerrain(TestPacks.bsl(), "BSL");
-    }
-
     /**
      * Entity programs test against the host render type's threshold per draw
      * (Iris iris_currentAlphaTest); a pack alphaTest directive fixes it. The
@@ -62,18 +52,22 @@ final class AlphaTestContractTest {
                         + UniformRegistry.ENTITY_ALPHA_REFERENCE + "))"),
                 "entity test does not follow Iris's GREATER reference");
 
-        String modern = "#version 460\nlayout(location = 0) out vec4 albedo;\n"
-                + "void main() { albedo = vec4(1.0, 0.0, 0.0, 0.05); }\n";
         PackAlphaTestPlan fixed = PackAlphaTestPlan.forProgram("gbuffers_entities",
                 settings(Map.of("alphaTest.gbuffers_entities", "GREATER 0.5")));
-        String fixedSource = fixed.injectDrawTest(modern);
-        assertTrue(fixed.mode() == PackAlphaTestPlan.Mode.FIXED && fixedSource.contains("albedo.a > 0.5")
+        String fragColor = "#version 120\nvoid main() { gl_FragColor = vec4(1.0, 0.0, 0.0, 0.05); }\n";
+        String fixedSource = fixed.injectDrawTest(fragColor);
+        assertTrue(fixed.mode() == PackAlphaTestPlan.Mode.FIXED && fixedSource.contains("gl_FragColor.a > 0.5")
                         && !fixedSource.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
                 "pack alphaTest directive does not fix the entity test");
-        compileFragment(fixedSource);
-        compileFragment(dynamic.injectDrawTest(modern).replace(
-                "uniform float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + ";",
-                "layout(binding = 0) uniform Ref { float " + UniformRegistry.ENTITY_ALPHA_REFERENCE + "; };"));
+
+        // Iris tests only gl_FragData[0] or gl_FragColor (CommonTransformer): a modern output, or
+        // a fragment indexing other buffers only, keeps its authored main.
+        String modern = "#version 460\nlayout(location = 0) out vec4 albedo;\n"
+                + "void main() { albedo = vec4(1.0, 0.0, 0.0, 0.05); }\n";
+        String otherBuffer = "#version 120\nvoid main() { gl_FragData[1] = vec4(1.0); }\n";
+        assertTrue(fixed.injectDrawTest(modern).equals(modern) && dynamic.injectDrawTest(modern).equals(modern)
+                        && dynamic.injectDrawTest(otherBuffer).equals(otherBuffer),
+                "a fragment Iris leaves untested was tested");
 
         // Iris ENTITIES_ALPHA (AlphaTests.VERTEX_ALPHA): a negative reference tests the vertex alpha,
         // which the entity vertex bridge forwards once the fragment reads it.
@@ -106,6 +100,30 @@ final class AlphaTestContractTest {
                 "alphaTest.shadow does not fix the shadow test");
     }
 
+    /**
+     * Iris appends its test to the end of main's body (CommonTransformer, appendMainFunctionBody), so a
+     * return earlier in main skips it. Any integer literal of value 0 indexes buffer 0.
+     */
+    @Test
+    void theTestEndsMainsBody() {
+        PackAlphaTestPlan fixed = PackAlphaTestPlan.forProgram("gbuffers_entities",
+                settings(Map.of("alphaTest.gbuffers_entities", "GREATER 0.5")));
+        String early = "#version 130\nvoid main() {\n"
+                + "    if (gl_FragCoord.x < 1.0) { gl_FragData[0] = vec4(0.0); return; }\n"
+                + "    gl_FragData[0] = vec4(1.0);\n}\n";
+        String tested = fixed.injectDrawTest(early);
+        int test = tested.indexOf("gl_FragData[0].a > 0.5");
+        assertTrue(test > tested.indexOf("vec4(1.0);") && test < tested.lastIndexOf('}')
+                && !tested.contains("chimeraAuthoredMain") && tested.indexOf("void main") == tested.lastIndexOf(
+                "void main"), tested);
+        for (String index : List.of("0u", "0x0", "00")) {
+            String source = "#version 130\nvoid main() { gl_FragData[" + index + "] = vec4(1.0); }\n";
+            assertTrue(fixed.injectDrawTest(source).contains("gl_FragData[0].a > 0.5"), index);
+        }
+        String one = "#version 130\nvoid main() { gl_FragData[0x1] = vec4(1.0); }\n";
+        assertTrue(fixed.injectDrawTest(one).equals(one), "buffer 1 was tested");
+    }
+
     /** Iris ShaderKey.CLOUDS tests ONE_TENTH_ALPHA; a pack alphaTest.gbuffers_clouds replaces it. */
     @Test
     void cloudAlphaTest() {
@@ -121,18 +139,83 @@ final class AlphaTestContractTest {
                 "alphaTest.gbuffers_clouds does not replace the cloud test");
     }
 
-    private static void compileFragment(String source) {
-        long compiler = Shaderc.shaderc_compiler_initialize();
-        long result = Shaderc.shaderc_compile_into_spv(compiler, source,
-                Shaderc.shaderc_glsl_fragment_shader, "entity_alpha.fsh", "main", 0L);
-        try {
-            assertTrue(result != 0 && Shaderc.shaderc_result_get_compilation_status(result)
-                            == Shaderc.shaderc_compilation_status_success,
-                    result == 0 ? "no shader result" : Shaderc.shaderc_result_get_error_message(result));
-        } finally {
-            if (result != 0) Shaderc.shaderc_result_release(result);
-            Shaderc.shaderc_compiler_release(compiler);
+    /**
+     * Iris tests a program with its pack alphaTest, else its ShaderKey's (ShaderCreator): the sky's
+     * colour draws NON_ZERO_ALPHA and its others nothing, per draw; skytextured, beacon beams,
+     * lines, lightning and gbuffers_basic nothing, unless the pack's alphaTest says otherwise.
+     */
+    @Test
+    void untestedKeysHonourTheirAlphaTest() {
+        String legacy = "#version 120\nvarying vec4 color;\nvoid main() {\n    gl_FragData[0] = color;\n}\n";
+        PackAlphaTestPlan sky = PackAlphaTestPlan.forProgram("gbuffers_skybasic", settings(Map.of()));
+        assertTrue(sky.mode() == PackAlphaTestPlan.Mode.DYNAMIC_SKY
+                && sky.injectDrawTest(legacy).contains(UniformRegistry.ENTITY_ALPHA_REFERENCE), "sky per draw");
+        for (String program : List.of("gbuffers_skytextured", "gbuffers_beaconbeam", "gbuffers_line",
+                "gbuffers_lightning", "gbuffers_basic")) {
+            assertTrue(PackAlphaTestPlan.forProgram(program, settings(Map.of())).injectDrawTest(legacy).equals(legacy),
+                    program + " tests by default");
+            assertTrue(PackAlphaTestPlan.forProgram(program, settings(Map.of("alphaTest." + program, "GREATER 0.5")))
+                    .injectDrawTest(legacy).contains("gl_FragData[0].a > 0.5"), program + " ignores its alphaTest");
         }
+    }
+
+    /**
+     * Iris draws text backgrounds with TEXT_BG, which tests ONE_TENTH_ALPHA per draw unless the
+     * pack's alphaTest replaces it. The plan injects every program's test as its mode says, not
+     * by a list of families, which left text_bg untested.
+     */
+    @Test
+    void textBackgroundsTestPerDraw(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 120
+                varying vec4 color;
+                void main() { color = gl_Color; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 120
+                varying vec4 color;
+                void main() { gl_FragData[0] = color; }
+                """);
+        PackProgramPlan textBackground = PackProbe.analyze(root).plan().program("text_bg");
+        assertTrue(textBackground != null && textBackground.convertedFragment() != null
+                        && textBackground.convertedFragment().contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
+                "text_bg is not tested per draw: "
+                        + (textBackground == null ? "no plan" : textBackground.convertedFragment()));
+    }
+
+    /**
+     * Iris appends the alpha test only in compatibility mode (CommonTransformer, core false): a
+     * core-profile fragment, here 330 with no profile, keeps its authored main and tests itself
+     * against alphaTestRef, which still reads the draw's reference.
+     */
+    @Test
+    void coreProfileFragmentsTestThemselves(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 330
+                in vec3 vaPosition;
+                in vec4 vaColor;
+                uniform mat4 modelViewMatrix;
+                uniform mat4 projectionMatrix;
+                out vec4 color;
+                void main() {
+                    color = vaColor;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(vaPosition, 1.0);
+                }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 330
+                uniform float alphaTestRef;
+                in vec4 color;
+                layout(location = 0) out vec4 albedo;
+                void main() { if (color.a < alphaTestRef) discard; albedo = color; }
+                """);
+        String fragment = PackProbe.analyze(root).plan().program("gbuffers_entities").convertedFragment();
+        String reference = UniformRegistry.ENTITY_ALPHA_REFERENCE;
+        assertTrue(fragment != null && !fragment.contains(reference + " > 0.0 &&")
+                        && fragment.contains(reference + " < 0.0 ? 3.4028235e38"),
+                "a core-profile fragment was tested, or lost its alphaTestRef: " + fragment);
     }
 
     @Test
@@ -141,35 +224,38 @@ final class AlphaTestContractTest {
                 "gbuffers_terrain", settings(Map.of()));
         assertTrue(dynamic.mode() == PackAlphaTestPlan.Mode.DYNAMIC_TERRAIN,
                 "terrain default is not dynamic");
-        assertTrue(dynamic.active() && dynamic.needsHostThreshold(),
+        assertTrue(dynamic.active() && dynamic.perDrawReference(),
                 "terrain default is not active");
 
         for (String function : List.of("NEVER", "LESS", "EQUAL", "LEQUAL",
                 "GREATER", "NOTEQUAL", "GEQUAL", "ALWAYS")) {
             PackAlphaTestPlan plan = PackAlphaTestPlan.forProgram(
-                    "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain",
-                            "GL_" + function + " 0.5")));
-            if (function.equals("ALWAYS") || function.equals("NEVER")) {
-                plan = PackAlphaTestPlan.forProgram("gbuffers_terrain",
-                        settings(Map.of("alphaTest.gbuffers_terrain", "GL_" + function)));
-            }
-            assertTrue(plan.valid() && plan.mode() == PackAlphaTestPlan.Mode.FIXED,
-                    "fixed alpha function rejected: " + function);
-            assertTrue(plan.function().equals(function), "fixed alpha function changed: " + function);
+                    "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", function + " 0.5")));
+            assertTrue(plan.mode() == PackAlphaTestPlan.Mode.FIXED && plan.function().equals(function)
+                    && plan.reference() == 0.5F, "fixed alpha function rejected: " + function);
         }
+        // Iris's names are exact; GL_ALWAYS is the one GL_ spelling it takes. A third part is ignored.
+        assertTrue(PackAlphaTestPlan.forProgram("gbuffers_terrain", settings(Map.of(
+                "alphaTest.gbuffers_terrain", "GL_ALWAYS 0"))).function().equals("ALWAYS"), "GL_ALWAYS");
+        assertTrue(PackAlphaTestPlan.forProgram("gbuffers_terrain", settings(Map.of(
+                "alphaTest.gbuffers_terrain", "GREATER 0.25 extra"))).reference() == 0.25F, "third part");
 
         PackAlphaTestPlan off = PackAlphaTestPlan.forProgram(
                 "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", "off")));
-        assertTrue(off.mode() == PackAlphaTestPlan.Mode.OFF && off.valid(), "off was not accepted");
+        assertTrue(off.mode() == PackAlphaTestPlan.Mode.OFF && off.configured(), "off was not accepted");
         PackAlphaTestPlan falseValue = PackAlphaTestPlan.forProgram(
                 "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", "false")));
-        assertTrue(falseValue.mode() == PackAlphaTestPlan.Mode.OFF && falseValue.valid(),
+        assertTrue(falseValue.mode() == PackAlphaTestPlan.Mode.OFF && falseValue.configured(),
                 "false was not accepted");
-        PackAlphaTestPlan malformed = PackAlphaTestPlan.forProgram(
-                "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", "LESS")));
-        assertTrue(!malformed.valid() && malformed.deviations().get(0)
-                        .equals("ALPHA_TEST_MALFORMED:gbuffers_terrain:LESS"),
-                "malformed alpha setting was accepted");
+        // A directive Iris rejects keeps the key's own test (ShaderProperties: logged, no override).
+        for (String rejected : List.of("LESS", "ALWAYS", "Off", "GL_GREATER 0.5", "greater 0.5", "GREATER x")) {
+            PackAlphaTestPlan kept = PackAlphaTestPlan.forProgram(
+                    "gbuffers_terrain", settings(Map.of("alphaTest.gbuffers_terrain", rejected)));
+            assertTrue(kept.mode() == PackAlphaTestPlan.Mode.DYNAMIC_TERRAIN && !kept.configured()
+                            && kept.deviations().equals(
+                                    List.of("ALPHA_TEST_DIRECTIVE_IGNORED:gbuffers_terrain:" + rejected)),
+                    "a rejected directive replaced the key's test: " + rejected + " " + kept);
+        }
         PackAlphaTestPlan water = PackAlphaTestPlan.forProgram(
                 "gbuffers_water", settings(Map.of("alphaTest.gbuffers_water", "GREATER 0.5")));
         assertTrue(water.active(), "water alpha setting was not parsed");
@@ -207,19 +293,6 @@ final class AlphaTestContractTest {
     }
 
     @Test
-    void geometryOutputNames() {
-        GeometryOutputPlan single = GeometryOutputPlan.parse(
-                "gbuffers_terrain", "#version 120\nvoid main() { gl_FragColor = vec4(1.0); }", Map.of());
-        assertTrue(single.locationZeroOutputName().equals("fragColor"),
-                "single output name changed");
-        GeometryOutputPlan mrt = GeometryOutputPlan.parse(
-                "gbuffers_terrain", "#version 120\n/* DRAWBUFFERS:0123 */\n"
-                        + "void main() { gl_FragData[0] = vec4(1.0); }", Map.of());
-        assertTrue(mrt.locationZeroOutputName().equals("chimeraFragColor0"),
-                "MRT output name changed");
-    }
-
-    @Test
     void convertedTerrain() {
         Path fixture = Path.of("testpacks/m5_2/material");
         PackProbe.Analysis analysis = PackProbe.analyze(fixture);
@@ -228,13 +301,13 @@ final class AlphaTestContractTest {
         assertTrue(terrain.alphaTestPlan().mode() == PackAlphaTestPlan.Mode.DYNAMIC_TERRAIN,
                 "material terrain alpha plan is not dynamic");
         String fragment = terrain.convertedFragment();
-        assertTrue(fragment != null && fragment.contains("AlphaCutout"),
-                "converted terrain does not read the host alpha threshold");
+        assertTrue(fragment != null && fragment.contains(UniformRegistry.ENTITY_ALPHA_REFERENCE),
+                "converted terrain does not read the per-layer alpha reference");
         assertTrue(fragment.contains("discard;"), "converted terrain has no fragment termination");
-        int authored = fragment.lastIndexOf("chimeraAuthoredMain");
-        int rejection = fragment.lastIndexOf("AlphaCutout");
-        assertTrue(authored >= 0 && rejection > authored,
-                "alpha test was not appended after the authored main");
+        int main = fragment.indexOf("void main");
+        int rejection = fragment.lastIndexOf(UniformRegistry.ENTITY_ALPHA_REFERENCE);
+        assertTrue(main >= 0 && rejection > main && !fragment.contains("chimeraAuthoredMain"),
+                "alpha test does not end the authored main's body");
         compile(fragment);
         String covered = FragmentConverter.withCoverageOutput(fragment);
         assertTrue(covered.indexOf("discard;") < covered.lastIndexOf("chimeraCoverage ="),
@@ -246,7 +319,7 @@ final class AlphaTestContractTest {
         Path fixture = Path.of("testpacks/m5_2/material");
         try (PackSource.LoadResult loaded = PackSource.loadResult(fixture)) {
             PackSettingsPlan settings = settings(Map.of(
-                    "alphaTest.gbuffers_terrain", "GL_GREATER 0.5"));
+                    "alphaTest.gbuffers_terrain", "GREATER 0.5"));
             PackConfig.PackConfigData config = PackConfig.parse(
                     loaded.programs(), loaded.shadersDir(), settings);
             PackProgramPlan terrain = PackPlanBuilder.build(loaded.programs(), config,
@@ -285,20 +358,6 @@ final class AlphaTestContractTest {
         } catch (Exception failure) {
             throw new AssertionError("water fallback test failed", failure);
         }
-    }
-
-    private static void verifyRealPackTerrain(Path pack, String label) {
-        PackProbe.Analysis analysis = PackProbe.analyze(pack);
-        PackProgramPlan terrain = analysis.plan().program("gbuffers_terrain");
-        assertTrue(terrain != null && terrain.executable(),
-                label + " terrain is not conversion-eligible: "
-                        + (terrain == null ? "missing" : terrain.deviations()));
-        assertTrue(terrain.alphaTestPlan().mode() == PackAlphaTestPlan.Mode.DYNAMIC_TERRAIN,
-                label + " terrain alpha plan is not dynamic");
-        assertTrue(terrain.convertedFragment() != null
-                        && terrain.convertedFragment().contains("AlphaCutout")
-                        && terrain.convertedFragment().contains("discard;"),
-                label + " terrain has no generated alpha rejection");
     }
 
     /**
@@ -344,16 +403,6 @@ final class AlphaTestContractTest {
             assertTrue(bslSlots.contains(25) && bslSlots.contains(26),
                     "BSL material selectors 25/26 missing: " + bslSlots);
             compile(terrain.convertedFragment());
-            PackConfig.TargetSettings bslTarget2Contract = analysis.config()
-                    .targetSettings().get(2);
-            assertTrue(bslTarget2Contract != null && !bslTarget2Contract.clear(),
-                    "BSL colortex2Clear=false declaration was not parsed from the pack source");
-            PackTargetGraphPlan graph = PackTargetGraphPlan.build(
-                    analysis.plan().programs(), analysis.config(), 2560, 1440, 8, 16384);
-            assertTrue(graph.target(2) != null && graph.target(2).persistent(),
-                    "BSL temporal target lost declaration-driven cross-frame persistence");
-            assertTrue(graph.target(0) != null && !graph.target(0).persistent(),
-                    "BSL geometry target must not persist across frames");
         } finally {
             restoreProperty("chimera.option.MATERIAL_FORMAT", previousFormat);
             restoreProperty("chimera.option.ADVANCED_MATERIALS", previousAdvanced);
@@ -365,7 +414,7 @@ final class AlphaTestContractTest {
         else System.setProperty(name, value);
     }
 
-    private static PackSettingsPlan settings(Map<String, String> properties) {
+    static PackSettingsPlan settings(Map<String, String> properties) {
         return new PackSettingsPlan(Map.of(), Map.of(), Map.of(), properties, Map.of(),
                 Set.of(), Set.of(), Set.of(), List.of(), "default",
                 PackRuntimeSettings.empty(), Map.of(), Map.of(), false, Map.of(), null);

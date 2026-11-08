@@ -8,8 +8,10 @@ import java.util.TreeMap;
  * Immutable scheduled read/write information for one post program.
  * {@code mipmapTargets} are regenerated before the step runs, as Iris's
  * CompositeRenderer.setupMipmapping does for the program's directives.
- * {@code flipsBefore} and {@code flipsAfter} are the targets a {@code flip.<program>_pre} or
- * {@code flip.<program>} directive flips before or after the step, as Iris's BufferFlipper does.
+ * {@code flipsAfter} are the targets a {@code flip.<program>} directive flips after the step, as
+ * Iris's BufferFlipper does; a pass group's pre-flips are the graph's (PackTargetGraphPlan.preFlips).
+ * {@code unwrittenTargets} are the output targets the program's directive names and its shader
+ * never writes: the step flips them all the same, so their other side becomes current.
  */
 public record TargetStep(
         String programName,
@@ -24,8 +26,8 @@ public record TargetStep(
         boolean finalStage,
         boolean executable,
         List<String> deviations,
-        List<Integer> flipsBefore,
-        List<Integer> flipsAfter
+        List<Integer> flipsAfter,
+        List<Integer> unwrittenTargets
 ) {
     /** A step no flip directive names. */
     public TargetStep(String programName, List<Integer> readTargets, List<Integer> outputTargets,
@@ -45,8 +47,8 @@ public record TargetStep(
         writeSides = immutableMap(writeSides);
         mipmapTargets = mipmapTargets == null ? List.of() : mipmapTargets.stream().distinct().sorted().toList();
         deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
-        flipsBefore = flipsBefore == null ? List.of() : List.copyOf(flipsBefore);
         flipsAfter = flipsAfter == null ? List.of() : List.copyOf(flipsAfter);
+        unwrittenTargets = unwrittenTargets == null ? List.of() : List.copyOf(unwrittenTargets);
     }
 
     private static Map<Integer, Integer> immutableMap(Map<Integer, Integer> values) {

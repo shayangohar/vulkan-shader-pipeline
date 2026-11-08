@@ -1,9 +1,13 @@
 package net.chimera.render.shader;
 
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import com.mojang.blaze3d.vertex.VertexFormatElement;
 import net.chimera.shaderpack.PackPipelines;
 import net.minecraft.client.CloudStatus;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
+import net.vulkanmod.vulkan.texture.VTextureSelector;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 
 /**
  * The pack's sky and cloud programs, chosen per host draw as Iris 1.21.1 overrides the sky's
@@ -74,6 +78,14 @@ public final class ChimeraSkyBridge {
         return enabled && cloudsDrawNothing;
     }
 
+    /**
+     * True while the pack's cloud program draws the clouds, which then draw over Sodium's cloud mesh
+     * (ChimeraCloudRenderer) rather than vanilla's tile sheets.
+     */
+    public static boolean drawsPackClouds() {
+        return enabled && clouds != null;
+    }
+
     public static boolean hasBasicSky() {
         return enabled && skyBasic != null;
     }
@@ -85,6 +97,23 @@ public final class ChimeraSkyBridge {
 
     public static void endSky() {
         skyWindow = false;
+    }
+
+    /**
+     * True inside LevelRenderer.renderSky, where Iris draws position_tex and position_tex_color with
+     * its sky keys rather than TEXTURED (MixinGameRenderer checks isSky first).
+     */
+    public static boolean inSkyWindow() {
+        return skyWindow;
+    }
+
+    /**
+     * True for a position-shader draw in the sky window (the horizon, the sky and dark discs) when the
+     * pack serves no gbuffers_skybasic: Iris then draws SKY_BASIC with its fallback program, which
+     * writes the sky colour unfogged (FogMode.OFF), where the host's position shader fogs it.
+     */
+    public static boolean drawsUnfoggedSky(String shader) {
+        return skyWindow && !hasBasicSky() && "position".equals(shader);
     }
 
     /** The pack program that draws a host mesh of {@code shader} on {@code format}, or null. */
@@ -102,12 +131,53 @@ public final class ChimeraSkyBridge {
         return family == null ? null : family.forFormat(format);
     }
 
+    /** Opens a sky or cloud draw, with the sky's per-draw alpha reference (skyAlphaReference). */
     public static void beginDraw(PackPipelines.PackSky program) {
         active = program;
+        VertexFormat format = program.vertexFormat();
+        boolean basicSky = skyBasic != null && program == skyBasic.forFormat(format);
+        PackUniformProvider.updateDrawAlphaReference(skyAlphaReference(basicSky, format));
+    }
+
+    /**
+     * The reference a sky draw tests against: a gbuffers_skybasic draw on POSITION_COLOR tests
+     * Iris's SKY_BASIC_COLOR NON_ZERO_ALPHA and one on POSITION nothing (SKY_BASIC). A program the
+     * pack gives an alphaTest reads its own reference instead (PackAlphaTestPlan).
+     */
+    public static float skyAlphaReference(boolean basicSky, VertexFormat format) {
+        return basicSky && format == DefaultVertexFormat.POSITION_COLOR ? HostAlphaTest.NON_ZERO_ALPHA : 0.0F;
     }
 
     public static void endDraw() {
         active = null;
+    }
+
+    /**
+     * Binds Iris's level samplers for the open sky or cloud draw (IrisSamplers.addLevelSamplers): a
+     * format without texture coordinates (the sky disc, stars and sunrise fan) reads Iris's white
+     * pixel as its albedo, and one without light coordinates, as every sky and cloud key's is, reads
+     * it as lightmap. Returns units 0 and 2 as they were, for restoreLevelSamplers.
+     */
+    public static VulkanImage[] bindLevelSamplers() {
+        VulkanImage[] bound = {VTextureSelector.getBoundTexture(0), VTextureSelector.getBoundTexture(2)};
+        VertexFormat format = active == null ? null : active.vertexFormat();
+        if (format == null) return bound;
+        if (whiteAlbedo(format)) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
+        if (whiteLightmap(format)) VTextureSelector.bindTexture(2, VTextureSelector.getWhiteTexture());
+        return bound;
+    }
+
+    public static void restoreLevelSamplers(VulkanImage[] bound) {
+        VTextureSelector.bindTexture(0, bound[0]);
+        VTextureSelector.bindTexture(2, bound[1]);
+    }
+
+    public static boolean whiteAlbedo(VertexFormat format) {
+        return !format.contains(VertexFormatElement.UV0);
+    }
+
+    public static boolean whiteLightmap(VertexFormat format) {
+        return !format.contains(VertexFormatElement.UV2);
     }
 
     /** The open draw's pipeline, or null when no sky or cloud draw is open. */

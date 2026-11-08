@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -38,12 +39,40 @@ final class SampledResourcePlanTest {
 
         PackProbe.Analysis unsupported = PackProbe.analyze(unsupportedPath);
         verifyUnsupported(unsupported);
-        assertTrue(unsupported.report().deviations().stream().anyMatch(value ->
-                        value.startsWith("CUSTOM_IMAGE_UNSUPPORTED:")
-                                || value.startsWith("STORAGE_RESOURCE_UNSUPPORTED:")),
-                "unsupported storage declarations were not named");
+        List<String> imageDeviations = unsupported.plan().advancedResources().deviations();
+        assertTrue(imageDeviations.contains("ADVANCED_IMAGE_UNSUPPORTED:albedo"),
+                "the malformed image declaration was not named: " + imageDeviations);
 
         verifyBaseline(root.resolve("baselines/m7_5.json"), supported, unsupported);
+    }
+
+    /**
+     * Spring declares texture.deferred.noisetex and texture.composite.noisetex but no texture.noise,
+     * so its gbuffers programs read Iris's generated noise. Every noisetex shared one resource key,
+     * and the owner loaded whichever binding came first for all of them.
+     */
+    @Test
+    void aDeclaredNoiseIsItsOwnImage(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.createDirectories(shaders.resolve("texture"));
+        Files.write(shaders.resolve("texture/Noise2D.png"), new byte[] {0});
+        Files.writeString(shaders.resolve("shaders.properties"), "texture.deferred.noisetex = texture/Noise2D.png\n");
+        String vertex = "#version 120\nvarying vec2 uv;\n"
+                + "void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }\n";
+        String fragment = "#version 120\nuniform sampler2D noisetex;\nvarying vec2 uv;\n"
+                + "void main() { gl_FragData[0] = texture2D(noisetex, uv); }\n";
+        for (String program : List.of("gbuffers_terrain", "deferred")) {
+            Files.writeString(shaders.resolve(program + ".vsh"), vertex);
+            Files.writeString(shaders.resolve(program + ".fsh"), fragment);
+        }
+        PackResourcePlan resources = PackProbe.analyze(root).plan().resources();
+        PackResourceBinding generated = resources.binding("gbuffers_terrain", "noisetex");
+        PackResourceBinding declared = resources.binding("deferred", "noisetex");
+        assertTrue(generated != null && generated.status() == PackResourceStatus.GENERATED
+                && generated.resourceKey().equals("noisetex"), String.valueOf(generated));
+        assertTrue(declared != null && declared.status() == PackResourceStatus.PACK_FILE
+                && declared.resourceKey().equals("noisetex:texture/Noise2D.png") && declared.slot() == 7,
+                String.valueOf(declared));
     }
 
     private static void verifySupported(PackProbe.Analysis analysis) {
@@ -57,16 +86,17 @@ final class SampledResourcePlanTest {
         PackResourceBinding shadow = resources.binding("composite", "shadowtex0");
         PackResourceBinding scene = resources.binding("composite", "colortex0");
 
+        // Iris binds customTexture.marker straight to the program, while texture.composite.marker
+        // only replaces what a registration through the sampler interceptor binds, and no built-in
+        // sampler or image is named marker (CompositeRenderer.createProgram, IrisSamplerOrder).
         assertTrue(marker != null && marker.status() == PackResourceStatus.PACK_FILE,
-                "stage-specific marker was not loaded");
-        assertEquals("tex/override.png", marker.source(),
-                "stage-specific declaration did not win");
-        // Iris texture stages cover numbered programs: composite1 is in the
-        // composite stage, so texture.composite.marker also wins there.
+                "marker was not loaded");
+        assertEquals("tex/custom.png", marker.source(),
+                "a stage texture took a name no interceptor registration binds");
         assertTrue(globalMarker != null && globalMarker.status() == PackResourceStatus.PACK_FILE,
                 "composite1 marker was not loaded");
-        assertEquals("tex/override.png", globalMarker.source(),
-                "composite-stage declaration did not reach composite1");
+        assertEquals("tex/custom.png", globalMarker.source(),
+                "a stage texture took composite1's marker");
         assertTrue(noise != null && noise.slot() == 7
                         && noise.status() == PackResourceStatus.PACK_FILE,
                 "noisetex plan is not a pack file at slot 7");
@@ -127,6 +157,51 @@ final class SampledResourcePlanTest {
         TargetStep composite = graph.step("composite");
         assertTrue(composite != null && composite.readTargets().contains(4),
                 "gaux1 did not schedule a colortex4 read");
+    }
+
+    /**
+     * Iris preprocesses shaders.properties as C, so a raw texture's size may be a macro the file
+     * defines: Alpha Piscium sizes customTexture.usam_restirReuseTex0 with RESTIR_REUSE_TEX_WIDTH.
+     */
+    @Test
+    void resourceValuesReadPropertyMacros(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #define REUSE_SIZE 2
+                customTexture.reuse = reuse.bin TEXTURE_2D RG8UI REUSE_SIZE REUSE_SIZE RG_INTEGER UNSIGNED_BYTE
+                """);
+        Files.write(shaders.resolve("reuse.bin"), new byte[8]);
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 130\nuniform usampler2D reuse;\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = vec4(texture(reuse, vec2(0.5)));\n}\n");
+        PackPlan plan = PackProbe.analyze(root).plan();
+        assertEquals("reuse.bin TEXTURE_2D RG8UI 2 2 RG_INTEGER UNSIGNED_BYTE",
+                plan.settings().resourceDeclarations().get("customTexture.reuse").source());
+        PackResourceBinding binding = plan.resources().binding("composite", "reuse");
+        assertEquals(PackResourceStatus.PACK_FILE, binding.status(), binding.deviations().toString());
+    }
+
+    /**
+     * Iris applies a texture.<stage> entry only by replacing a registration (KNOW-801): a name nothing
+     * registers keeps unit 0, which is colortex0 in a fullscreen pass. World programs register
+     * colortex4 and up and the DH depth textures (IrisSamplers.addRenderTargetSamplers).
+     */
+    @Test
+    void stageTexturesOnlyReplaceRegisteredNames(@TempDir Path root) throws IOException {
+        assertEquals(IrisSamplerOrder.Source.TARGET, IrisSamplerOrder.POST.last("colortex1", false, false));
+        assertEquals(null, IrisSamplerOrder.WORLD.last("colortex1", false, false), "colortex1 in gbuffers");
+        assertEquals(null, IrisSamplerOrder.WORLD.last("gcolor", false, false), "gcolor in gbuffers");
+        assertEquals(IrisSamplerOrder.Source.TARGET, IrisSamplerOrder.WORLD.last("gaux1", false, false));
+        assertEquals(IrisSamplerOrder.Source.TARGET, IrisSamplerOrder.WORLD.last("dhDepthTex1", false, false));
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "texture.composite.marker = marker.png\n");
+        Files.write(shaders.resolve("marker.png"), new byte[8]);
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "uniform sampler2D marker;\nuniform sampler2D shadowtex0DH;\nvoid main() {\n/* RENDERTARGETS: 0 */\n"
+                + " gl_FragData[0] = texture2D(colortex0, vec2(0.5)) + texture2D(marker, vec2(0.5))"
+                + " + texture2D(shadowtex0DH, vec2(0.5));\n}\n");
+        PackProgramPlan composite = PackProbe.analyze(root).plan().program("composite");
+        assertTrue(composite.deviations().containsAll(List.of("SAMPLER_UNIT0_COLORTEX0:marker",
+                "SAMPLER_UNIT0_COLORTEX0:shadowtex0DH")), composite.deviations().toString());
     }
 
     @Test
@@ -194,15 +269,6 @@ final class SampledResourcePlanTest {
             PackProbe.Analysis unsupported
     ) throws IOException {
         String expected = Files.readString(baseline, StandardCharsets.UTF_8).trim();
-        if (expected.contains("TO_BE_FILLED")) {
-            System.out.println("[chimera] M7.5 supportedReport=" + supported.report().sha256());
-            System.out.println("[chimera] M7.5 supportedResource="
-                    + supported.plan().resources().fingerprint());
-            System.out.println("[chimera] M7.5 unsupportedReport=" + unsupported.report().sha256());
-            System.out.println("[chimera] M7.5 unsupportedResource="
-                    + unsupported.plan().resources().fingerprint());
-            return;
-        }
         assertTrue(expected.contains(supported.report().sha256()),
                 "supported report baseline mismatch");
         assertTrue(expected.contains(supported.plan().resources().fingerprint()),

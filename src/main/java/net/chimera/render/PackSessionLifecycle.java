@@ -7,11 +7,11 @@ import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.shader.RenderedItemIds;
-import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.HandLightDirectives;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackCoveragePlan;
+import net.chimera.shaderpack.PackDirectives;
 import net.chimera.shaderpack.PackEngineDefines;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackItemIdResolver;
@@ -27,6 +27,7 @@ import net.chimera.shaderpack.ParticleDirectives;
 import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.SelectorNamespace;
+import net.chimera.shaderpack.ShadowPassUse;
 import net.chimera.shaderpack.StagedOptions;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.chimera.shaderpack.TerrainShadingDirectives;
@@ -54,6 +55,8 @@ import static org.lwjgl.vulkan.VK10.*;
 final class PackSessionLifecycle {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private final ChimeraMainPass pass;
+    /** The loaded pack's pass computes, as its analysis translated them. */
+    private PassComputePlan passComputes = PassComputePlan.empty();
 
     /** Original pack path used to select another dimension variant in place. */
     Path packPath;
@@ -195,7 +198,6 @@ final class PackSessionLifecycle {
         // The host rebinds its normal slots during the next draw window.
         SelectorNamespace.clearOwned(slot -> VTextureSelector.bindTexture(slot, null));
         ChimeraTextureBindingState.reset();
-        pass.shadowPass.releasePackShadowView();
         pass.shadowPass.shadowMap.cleanUp();
         pass.shadowPass.packShadowDepth.cleanUp();
         pass.packPostTargets.cleanUp();
@@ -204,8 +206,6 @@ final class PackSessionLifecycle {
         pass.coverage.packCoverageState.endFrame();
         pass.coverage.packCoveragePlan = PackCoveragePlan.disabled();
         pass.pipelines.destroy();
-        if (pass.packShadowCompute != null) pass.packShadowCompute.close();
-        pass.packShadowCompute = null;
         if (pass.packPassComputes != null) pass.packPassComputes.close();
         pass.packPassComputes = null;
         if (pass.packStorageBufferOwner != null) {
@@ -223,6 +223,8 @@ final class PackSessionLifecycle {
         pass.packResourceOwner = null;
         if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.close();
         pass.packAdvancedImageOwner = null;
+        if (pass.packCenterDepth != null) pass.packCenterDepth.close();
+        pass.packCenterDepth = null;
         pass.pipelines.clear();
         pass.postChain.packPostExecution.clear();
         pass.postChain.packPostBoundaryLogged.clear();
@@ -241,8 +243,10 @@ final class PackSessionLifecycle {
         pass.packConfig = null;
         pass.packPlan = null;
         pass.shadowPass.shadowCulling = null;
+        pass.shadowPass.shadowUse = ShadowPassUse.ALWAYS;
         pass.screenOverlays = null;
         pass.skyDirectives = null;
+        pass.weatherDirectives = null;
         pass.packTargetGraph = null;
         pass.packFrameSchedule = PackFrameSchedulePlan.empty();
         pass.packPrograms = null;
@@ -253,6 +257,7 @@ final class PackSessionLifecycle {
         ChimeraTerrainPipelines.setTranslucentOverride(null);
         ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
         ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
+        PackAtlasMipmaps.setPackInstalled(false);
         PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
         RenderedItemIds.install(PackItemIdResolver.empty());
         PackUniformProvider.resetSession();
@@ -501,9 +506,11 @@ final class PackSessionLifecycle {
             ChimeraTerrainPipelines.setMaterialResolver(PackMaterialResolver.empty());
             ChimeraTerrainPipelines.setMaterialPlan(TerrainMaterialPlan.legacy());
             ChimeraTerrainPipelines.setTerrainShading(TerrainShadingDirectives.VANILLA);
+            PackAtlasMipmaps.setPackInstalled(false);
             PackUniformProvider.installHeldItems(PackItemIdResolver.empty(), true);
             RenderedItemIds.install(PackItemIdResolver.empty());
             PackUniformProvider.installRuntimeSettings(null);
+            PackUniformProvider.installDirectives(null);
             pass.packNeedsHdrDepth = false;
             return;
         }
@@ -517,6 +524,9 @@ final class PackSessionLifecycle {
         LOGGER.info("[chimera] pack sky: sun={}, moon={}, stars={}, sky={}{}", pass.skyDirectives.sun(),
                 pass.skyDirectives.moon(), pass.skyDirectives.stars(), pass.skyDirectives.sky(),
                 pass.skyDirectives.deviations().isEmpty() ? "" : " " + pass.skyDirectives.deviations());
+        pass.weatherDirectives = pass.packPlan.weatherDirectives();
+        LOGGER.info("[chimera] pack weather: rain.depth={}{}", pass.weatherDirectives.rainDepth(),
+                pass.weatherDirectives.deviations().isEmpty() ? "" : " " + pass.weatherDirectives.deviations());
         ParticleDirectives particles = pass.packPlan.particleDirectives();
         LOGGER.info("[chimera] pack particle ordering: {}, separateEntityDraws={}{}", particles.ordering(),
                 particles.separateEntityDraws(), particles.deviations().isEmpty() ? "" : " " + particles.deviations());
@@ -527,7 +537,7 @@ final class PackSessionLifecycle {
                         || program.samplers().contains("depthtex1")
                         || program.samplers().contains("depthtex2"));
         installIdMaps(result.shadersDir());
-        pass.packHdrFormat = pass.packConfig.colortexFormats().getOrDefault(0, 97);
+        pass.packHdrFormat = pass.packConfig.colortexFormats().getOrDefault(0, PostTargetPlan.DEFAULT_FORMAT);
         loadResourceOwners(result.shadersDir());
         logResourcePlans();
         logPackPrograms(dir);
@@ -540,6 +550,7 @@ final class PackSessionLifecycle {
      */
     private PackSource.LoadResult loadPackPlan(Path dir) {
         boolean fresh = pass.packSource == null;
+        PackEngineDefines.setMipmapLevel(Minecraft.getInstance().options.mipmapLevels().get());
         PackSource.LoadResult result = fresh
                 ? PackSource.loadResult(dir, this.currentDimension, PendingOptions.drain(dir)) : pass.packSource;
         pass.packSource = result;
@@ -558,6 +569,7 @@ final class PackSessionLifecycle {
                 options.undeclared(), options.disabledPrograms(),
                 options.pack().problems().isEmpty() ? "" : " " + options.pack().problems());
         pass.conformanceReport = analysis.report();
+        this.passComputes = analysis.passComputes();
         pass.packPrograms = analysis.plan() == null ? result.programs()
                 : analysis.plan().programs().stream().map(PackProgramPlan::program).toList();
         pass.packConfig = analysis.config() != null
@@ -577,16 +589,26 @@ final class PackSessionLifecycle {
                 pass.shadowPass.shadowCulling.entities(renderDistance).describe(), renderDistance,
                 pass.shadowPass.shadowCulling.deviations().isEmpty() ? "" : " "
                         + pass.shadowPass.shadowCulling.deviations());
+        ShadowPassUse shadowUse = ShadowPassUse.of(pass.packPlan, this.passComputes);
+        pass.shadowPass.shadowUse = shadowUse;
+        LOGGER.info("[chimera] shadow pass: runs={}, entityShadowsReplaced={} (shadow.enabled={}, readers={}, "
+                + "writers={}){}", shadowUse.runs(), shadowUse.replacesEntityShadows(), shadowUse.enabled(),
+                shadowUse.readers(), shadowUse.writers(),
+                shadowUse.deviations().isEmpty() ? "" : " " + shadowUse.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(pass.packPlan.terrainMaterial());
         TerrainShadingDirectives shading = pass.packPlan.terrainShading();
-        LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}{}", shading.oldLighting(),
-                shading.separateAo(), shading.deviations().isEmpty() ? "" : " " + shading.deviations());
+        LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}, voxelizeLightBlocks={}{}",
+                shading.oldLighting(), shading.separateAo(), shading.voxelizeLightBlocks(),
+                shading.deviations().isEmpty() ? "" : " " + shading.deviations());
         ChimeraTerrainPipelines.setTerrainShading(shading);
+        PackAtlasMipmaps.setPackInstalled(true);
     }
 
     /** Installs the plan's uniform runtime settings and logs how the pack resolved. */
     private void installRuntimeSettings() {
         PackUniformProvider.installRuntimeSettings(pass.packPlan.runtimeSettings());
+        PackUniformProvider.installDirectives(pass.packPlan.config() == null ? null
+                : pass.packPlan.config().directives());
         LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, "
                 + "missing={}, settingsFingerprint={}, resolutionFingerprint={}",
                 pass.packPlan.selectedDimension(),
@@ -596,12 +618,9 @@ final class PackSessionLifecycle {
                 pass.packPlan.missingProgramCount(),
                 pass.packPlan.settingsFingerprint(),
                 pass.packPlan.resolutionFingerprint());
-        LOGGER.info("[chimera] uniform runtime settings: custom={}, wetnessRise={}, wetnessFall={}, "
-                + "eyeBrightnessHalfLife={}",
+        LOGGER.info("[chimera] uniform runtime settings: custom={}, directives={}",
                 pass.packPlan.runtimeSettings().customDescriptors().size(),
-                pass.packPlan.runtimeSettings().wetnessRiseHalfLife(),
-                pass.packPlan.runtimeSettings().wetnessFallHalfLife(),
-                pass.packPlan.runtimeSettings().eyeBrightnessHalfLife());
+                pass.packPlan.config() == null ? PackDirectives.DEFAULTS : pass.packPlan.config().directives());
     }
 
     /** Parses the pack's block and item id maps and installs them with its hand-light setting. */
@@ -621,46 +640,29 @@ final class PackSessionLifecycle {
         RenderedItemIds.install(items.resolver());
     }
 
-    /** Loads the session's pack textures, material maps, advanced images, storage buffers and shadowcomp. */
+    /**
+     * Loads the session's pack textures, material maps, advanced images, smoothed centre depth,
+     * storage buffers and shadowcomp.
+     */
     private void loadResourceOwners(Path shadersDir) {
-        pass.packResourceOwner = PackResourceOwner.load(pass.packPlan.resources(), shadersDir);
         pass.materials.ensureMaterialMapOwner();
-        pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources());
-        pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources());
-        pass.packShadowCompute = PackShadowCompute.load(pass.packPlan.advancedResources(),
-                pass.packAdvancedImageOwner, pass.packResourceOwner, shadersDir,
-                pass.packPlan.settingsPreprocessorDefines(),
-                pass.packPlan.settingsOverriddenNames());
-        recordShadowComputeDisposition();
-        pass.packPassComputes = PackPassComputes.load(PassComputePlan.build(pass.packPlan, shadersDir),
-                pass.packResourceOwner);
+        pass.packResourceOwner = PackResourceOwner.load(pass.packPlan.resources(), shadersDir,
+                () -> pass.materials.materialMapOwner);
+        // Relative images and buffers start at the window's size; the main pass refits them to the main target.
+        var window = Minecraft.getInstance().getWindow();
+        int width = Math.max(window.getWidth(), 1);
+        int height = Math.max(window.getHeight(), 1);
+        pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources(), width, height,
+                passComputes.imageFormats());
+        pass.packCenterDepth = PackCenterDepth.create(pass.packPlan);
+        pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources(), width, height,
+                passComputes.storageBuffers());
+        pass.packPassComputes = PackPassComputes.load(passComputes, pass.packResourceOwner,
+                pass.packAdvancedImageOwner, pass.packStorageBufferOwner);
         for (String compute : pass.packPassComputes.installedNames()) {
             if (pass.conformanceReport != null && pass.conformanceReport.program(compute) != null) {
-                pass.conformanceReport.markRuntime(compute, ConformanceReport.RuntimeDisposition.INSTALLED,
-                        "PASS_COMPUTE_INSTALLED");
+                pass.conformanceReport.markPassComputeInstalled(compute);
             }
-        }
-    }
-
-    /** Records whether shadowcomp installed natively, or why it fell back, in the conformance report. */
-    private void recordShadowComputeDisposition() {
-        if (pass.packShadowCompute != null && pass.packShadowCompute.isInstalled()) {
-            pass.packAdvancedImageOwner.markComputeInstalled();
-            if (pass.conformanceReport != null
-                    && pass.conformanceReport.program("shadowcomp") != null) {
-                pass.conformanceReport.markRuntime("shadowcomp",
-                        ConformanceReport.RuntimeDisposition.INSTALLED,
-                        "COMPUTE_NATIVE_INSTALLED");
-            }
-        } else if (pass.conformanceReport != null
-                && pass.conformanceReport.program("shadowcomp") != null
-                && pass.conformanceReport.program("shadowcomp").runtime()
-                == ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED) {
-            pass.conformanceReport.markRuntime("shadowcomp",
-                    ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
-                    pass.packPlan.advancedResources().capabilityPossible()
-                            ? "COMPUTE_PIPELINE_BUILD_FAILED"
-                            : "COMPUTE_CAPABILITY_UNAVAILABLE");
         }
     }
 
@@ -670,11 +672,10 @@ final class PackSessionLifecycle {
                 pass.packPlan.resources().fingerprint(),
                 pass.packPlan.resources().declarations().size(),
                 pass.packPlan.resources().deviations().size());
-        LOGGER.info("[chimera] advanced resources: fingerprint={}, images={}, compute={}, capabilityPossible={}, "
+        LOGGER.info("[chimera] advanced resources: fingerprint={}, images={}, capabilityPossible={}, "
                 + "planned={}, allocated={}, initialized={}, failed={}",
                 pass.packPlan.advancedResources().fingerprint(),
                 pass.packPlan.advancedResources().images().size(),
-                pass.packPlan.advancedResources().computeStages().size(),
                 pass.packPlan.advancedResources().capabilityPossible(),
                 pass.packAdvancedImageOwner.plannedImageCount(),
                 pass.packAdvancedImageOwner.allocatedImageCount(),
@@ -696,12 +697,6 @@ final class PackSessionLifecycle {
                                 .map(PackAdvancedResourcePlan.GraphicsImageBinding::symbol)
                                 .toList())
                         .toList());
-        LOGGER.info("[chimera] advanced compute plan: {}",
-                pass.packPlan.advancedResources().computeStages().values().stream()
-                        .map(value -> value.program() + ":" + value.status() + ":" + value.deviations())
-                        .toList());
-        LOGGER.info("[chimera] advanced compute: shadowcompInstalled={}",
-                pass.packShadowCompute != null && pass.packShadowCompute.isInstalled());
     }
 
     /** Logs the pack's programs and constants, or that it has no programs. */

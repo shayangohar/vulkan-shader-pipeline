@@ -11,6 +11,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
@@ -82,14 +83,14 @@ final class StorageBufferPlanTest {
     private static void assertBufferSpecsParsed(PackAdvancedResourcePlan plan) {
         PackAdvancedResourcePlan.BufferSpec named = plan.buffers().get(0);
         PackAdvancedResourcePlan.BufferSpec unnamed = plan.buffers().get(1);
-        PackAdvancedResourcePlan.BufferSpec upper = plan.buffers().get(12);
+        PackAdvancedResourcePlan.BufferSpec upper = plan.buffers().get(8);
         assertTrue(named != null && named.supported() && named.size() == 64
                         && named.requestedName().equals("blockDataBuffer"),
                 "named absolute buffer was not parsed");
         assertTrue(unnamed != null && unnamed.supported() && unnamed.size() == 32,
                 "unnamed absolute buffer was not parsed");
         assertTrue(upper != null && upper.supported(),
-                "logical buffer index 12 was not accepted");
+                "logical buffer index 8, Iris's highest, was not accepted");
     }
 
     private static void assertStorageProgramsAdmitted(PackProbe.Analysis supported, PackProgramPlan shadow,
@@ -148,15 +149,14 @@ final class StorageBufferPlanTest {
     /** Invalid storage disables only the program that depends on it. */
     private static void assertInvalidStorageStaysScoped(PackProbe.Analysis unsupported) {
         PackAdvancedResourcePlan unsupportedPlan = unsupported.plan().advancedResources();
-        PackAdvancedResourcePlan.BufferSpec invalidZero = unsupportedPlan.buffers().get(0);
-        PackAdvancedResourcePlan.BufferSpec invalidIndex = unsupportedPlan.buffers().get(13);
-        assertTrue(invalidZero != null && !invalidZero.supported()
-                        && invalidZero.deviations().stream()
-                        .anyMatch(value -> value.startsWith("STORAGE_BUFFER_SIZE_UNSUPPORTED:")),
-                "zero-size rejection is missing");
-        assertTrue(invalidIndex != null && !invalidIndex.supported()
-                        && invalidIndex.deviations().contains("STORAGE_BUFFER_INDEX_UNSUPPORTED:13"),
-                "index-13 rejection is missing");
+        // Iris creates no buffer for a size below 1, as for an index above 8 (ShaderProperties).
+        assertTrue(unsupportedPlan.buffers().get(0) == null && unsupportedPlan.buffers().get(1) == null
+                        && unsupportedPlan.deviations().containsAll(List.of("STORAGE_BUFFER_DISABLED:0",
+                        "STORAGE_BUFFER_DISABLED:1")), "a zero or negative size must switch the buffer off");
+        assertTrue(unsupportedPlan.buffers().get(12) == null && unsupportedPlan.buffers().get(13) == null
+                        && unsupportedPlan.deviations().containsAll(List.of("STORAGE_BUFFER_INDEX_RESERVED:12",
+                        "STORAGE_BUFFER_INDEX_RESERVED:13")),
+                "indices 12 and 13 are reserved: Iris skips them");
         PackProgramPlan unsupportedShadow = unsupported.plan().program("shadow");
         assertTrue(unsupportedShadow != null && !unsupportedShadow.executable()
                         && !unsupported.plan().shouldAttempt("shadow"),
@@ -308,7 +308,7 @@ final class StorageBufferPlanTest {
         var layout = new PackAdvancedResourcePlan.ProgramBindingLayout(1, 1, 1,
                 List.of(), List.of(), List.of(), List.of(descriptor), List.of(descriptor));
         try {
-            PackPipelines.prepareLayout(new PackPipelines.PreparedPipeline(null, "", "", layout,
+            PackPipelines.prepareLayout(new PackPipelines.PreparedPipeline(null, "", BetweenStages.NONE, "", layout,
                     new ProgramImageBindingManifest(List.of())), "future", PackAdvancedResourcePlan.empty());
             throw new AssertionError("Future selector reached builder creation");
         } catch (PackPipelines.PreparationFailure failure) {
@@ -685,10 +685,10 @@ final class StorageBufferPlanTest {
                 + "layout(std430, binding = 1) SSBO_QUALIFIER buffer reader {\n"
                 + " uint values[];\n};\n");
         List<GlslStorageBufferParser.Block> blocks = GlslStorageBufferParser.scan(source);
-        assertTrue(blocks.size() == 2 && blocks.get(0).std430()
+        assertTrue(blocks.size() == 2 && blocks.get(0).laidOut()
                         && blocks.get(0).originalBinding() == 0
                         && blocks.get(0).instanceName().equals("blockDataBuffer")
-                        && blocks.get(1).std430()
+                        && blocks.get(1).laidOut()
                         && blocks.get(1).originalBinding() == 1
                         && blocks.get(1).instanceName().isEmpty(),
                 "storage blocks are not read in source order");
@@ -723,7 +723,7 @@ final class StorageBufferPlanTest {
         UniformRegistry.ProgramInterface deadPlan = UniformRegistry.planPreparedPost(
                 deadHelperSource, targetResult.plan());
         String deadConverted = FragmentConverter.convertPostFragment(
-                deadHelperSource, null, deadPlan, targetResult.plan(), Map.of());
+                deadHelperSource, null, deadPlan, targetResult.plan());
         assertTrue(deadConverted != null && !deadConverted.contains("unreachable")
                         && !deadConverted.contains("helperSampler")
                         && deadPlan.samplers().isEmpty()
@@ -830,24 +830,142 @@ final class StorageBufferPlanTest {
                 + " gl_FragColor = vec4(value); }\n";
         LegacyShaderNormalizer.Result normalizedFog = LegacyShaderNormalizer.normalize(fogSource, false);
         assertTrue(normalizedFog.successful()
-                        && normalizedFog.source().contains("fogStart")
-                        && normalizedFog.source().contains("fogEnd")
-                        && normalizedFog.source().contains("1.0 / (fogEnd - fogStart)")
-                        && normalizedFog.source().contains("uniform float fogStart;")
-                        && normalizedFog.source().contains("uniform float fogEnd;"),
+                        && normalizedFog.source().contains("1.0 / (iris_FogEnd - iris_FogStart)")
+                        && normalizedFog.source().contains("uniform float iris_FogStart;")
+                        && normalizedFog.source().contains("uniform float iris_FogEnd;"),
                 "legacy gl_Fog fields were not normalized");
         UniformRegistry.ProgramInterface fogPlan = UniformRegistry.planPreparedPost(
                 normalizedFog.source(),
                 PostTargetPlan.parse("composite", fogSource).plan());
-        assertTrue(fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("fogStart"))
-                        && fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("fogEnd"))
+        assertTrue(fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("iris_FogStart"))
+                        && fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("iris_FogEnd"))
                         && fogPlan.executable(),
                 "normalized fog values did not enter the live interface");
+        // Division exposes a missing outer pair of parentheses; multiplication alone does not.
+        LegacyShaderNormalizer.Result division = LegacyShaderNormalizer.normalize(
+                "float probe = 6.0 / gl_Fog.scale;", false);
+        assertTrue(division.successful(), "Fog scale division normalization failed");
+        String expression = division.source().substring(division.source().indexOf("=") + 1,
+                division.source().lastIndexOf(';')).trim();
+        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(true, "float", "fogScaleProbe", expression)),
+                List.of());
+        assertTrue(settings.indexOf("fogScaleProbe") >= 0,
+                "Normalized fog scale expression is not evaluable");
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> switch (name) {
+            case "iris_FogStart" -> 2.0;
+            case "iris_FogEnd" -> 8.0;
+            default -> throw new AssertionError("Unexpected fog dependency: " + name);
+        }, session, 0.05f);
+        assertEquals(36.0f, session.values()[settings.indexOf("fogScaleProbe")],
+                "gl_Fog.scale reciprocal lost expression precedence");
         LegacyShaderNormalizer.Result unsupportedFog = LegacyShaderNormalizer.normalize(
-                "void main() { gl_FragColor = vec4(gl_Fog.density); }", false);
+                "void main() { gl_FragColor = vec4(gl_Fog.index); }", false);
         assertTrue(!unsupportedFog.successful()
                         && unsupportedFog.deviations().contains(
-                        "LEGACY_FOG_FIELD_UNSUPPORTED:density"),
+                        "LEGACY_FOG_FIELD_UNSUPPORTED:index"),
                 "unsupported gl_Fog field did not fail closed");
+    }
+
+    /**
+     * Shrimple qualifies none of its storage blocks with a packing. GL lays such a block out alike in
+     * every program (shared), and glslang lays it out std430 for Vulkan in every stage alike, so it
+     * binds; std140 binds as spelled. Spelled-out shared or packed has no Vulkan layout.
+     */
+    @Test
+    void storageBlocksWithoutAPackingBind() {
+        List<GlslStorageBufferParser.Block> blocks = GlslStorageBufferParser.scan("""
+                #version 430
+                layout(binding = 0) readonly buffer sceneData { vec3 sunDirection; uint lightType; };
+                layout(std140, binding = 1) buffer lights { vec4 colors[4]; };
+                layout(shared, binding = 2) buffer legacy { float values[]; };
+                void main() {}
+                """);
+        assertTrue(blocks.get(0).laidOut() && blocks.get(1).laidOut() && !blocks.get(2).laidOut(),
+                blocks.toString());
+    }
+
+    /**
+     * ShaderProperties skips a bufferObject value it cannot parse (three values, or a size or scale
+     * that is no number), as it skips a reserved index: Iris creates no buffer under that index.
+     */
+    @Test
+    void malformedDeclarationsCreateNoBuffer(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "bufferObject.1=4 true 1.0\nbufferObject.2=big\nbufferObject.3=64 true wide 1.0\nbufferObject.4=64\n");
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform sampler2D colortex0;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(colortex0, uv); }
+                """);
+        PackAdvancedResourcePlan resources = PackProbe.analyze(root).plan().advancedResources();
+        for (int index = 1; index <= 3; index++) {
+            assertTrue(resources.buffers().get(index) == null
+                            && resources.deviations().contains("STORAGE_BUFFER_PROPERTY_MALFORMED:" + index),
+                    "bufferObject." + index + " is skipped: " + resources.deviations());
+        }
+        assertTrue(resources.buffers().get(4) != null, "a well-formed neighbour still declares its buffer");
+    }
+
+    /**
+     * Iris's ShaderProperties reads "size [name]", or "size relative scaleX scaleY" from the first
+     * four values. A relative buffer holds size bytes for each pixel of its truncated share of the
+     * screen (ShaderStorageBuffer.resizeIfRelative). Alpha Piscium declares bufferObject.1=4 true 1.0 1.0.
+     */
+    @Test
+    void relativeBuffersFollowTheScreen(@TempDir Path root) throws IOException {
+        PackAdvancedResourcePlan.BufferSpec screen = StorageBufferDeclarations.parseBuffer(1, "4 true 1.0 1.0");
+        PackAdvancedResourcePlan.BufferSpec tiles = StorageBufferDeclarations.parseBuffer(5, "16384 true 0.033 0.033");
+        PackAdvancedResourcePlan.BufferSpec fixed = StorageBufferDeclarations.parseBuffer(2, "64 false 0.5 0.5 x");
+        assertTrue(screen.supported() && screen.relative() && tiles.supported() && fixed.supported()
+                && !fixed.relative(), List.of(screen, tiles, fixed).toString());
+        assertEquals(1920L * 1080L * 4L, screen.bytes(1920, 1080));
+        assertEquals(63L * 35L * 16384L, tiles.bytes(1920, 1080));
+        assertEquals(64L, fixed.bytes(1920, 1080));
+        for (String malformed : List.of("4 true 1.0", "4 true wide 1.0")) {
+            assertTrue(StorageBufferDeclarations.parseBuffer(1, malformed).deviations()
+                    .contains("STORAGE_BUFFER_PROPERTY_MALFORMED:1"), malformed);
+        }
+        // A share of zero or less, or none at all, gives Iris no buffer to create.
+        for (String empty : List.of("4 true 0 1.0", "4 true -0.5 1.0", "4 true 1.0 NaN")) {
+            assertTrue(StorageBufferDeclarations.parseBuffer(1, empty).deviations()
+                    .contains("STORAGE_BUFFER_SIZE_UNSUPPORTED:1"), empty);
+        }
+        // ShaderProperties: a size below 1 switches the buffer off, an index above 8 is reserved,
+        // and the values split on single spaces.
+        for (String off : List.of("0", "-4", "0 true 1.0 1.0")) {
+            assertEquals(List.of("STORAGE_BUFFER_DISABLED:3"),
+                    StorageBufferDeclarations.parseBuffer(3, off).deviations(), off);
+        }
+        assertEquals(List.of("STORAGE_BUFFER_INDEX_RESERVED:9"),
+                StorageBufferDeclarations.parseBuffer(9, "64").deviations());
+        assertTrue(StorageBufferDeclarations.parseBuffer(1, "64  name").deviations()
+                .contains("STORAGE_BUFFER_PROPERTY_MALFORMED:1"), "a double space makes three values");
+        // Any byte count binds: RenderPearl's BUFFER_16_8 declares bufferObject.0=6.
+        assertTrue(StorageBufferDeclarations.parseBuffer(0, "6").supported()
+                && StorageBufferDeclarations.parseBuffer(1, "2 true 1.0 1.0").supported());
+
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.1=4 true 1.0 1.0\n");
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 430 compatibility
+                out vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 430 compatibility
+                layout(std430, binding = 1) buffer ScreenData { uint values[]; } screenData;
+                uniform sampler2D gtexture;
+                in vec2 uv;
+                void main() { gl_FragData[0] = texture(gtexture, uv) * float(screenData.values[0]); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        assertTrue(plan.shouldAttempt("gbuffers_entities")
+                        && plan.advancedResources().storageBuffers("gbuffers_entities").stream()
+                        .allMatch(PackAdvancedResourcePlan.StorageBufferBinding::supported),
+                plan.advancedResources().deviations().toString());
     }
 }

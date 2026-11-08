@@ -4,8 +4,6 @@ import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.mixin.ChimeraRendererAccessor;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraPostPipelines;
-import net.chimera.render.shader.ChimeraSkyBridge;
-import net.chimera.render.shader.FamilyRenderType;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.GeometryOutputPlan;
@@ -21,6 +19,7 @@ import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.chimera.shaderpack.SkyDirectives;
 import net.chimera.shaderpack.TargetSpec;
+import net.chimera.shaderpack.WeatherDirectives;
 import net.minecraft.client.renderer.RenderType;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import net.vulkanmod.vulkan.Renderer;
@@ -55,8 +54,8 @@ import static org.lwjgl.vulkan.VK10.*;
  * VulkShade:
  *
  *   - renderLevel HEAD opens the internal RGBA16F world target.
- *   - The opaque layer's head temporarily records the shadow map and resumes
- *     the world target.
+ *   - Just before the sky, the shadow map is recorded (PreSkyPasses) and the
+ *     world target resumes.
  *   - renderLevel RETURN resolves the HDR world into a separate output target.
  *     Entity passes inside renderLevel follow the HDR alias; hand, GUI, and
  *     post-chain passes follow the output alias.
@@ -88,13 +87,9 @@ public final class ChimeraMainPass implements MainPass {
     final MaterialMapRuntime materials = new MaterialMapRuntime(this);
     final PackFamilyWindows windows = new PackFamilyWindows(this);
 
+    /** The host hand continues from loaded color with a fresh cleared depth. */
     private static final HandBoundaryPolicy HAND_BOUNDARY_POLICY =
             new HandBoundaryPolicy(true, true);
-
-    /** The host hand continues from loaded color with a fresh cleared depth. */
-    static HandBoundaryPolicy handBoundaryPolicy() {
-        return HAND_BOUNDARY_POLICY;
-    }
 
     static record HandBoundaryPolicy(boolean loadColor, boolean clearDepth) {}
 
@@ -172,20 +167,23 @@ public final class ChimeraMainPass implements MainPass {
     PackResourceOwner packResourceOwner;
     /** All pack-owned writable images, retained for the pack session. */
     PackAdvancedImageOwner packAdvancedImageOwner;
+    /** Iris's smoothed centre depth, when a fullscreen pass reads it. */
+    PackCenterDepth packCenterDepth;
     /** Owns exact-size pack storage buffers for the active session. */
     PackStorageBufferOwner packStorageBufferOwner;
     boolean packStorageInitializationLogged;
     /** Suppresses the secondary frame-not-started flood until the next pack session. */
     boolean packTargetFrameNotStartedLogged;
-    /** Optional bounded shadow compute pipeline for the active pack session. */
-    PackShadowCompute packShadowCompute;
     /** The pack's computes that run before their deferred, composite or prepare pass. */
     PackPassComputes packPassComputes;
     /** Static pack inventory plus the actual compile/install disposition. */
     ConformanceReport conformanceReport;
     /** Pack pipelines are retained until the renderer session is torn down. */
     boolean packPipelinesLoaded;
-    /** HDR buffer format from the pack's colortex0Format; 97 (RGBA16F) when the pack says nothing. */
+    /**
+     * HDR buffer format: a loaded pack's colortex0 format (PostTargetPlan.DEFAULT_FORMAT, RGBA8 as
+     * under Iris, when it declares none); 97 (RGBA16F) for Chimera's own frame without a pack.
+     */
     int packHdrFormat = 97;
     /** True when a loaded post source may sample the HDR depth attachment. */
     boolean packNeedsHdrDepth;
@@ -200,6 +198,8 @@ public final class ChimeraMainPass implements MainPass {
     ScreenOverlayDirectives screenOverlays;
     /** Which parts of Minecraft's sky this pack session keeps (Iris sun, moon, stars and sky). */
     SkyDirectives skyDirectives;
+    /** Whether this pack session's rain and snow write depth (Iris rain.depth). */
+    WeatherDirectives weatherDirectives;
     /** True after renderLevel opens the internal HDR world target. */
     boolean levelPhase;
     /** Set when vanilla requests a depth clear while no pass is recording. */
@@ -290,12 +290,20 @@ public final class ChimeraMainPass implements MainPass {
         Renderer.getInstance().endRenderPass();
         if (this.packStorageBufferOwner != null) {
             this.packStorageBufferOwner.beginExecutionFrame();
+            // Iris sizes relative buffers, as relative images, from the main render target.
+            this.packStorageBufferOwner.fitRelativeBuffers(Renderer.getCommandBuffer(),
+                    this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight());
             boolean initialized = this.packStorageBufferOwner.initialize(Renderer.getCommandBuffer());
             if (initialized || !this.packStorageInitializationLogged) {
                 load.logPackStoragePath("storage-initialization");
                 this.packStorageInitializationLogged = true;
             }
             this.packStorageBufferOwner.prepareForUse(Renderer.getCommandBuffer());
+        }
+        if (this.packAdvancedImageOwner != null) {
+            // Iris sizes relative images from the main render target.
+            this.packAdvancedImageOwner.prepareFrame(Renderer.getCommandBuffer(),
+                    this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight());
         }
         this.currentFramebuffer = this.targets.hdrFramebuffer;
         this.depth.hdrDepthReadable = false;
@@ -308,6 +316,7 @@ public final class ChimeraMainPass implements MainPass {
         if (this.packDepthTargets.isConfigured()) {
             this.packDepthTargets.beginFrame(Renderer.getCommandBuffer());
         }
+        if (this.packCenterDepth != null) this.packCenterDepth.beginFrame(Renderer.getCommandBuffer());
         if (this.packPostTargets.isConfigured()) {
             postChain.beginPostFrame(Renderer.getCommandBuffer());
         }
@@ -325,9 +334,8 @@ public final class ChimeraMainPass implements MainPass {
             this.levelPhase = true;
             this.pendingDepthClear = false;
         }
-        if (this.packPostChainActive
-                && this.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE)) {
-            postChain.runPrepareWindow(commandBuffer);
+        if (this.packPostChainActive && postChain.hasOpeningWork()) {
+            postChain.runOpeningWindows(commandBuffer);
         }
     }
 
@@ -363,10 +371,14 @@ public final class ChimeraMainPass implements MainPass {
         return this.levelPhase && this.packPostChainActive && this.packPostTargets.isConfigured();
     }
 
-    /** Called as the sky window opens, ahead of the sky, under its model-view and projection. */
+    /**
+     * Called after the world clear, ahead of the sky, under the level's model-view and projection.
+     * Without a gbuffers_skybasic it draws as Iris's SKY_BASIC fallback does (PackHostDraws).
+     */
     public void drawPackHorizon(Matrix4f modelView, Matrix4f projection) {
-        if (this.levelPhase && this.skyDirectives != null && this.skyDirectives.sky()
-                && ChimeraSkyBridge.hasBasicSky()) this.horizonRenderer.draw(modelView, projection);
+        if (this.levelPhase && this.skyDirectives != null && this.skyDirectives.sky()) {
+            this.horizonRenderer.draw(modelView, projection);
+        }
     }
 
     /** Resolves the world into the stable output before hand and GUI work. */
@@ -438,7 +450,7 @@ public final class ChimeraMainPass implements MainPass {
     }
 
     /** Draws buffered family batches inside their lanes' pack windows (FamilyBufferSource). */
-    public void drawFamilyBatches(List<FamilyRenderType> batches, Consumer<RenderType> draw,
+    public void drawFamilyBatches(List<RenderType> batches, Consumer<RenderType> draw,
                                   Consumer<RenderType> discard) {
         windows.drawFamilyBatches(batches, draw, discard);
     }
@@ -693,6 +705,11 @@ public final class ChimeraMainPass implements MainPass {
         depth.captureOpaqueDepthBeforeTranslucent();
     }
 
+    /** Iris's beginHand centre-depth sample, before the hand draws. */
+    public void sampleCenterDepthBeforeHand() {
+        depth.sampleCenterDepthBeforeHand();
+    }
+
     // ------------------------------------------------------------------
     // Main-target interop
     // ------------------------------------------------------------------
@@ -819,6 +836,7 @@ public final class ChimeraMainPass implements MainPass {
         stopRenderWorkForCleanup();
         sessions.waitForImmediateDestruction("final pack cleanup");
         this.horizonRenderer.close();
+        ChimeraCloudRenderer.shared().close();
         sessions.cleanUpPackVariant();
         // The material owner has renderer lifetime: shader-pack replacement
         // must not close it, and final teardown closes it exactly once while
@@ -877,6 +895,7 @@ public final class ChimeraMainPass implements MainPass {
         // Renderer idles the device before resize and may change its frames-in-flight
         // count. Recreate the diagnostic ring at this same safe boundary.
         this.postChain.nanTripwire.close();
+        if (resources.serveSwapchain()) return;
         resources.createResources();
     }
 
@@ -921,6 +940,9 @@ public final class ChimeraMainPass implements MainPass {
     /** The loaded pack's sky switches, or null while no pack session is loaded. */
     public SkyDirectives skyDirectives() { return this.skyDirectives; }
 
+    /** The loaded pack's weather switch, or null while no pack session is loaded. */
+    public WeatherDirectives weatherDirectives() { return this.weatherDirectives; }
+
     public void recordShadowDraw() {
         shadowPass.recordShadowDraw();
     }
@@ -936,15 +958,6 @@ public final class ChimeraMainPass implements MainPass {
 
     public boolean packShadowPassActive() {
         return shadowPass.packShadowPassActive();
-    }
-
-    static boolean containsSlot(int[] slots, int slot) {
-        for (int candidate : slots) {
-            if (candidate == slot) {
-                return true;
-            }
-        }
-        return false;
     }
 
     void cleanUpPipelines() {

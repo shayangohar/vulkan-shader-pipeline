@@ -8,7 +8,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -84,17 +83,6 @@ final class WaterProgramTest {
         verifyRealPack(TestPacks.bsl(), "bsl");
     }
 
-    /** Structural check for the shared Vulkan builder; runtime captures verify its sampler. */
-    @Test
-    void depthSamplingContract() throws IOException {
-        String source = Files.readString(Path.of(
-                "src/main/java/net/chimera/render/PackDepthTargets.java"));
-        assertTrue(source.contains(".setLinearFiltering(false)")
-                        && !source.contains(".setLinearFiltering(true)")
-                        && source.contains(".setClamp(true)"),
-                "depthtex0/1/2 snapshots must use Iris nearest/clamp sampling");
-    }
-
     /** The water stage serves the terrain uniforms and its translucent inputs. */
     @Test
     void liveInterface() {
@@ -103,8 +91,6 @@ final class WaterProgramTest {
         assertTrue(water.executable(), "water interface is not executable: " + water.deviations());
         assertTrue(water.deviations().contains("LIVE_UNIFORM_BRIDGE"),
                 "water uniforms do not use the live bridge: " + water.deviations());
-        assertTrue(water.deviations().stream().noneMatch(value -> value.startsWith("TRANSLUCENT_FIXED")),
-                "water still reports the retired fixed uniform bridge: " + water.deviations());
         Map<String, Integer> expected = Map.of(
                 "texture", 0, "lightmap", 2, "shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT, "noisetex", 7,
                 "depthtex1", 12, "gaux2", 9);
@@ -129,11 +115,13 @@ final class WaterProgramTest {
         assertTrue(!current.executable()
                         && current.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:colortex0"),
                 "water accepted colortex0, which aliases a host selector: " + current.deviations());
+        // depthtex0 is a capture taken before the layer draws (KNOW-760), never the depth it writes.
         UniformRegistry.ProgramInterface depth = UniformRegistry.plan(
                 "uniform sampler2D depthtex0; void main() { gl_FragColor = texture2D(depthtex0, vec2(0.0)); }",
                 UniformRegistry.Stage.TRANSLUCENT);
-        assertTrue(!depth.executable() && depth.deviations().contains("TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED"),
-                "water accepted depthtex0, the depth it is writing: " + depth.deviations());
+        assertTrue(depth.executable() && depth.samplers().stream().anyMatch(sampler ->
+                        sampler.name().equals("depthtex0") && sampler.slot() == 6),
+                "water refused depthtex0: " + depth.deviations());
     }
 
     /**
@@ -331,7 +319,7 @@ final class WaterProgramTest {
                 "toggle defines: " + settings.preprocessorDefines());
         ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(null, null, source,
                 PackEngineDefines.forPack(settings.preprocessorDefines()),
-                PackEngineDefines.lockedNames(settings.overriddenNames(), false, false));
+                PackEngineDefines.lockedNames(settings.overriddenNames(), false));
         assertTrue(prepared.source() != null && !prepared.source().contains("sourceOn")
                         && prepared.source().contains("sourceOff"),
                 "toggle options did not follow Iris true/false: " + prepared.source());

@@ -29,11 +29,11 @@ public record TerrainMaterialPlan(
             String vertexSource,
             String fragmentSource
     ) {
-        if (!name.equals("gbuffers_terrain") && !name.equals("gbuffers_water")
-                && !name.equals("shadow")) {
+        String lane = FamilyAdapterRegistry.laneProgram(name);
+        if (!lane.equals("gbuffers_terrain") && !lane.equals("gbuffers_water") && !lane.equals("shadow")) {
             return legacy();
         }
-        boolean supportedModern = name.equals("shadow")
+        boolean supportedModern = lane.equals("shadow")
                 ? TerrainVertexBridge.supportsModernShadow(vertexSource, fragmentSource)
                 : TerrainVertexBridge.requiresExtendedTerrain(vertexSource)
                 || TerrainVertexBridge.requiresExtendedTerrain(fragmentSource);
@@ -41,9 +41,9 @@ public record TerrainMaterialPlan(
             return legacy();
         }
         List<String> deviations = new ArrayList<>();
-        deviations.add(name.equals("gbuffers_water")
+        deviations.add(lane.equals("gbuffers_water")
                 ? "MODERN_WATER_VERTEX_BRIDGE"
-                : name.equals("shadow") ? "MODERN_SHADOW_VERTEX_BRIDGE"
+                : lane.equals("shadow") ? "MODERN_SHADOW_VERTEX_BRIDGE"
                 : "MODERN_TERRAIN_VERTEX_BRIDGE");
         deviations.add("TERRAIN_NORMAL_AUTHORITATIVE");
         deviations.add("TERRAIN_TANGENT_DERIVED_FALLBACK");

@@ -5,10 +5,12 @@ import net.chimera.ChimeraMod;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
+import net.chimera.render.shader.TerrainVertexUniforms;
 import net.chimera.shaderpack.ParticleDirectives;
 import net.chimera.shaderpack.ScreenOverlayDirectives;
 import net.chimera.shaderpack.SkyDirectives;
 import net.chimera.shaderpack.StagedOptions;
+import net.chimera.shaderpack.WeatherDirectives;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.vulkanmod.vulkan.Renderer;
@@ -79,6 +81,8 @@ public final class ChimeraRenderer {
         }
 
         hostPass = current;
+        // Before the main pass and the terrain pipelines build the terrain and shadow configs.
+        TerrainVertexUniforms.register();
         chimeraPass = new ChimeraMainPass();
         renderer.addOnResizeCallback(ChimeraRenderer::refreshIdleHostPass);
         ready = true;
@@ -170,6 +174,13 @@ public final class ChimeraRenderer {
         // uploads arrive whether or not a pack is installed.
         chimeraPass.pumpMaterialMapBuilds();
         chimeraPass.resources.refreshWorldResourcesIfDue();
+        ChimeraTerrainPipelines.rebuildingOnce(ChimeraRenderer::changePackAtFrameBoundary);
+        // After any pack change above, so a replaced pack's teardown and install upload the atlas once.
+        PackAtlasMipmaps.reconcile();
+    }
+
+    /** Hands a pending pack change or dimension variant to the host, applies it, and resumes Chimera. */
+    private static void changePackAtFrameBoundary() {
         if (chimeraPass.hasPendingPackChange() && installed) {
             Renderer.getInstance().setMainPass(hostPass);
             ChimeraTerrainPipelines.disable();
@@ -233,11 +244,25 @@ public final class ChimeraRenderer {
     }
 
     /**
+     * The weather switch of the pack rendering this frame's world, or null when the world is not
+     * pack-rendered and rain and snow draw as vanilla's (Iris MixinLevelRenderer checks its active
+     * pipeline the same way).
+     */
+    public static WeatherDirectives packWeatherDirectives() {
+        return packProjectionActive() ? chimeraPass.weatherDirectives() : null;
+    }
+
+    /**
      * Where the pack rendering this frame's world draws particles against its deferred passes, or
      * null when the world is not pack-rendered and NeoForge's split stands (Iris answers MIXED then).
      */
     public static ParticleDirectives.Ordering packParticleOrdering() {
         return packProjectionActive() ? chimeraPass.packPlan.particleDirectives().ordering() : null;
+    }
+
+    /** The installed pack's separateEntityDraws, as Iris's batched entity rendering reads it; false with no pack. */
+    public static boolean packSeparatesEntityDraws() {
+        return packProjectionActive() && chimeraPass.packPlan.particleDirectives().separateEntityDraws();
     }
 
     /**
@@ -385,6 +410,7 @@ public final class ChimeraRenderer {
 
     /** Level went away mid-screen: host takes over until a live level returns. */
     public static void onLevelUnloaded() {
+        ShadowSectionQueue.release();
         if (!screenOpen || screenMode || !installed) {
             return;
         }
@@ -400,6 +426,7 @@ public final class ChimeraRenderer {
 
     /** Re-selects the pack variant before applying the screen lifecycle state. */
     public static void onLevelLoaded(ClientLevel level) {
+        ShadowSectionQueue.release();
         if (chimeraPass != null && level != null) {
             chimeraPass.onLevelChanged(level.dimension().location().toString());
         }

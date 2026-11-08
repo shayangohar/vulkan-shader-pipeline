@@ -16,8 +16,12 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
  * against the catalog and the pack's own values, and binds each sampler to its selector slot.
  */
 final class InterfacePlanner {
-    private static final Set<String> PLANAR_SAMPLER_TYPES = Set.of("sampler2D", "sampler2DShadow");
-    private static final Set<String> VOLUME_SAMPLER_TYPES = Set.of("sampler3D", "isampler3D", "usampler3D");
+    /** Iris binds integer targets (IrisColorFormats) to isampler2D and usampler2D declarations. */
+    private static final Set<String> PLANAR_SAMPLER_TYPES = Set.of("sampler2D", "sampler2DShadow",
+            "isampler2D", "usampler2D");
+    /** Samplers of 1D and 3D textures, which only the pack's own textures and images serve. */
+    private static final Set<String> PACK_ONLY_SAMPLER_TYPES = Set.of("sampler3D", "isampler3D", "usampler3D",
+            "sampler1D", "isampler1D", "usampler1D");
 
     private InterfacePlanner() {}
 
@@ -97,6 +101,13 @@ final class InterfacePlanner {
                 && !UniformRegistry.isLocallyDeclared(stripped, "gbufferModelView")) {
             declareImplicit("gbufferModelView", "mat4", declared, deviations);
         }
+        // The shadow bridge serves them from the shadow matrices
+        // (ShadowStageBuiltins.matrixReplacements): RenderPearl's shadow vertex
+        // reads modelViewMatrix, which Iris's core profile makes gl_ModelViewMatrix.
+        for (String name : shadowMatrixValues(stripped, stage)) {
+            if (declared.uniforms().containsKey(name) || UniformRegistry.isLocallyDeclared(stripped, name)) continue;
+            declareImplicit(name, "mat4", declared, deviations);
+        }
         return declared;
     }
 
@@ -149,18 +160,24 @@ final class InterfacePlanner {
     static Set<String> referencedValues(String stripped, UniformRegistry.Stage stage) {
         Set<String> referenced = new TreeSet<>(
                 GlslResourceUsage.referencedValueIdentifiers(stripped, UniformRegistry.UNIFORM_SPECS.keySet()));
-        if (stage == UniformRegistry.Stage.SHADOW) {
-            if (UniformRegistry.containsIdentifier(stripped, "gl_ModelViewMatrix")) {
-                referenced.add("shadowModelView");
-            }
-            if (UniformRegistry.containsIdentifier(stripped, "gl_NormalMatrix")) {
-                referenced.add("shadowModelViewInverse");
-            }
-            if (UniformRegistry.containsIdentifier(stripped, "gl_ProjectionMatrix")) {
-                referenced.add("shadowProjection");
-            }
-        }
+        referenced.addAll(shadowMatrixValues(stripped, stage));
         return referenced;
+    }
+
+    /** The shadow matrices that stand for the legacy matrix built-ins a shadow-pass source reads. */
+    private static Set<String> shadowMatrixValues(String stripped, UniformRegistry.Stage stage) {
+        Set<String> values = new TreeSet<>();
+        if (stage != UniformRegistry.Stage.SHADOW) return values;
+        if (UniformRegistry.containsIdentifier(stripped, "gl_ModelViewMatrix")) {
+            values.add("shadowModelView");
+        }
+        if (UniformRegistry.containsIdentifier(stripped, "gl_NormalMatrix")) {
+            values.add("shadowModelViewInverse");
+        }
+        if (UniformRegistry.containsIdentifier(stripped, "gl_ProjectionMatrix")) {
+            values.add("shadowProjection");
+        }
+        return values;
     }
 
     /** The descriptor a declared name plans against: a pack value of a VulkanMod host name is the pack's. */
@@ -197,14 +214,9 @@ final class InterfacePlanner {
         }
         UniformRegistry.UniformDescriptor custom = customDescriptors == null ? null : customDescriptors.get(name);
         UniformRegistry.UniformDescriptor spec = descriptorFor(name, customDescriptors);
-        if (custom != null && custom.availability() == UniformRegistry.Availability.REJECTED) {
-            // The pack wrote this declaration and Chimera could not honour it. A program that reads
-            // the name must not run with a substitute value, so it fails closed here.
-            deviations.add(unusedOr(name, unused, "CUSTOM_VALUE_REJECTED:" + name));
-            return;
-        }
-        if (!UniformRegistry.SUPPORTED_TYPES.contains(type)) {
-            deviations.add(unusedOr(name, unused, "UNIFORM_TYPE_UNSUPPORTED:" + name));
+        String refusal = refusal(name, type, custom, stage);
+        if (refusal != null) {
+            deviations.add(unusedOr(name, unused, refusal));
             return;
         }
         spec = typed(name, type, spec, unused, deviations);
@@ -223,6 +235,20 @@ final class InterfacePlanner {
             return;
         }
         addLiveBridge(name, spec, customDescriptors, deviations);
+    }
+
+    /**
+     * Why a declaration keeps its program from running, or null. A custom value the pack wrote and
+     * Chimera could not honour must not run with a substitute, so it fails closed; so do a type the
+     * uniform block cannot carry and a name this stage cannot read (UniformRegistry.unservedIn).
+     */
+    private static String refusal(String name, String type, UniformRegistry.UniformDescriptor custom,
+                                  UniformRegistry.Stage stage) {
+        if (custom != null && custom.availability() == UniformRegistry.Availability.REJECTED) {
+            return "CUSTOM_VALUE_REJECTED:" + name;
+        }
+        if (!UniformRegistry.SUPPORTED_TYPES.contains(type)) return "UNIFORM_TYPE_UNSUPPORTED:" + name;
+        return custom == null && UniformRegistry.unservedIn(name, stage) ? "UNIFORM_NAME_UNSUPPORTED:" + name : null;
     }
 
     /** Iris disables a value the program declares with another type, and it reads zero (KNOW-732). */
@@ -274,20 +300,25 @@ final class InterfacePlanner {
         for (Map.Entry<String, String> sampler : samplerNames.entrySet()) {
             String name = sampler.getKey();
             String type = sampler.getValue();
-            if (allowUnusedDeclarations && UniformRegistry.isSamplerUnused(stripped, name)) {
+            // A shadow program's unread shadowcolor stays inactive, so the pass copies no target for it.
+            boolean shadowColor = stage.shadowPass() && PackResourcePlan.shadowColorIndex(name) >= 0;
+            if ((allowUnusedDeclarations || shadowColor) && UniformRegistry.isSamplerUnused(stripped, name)) {
                 deviations.add("SAMPLER_DECLARATION_UNUSED:" + name);
                 continue;
             }
             // Iris gives the legacy shadow names a per-program meaning; look them up by it.
             String lookup = PackResourcePlan.isProgramShadowAlias(name)
                     ? PackResourcePlan.programResource(name, waterShadow) : name;
-            Integer slot = samplerSlot(name, lookup, stage, customSamplerSlots, deviations);
+            Integer slot = samplerSlot(name, lookup, stage, customSamplerSlots);
             if (!mappedType(name, type, customSamplerSlots) || slot == null) {
-                deviations.add(unmappedSamplerDeviation(name, stage));
+                // A sampler nothing reads is inactive, as GL leaves it: Escheridia's composites
+                // declare clouds, normals and shadowtex0HW in a shared header and read none of them.
+                deviations.add(UniformRegistry.isSamplerUnused(stripped, name)
+                        ? "SAMPLER_DECLARATION_UNUSED:" + name : unmappedSamplerDeviation(name, stage));
                 continue;
             }
             bindings.add(new UniformRegistry.SamplerBinding(name, slot, type));
-            String resource = boundResource(name, lookup, stage, customSamplerSlots);
+            String resource = UniformRegistry.samplerResource(lookup);
             String previousResource = samplerResources.putIfAbsent(slot, resource);
             if (previousResource != null && !previousResource.equals(resource)) {
                 deviations.add("SAMPLER_SLOT_CONFLICT:" + slot);
@@ -302,15 +333,7 @@ final class InterfacePlanner {
     /** 2D and shadow samplers always bind; 3D samplers bind only to the pack's own textures. */
     private static boolean mappedType(String name, String type, Map<String, Integer> customSamplerSlots) {
         return PLANAR_SAMPLER_TYPES.contains(type)
-                || VOLUME_SAMPLER_TYPES.contains(type) && hasCustomSlot(customSamplerSlots, name);
-    }
-
-    /** The resource a bound sampler reads: post's tex reads the pack's atlas when the pack has one. */
-    private static String boundResource(
-            String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots) {
-        return stage == UniformRegistry.Stage.POST && name.equals("tex")
-                && hasCustomSlot(customSamplerSlots, UniformRegistry.PACK_ATLAS_SAMPLER)
-                ? UniformRegistry.PACK_ATLAS_SAMPLER : UniformRegistry.samplerResource(lookup);
+                || PACK_ONLY_SAMPLER_TYPES.contains(type) && hasCustomSlot(customSamplerSlots, name);
     }
 
     private static boolean hasCustomSlot(Map<String, Integer> customSamplerSlots, String name) {
@@ -327,15 +350,12 @@ final class InterfacePlanner {
         };
     }
 
-    /** The slot a declared sampler binds to: the stage's map, then the pack's own textures. */
+    /** The slot a declared sampler binds to: the stage's map, the targets' samplers, then the pack's own textures. */
     static Integer samplerSlot(
-            String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots,
-                    Set<String> deviations) {
+            String name, String lookup, UniformRegistry.Stage stage, Map<String, Integer> customSamplerSlots) {
         Integer slot = stageSlots(stage).get(lookup);
-        if (slot == null && stage == UniformRegistry.Stage.POST) {
-            slot = postFallbackSlot(name, customSamplerSlots, deviations);
-        } else if (slot == null && !stage.shadowPass()) {
-            slot = UniformRegistry.gbufferColorInputSlot(name);
+        if (slot == null) {
+            slot = targetSamplerSlot(name, lookup, stage);
         }
         if (slot == null && customSamplerSlots != null) {
             slot = customSamplerSlots.get(name);
@@ -347,17 +367,36 @@ final class InterfacePlanner {
         return slot;
     }
 
-    /** Post's fallbacks for a name its stage map lacks: an extended color target, then tex as the pack atlas. */
-    private static Integer postFallbackSlot(String name, Map<String, Integer> customSamplerSlots,
-                                            Set<String> deviations) {
-        Integer slot = UniformRegistry.extendedPostColorSlot(name);
-        if (slot == null && name.equals("tex") && customSamplerSlots != null) {
-            slot = customSamplerSlots.get(UniformRegistry.PACK_ATLAS_SAMPLER);
-            if (slot != null) {
-                deviations.add("SAMPLER_ALIAS_TO_PACK_RESOURCE:tex:textureAtlas");
-            }
+    /**
+     * The slot of a target sampler the stage's map lacks: the DH depth textures, which every program
+     * that has the render targets has with them; a fullscreen pass's smoothed centre depth; and
+     * outside the shadow pass the shadow samplers and the further colour targets.
+     */
+    private static Integer targetSamplerSlot(String name, String lookup, UniformRegistry.Stage stage) {
+        if (PackResourcePlan.isDhDepth(lookup)) return SelectorNamespace.dhDepthSlot(lookup);
+        if (stage == UniformRegistry.Stage.POST && CenterDepthSmooth.SAMPLER.equals(lookup)) {
+            return SelectorNamespace.CENTER_DEPTH_SLOT;
         }
-        return slot;
+        // Iris gives every program each shadowcolor target and the hardware shadow samplers
+        // (addShadowSamplers), shadow programs too. A shadow program reads a shadowcolor target as
+        // the pass opened (ChimeraShadowMap.snapshotPassReads); the hardware samplers bind outside
+        // the shadow pass. PackPlanBuilder refuses those the pack lacks.
+        if (stage.shadowPass()) return shadowPassColorSlot(lookup);
+        int shadow = SelectorNamespace.shadowSamplerSlot(lookup);
+        if (shadow >= 0) return shadow;
+        return stage == UniformRegistry.Stage.POST
+                ? postFallbackSlot(name) : UniformRegistry.gbufferColorInputSlot(name);
+    }
+
+    /** A shadowcolorN sampler's slot in the shadow pass; null for any other name. */
+    private static Integer shadowPassColorSlot(String lookup) {
+        int slot = SelectorNamespace.shadowColorSlot(PackResourcePlan.shadowColorIndex(lookup));
+        return slot >= 0 ? slot : null;
+    }
+
+    /** Post's fallback for a name its stage map lacks: an extended color target. */
+    private static Integer postFallbackSlot(String name) {
+        return UniformRegistry.extendedPostColorSlot(name);
     }
 
     static String unmappedSamplerDeviation(String name, UniformRegistry.Stage stage) {

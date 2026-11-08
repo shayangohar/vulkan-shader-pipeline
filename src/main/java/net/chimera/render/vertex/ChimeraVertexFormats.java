@@ -193,9 +193,18 @@ public final class ChimeraVertexFormats {
         };
     }
 
-    /** True for a format whose normal Chimera computes per quad because the host writes none. */
-    public static boolean computesNormal(VertexFormat format) {
+    /** True for a format whose normal Chimera appends because the host writes none: GLYPH's, as Iris injects it. */
+    public static boolean appendsNormal(VertexFormat format) {
         return format == EXTENDED_GLYPH;
+    }
+
+    /**
+     * True when a quad of {@code format} takes its face normal: the layouts Iris extends (TERRAIN,
+     * ENTITY and GLYPH) while the level renders (MixinBufferBuilder fillExtendedData,
+     * ImmediateState.isRenderingLevel). A triangle keeps its normals.
+     */
+    public static boolean takesFaceNormal(VertexFormat format, boolean renderingLevel) {
+        return renderingLevel && (format == EXTENDED_BLOCK || format == EXTENDED_ENTITY || format == EXTENDED_GLYPH);
     }
 
     public static VertexFormat handHostFormat(VertexFormat format) {

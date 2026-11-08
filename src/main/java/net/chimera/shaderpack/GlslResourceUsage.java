@@ -218,7 +218,7 @@ final class GlslResourceUsage {
                 boolean uniform = declaration.qualifiers().stream()
                         .anyMatch(qualifier -> tree.text(qualifier.keyword()).equals("uniform"));
                 Set<String> kind = uniform && isSampler(type) ? names.samplers()
-                        : isImageType(type) ? names.images() : null;
+                        : UniformRegistry.isStorageImageType(type) ? names.images() : null;
                 if (kind == null) continue;
                 for (GlslTree.Declarator declarator : declaration.declarators()) {
                     kind.add(tree.text(declarator.name()));
@@ -338,10 +338,6 @@ final class GlslResourceUsage {
 
     private static boolean isSampler(String type) {
         return type.startsWith("sampler") || type.startsWith("isampler") || type.startsWith("usampler");
-    }
-
-    private static boolean isImageType(String type) {
-        return type.equals("image3D") || type.equals("iimage3D") || type.equals("uimage3D");
     }
 
     private static Set<String> sorted(Set<String> values) {

@@ -22,7 +22,7 @@ import java.util.Set;
  * IrisItemLightProvider gives every vanilla item. With oldHandLight on, the main hand reports the
  * off hand's light when that is brighter. Without a player every value is Iris's invalid one.</p>
  */
-final class HeldItemState {
+final class HeldItemState implements FrameValueSource {
     static final Set<String> NAMES = Set.of(
             "heldItemId", "heldItemId2", "heldBlockLightValue", "heldBlockLightValue2",
             "heldBlockLightColor", "heldBlockLightColor2");
@@ -58,8 +58,14 @@ final class HeldItemState {
         this.mainLight = this.offLight = 0;
     }
 
+    @Override
+    public Set<String> names() {
+        return NAMES;
+    }
+
     /** The scalar, or one component of the colour, Iris serves under a name. */
-    double value(String name, int component) {
+    @Override
+    public double value(String name, int component) {
         return switch (name) {
             case "heldItemId" -> this.mainId;
             case "heldItemId2" -> this.offId;
@@ -71,7 +77,8 @@ final class HeldItemState {
     }
 
     /** Writes a name in its declared type: integer types as ints, the colour as floats. */
-    void write(String name, String type, MappedBuffer target) {
+    @Override
+    public void write(String name, String type, MappedBuffer target) {
         boolean colour = name.startsWith("heldBlockLightColor");
         int count = colour ? 3 : 1;
         boolean integral = type.startsWith("i") || type.equals("bool");

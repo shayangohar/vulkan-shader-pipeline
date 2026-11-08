@@ -5,6 +5,7 @@ import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
+import org.lwjgl.vulkan.VkImageViewUsageCreateInfo;
 
 import java.nio.LongBuffer;
 
@@ -12,6 +13,7 @@ import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.VK_COMPONENT_SWIZZLE_IDENTITY;
 import static org.lwjgl.vulkan.VK10.VK_COMPONENT_SWIZZLE_ONE;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_STORAGE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_2D;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
@@ -24,7 +26,16 @@ final class ImageViews {
 
     /** A view of the first level and layer of {@code image}, as {@code viewType}. */
     static long create(long image, int viewType, int format, int aspect) {
-        return create(image, viewType, format, aspect, 1, VK_COMPONENT_SWIZZLE_IDENTITY);
+        return create(image, viewType, format, aspect, 1, VK_COMPONENT_SWIZZLE_IDENTITY, 0);
+    }
+
+    /**
+     * A storage-only colour view of a mutable-format image in another format of its size. Limiting
+     * its usage keeps the view from needing the format's sampled-image support.
+     */
+    static long createStorage(long image, int viewType, int format) {
+        return create(image, viewType, format, VK_IMAGE_ASPECT_COLOR_BIT, 1, VK_COMPONENT_SWIZZLE_IDENTITY,
+                VK_IMAGE_USAGE_STORAGE_BIT);
     }
 
     /**
@@ -33,19 +44,24 @@ final class ImageViews {
      */
     static void sampleAlphaAsOne(VulkanImage image) {
         long view = create(image.getId(), VK_IMAGE_VIEW_TYPE_2D, image.format, VK_IMAGE_ASPECT_COLOR_BIT,
-                image.mipLevels, VK_COMPONENT_SWIZZLE_ONE);
+                image.mipLevels, VK_COMPONENT_SWIZZLE_ONE, 0);
         // No command has recorded the replaced view yet.
         vkDestroyImageView(Vulkan.getVkDevice(), image.getImageView(), null);
         ((ChimeraVulkanImageAccessor) image).chimera$setMainImageView(view);
     }
 
-    private static long create(long image, int viewType, int format, int aspect, int levelCount, int alpha) {
+    /** {@code usage} 0 leaves the view the image's usage; otherwise the view takes only it. */
+    private static long create(long image, int viewType, int format, int aspect, int levelCount, int alpha,
+                               int usage) {
         try (MemoryStack stack = stackPush()) {
             VkImageViewCreateInfo info = VkImageViewCreateInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO)
                     .image(image)
                     .viewType(viewType)
                     .format(format);
+            if (usage != 0) {
+                info.pNext(VkImageViewUsageCreateInfo.calloc(stack).sType$Default().usage(usage).address());
+            }
             info.components().a(alpha);
             info.subresourceRange().aspectMask(aspect).baseMipLevel(0).levelCount(levelCount)
                     .baseArrayLayer(0).layerCount(1);

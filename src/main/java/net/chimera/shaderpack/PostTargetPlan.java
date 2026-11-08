@@ -19,20 +19,35 @@ import java.util.regex.Pattern;
 public final class PostTargetPlan {
     /** Highest logical colortex index: Iris exposes colortex0 through colortex15. */
     public static final int MAX_TARGET = 15;
-    public static final int DEFAULT_FORMAT = 97;
+    /**
+     * A colortex target the pack declares no format for: Iris's RenderTargetSettings starts at
+     * InternalTextureFormat.RGBA, which GL allocates as RGBA8 (VK_FORMAT_R8G8B8A8_UNORM), so it
+     * clamps to [0, 1] as under Iris.
+     */
+    public static final int DEFAULT_FORMAT = 37;
+    /**
+     * The numbered pass families in the order Iris runs them: the setup computes, then its composite
+     * renderers (IrisRenderingPipeline), shadowcomp running after the shadow pass, before prepare.
+     */
+    private static final List<String> PASS_FAMILIES =
+            List.of("setup", "begin", "shadowcomp", "prepare", "deferred", "composite");
 
     private static final Pattern TARGET_COMMENT = Pattern.compile(
             "(?is)/\\*\\s*(DRAWBUFFERS|RENDERTARGETS)\\s*:\\s*([^*]*?)\\*/");
+    /** The route Iris gives a shadow-pass source with no target directive: shadowcolor0 and shadowcolor1. */
+    private static final String SHADOW_DEFAULT_TARGETS = "/* DRAWBUFFERS:01 */";
     private static final Pattern DIRECTIVE_WORD = Pattern.compile(
             "(?i)\\b(?:DRAWBUFFERS|RENDERTARGETS)\\b");
     private static final Pattern FRAG_DATA = Pattern.compile(
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
-    private static final Pattern OUTPUT_TYPE = Pattern.compile("float|int|uint|[iu]?vec[234]");
+    /** RenderPearl's NVIDIA path writes f16vec3 shadow colours; GlslVendorExtensions widens them where it must. */
+    private static final Pattern OUTPUT_TYPE = Pattern.compile(
+            "float|int|uint|[iu]?vec[234]|float16_t|u?int16_t|[fiu]16vec[234]");
     private static final Pattern MIPMAP_DIRECTIVE_NAME = Pattern.compile(
             "(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])MipmapEnabled");
 
-    /** One modern fragment output: its declaration's source range, type, name and location. */
-    public record ModernOutput(int start, int end, String type, String name, int location) {}
+    /** One modern fragment output: its declaration's source range, type, name, location and component. */
+    public record ModernOutput(int start, int end, String type, String name, int location, int component) {}
 
     /**
      * Modern fragment outputs as GL links them for Iris: an explicit
@@ -48,7 +63,9 @@ public final class PostTargetPlan {
         for (GlslDeclarations.Variable output : GlslDeclarations.variables(tree)) {
             List<String> qualifiers = output.qualifiers();
             int start = tree.offset(output.declaration().range().start());
+            // A gl_ name is a built-in redeclared (layout(depth_greater) out float gl_FragDepth).
             if ((qualifiers.equals(List.of("out")) || qualifiers.equals(List.of("layout", "out")))
+                    && !output.name().startsWith("gl_")
                     && OUTPUT_TYPE.matcher(output.type()).matches() && output.plain()
                     && GlslDeclarations.indentationStart(text, start) >= 0) {
                 declared.add(output);
@@ -66,7 +83,8 @@ public final class PostTargetPlan {
             }
             int start = tree.offset(output.declaration().range().start());
             outputs.add(new ModernOutput(GlslDeclarations.indentationStart(text, start),
-                    tree.offset(output.declaration().range().end()), output.type(), output.name(), location));
+                    tree.offset(output.declaration().range().end()), output.type(), output.name(), location,
+                    GlslDeclarations.component(tree, output.declaration())));
         }
         return List.copyOf(outputs);
     }
@@ -78,8 +96,10 @@ public final class PostTargetPlan {
     private final List<Integer> outputFormats;
     private final int[] outputFormatsArray;
     private final Map<Integer, String> outputTypes;
+    private final Map<Integer, Integer> outputComponents;
     private final List<Integer> mipmappedTargets;
     private final List<String> deviations;
+    private final boolean writesNoOutput;
 
     private PostTargetPlan(
             String programName,
@@ -88,9 +108,12 @@ public final class PostTargetPlan {
             List<Integer> discardedOutputs,
             List<Integer> outputFormats,
             Map<Integer, String> outputTypes,
+            Map<Integer, Integer> outputComponents,
             List<Integer> mipmappedTargets,
-            List<String> deviations
+            List<String> deviations,
+            boolean writesNoOutput
     ) {
+        this.writesNoOutput = writesNoOutput;
         this.programName = programName;
         this.targetSlots = List.copyOf(targetSlots);
         this.outputLocations = List.copyOf(outputLocations);
@@ -98,6 +121,7 @@ public final class PostTargetPlan {
         this.outputFormats = List.copyOf(outputFormats);
         this.outputFormatsArray = outputFormats.stream().mapToInt(Integer::intValue).toArray();
         this.outputTypes = Map.copyOf(outputTypes);
+        this.outputComponents = Map.copyOf(outputComponents);
         this.mipmappedTargets = List.copyOf(mipmappedTargets);
         this.deviations = deviations.stream().distinct().sorted().toList();
     }
@@ -111,10 +135,12 @@ public final class PostTargetPlan {
         List<Integer> targetSlots = selectDirective(directives, deviations);
         Set<Integer> outputSet = legacyOutputs(text, deviations);
         Map<Integer, String> outputTypes = new TreeMap<>();
+        Map<Integer, Integer> outputComponents = new TreeMap<>();
         for (ModernOutput output : modernOutputs(text)) {
             if (outputTypes.put(output.location(), output.type()) != null) {
                 deviations.add("POST_TARGET_DIRECTIVE_MALFORMED");
             }
+            if (output.component() != 0) outputComponents.put(output.location(), output.component());
             outputSet.add(output.location());
         }
 
@@ -142,8 +168,34 @@ public final class PostTargetPlan {
                 .toList();
         PostTargetPlan plan = new PostTargetPlan(
                 programName, targetSlots, outputLocations, discardedOutputs, outputFormats,
-                outputTypes, parseMipmappedTargets(text), deviations);
+                outputTypes, outputComponents, parseMipmappedTargets(text), deviations,
+                writesNoOutput(text, outputSet));
         return new ParseResult(plan, plan.deviations());
+    }
+
+    /**
+     * Whether the shader certainly writes no output: it names neither gl_FragData nor
+     * gl_FragColor, and parses with no output variable. Rethinking Voxels' prepare1 and prepare2
+     * only discard, and work through image stores.
+     */
+    private static boolean writesNoOutput(String text, Set<Integer> outputs) {
+        return outputs.isEmpty() && !text.contains("gl_FragData") && !text.contains("gl_FragColor")
+                && GlslDeclarations.parseOrNull(text) != null;
+    }
+
+    /**
+     * A shadow source as Iris draws it when its target directive names a shadowcolor at or past the
+     * pass's {@code count}: ShadowRenderTargets.createColorFramebuffer then draws to {0, 1}, so
+     * output 0 writes shadowcolor0, output 1 shadowcolor1, and a later output is discarded.
+     */
+    static String withShadowTargetsWithin(String source, int count, List<String> deviations) {
+        if (source == null || !TARGET_COMMENT.matcher(source).find()) return source;
+        List<Integer> outside = parse("shadow", source).plan().targetSlots().stream()
+                .filter(target -> target < 0 || target >= count)
+                .toList();
+        if (outside.isEmpty()) return source;
+        outside.forEach(target -> deviations.add("SHADOW_DRAWBUFFERS_RESET:" + target));
+        return TARGET_COMMENT.matcher(source).replaceAll(SHADOW_DEFAULT_TARGETS);
     }
 
     /**
@@ -199,22 +251,15 @@ public final class PostTargetPlan {
      */
     private static List<Integer> parseMipmappedTargets(String source) {
         Set<Integer> targets = new TreeSet<>();
-        GlslTree tree = GlslDeclarations.parseOrNull(source);
-        if (tree == null) return List.of();
-        for (GlslDeclarations.Variable directive : GlslDeclarations.variables(tree)) {
+        // ConstDirectiveParser reads lines, so a directive inside a block comment counts (Photon's
+        // d4_deferred_shading declares its mipmapped targets that way).
+        for (IrisConstDirectives.Directive directive : IrisConstDirectives.find(source)) {
             Matcher name = MIPMAP_DIRECTIVE_NAME.matcher(directive.name());
-            GlslTree.Range value = directive.declarator().initializer();
-            if (!name.matches() || !directive.qualifiers().equals(List.of("const"))
-                    || !directive.type().equals("bool") || value == null
-                    || directive.declaration().declarators().size() != 1) {
-                continue;
-            }
-            Integer target = PackResourcePlan.targetIndex(name.group(1));
-            String flag = tree.text(value).trim();
-            if (target == null || target < 0 || target > MAX_TARGET || !flag.matches("true|false")) continue;
-            if (Boolean.parseBoolean(flag)) {
+            Integer target = name.matches() ? PackResourcePlan.targetIndex(name.group(1)) : null;
+            if (!directive.type().equals("bool") || target == null || target < 0 || target > MAX_TARGET) continue;
+            if (directive.value().equals("true")) {
                 targets.add(target);
-            } else {
+            } else if (directive.value().equals("false")) {
                 targets.remove(target);
             }
         }
@@ -229,31 +274,63 @@ public final class PostTargetPlan {
         return name != null && name.matches("(?:prepare|deferred|composite)\\d*|final");
     }
 
+    /**
+     * A fullscreen pass converted with the post converter: a post program over the colour targets, or
+     * a shadowcomp pass over the shadowcolor targets (PackShadowComposites).
+     */
+    public static boolean isFullscreenProgramName(String name) {
+        return isPostProgramName(name) || PassComputePlan.isShadowcomp(name);
+    }
+
+    /**
+     * A fullscreen pass's route: a post program's over the colour targets in their formats, a
+     * shadowcomp pass's over the shadowcolor targets in theirs; null for any other program.
+     */
+    static PostTargetPlan forFullscreenProgram(String name, String fragment, PackConfig.PackConfigData config) {
+        if (isPostProgramName(name)) {
+            return parse(name, fragment, config == null ? Map.of() : config.colortexFormats()).plan();
+        }
+        return PassComputePlan.isShadowcomp(name) ? parseShadowcomp(name, fragment, config).plan() : null;
+    }
+
+    /** A shadowcomp pass's route over the shadowcolor targets (parseShadow), in the pack's shadowcolor formats. */
+    static ParseResult parseShadowcomp(String programName, String source, PackConfig.PackConfigData config) {
+        List<Integer> shadowFormats = config == null ? List.of() : config.shadowSettings().colorAttachmentFormats();
+        Map<Integer, Integer> formats = new TreeMap<>();
+        for (int index = 0; index < shadowFormats.size(); index++) formats.put(index, shadowFormats.get(index));
+        return parseShadow(programName, source, formats);
+    }
+
+    /**
+     * A shadow-pass source's route over the shadowcolor targets: its directive, or with none {0, 1}.
+     * Iris draws a shadow program or a shadowcomp pass whose draw buffers are unknown to both
+     * (IrisRenderingPipeline.createShadowShader, SodiumPrograms.createFramebuffer,
+     * ShadowCompositeRenderer), where a colour program's default is {0}. Kappa's shadow program
+     * declares no directive and writes its material ids to shadowcolor1 for its shadowcomp to read.
+     */
+    static ParseResult parseShadow(String programName, String source, Map<Integer, Integer> formats) {
+        String text = source == null ? "" : source;
+        return parse(programName,
+                TARGET_COMMENT.matcher(text).find() ? text : text + "\n" + SHADOW_DEFAULT_TARGETS + "\n", formats);
+    }
+
     public static Comparator<String> programComparator() {
         return Comparator.comparingInt(PostTargetPlan::familyRank)
                 .thenComparingInt(PostTargetPlan::numericSuffix)
                 .thenComparing(Comparator.naturalOrder());
     }
 
+    /** Final, and any other name, after them. */
     private static int familyRank(String name) {
-        if (name.startsWith("prepare")) {
-            return -1;
+        for (int rank = 0; rank < PASS_FAMILIES.size(); rank++) {
+            if (name.startsWith(PASS_FAMILIES.get(rank))) return rank;
         }
-        if (name.startsWith("deferred")) {
-            return 0;
-        }
-        if (name.startsWith("composite")) {
-            return 1;
-        }
-        return 2;
+        return PASS_FAMILIES.size();
     }
 
     private static int numericSuffix(String name) {
-        int index = name.startsWith("prepare")
-                ? "prepare".length()
-                : name.startsWith("deferred")
-                ? "deferred".length()
-                : name.startsWith("composite") ? "composite".length() : name.length();
+        int rank = familyRank(name);
+        int index = rank < PASS_FAMILIES.size() ? PASS_FAMILIES.get(rank).length() : name.length();
         if (index == name.length()) {
             return 0;
         }
@@ -373,6 +450,15 @@ public final class PostTargetPlan {
         return outputLocations;
     }
 
+    /**
+     * Whether the source certainly writes no output, so every directive target is left unwritten
+     * (PackTargetGraphPlan.unwrittenTargets). An empty {@link #outputLocations()} alone may be a
+     * write the scan did not see.
+     */
+    public boolean writesNoOutput() {
+        return writesNoOutput;
+    }
+
     /** Output locations past the route: written, and discarded as GL discards them. */
     public List<Integer> discardedOutputs() {
         return discardedOutputs;
@@ -391,6 +477,14 @@ public final class PostTargetPlan {
     /** The declared GLSL type of an output location: a modern output's own type, else vec4. */
     public String outputType(int outputLocation) {
         return outputTypes.getOrDefault(outputLocation, "vec4");
+    }
+
+    /**
+     * The first component an output location's value fills: a modern output's layout component,
+     * else 0. RenderPearl writes its deferred-ignore flag to colortex2.y as a uint at component 1.
+     */
+    public int outputComponent(int outputLocation) {
+        return outputComponents.getOrDefault(outputLocation, 0);
     }
 
     /** Targets whose mip chain Iris regenerates before this program runs. */

@@ -26,6 +26,77 @@ final class IrisCoreProfile {
     private static final Set<String> CORE_MATRICES = Set.of("modelViewMatrix", "modelViewMatrixInverse",
             "projectionMatrix", "projectionMatrixInverse", "normalMatrix", "textureMatrix");
 
+    /** Iris core-profile uniforms: the matrices and chunkOffset. */
+    private static final Set<String> CORE_UNIFORMS = Set.of("modelViewMatrix", "modelViewMatrixInverse",
+            "projectionMatrix", "projectionMatrixInverse", "normalMatrix", "textureMatrix", "chunkOffset");
+
+    /** The uniforms SodiumCoreTransformer renames outside the vertex stage: all but textureMatrix. */
+    private static final Set<String> SODIUM_FRAGMENT_UNIFORMS = Set.of("modelViewMatrix",
+            "modelViewMatrixInverse", "projectionMatrix", "projectionMatrixInverse", "normalMatrix", "chunkOffset");
+
+    /** The matrices CompositeCoreTransformer gives a composite vertex stage. */
+    private static final Set<String> COMPOSITE_VERTEX_UNIFORMS = Set.of("modelViewMatrix",
+            "modelViewMatrixInverse", "projectionMatrix", "projectionMatrixInverse", "textureMatrix");
+
+    /** The Iris transformer family that compiles a program (TransformPatcher's Patch). */
+    enum Patch {
+        /** Vanilla draws: entities, block entities, particles, sky, lines and the rest. */
+        VANILLA,
+        /** Sodium's terrain and shadow terrain passes (SodiumPrograms.Pass). */
+        SODIUM,
+        /** Fullscreen passes: shadowcomp, prepare, deferred, composite and final. */
+        COMPOSITE,
+        /**
+         * A pack's own gbuffers_line: VANILLA in core mode whatever its stages' versions
+         * (TransformPatcher's isLine). A compatibility stage still keeps its own variables of
+         * the core names it does not declare as uniforms (PackPlanBuilder.irisCoreMode).
+         */
+        LINES
+    }
+
+    /**
+     * The Iris patch that compiles a program: COMPOSITE for a fullscreen pass, LINES for a pack's
+     * own gbuffers_line, SODIUM for terrain and shadow terrain (SodiumPrograms.Pass), and VANILLA
+     * for the rest, shadow entities and host-layout shadow lanes included.
+     */
+    static Patch patchFor(String program, UniformRegistry.Stage stage, boolean packLine) {
+        if (stage == UniformRegistry.Stage.POST) return Patch.COMPOSITE;
+        if (packLine) return Patch.LINES;
+        FamilyAdapterPlan.Family family = FamilyAdapterRegistry.forProgram(program).family();
+        return family == FamilyAdapterPlan.Family.TERRAIN || family == FamilyAdapterPlan.Family.WATER
+                || family == FamilyAdapterPlan.Family.SHADOW ? Patch.SODIUM : Patch.VANILLA;
+    }
+
+    /**
+     * Iris TransformPatcher compiles a stage in core-profile mode for a core profile and for 150
+     * and above with no profile, serving the core names whether or not the stage declares them.
+     * Iris also uses that mode for every stage of a pack's own gbuffers_line ({@link Patch#LINES});
+     * there a compatibility stage only gets the core names it declares, so its own variables of
+     * those names stay its own. Read from the source as written: the modern post and terrain
+     * normalizations drop the version line.
+     */
+    static boolean coreMode(String source) {
+        GlslVersion version = GlslVersion.first(source);
+        return version != null && version.irisCore();
+    }
+
+    /**
+     * The core uniforms Iris gives one stage. Only its core-profile transformers name them:
+     * VanillaCoreTransformer renames every one in every stage; SodiumCoreTransformer renames all
+     * but textureMatrix, which it replaces with the identity in the vertex stage alone;
+     * CompositeCoreTransformer replaces the vertex stage's matrices other than normalMatrix. Outside
+     * core mode no transformer touches them, so a declared one is an ordinary uniform Iris never
+     * sets: it reads its initializer, or zero.
+     */
+    static Set<String> servedUniforms(Patch patch, boolean vertexStage, boolean coreMode) {
+        if (!coreMode && patch != Patch.LINES) return Set.of();
+        return switch (patch) {
+            case VANILLA, LINES -> CORE_UNIFORMS;
+            case SODIUM -> vertexStage ? CORE_UNIFORMS : SODIUM_FRAGMENT_UNIFORMS;
+            case COMPOSITE -> vertexStage ? COMPOSITE_VERTEX_UNIFORMS : Set.of();
+        };
+    }
+
     /** Iris SodiumCoreTransformer's overlay for a format without one: no hurt flash, no white flash. */
     public static final String NO_OVERLAY = "ivec2(0, 10)";
 
@@ -39,14 +110,15 @@ final class IrisCoreProfile {
 
     /**
      * Iris's core-profile mode (TransformPatcher: a core profile, 150 and above with no
-     * profile, or any program drawn on the line layout) names the host inputs and matrices
-     * itself: vaPosition and the other core inputs, modelViewMatrix and the other matrices, and
-     * chunkOffset. Each converter already serves the compatibility built-ins with the same
-     * values (VanillaCoreTransformer maps both spellings to one input), so the stage is
-     * rewritten to those before its interface is planned. In core mode Iris serves the names
-     * whether or not the stage declares them; elsewhere it leaves a declared core input
+     * profile, or a pack's own gbuffers_line) names the host inputs and matrices itself:
+     * vaPosition and the other core inputs, and the core uniforms its transformer for the stage
+     * serves ({@link #servedUniforms}). Each converter already serves the compatibility built-ins
+     * with the same values (VanillaCoreTransformer maps both spellings to one input), so the
+     * stage is rewritten to those before its interface is planned. In core mode Iris serves the
+     * names whether or not the stage declares them; elsewhere it leaves a declared core input
      * unbound, which only a driver's attribute order made meaningful (Photon's compatibility
-     * gbuffers_basic reads vaColor), so a declared one gets its intended value.
+     * gbuffers_basic reads vaColor), so a declared one gets its intended value. A core uniform
+     * the stage's transformer does not serve stays declared: Iris never sets it.
      *
      * <p>chunkOffset is zero: Chimera's positions are already camera-relative, which Iris's
      * vaPosition plus chunkOffset is. overlay is the stage's overlay coordinates: the host
@@ -55,17 +127,18 @@ final class IrisCoreProfile {
      * full light; a pack's own gbuffers_line keeps Iris's zeros ({@link #prepareLineVertex}).</p>
      */
     public static String prepareIrisCoreProfile(String source, Path sourceFile, boolean vertexStage,
-                                                String overlay, boolean coreMode) {
+                                                String overlay, boolean coreMode, Patch patch) {
         if (source == null) return null;
+        Set<String> served = servedUniforms(patch, vertexStage, coreMode);
         Map<String, String> declared = new TreeMap<>();
-        String result = withoutCoreDeclarations(expandIncludes(source, sourceFile), vertexStage, declared);
+        String result = withoutCoreDeclarations(expandIncludes(source, sourceFile), vertexStage, served, declared);
         if (coreMode) {
             // The source is macro-expanded, as Iris's is: a core name the pack defines as a macro
             // (Noble's #define projectionMatrix gbufferProjection) has expanded away.
             String stripped = stripComments(result);
             for (Map.Entry<String, String> name : CORE_NAME_TYPES.entrySet()) {
-                boolean input = name.getKey().startsWith("va");
-                if ((vertexStage || !input) && LegacyGlslConverter.containsIdentifier(stripped, name.getKey())) {
+                boolean named = name.getKey().startsWith("va") ? vertexStage : served.contains(name.getKey());
+                if (named && LegacyGlslConverter.containsIdentifier(stripped, name.getKey())) {
                     declared.putIfAbsent(name.getKey(), name.getValue());
                 }
             }
@@ -100,41 +173,54 @@ final class IrisCoreProfile {
     }
 
     /**
-     * The source without its plain declarations of the core inputs (a vertex stage's) and of the
-     * core uniforms, each recorded in {@code declared} with the type the stage gave it.
+     * The source without its plain declarations of the core inputs (a vertex stage's) and its
+     * declarations of the core uniforms the stage is served, each recorded in {@code declared}
+     * with the type the stage gave it. A served uniform's initializer goes with it: Iris's value
+     * replaces it.
      */
-    private static String withoutCoreDeclarations(String source, boolean vertexStage, Map<String, String> declared) {
+    private static String withoutCoreDeclarations(String source, boolean vertexStage, Set<String> served,
+                                                  Map<String, String> declared) {
         GlslTree tree = GlslTree.parse(source);
-        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        List<GlslDeclarations.Variable> removed = new ArrayList<>();
         for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
-            boolean input = vertexStage && CORE_INPUTS.contains(variable.name()) && isInput(variable);
-            boolean uniform = variable.qualified("uniform") && (CORE_MATRICES.contains(variable.name())
-                    || variable.name().equals("chunkOffset"));
-            if ((input || uniform) && variable.plain()) {
+            boolean input = vertexStage && CORE_INPUTS.contains(variable.name()) && isInput(variable)
+                    && plainInput(variable);
+            boolean uniform = variable.qualified("uniform") && served.contains(variable.name())
+                    && variable.unarrayed();
+            if (input || uniform) {
                 declared.put(variable.name(), variable.type());
-                removals.add(GlslDeclarations.remove(tree, variable.declaration()));
+                removed.add(variable);
             }
         }
-        return GlslDeclarations.apply(source, removals);
+        return GlslDeclarations.apply(source, GlslDeclarations.removeVariables(tree, removed));
+    }
+
+    /** A core input declared without array sizes or an initializer, alone or beside other names. */
+    private static boolean plainInput(GlslDeclarations.Variable variable) {
+        return variable.unarrayed() && variable.declarator().initializer() == null;
     }
 
     private static boolean isInput(GlslDeclarations.Variable variable) {
         return variable.qualified("in") || variable.qualified("attribute");
     }
 
-    /** The source without its plain declarations of the core inputs and of the core matrices as mat3 or mat4. */
+    /**
+     * The source without its plain declarations of the core inputs, of the core matrices as mat3
+     * or mat4, and of chunkOffset as vec3.
+     */
     private static String withoutLineCoreDeclarations(String source) {
         GlslTree tree = GlslTree.parse(source);
-        List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
+        List<GlslDeclarations.Variable> removed = new ArrayList<>();
         for (GlslDeclarations.Variable variable : GlslDeclarations.variables(tree)) {
             boolean input = CORE_INPUTS.contains(variable.name()) && isInput(variable);
-            boolean matrix = CORE_MATRICES.contains(variable.name()) && variable.qualified("uniform")
-                    && (variable.type().equals("mat3") || variable.type().equals("mat4"));
-            if ((input || matrix) && variable.plain()) {
-                removals.add(GlslDeclarations.remove(tree, variable.declaration()));
-            }
+            String type = variable.type();
+            boolean matrix = CORE_MATRICES.contains(variable.name()) && (type.equals("mat3") || type.equals("mat4"));
+            boolean offset = variable.name().equals("chunkOffset") && type.equals("vec3");
+            // A served uniform's initializer goes with it, as in withoutCoreDeclarations.
+            boolean uniform = variable.qualified("uniform") && (matrix || offset) && variable.unarrayed();
+            if (input && plainInput(variable) || uniform) removed.add(variable);
         }
-        return GlslDeclarations.apply(source, removals);
+        return GlslDeclarations.apply(source, GlslDeclarations.removeVariables(tree, removed));
     }
 
     /** The source with its first main renamed {@code chimeraLineMain}, signature normalized to {@code ()}. */
@@ -170,7 +256,8 @@ final class IrisCoreProfile {
                     Map.entry("projectionMatrix", "gl_ProjectionMatrix"),
                     Map.entry("projectionMatrixInverse", "inverse(gl_ProjectionMatrix)"),
                     Map.entry("normalMatrix", "gl_NormalMatrix"),
-                    Map.entry("textureMatrix", "gl_TextureMatrix[0]")));
+                    Map.entry("textureMatrix", "gl_TextureMatrix[0]"),
+                    Map.entry("chunkOffset", "vec3(0.0)")));
         }
         src = src.replaceAll("\\bftransform\\s*\\(\\s*\\)", "(gl_ModelViewProjectionMatrix * gl_Vertex)");
         src = GlslTokenRewriter.replaceIdentifiers(src, Map.of(
@@ -237,12 +324,13 @@ final class IrisCoreProfile {
         if (types.containsKey("blockEntityId")) {
             replacements.put("blockEntityId", "float".equals(types.get("blockEntityId")) ? "(-1.0)" : "(-1)");
         }
-        // CapturedRenderingState's item is 0 by the time a host-layout batch draws.
+        // CommonUniforms registers currentRenderedItemId as the constant -1, not CapturedRenderingState's item.
         if (types.containsKey("currentRenderedItemId")) {
             replacements.put("currentRenderedItemId",
-                    "float".equals(types.get("currentRenderedItemId")) ? "(0.0)" : "(0)");
+                    "float".equals(types.get("currentRenderedItemId")) ? "(-1.0)" : "(-1)");
         }
-        String folded = GlslTokenRewriter.replaceIdentifiers(src, replacements);
+        // Iris leaves the uniforms named; a parameter or local of the same name keeps its own.
+        String folded = GlslScopedReferences.replace(src, replacements);
         return types.containsKey("entityId") ? insertAfterHeader(folded, "uniform int " + entityId + ";\n") : folded;
     }
 
@@ -251,7 +339,7 @@ final class IrisCoreProfile {
         ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
                 sourceFile.getParent(), sourceFile, source,
                 PackEngineDefines.forPack(Map.of()),
-                PackEngineDefines.lockedNames(Set.of(), false, false));
+                PackEngineDefines.lockedNames(Set.of(), false));
         if (!prepared.successful()) {
             throw new IllegalArgumentException(prepared.deviations().toString());
         }
@@ -262,6 +350,17 @@ final class IrisCoreProfile {
      * Inserts declarations after the #version and #extension lines that must lead the source, and
      * the blank lines among them: after the last of the leading lines that end in a line break.
      */
+    /**
+     * A Sodium-patch vertex stage with Iris's {@code mc_chunkFade}: SodiumTransformer.injectVertInit
+     * declares it in every terrain and shadow terrain vertex stage, core or not, as the fraction of
+     * the section's fade-in, and 1.0 for a section not fading. VulkanMod fades no section in, so a
+     * stage that reads it reads 1.0.
+     */
+    static String withChunkFade(String vertex) {
+        if (vertex == null || !GlslTokenRewriter.containsIdentifier(vertex, "mc_chunkFade")) return vertex;
+        return insertAfterHeader(vertex, "float mc_chunkFade = 1.0;\n");
+    }
+
     static String insertAfterHeader(String source, String declarations) {
         Map<Integer, GlslDirectives.Line> directives = new HashMap<>();
         for (GlslDirectives.Line line : GlslDirectives.lines(source)) directives.put(line.hash(), line);

@@ -53,8 +53,8 @@ final class OptionSweepFixesTest {
 
     /**
      * A post program's fragment reads an input its vertex never writes (Bliss composite3 reads an
-     * exposure its vertex writes only under another option). Iris adds a zeroed output; the input
-     * reads as zero.
+     * exposure its vertex writes only under another option). Iris adds a vertex output set to zero
+     * (CompatibilityTransformer.transformGrouped); the pair then matches.
      */
     @Test
     void aPostInputNoVertexWritesReadsAsZero() {
@@ -69,31 +69,18 @@ final class OptionSweepFixesTest {
                 flat varying float exposure;
                 void main() { gl_FragData[0] = vec4(texcoord, exposure, 1.0); }
                 """;
-        var match = GlslInterfaceScanner.match(GlslInterfaceScanner.scan(vertex, true),
-                GlslInterfaceScanner.scan(fragment, false), true);
-        assertTrue(match.executable(), match.deviations().toString());
-        assertEquals(List.of("VARYING_UNWRITTEN_ZEROED:exposure"), match.deviations());
-        String converted = PostVertexBridge.convertPostVaryings(fragment,
-                new PostVertexBridge.PostVaryingLayout(match.locations(), Map.of("texcoord", "vec2")));
-        assertTrue(converted.contains("float exposure = 0.0;"), converted);
         assertTrue(!GlslInterfaceScanner.match(GlslInterfaceScanner.scan(vertex, true),
-                GlslInterfaceScanner.scan(fragment, false)).executable(), "other stages still refuse it");
-    }
-
-    /**
-     * Photon's sampler debug view declares {@code uniform sampler2D DEBUG_SAMPLER} with the macro
-     * defined as colortex1: the preprocessor expands the declaration, so it is colortex1.
-     */
-    @Test
-    void aSamplerDeclaredThroughAMacroIsTheSamplerItNames() {
-        String source = """
-                #define DEBUG_SAMPLER colortex1
-                uniform sampler2D DEBUG_SAMPLER;
-                void main() { gl_FragColor = texelFetch(DEBUG_SAMPLER, ivec2(0), 0); }
-                """;
-        String expanded = GlslMacroExpander.expand(source);
-        assertTrue(expanded.contains("uniform sampler2D colortex1;"), expanded);
-        assertTrue(expanded.contains("texelFetch(colortex1,"), expanded);
+                GlslInterfaceScanner.scan(fragment, false)).executable(), "unrepaired, the pair is refused");
+        CrossStageRepair.Result repaired = CrossStageRepair.repair(vertex, fragment);
+        assertEquals(List.of("VARYING_UNWRITTEN_ZEROED:exposure"), repaired.deviations());
+        assertTrue(repaired.vertex().contains("flat varying float exposure;"), repaired.vertex());
+        assertTrue(repaired.vertex().contains("exposure = float(0);"), repaired.vertex());
+        var match = GlslInterfaceScanner.match(GlslInterfaceScanner.scan(repaired.vertex(), true),
+                GlslInterfaceScanner.scan(fragment, false));
+        assertTrue(match.executable(), match.deviations().toString());
+        String converted = PostVertexBridge.convertPostVaryings(fragment, new PostVertexBridge.PostVaryingLayout(
+                match.locations(), Map.of("texcoord", "vec2", "exposure", "float")));
+        assertTrue(converted.contains("in float exposure;"), converted);
     }
 
     /**
@@ -144,6 +131,52 @@ final class OptionSweepFixesTest {
     }
 
     /**
+     * Iris's preprocessor (JCPP) ends a directive name at the first non-word character, tests one
+     * name after #ifdef, and keeps a source whose conditional is never closed. Escheridia writes
+     * "#endif//CLOUDS_GLSL"; Bloop's TAA program never closes its #ifdef TAA.
+     */
+    @Test
+    void directivesReadAsJcppReadsThem(@TempDir Path dir) {
+        String source = """
+                #version 400 compatibility
+                #ifndef GUARD
+                #define GUARD
+                #endif//GUARD
+                #ifdef GUARD > 1
+                void main() { gl_FragColor = vec4(1.0); }
+                #ifdef TAA
+                """;
+        var result = ShaderSourcePreprocessor.prepare(dir, dir.resolve("composite.fsh"), source,
+                PackEngineDefines.forPack(Map.of()), Set.of());
+        assertTrue(result.successful(), result.deviations().toString());
+        assertEquals(List.of("PREPROCESSOR_UNMATCHED_CONDITIONAL:unterminated"), result.deviations());
+        assertTrue(result.source().contains("gl_FragColor"), result.source());
+    }
+
+    /**
+     * A macro defined with no body expands to nothing, so JCPP reads "#if NAME" as false: Bloop's TAA
+     * program defines TAA_USE_YCOCG bare and tests it with #if, and Iris skips the YCoCg path.
+     */
+    @Test
+    void aBareDefineTestedByIfIsFalse(@TempDir Path dir) {
+        String source = """
+                #version 400 compatibility
+                #define TAA_USE_YCOCG
+                #if TAA_USE_YCOCG
+                vec3 ycocg;
+                #endif
+                #ifdef TAA_USE_YCOCG
+                vec3 defined;
+                #endif
+                void main() { gl_FragColor = vec4(1.0); }
+                """;
+        var result = ShaderSourcePreprocessor.prepare(dir, dir.resolve("taa.fsh"), source,
+                PackEngineDefines.forPack(Map.of()), Set.of());
+        assertTrue(result.successful(), result.deviations().toString());
+        assertTrue(!result.source().contains("ycocg") && result.source().contains("defined"), result.source());
+    }
+
+    /**
      * Bliss SAND_STORMS off writes {@code uniform.float.sandStorm = 0.0;}. Iris cannot parse the
      * semicolon, logs it and declares nothing, so programs run reading it as zero; a value Chimera
      * cannot compile for want of a feature (an unknown function) still fails closed.
@@ -153,7 +186,7 @@ final class OptionSweepFixesTest {
         PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
                 PackRuntimeSettings.declaration(true, "float", "sandStorm", "0.0;"),
                 PackRuntimeSettings.declaration(true, "float", "wrong", "sinh(frameTimeCounter)")),
-                Map.of(), List.of());
+                List.of());
         assertTrue(settings.rejected().containsAll(List.of("sandStorm", "wrong")), settings.rejected().toString());
         assertTrue(!settings.customDescriptors().containsKey("sandStorm"),
                 "a value that does not parse is left unset, as Iris leaves it");
@@ -182,5 +215,45 @@ final class OptionSweepFixesTest {
         assertTrue(!result.contains("unusedFog"), result);
         assertTrue(result.contains("#define MULT_M 25 * 0.01;"), result);
         assertTrue(PackCompileTest.compile(result, false) == null, PackCompileTest.compile(result, false));
+    }
+
+    /**
+     * Photon DEBUG_VIEW_HISTOGRAM: composite4 passes {@code flat out vec4[HISTOGRAM_BINS / 4]
+     * histogram_pdf}, which reaches translation as {@code vec4[32 / 4]}. GL sizes an array with any
+     * constant integral expression, so each stage declares eight locations and the pair links; a
+     * named length is still not read.
+     */
+    @Test
+    void aConstantExpressionSizesAnInterfaceArray() {
+        String vertex = """
+                #version 400 compatibility
+                flat out vec4[32 / 4] histogram_pdf;
+                out vec2 uv;
+                void main() {
+                    for (int i = 0; i < 8; ++i) histogram_pdf[i] = vec4(i);
+                    uv = gl_MultiTexCoord0.xy;
+                    gl_Position = ftransform();
+                }
+                """;
+        String fragment = """
+                #version 400 compatibility
+                flat in vec4[32 / 4] histogram_pdf;
+                in vec2 uv;
+                layout(location = 0) out vec4 result;
+                void main() { result = histogram_pdf[int(uv.x * 8.0)]; }
+                """;
+        GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
+        GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
+        assertEquals(List.of(), vs.deviations());
+        assertEquals(List.of(), fs.deviations());
+        GlslInterfaceScanner.Declaration pdf = fs.input("histogram_pdf");
+        assertEquals(8, pdf.arraySize());
+        assertEquals(8, pdf.slots());
+        assertEquals("vec4[8]", vs.output("histogram_pdf").typeWithArray());
+        GlslInterfaceScanner.ProgramMatch match = GlslInterfaceScanner.match(vs, fs);
+        assertTrue(match.executable(), match.deviations().toString());
+        assertEquals(Map.of("histogram_pdf", 0, "uv", 8), match.locations());
+        assertEquals(List.of("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED"), GlslInterfaceScanner.scan(
+                fragment.replace("32 / 4", "BINS"), false).deviations());
     }
 }

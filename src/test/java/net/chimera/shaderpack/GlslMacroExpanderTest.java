@@ -29,6 +29,25 @@ final class GlslMacroExpanderTest {
                 "#define V 1\nint a = V;\n#undef V\n#define V 2\nint b = V;\n"));
     }
 
+    /** Photon reaches samplers through macros: a chained alias and a macro's body expand where they are used. */
+    @Test
+    void samplerMacroAliases() {
+        String aliased = GlslMacroExpander.expand("""
+                uniform sampler2D colortex5;
+                #define rec709_to_working_color rec709_to_rec2020
+                #define SRC_SAMPLER colortex5
+                #define LUT SRC_SAMPLER
+                #define SAMPLE(uv) texture(SRC_SAMPLER, uv)
+                vec4 a = texture(SRC_SAMPLER, vec2(0.0)) + texture(LUT, vec2(0.0)) + SAMPLE(vec2(1.0));
+                vec3 c = rec709_to_working_color[0];
+                """);
+        assertTrue(!aliased.contains("SRC_SAMPLER") && !aliased.contains("#define")
+                        && aliased.contains("vec4 a = texture(colortex5, vec2(0.0)) + texture(colortex5, vec2(0.0))"
+                                + " + texture(colortex5, vec2(1.0));")
+                        && aliased.contains("vec3 c = rec709_to_rec2020[0];"),
+                "sampler alias expansion:\n" + aliased);
+    }
+
     @Test
     void aCallAcrossLinesKeepsTheLineCount() {
         String source = "#define ADD(a, b) a + b\nfloat c = ADD(1.0,\n  2.0);\nfloat d;\n";
@@ -49,6 +68,21 @@ final class GlslMacroExpanderTest {
                 "tokens that would merge stay apart");
         assertEquals("\nfloat x = F(1);\n", GlslMacroExpander.expand("#define F(a, b) a\nfloat x = F(1);\n"),
                 "a call with the wrong argument count stays for the compiler to report");
+    }
+
+    /**
+     * Alpha Piscium pastes its colour-space converter's name onto the call's parenthesis
+     * ({@code _to_ ## b ##(x)}). That is not one token; JCPP lexes it again, and the rescan
+     * expands the pasted name as a call.
+     */
+    @Test
+    void aPasteThatIsNotOneTokenIsLexedAgain() {
+        assertEquals("\n\n\nvec3 c = srgbToWork(t);\n", GlslMacroExpander.expand("""
+                #define CONVERT(a, b, x) colors_ ## a ## _to_ ## b ##(x)
+                #define colors_1_to_8(x) srgbToWork(x)
+                #define WORK 8
+                vec3 c = CONVERT(1, 8, t);
+                """));
     }
 
     /** BSL documents its options with "#define FEATURE ..." inside a block comment; JCPP reads that as text. */

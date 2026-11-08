@@ -39,6 +39,32 @@ final class PackFeatureFlagsTest {
                 "mc_chunkFade does not exist, so packs must not take its path");
     }
 
+    /**
+     * Ebin declares its flood-fill light volume, and reversed shadow culling, under
+     * IRIS_FEATURE_CUSTOM_IMAGES. Iris defines every usable flag while it reads shaders.properties,
+     * listed or not; Chimera left this one out, so Ebin lost its coloured block light.
+     */
+    @Test
+    void shadersPropertiesSeesCustomImages(@TempDir Path dir) throws IOException {
+        Files.writeString(dir.resolve("shaders.properties"), """
+                #define FLOODFILL_BLOCKLIGHT
+                #if defined FLOODFILL_BLOCKLIGHT && defined IRIS_FEATURE_CUSTOM_IMAGES
+                shadow.culling = reversed
+                #else
+                shadow.culling = true
+                #endif
+                #ifdef IRIS_FEATURE_CUSTOM_IMAGES
+                image.lightvoxel = lightVoxelTex RGBA RGBA16F FLOAT false false 128 64 128
+                #endif
+                """);
+        PackSettingsPlan settings = PackSettingsPlan.parse(List.of(), dir, Map.of(),
+                PackOptionEnvironment.defaults(dir));
+        assertEquals("reversed", settings.propertyValues().get("shadow.culling"));
+        assertTrue(settings.propertyValues().containsKey("image.lightvoxel"), settings.propertyValues().toString());
+        assertFalse(settings.preprocessorDefines().containsKey("IRIS_FEATURE_CUSTOM_IMAGES"),
+                "program sources see the flag only once the pack's images can run");
+    }
+
     @Test
     @Tag("packs")
     void complementarySizesItsReflectionBuffersAsUnderIris() throws IOException {
@@ -53,7 +79,7 @@ final class PackFeatureFlagsTest {
 
     @Test
     void requiredFeaturesChimeraCannotProvideRefuseThePack() {
-        assertEquals(Set.of("TESSELATION_SHADERS", "SEPARATE_HARDWARE_SAMPLERS", "A,B"),
+        assertEquals(Set.of("TESSELATION_SHADERS", "A,B"),
                 PackFeatureFlags.unprovided(List.of("TESSELATION_SHADERS", "SEPARATE_HARDWARE_SAMPLERS", "A,B",
                         "ssbo", "COMPUTE_SHADERS", "CUSTOM_IMAGES")),
                 "unknown names refuse too; custom images load and fall back where they are missing");
@@ -64,7 +90,7 @@ final class PackFeatureFlagsTest {
     void optionalFlagsAreDefinedAsThePackSpellsThem() {
         assertEquals(Map.of("IRIS_FEATURE_ssbo", "1", "IRIS_FEATURE_ENTITY_TRANSLUCENT", "1"),
                 PackFeatureFlags.sourceDefines(List.of("ssbo", "ENTITY_TRANSLUCENT", "CUSTOM_IMAGES",
-                        "HIGHER_SHADOWCOLOR")),
+                        "TESSELLATION_SHADERS")),
                 "custom images stay with their own negotiation");
     }
 }

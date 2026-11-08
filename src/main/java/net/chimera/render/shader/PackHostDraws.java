@@ -1,5 +1,6 @@
 package net.chimera.render.shader;
 
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
@@ -12,12 +13,13 @@ import java.util.function.BooleanSupplier;
 
 /**
  * Draws a host mesh that a pack program serves with that program, inside the program's pack
- * outputs: the sky and clouds (ChimeraSkyBridge) and the host-layout lanes (particles, crumbling,
- * weather, lines, glint, lightning, beams, leads, text backgrounds and the shadow lanes). The
+ * outputs: the sky and clouds (ChimeraSkyBridge) and the host-layout lanes (particles,
+ * weather, lines, glint, lightning, leads, text backgrounds and the shadow lanes). The
  * program is chosen by the draw's shader and vertex format; the host's state and draw call stay,
  * and the ShaderInstance pipeline seam answers with the open draw's pipeline. In the shadow pass a
- * draw no shadow lane serves stays out of the shadow map. Family batches arrive with their draw
- * already open (FamilyRenderType) and pass through.
+ * draw no shadow lane serves stays out of the shadow map. Without a gbuffers_skybasic the horizon
+ * and the sky disc keep their host shader but draw unfogged, as Iris's SKY_BASIC fallback does.
+ * Family batches arrive with their draw already open (FamilyRenderType) and pass through.
  */
 public final class PackHostDraws {
     private PackHostDraws() {}
@@ -40,6 +42,10 @@ public final class PackHostDraws {
                     }, ChimeraSkyBridge::endDraw, draw);
             return;
         }
+        if (ChimeraSkyBridge.drawsUnfoggedSky(name)) {
+            drawUnfogged(draw);
+            return;
+        }
         ChimeraEntityBridge.Family lane = pass == null ? null : ChimeraEntityBridge.hostLaneFor(name, format);
         if (lane != null) {
             drawInWindow(pass, ChimeraEntityBridge.lanePipeline(lane, format), pass.laneWindowOutputs(lane),
@@ -48,6 +54,17 @@ public final class PackHostDraws {
             drop.run();
         } else {
             draw.run();
+        }
+    }
+
+    /** Runs a host draw with no fog, as FogRenderer.setupNoFog leaves it, then restores the fog start. */
+    private static void drawUnfogged(Runnable draw) {
+        float start = RenderSystem.getShaderFogStart();
+        RenderSystem.setShaderFogStart(Float.MAX_VALUE);
+        try {
+            draw.run();
+        } finally {
+            RenderSystem.setShaderFogStart(start);
         }
     }
 

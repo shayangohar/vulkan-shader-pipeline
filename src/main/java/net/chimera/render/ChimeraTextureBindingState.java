@@ -29,13 +29,16 @@ public final class ChimeraTextureBindingState {
         }
     }
 
-    /** Binds selector slot 0 to the terrain atlas and the sampler its texture parameters chose. */
+    /**
+     * Binds selector slot 0 to the terrain atlas and the sampler its texture parameters chose, at
+     * OpenGL's mip bias (SamplerProfile.asGl).
+     */
     public static void bindTerrainAtlas(VulkanImage image) {
         if (image == null) {
             clearPackBinding(0);
             return;
         }
-        SamplerProfile profile = SamplerProfile.of(image);
+        SamplerProfile profile = SamplerProfile.of(image).asGl(image);
         synchronized (ChimeraTextureBindingState.class) {
             STORE.bind(0, image, profile.id());
             samplerProfiles.put(0, profile);

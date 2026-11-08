@@ -134,8 +134,45 @@ final class WorldEntityAdapterTest {
             }
             assertEquals(null, ChimeraEntityBridge.shadowFamily(shader, block, null), "terrain casts no entity shadow");
         }
-        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_crumbling", block, Family.BLOCK), "crumbling");
+        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_crumbling", block, Family.BLOCK),
+                "crumbling is no block entity's model");
         assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_beacon_beam", block, Family.BLOCK), "beams");
+    }
+
+    /** Iris widens every BLOCK buffer to TERRAIN, so the crumbling overlay is its own lane wherever it is written. */
+    @Test
+    void crumblingBatchesAsDamagedBlockInAnyContext() {
+        var block = DefaultVertexFormat.BLOCK;
+        assertEquals(Family.DAMAGED_BLOCK, ChimeraEntityBridge.worldTypeFamily("rendertype_crumbling", block));
+        ChimeraEntityBridge.beginBlockEntity(0);
+        try {
+            assertEquals(Family.DAMAGED_BLOCK, ChimeraEntityBridge.worldTypeFamily("rendertype_crumbling", block),
+                    "a block entity's overlay");
+            assertEquals(Family.MOVING_BLOCK, ChimeraEntityBridge.worldTypeFamily("rendertype_solid", block));
+        } finally {
+            ChimeraEntityBridge.endContext();
+        }
+        assertEquals(null, ChimeraEntityBridge.worldTypeFamily("rendertype_crumbling",
+                DefaultVertexFormat.NEW_ENTITY), "the overlay only widens BLOCK buffers");
+        assertEquals(null, ChimeraEntityBridge.worldTypeFamily("rendertype_solid", block), "terrain");
+    }
+
+    /** Iris draws beacon beams with BEACON on BLOCK widened to TERRAIN, a beacon's or a mod's. */
+    @Test
+    void beaconBeamsBatchOnTheWidenedBlockLayout() {
+        var block = DefaultVertexFormat.BLOCK;
+        assertEquals(Family.BEACON_BEAM, ChimeraEntityBridge.worldTypeFamily("rendertype_beacon_beam", block));
+        ChimeraEntityBridge.beginBlockEntity(0);
+        try {
+            assertEquals(Family.BEACON_BEAM, ChimeraEntityBridge.worldTypeFamily("rendertype_beacon_beam", block),
+                    "a beacon's beam");
+            assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.BEACON_BEAM),
+                    "Iris draws a beacon's beam inside its block entity's wrapper");
+        } finally {
+            ChimeraEntityBridge.endContext();
+        }
+        assertEquals(null, ChimeraEntityBridge.shadowFamily("rendertype_beacon_beam", block, Family.BLOCK),
+                "Iris cancels beacon beams in the shadow pass");
     }
 
     /** Iris reports BLOCK_ENTITIES for whatever a block entity draws, in either pass, and ENTITIES for an entity's. */
@@ -147,6 +184,8 @@ final class WorldEntityAdapterTest {
                     "a moving piston");
             assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.SHADOW_ENTITIES),
                     "a block entity's eyes in the shadow pass");
+            assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.writePhase(Family.DAMAGED_BLOCK),
+                    "the crumbling batch draws after every block entity's wrapper closed; Iris never sets DESTROY");
             ChimeraEntityBridge.beginEntity("minecraft:zombie");
             try {
                 assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.writePhase(Family.ENTITY),
@@ -161,9 +200,26 @@ final class WorldEntityAdapterTest {
         try {
             assertEquals(PackRenderingPhase.ENTITIES, ChimeraEntityBridge.writePhase(Family.MOVING_BLOCK),
                     "a falling block");
+            assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.writePhase(Family.DAMAGED_BLOCK));
         } finally {
             ChimeraEntityBridge.endContext();
         }
+    }
+
+    /**
+     * Iris writes each quad's face normal into the layouts it extends (TERRAIN, ENTITY and GLYPH)
+     * while the level renders, and keeps the written normals outside it (MixinBufferBuilder).
+     */
+    @Test
+    void levelQuadsTakeTheirFaceNormal() {
+        for (var format : List.of(ChimeraVertexFormats.EXTENDED_BLOCK, ChimeraVertexFormats.EXTENDED_ENTITY,
+                ChimeraVertexFormats.EXTENDED_GLYPH)) {
+            assertTrue(ChimeraVertexFormats.takesFaceNormal(format, true), format.toString());
+            assertTrue(!ChimeraVertexFormats.takesFaceNormal(format, false), format.toString());
+        }
+        assertTrue(!ChimeraVertexFormats.takesFaceNormal(ChimeraVertexFormats.EXTENDED_PARTICLE, true),
+                "Iris does not extend particles");
+        assertTrue(!ChimeraVertexFormats.takesFaceNormal(DefaultVertexFormat.NEW_ENTITY, true), "a host layout");
     }
 
     @Test
@@ -241,6 +297,36 @@ final class WorldEntityAdapterTest {
      * Iris EntityPatcher: blockEntityId reads iris_Entity.y whether declared as an
      * attribute (MakeUp 9.5g solid_blocks_vertex) or a uniform, beside entityId on .x.
      */
+    /**
+     * A parameter named after an identity hides it, as Shrimple's GetSceneEntityLightColor(const in
+     * int entityId) does in its Nether and End voxel lighting: only the global's references read the
+     * identity. Renaming the parameter too broke the parameter list and refused the program.
+     */
+    @Test
+    void aParameterNamedEntityIdKeepsItsName() {
+        String vertex = """
+                #version 120
+                uniform int entityId;
+                varying float light;
+                float lightOf(const in int entityId) { return float(entityId) * 0.5; }
+                void main() {
+                    light = lightOf(entityId);
+                    gl_Position = ftransform();
+                }
+                """;
+        String fragment = """
+                #version 120
+                varying float light;
+                void main() { gl_FragColor = vec4(light); }
+                """;
+        LegacyGlslConverter.TerrainVertexConversion converted =
+                EntityVertexBridge.convertEntityVertex(vertex, null, fragment, Map.of("light", 0));
+        assertTrue(converted != null, "the entity vertex bridge rejected the source");
+        assertTrue(converted.source().contains("float lightOf(const in int entityId)")
+                && converted.source().contains("return float(entityId) * 0.5;")
+                && !converted.source().contains("lightOf(entityId)"), converted.source());
+    }
+
     @Test
     void blockEntityIdBridge() {
         String vertex = """
@@ -345,9 +431,9 @@ final class WorldEntityAdapterTest {
                 "currentRenderedItemId must read EntityIds.z: " + converted.source());
 
         String hostLayout = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
-        assertTrue(hostLayout.contains("max((0) - 10000, 0)")
+        assertTrue(hostLayout.contains("max((-1) - 10000, 0)")
                         && !hostLayout.contains("uniform int currentRenderedItemId"),
-                "a host layout reads the item as 0: " + hostLayout);
+                "a host layout reads CommonUniforms' constant item -1: " + hostLayout);
         // Iris's fallback entityId uniform: per draw, the bolt's id while a lightning bolt draws.
         String lane = IrisCoreProfile.prepareHostLayoutIdentity("#version 120\nuniform int entityId;\n"
                 + "uniform float blockEntityId;\nvoid main() { int id = entityId; float b = blockEntityId; }\n");

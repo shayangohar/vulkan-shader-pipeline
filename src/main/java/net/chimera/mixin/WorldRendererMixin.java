@@ -5,9 +5,14 @@ import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
+import net.chimera.render.PreSkyPasses;
 import net.chimera.render.TerrainLayers;
+import net.chimera.render.shader.FamilyBufferSource;
 import net.chimera.render.shader.PackUniformProvider;
+import net.chimera.render.shader.TerrainVertexUniforms;
+import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.RenderType;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.vulkanmod.render.chunk.WorldRenderer;
 import net.vulkanmod.render.vertex.TerrainRenderType;
 import org.joml.Matrix4f;
@@ -22,13 +27,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * <p>Every layer call runs in its Iris rendering phase. Only the layers VulkanMod draws
  * ({@link TerrainLayers}) open Chimera's windows:</p>
  * <ul>
- *   <li>The shadow segment renders at the head of the first drawn layer, before any terrain,
- *   as Iris renders shadows. openLevelSegment (at the world clear) armed it, and cullTerrain has
- *   updated the section graph by then. The shadow phase draws its own light-volume sections
- *   (ShadowSectionQueue), never the camera's culled queues. consumeShadowPending() clears the
- *   flag first, so the layer calls the shadow pass makes do not recurse.</li>
  *   <li>Depth is captured before translucent terrain, ahead of the pack window, whose guarded
- *   attachments must not intercept that fullscreen pass.</li>
+ *   attachments must not intercept that fullscreen pass. The entity batches a pack's
+ *   separateEntityDraws held draw right after it (FamilyBufferSource).</li>
  *   <li>The pack coverage window spans the layer's draws.</li>
  *   <li>Every layer opens on the main target (ChimeraMainPass.rebindMainTarget), which opens the
  *   shadow pass or a pending pack geometry window. Upstream VulkanMod's renderSectionLayer did this
@@ -41,6 +42,8 @@ public abstract class WorldRendererMixin {
     @WrapMethod(method = "renderSectionLayer")
     private void chimera$terrainLayer(RenderType renderType, double camX, double camY, double camZ,
                                       Matrix4f view, Matrix4f projection, Operation<Void> original) {
+        // The camera every area's ChunkOffset is relative to, and the atlas shrink, for Chimera's terrain shaders.
+        TerrainVertexUniforms.update(camX, camY, camZ);
         TerrainRenderType type = ChimeraRenderer.segmentsActive() ? TerrainRenderType.get(renderType) : null;
         if (type == null) {
             original.call(renderType, camX, camY, camZ, view, projection);
@@ -55,15 +58,18 @@ public abstract class WorldRendererMixin {
                 original.call(renderType, camX, camY, camZ, view, projection);
                 return;
             }
-            if (type == TerrainLayers.OPAQUE && pass.consumeShadowPending()) {
-                pass.renderShadowSegment(camX, camY, camZ);
-            }
             if (type == TerrainRenderType.TRANSLUCENT) {
+                // The deferred passes, then the entity batches separateEntityDraws held for them.
                 pass.captureOpaqueDepthBeforeTranslucent();
+                FamilyBufferSource.endHeldLevelBatches(pass);
             }
             pass.beginPackCoverageWindow(type);
             try {
                 pass.rebindMainTarget();
+                // The shadow pass sets its own layers' references (PackShadowPass).
+                if (!ChimeraRenderer.shadowPassActive()) {
+                    PackUniformProvider.updateDrawAlphaReference(TerrainLayers.irisAlphaReference(type));
+                }
                 original.call(renderType, camX, camY, camZ, view, projection);
             } finally {
                 pass.endPackCoverageWindow(type);
@@ -71,6 +77,17 @@ public abstract class WorldRendererMixin {
         } finally {
             PackUniformProvider.setRenderingPhase(previous);
         }
+    }
+
+    /**
+     * Skips the frame's section setup when the shadow pass already ran it before the sky
+     * (PreSkyPasses): a second run would reset the indirect draws the shadow pass recorded.
+     */
+    @WrapMethod(method = "setupRenderer")
+    private void chimera$setupOnce(Camera camera, Frustum frustum, boolean capturedFrustum, boolean spectator,
+                                   Operation<Void> original) {
+        if (PreSkyPasses.consumeSetupRanEarly()) return;
+        original.call(camera, frustum, capturedFrustum, spectator);
     }
 
     /**

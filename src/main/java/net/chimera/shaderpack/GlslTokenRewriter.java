@@ -157,47 +157,6 @@ public final class GlslTokenRewriter {
     }
 
     /**
-     * Keeps legacy 3D texture reads inside the declared image volume. Iris
-     * packs commonly use camera-relative coordinates for these reads. Vulkan
-     * does not guarantee a safe result for an out-of-range texelFetch, so the
-     * bounded compute bridge makes the access explicit before shaderc sees it.
-     */
-    public static String rewriteTexelFetchBounds(String source, Set<String> samplerNames) {
-        if (source == null || source.isBlank() || samplerNames == null || samplerNames.isEmpty()) {
-            return source;
-        }
-        List<GlslLexer.Token> tokens = new ArrayList<>(GlslLexer.lex(source));
-        for (int index = tokens.size() - 1; index >= 0; index--) {
-            GlslLexer.Token token = tokens.get(index);
-            if (!token.identifier("texelFetch")) {
-                continue;
-            }
-            int open = GlslLexer.nextSignificant(tokens, index);
-            int close = open < 0 ? -1 : GlslLexer.matching(tokens, open, "(", ")");
-            if (open < 0 || close < 0) {
-                throw new IllegalArgumentException("unbalanced texelFetch call");
-            }
-            List<int[]> arguments = argumentRanges(tokens, open + 1, close);
-            if (arguments.size() != 3) {
-                continue;
-            }
-            String sampler = singleIdentifier(tokens, arguments.get(0));
-            if (!samplerNames.contains(sampler)) {
-                continue;
-            }
-            String coordinate = argumentText(tokens, arguments.get(1));
-            String lod = argumentText(tokens, arguments.get(2));
-            String expression = "texelFetch(" + sampler + ", clamp(" + coordinate
-                    + ", ivec3(0), textureSize(" + sampler + ", 0) - ivec3(1)), " + lod + ")";
-            tokens.set(index, raw(expression));
-            for (int clear = index + 1; clear <= close; clear++) {
-                tokens.set(clear, raw(""));
-            }
-        }
-        return GlslLexer.render(tokens);
-    }
-
-    /**
      * Converts legacy shadow lookups to expressions using the declared sampler.
      * GLSL opaque sampler types cannot be function parameters, so this rewrite
      * deliberately emits an inline expression instead of a generated helper.
@@ -285,6 +244,17 @@ public final class GlslTokenRewriter {
         int close = main.body().range().end() - 1;
         return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(main.name(), main.name() + 1), authored),
                 new GlslTree.Edit(new GlslTree.Range(close + 1, close + 1), generated)));
+    }
+
+    /**
+     * Appends statements at the end of the one real GLSL main function's body, as glsl-transformer's
+     * appendMainFunctionBody does for Iris: a {@code return} earlier in main skips them.
+     */
+    static String appendMainBody(String source, String statements) {
+        if (source == null || statements == null || statements.isBlank()) return source;
+        GlslTree tree = GlslTree.parse(source);
+        int close = mainDefinition(tree).body().range().end() - 1;
+        return tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(close, close), indent(statements) + "\n")));
     }
 
     /**
@@ -426,7 +396,7 @@ public final class GlslTokenRewriter {
     }
 
     /** The source's one main definition; only {@code void main()} is supported. */
-    private static GlslTree.Function mainDefinition(GlslTree tree) {
+    static GlslTree.Function mainDefinition(GlslTree tree) {
         List<GlslTree.Function> mains = new ArrayList<>();
         for (GlslTree.External external : tree.externals()) {
             if (external instanceof GlslTree.Function function && function.body() != null

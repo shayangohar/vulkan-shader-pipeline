@@ -5,8 +5,8 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,102 +36,43 @@ public final class PackConfig {
      * aliases Iris accepts the same way (gaux2Format is colortex5Format).
      */
     private static final String TARGET_NAME = "(colortex\\d+|gcolor|gdepth|gnormal|composite|gaux[1-4])";
-    /** const int <target>Format = TOKEN; */
-    private static final Pattern COLORTEX_FMT_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+int\\s+" + TARGET_NAME + "Format\\s*=\\s*(\\w+)\\s*;\\s*(?://.*)?$");
-    private static final Pattern COLORTEX_CLEAR_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+bool\\s+" + TARGET_NAME + "Clear\\s*=\\s*(true|false)\\s*;\\s*(?://.*)?$",
-            Pattern.CASE_INSENSITIVE);
-    private static final Pattern COLORTEX_CLEAR_COLOR_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+vec4\\s+" + TARGET_NAME
-                    + "ClearColor\\s*=\\s*vec4\\s*\\(([^)]*)\\)\\s*;\\s*(?://.*)?$");
-    private static final Pattern SHADOW_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+(?:int|float)\\s+"
-                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul"
-                    + "|shadowIntervalSize|sunPathRotation|sunPathOffset|entityShadowDistanceMul|voxelDistance)"
-                    + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
-    private static final Pattern PACK_NUMERIC_CONST = Pattern.compile(
-            "(?m)^\\s*const\\s+(int|float)\\s+"
-                    + "(shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|"
-                    + "shadowDistanceRenderMul|sunPathRotation|sunPathOffset)"
-                    + "\\s*=\\s*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)[fF]?\\s*;\\s*(?://.*)?$");
+    /** A colour target directive: {@code <target>Format} (int), {@code Clear} (bool), {@code ClearColor} (vec4). */
+    private static final Pattern TARGET_DIRECTIVE = Pattern.compile(TARGET_NAME + "(Format|ClearColor|Clear)");
+    private static final Map<String, String> TARGET_DIRECTIVE_TYPES = Map.of(
+            "Format", "int", "Clear", "bool", "ClearColor", "vec4");
+    /** The shadow settings a const directive declares, with the type it must be declared as. */
+    private static final Map<String, String> SHADOW_DIRECTIVE_TYPES = Map.ofEntries(
+            Map.entry("shadowMapResolution", "int"), Map.entry("shadowDistance", "float"),
+            Map.entry("shadowMapSize", "float"), Map.entry("shadowMapFov", "float"),
+            Map.entry("shadowDistanceRenderMul", "float"), Map.entry("shadowIntervalSize", "float"),
+            Map.entry("sunPathRotation", "float"), Map.entry("sunPathOffset", "float"),
+            Map.entry("entityShadowDistanceMul", "float"), Map.entry("voxelDistance", "float"),
+            Map.entry("shadowNearPlane", "float"), Map.entry("shadowFarPlane", "float"));
     private static final Pattern DRAWBUFFERS_COMMENT = Pattern.compile("/\\*\\s*DRAWBUFFERS\\s*:\\s*([0-9,]+)\\s*\\*/");
     private static final Pattern FRAG_DATA = Pattern.compile("gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY_KEY = Pattern.compile("[A-Za-z0-9_.-]+");
-    /** shaders.properties key shape: <target>Format. */
-    private static final Pattern COLORTEX_PROPERTY_KEY = Pattern.compile("^" + TARGET_NAME + "Format$");
     private static final Pattern TARGET_SIZE_PROPERTY_KEY =
             Pattern.compile("^size\\.buffer\\." + TARGET_NAME + "$");
-    private static final Pattern TARGET_CLEAR_PROPERTY_KEY =
-            Pattern.compile("^" + TARGET_NAME + "Clear$");
-    private static final Pattern TARGET_CLEAR_COLOR_PROPERTY_KEY =
-            Pattern.compile("^" + TARGET_NAME + "ClearColor$");
     private static final Pattern TARGET_FLIP_PROPERTY_KEY =
             Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\.colortex(\\d+)$");
 
     /**
-     * Iris format token -> exact VkFormat. Keep normalized and floating-point
-     * storage distinct; target allocation checks device support when required.
+     * Iris format token -> the VkFormat that stores it exactly (IrisColorFormats). Normalized,
+     * floating-point and integer storage stay distinct; target allocation checks device support
+     * when required.
      */
-    public static final Map<String, Integer> FMT_TO_VK = Map.ofEntries(
-            Map.entry("R8", 9),          // VK_FORMAT_R8_UNORM
-            Map.entry("RG8", 16),        // VK_FORMAT_R8G8_UNORM
-            Map.entry("RGBA8", 37),      // VK_FORMAT_R8G8B8A8_UNORM
-            Map.entry("RGB10_A2", 64),   // VK_FORMAT_A2B10G10R10_UNORM_PACK32 (GL_RGB10_A2 bit order)
-            Map.entry("R16", 70),        // VK_FORMAT_R16_UNORM
-            Map.entry("R16F", 76),       // VK_FORMAT_R16_SFLOAT
-            Map.entry("RG16", 77),       // VK_FORMAT_R16G16_UNORM
-            Map.entry("RG16F", 83),      // VK_FORMAT_R16G16_SFLOAT
-            Map.entry("RGBA16", 91),     // VK_FORMAT_R16G16B16A16_UNORM (not RGBA16F)
-            Map.entry("RGBA16F", 97),    // VK_FORMAT_R16G16B16A16_SFLOAT
-            Map.entry("R32F", 100),      // VK_FORMAT_R32_SFLOAT
-            Map.entry("RG32F", 103),     // VK_FORMAT_R32G32_SFLOAT
-            Map.entry("RGBA32F", 109)    // VK_FORMAT_R32G32B32A32_SFLOAT
-    );
-    /**
-     * The rest of Iris's InternalTextureFormat list, stored in a target format every device can
-     * draw to and blend: an RGB format gains alpha, a signed normalized one becomes a float with
-     * at least its precision, and the packed and low-precision formats widen to 8 or 16 bits per
-     * channel. Integer formats stay unsupported: their programs write integer outputs.
-     */
-    private static final Map<String, Integer> APPROXIMATE_FMT_TO_VK = Map.ofEntries(
-            Map.entry("RGB8", 37),
-            Map.entry("R8_SNORM", 76),
-            Map.entry("RG8_SNORM", 83),
-            Map.entry("RGB8_SNORM", 97),
-            Map.entry("RGBA8_SNORM", 97),
-            Map.entry("RGB16", 91),
-            Map.entry("R16_SNORM", 100),
-            Map.entry("RG16_SNORM", 103),
-            Map.entry("RGB16_SNORM", 109),
-            Map.entry("RGBA16_SNORM", 109),
-            Map.entry("RGB16F", 97),
-            Map.entry("RGB32F", 109),
-            Map.entry("RGBA2", 37),
-            Map.entry("RGBA4", 37),
-            Map.entry("R3_G3_B2", 37),
-            Map.entry("RGB5_A1", 37),
-            Map.entry("RGB565", 37),
-            Map.entry("R11F_G11F_B10F", 97),
-            Map.entry("RGB9_E5", 97)
-    );
-    /** Iris's {@code RGBA}, the unsized default, which GL stores as RGBA8. */
-    private static final Map<String, String> FORMAT_ALIASES = Map.of("RGBA", "RGBA8");
-    /**
-     * The approximations whose GL format has no alpha channel. GL reads alpha as 1 from them, and
-     * Solas, for one, keeps its reflections only where that alpha is above 0.
-     */
-    private static final Set<String> PADDED_ALPHA_FORMATS = Set.of(
-            "RGB8", "RGB8_SNORM", "RGB16", "RGB16_SNORM", "RGB16F", "RGB32F", "R3_G3_B2", "RGB565",
-            "R11F_G11F_B10F", "RGB9_E5");
-    private static final Map<Integer, String> VK_TO_NAME;
-    static {
-        Map<Integer, String> reverse = new HashMap<>();
-        FMT_TO_VK.forEach((token, code) -> reverse.put(code, token));
-        VK_TO_NAME = Map.copyOf(reverse);
-    }
+    public static final Map<String, Integer> FMT_TO_VK = exactFormats();
 
     private PackConfig() {}
+
+    private static Map<String, Integer> exactFormats() {
+        Map<String, Integer> exact = new HashMap<>();
+        for (String token : IrisColorFormats.tokens()) {
+            IrisColorFormats.Format format = IrisColorFormats.of(token);
+            if (format.exact()) exact.put(token, format.vkFormat());
+        }
+        return Map.copyOf(exact);
+    }
 
     /**
      * Bytes per texel of a colour-target format in {@link #FMT_TO_VK}, or 0
@@ -139,35 +80,50 @@ public final class PackConfig {
      * sizes its own formats, so pack targets take their size from here.
      */
     public static int formatBytes(int vkFormat) {
-        return switch (vkFormat) {
-            case 9 -> 1;
-            case 16, 70, 76 -> 2;
-            case 37, 64, 77, 83, 100 -> 4;
-            case 91, 97, 103 -> 8;
-            case 109 -> 16;
-            default -> 0;
-        };
+        return IrisColorFormats.bytes(vkFormat);
     }
 
+    /** The host shadow map's resolution and distance, without a pack. */
     public static final int DEFAULT_SHADOW_MAP_RESOLUTION = 2048;
     public static final float DEFAULT_SHADOW_DISTANCE = 128.0F;
+    /** Iris PackShadowDirectives' defaults for a pack that declares no resolution or distance. */
+    public static final int IRIS_SHADOW_MAP_RESOLUTION = 1024;
+    public static final float IRIS_SHADOW_DISTANCE = 160.0F;
+    /** Iris ShadowMatrices.NEAR and FAR: the shadow depth range when the pack sets no plane. */
+    public static final float SHADOW_NEAR_PLANE = -100.05F;
+    public static final float SHADOW_FAR_PLANE = 156.0F;
     /** Iris PackShadowDirectives default. */
     public static final float DEFAULT_SHADOW_INTERVAL_SIZE = 2.0F;
-    private static final int MIN_SHADOW_MAP_RESOLUTION = 128;
-    private static final int MAX_SHADOW_MAP_RESOLUTION = 4096;
-    private static final float MIN_SHADOW_DISTANCE = 16.0F;
-    private static final float MAX_SHADOW_DISTANCE = 2048.0F;
+    /** The shadow settings Iris reads as any finite number; Iris clamps none of them. */
+    private static final List<String> FINITE_SHADOW_SETTINGS = List.of("shadowDistanceRenderMul", "sunPathRotation",
+            "sunPathOffset", "shadowIntervalSize", "entityShadowDistanceMul", "voxelDistance", "shadowNearPlane",
+            "shadowFarPlane", "shadowMapFov");
 
     /** Validated shadow settings. The raw values remain available for logs. */
     public record ShadowSettings(
             int resolution,
             float distance,
             Map<String, String> rawValues,
-            List<String> deviations
+            List<String> deviations,
+            ShadowTargetDirectives targets,
+            int colorTargetCount
     ) {
         public ShadowSettings {
             rawValues = Collections.unmodifiableMap(new TreeMap<>(rawValues));
             deviations = List.copyOf(new TreeSet<>(deviations));
+            targets = targets == null ? ShadowTargetDirectives.defaults() : targets;
+            colorTargetCount = Math.clamp(colorTargetCount, ShadowTargetDirectives.LEGACY_COLOR_TARGETS,
+                    ShadowTargetDirectives.MAX_COLOR_TARGETS);
+        }
+
+        /** The shadow pass's colour attachment formats: each target's, in index order. */
+        public List<Integer> colorAttachmentFormats() {
+            return targets.attachmentFormats(colorTargetCount);
+        }
+
+        /** Settings with Iris's default shadow target directives and two targets. */
+        public ShadowSettings(int resolution, float distance, Map<String, String> rawValues, List<String> deviations) {
+            this(resolution, distance, rawValues, deviations, null, ShadowTargetDirectives.LEGACY_COLOR_TARGETS);
         }
 
         public float distanceRenderMultiplier() {
@@ -203,6 +159,34 @@ public final class PackConfig {
         /** Iris voxelDistance: the half-size of the box safe-zone shadow culling always draws. */
         public float voxelDistance() {
             return finiteValue("voxelDistance", 0.0F);
+        }
+
+        /**
+         * The shadow projection's near plane (Iris shadowNearPlane, ShadowRenderer and
+         * MatrixUniforms): -1 reaches the render distance toward the sun.
+         */
+        public float nearPlane(int renderDistanceChunks) {
+            return depthPlane("shadowNearPlane", SHADOW_NEAR_PLANE, -renderDistanceChunks * 16.0F);
+        }
+
+        /** The shadow projection's far plane (Iris shadowFarPlane): -1 reaches the render distance. */
+        public float farPlane(int renderDistanceChunks) {
+            return depthPlane("shadowFarPlane", SHADOW_FAR_PLANE, renderDistanceChunks * 16.0F);
+        }
+
+        /**
+         * Iris shadowMapFov: the field of view, in degrees, of a perspective shadow projection
+         * (ShadowRenderer, ShadowMatrices.createPerspectiveMatrix); null for Iris's orthographic one.
+         */
+        public Float fieldOfView() {
+            float fov = finiteValue("shadowMapFov", Float.NaN);
+            return Float.isNaN(fov) ? null : fov;
+        }
+
+        /** A declared plane, Iris's default without one; Iris compares with -1 as Mth.equal does. */
+        private float depthPlane(String name, float fallback, float renderDistancePlane) {
+            float plane = finiteValue(name, fallback);
+            return Math.abs(plane + 1.0F) < 1.0E-5F ? renderDistancePlane : plane;
         }
 
         private float finiteValue(String name, float fallback) {
@@ -261,37 +245,37 @@ public final class PackConfig {
             Map<Integer, Integer> colortexFormats,
             int drawBufferCount,
             ShadowSettings shadowSettings,
-            Map<String, String> shaderConstants,
             List<String> deviations,
             PackSettingsPlan settings,
             Map<Integer, TargetSettings> targetSettings,
             Map<String, List<Integer>> flips,
             Map<String, List<Integer>> preFlips,
-            // Targets declared in a format without alpha and stored with it (PADDED_ALPHA_FORMATS).
-            Set<Integer> paddedAlphaTargets
+            // Targets declared in a format without alpha and stored with it (IrisColorFormats).
+            Set<Integer> paddedAlphaTargets,
+            PackDirectives directives
     ) {
         public PackConfigData(
                 Map<Integer, Integer> colortexFormats,
                 int drawBufferCount,
                 ShadowSettings shadowSettings,
-                Map<String, String> shaderConstants,
                 List<String> deviations
         ) {
-            this(colortexFormats, drawBufferCount, shadowSettings, shaderConstants,
-                    deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of(), Set.of());
+            this(colortexFormats, drawBufferCount, shadowSettings,
+                    deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of(), Set.of(),
+                    PackDirectives.DEFAULTS);
         }
 
         public PackConfigData {
             colortexFormats = Collections.unmodifiableMap(new TreeMap<>(colortexFormats));
             paddedAlphaTargets = Collections.unmodifiableSet(new TreeSet<>(paddedAlphaTargets == null
                     ? Set.of() : paddedAlphaTargets));
-            shaderConstants = Collections.unmodifiableMap(new TreeMap<>(shaderConstants));
             deviations = List.copyOf(new TreeSet<>(deviations));
             settings = settings == null ? PackSettingsPlan.empty() : settings;
             targetSettings = Collections.unmodifiableMap(new TreeMap<>(targetSettings == null
                     ? Map.of() : targetSettings));
             flips = immutableTargetLists(flips);
             preFlips = immutableTargetLists(preFlips);
+            directives = directives == null ? PackDirectives.DEFAULTS : directives;
         }
 
         private static Map<String, List<Integer>> immutableTargetLists(
@@ -316,24 +300,19 @@ public final class PackConfig {
             PackSettingsPlan settings
     ) {
         Collected collected = new Collected();
-        for (PackProgram program : programs.stream()
-                .sorted(Comparator.comparing(PackProgram::name)).toList()) {
-            String src = program.executableFragmentSource();
-            if (src == null) {
-                src = "";
+        List<PackProgram> directivePrograms = IrisConstDirectives.programs(programs, settings);
+        List<IrisConstDirectives.Directive> directives = new ArrayList<>();
+        for (PackProgram program : directivePrograms) {
+            for (IrisConstDirectives.Directive directive
+                    : IrisConstDirectives.find(program.executableFragmentSource())) {
+                acceptDirective(program.name(), directive, collected);
+                directives.add(directive);
             }
-            collectSourceFormats(program.name(), src, collected);
-            collectShadowConstants(src, collected.shadowValues);
-            collectShadowConstants(program.executableVertexSource(), collected.shadowValues);
-            collectPackConstants(src, collected.shaderConstants, collected.deviations);
-            collectPackConstants(program.executableVertexSource(), collected.shaderConstants, collected.deviations);
-            collectTargetConstants(src, collected.targetSettings, collected.deviations);
-            collectTargetConstants(program.executableVertexSource(), collected.targetSettings, collected.deviations);
         }
 
-        // shaders.properties overrides (OptiFine packs may declare formats here), as Iris reads
-        // them: inside the #if branches that hold, the last value of a key, and option names in a
-        // value expanded (Complementary sizes colortex1 by REFLECTION_RES).
+        // shaders.properties' target sizes and flips, as Iris reads them: inside the #if branches that
+        // hold, the last value of a key, and option names in a value expanded (Complementary sizes
+        // colortex1 by REFLECTION_RES).
         settings.propertyValues().forEach((key, raw) -> {
             int comment = raw.indexOf('#');
             String value = (comment < 0 ? raw : raw.substring(0, comment)).trim();
@@ -351,11 +330,61 @@ public final class PackConfig {
             }
         }
 
-        ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues);
-        addShadowConstants(shadowSettings, collected.shadowValues, collected.shaderConstants);
+        // GL leaves Iris's float clear of an integer buffer undefined; Chimera clears it with the clear
+        // colour's integer parts (PackTargetImages).
+        collected.colortexFormats.forEach((slot, format) -> {
+            if (IrisColorFormats.integer(format)
+                    && collected.targetSettings.getOrDefault(slot, TargetSettings.defaults()).clear()) {
+                collected.deviations.add("POST_TARGET_INTEGER_CLEAR_CHIMERA:colortex" + slot);
+            }
+        });
+        boolean shadowPass = directivePrograms.stream().anyMatch(program -> program.name().equals("shadow"));
+        ShadowSettings shadowSettings = validateShadowSettings(collected.shadowValues,
+                ShadowTargetDirectives.read(directives), shadowColorTargetCount(directivePrograms, settings),
+                shadowPass);
         return new PackConfigData(collected.colortexFormats, drawBufferCount,
-                shadowSettings, collected.shaderConstants, collected.deviations, settings,
-                collected.targetSettings, collected.flips, collected.preFlips, collected.paddedAlphaTargets);
+                shadowSettings, collected.deviations, settings, collected.targetSettings, collected.flips,
+                collected.preFlips, collected.paddedAlphaTargets, PackDirectives.read(directives));
+    }
+
+    /**
+     * One const directive: a colour target's format, clear or clear colour, or a shadow setting.
+     * A directive declared with another type than Iris reads it as is ignored, as Iris ignores it.
+     */
+    private static void acceptDirective(String program, IrisConstDirectives.Directive directive, Collected collected) {
+        Matcher target = TARGET_DIRECTIVE.matcher(directive.name());
+        if (target.matches() && directive.type().equals(TARGET_DIRECTIVE_TYPES.get(target.group(2)))) {
+            acceptTargetDirective(program, target.group(1), target.group(2), directive.value(), collected);
+        } else if (directive.type().equals(SHADOW_DIRECTIVE_TYPES.get(directive.name()))
+                && directive.numeric()) {
+            collected.shadowValues.put(directive.name(), directive.value());
+        }
+    }
+
+    private static final Pattern SHADOW_COLOR_NAME = Pattern.compile("\\bshadowcolor([0-7])\\b");
+
+    /**
+     * The shadowcolor targets the shadow pass renders. Iris has two (MAX_SHADOW_COLOR_BUFFERS_OF);
+     * with HIGHER_SHADOWCOLOR it has eight and creates each on first use, so the pass renders every
+     * one up to the highest a program reads or a shadow program writes.
+     */
+    private static int shadowColorTargetCount(List<PackProgram> programs, PackSettingsPlan settings) {
+        if (!settings.hasFeature(PackFeatureFlags.HIGHER_SHADOWCOLOR)) {
+            return ShadowTargetDirectives.LEGACY_COLOR_TARGETS;
+        }
+        int highest = ShadowTargetDirectives.LEGACY_COLOR_TARGETS - 1;
+        for (PackProgram program : programs) {
+            for (String source : Arrays.asList(program.executableFragmentSource(), program.executableVertexSource())) {
+                Matcher name = SHADOW_COLOR_NAME.matcher(source == null ? "" : source);
+                while (name.find()) highest = Math.max(highest, Integer.parseInt(name.group(1)));
+            }
+            if (!FamilyAdapterRegistry.isShadowFamily(program.name())) continue;
+            String fragment = program.executableFragmentSource();
+            for (int target : PostTargetPlan.parseShadow("shadow", fragment, Map.of()).plan().targetSlots()) {
+                if (target < ShadowTargetDirectives.MAX_COLOR_TARGETS) highest = Math.max(highest, target);
+            }
+        }
+        return highest + 1;
     }
 
     /** What parsing gathers from the sources and shaders.properties before shadow validation. */
@@ -363,7 +392,6 @@ public final class PackConfig {
         final Map<Integer, Integer> colortexFormats = new HashMap<>();
         final Set<Integer> paddedAlphaTargets = new TreeSet<>();
         final Map<String, String> shadowValues = new TreeMap<>();
-        final Map<String, String> shaderConstants = new TreeMap<>();
         final Map<Integer, TargetSettings> targetSettings = new TreeMap<>();
         final Map<String, List<Integer>> flips = new TreeMap<>();
         final Map<String, List<Integer>> preFlips = new TreeMap<>();
@@ -372,20 +400,19 @@ public final class PackConfig {
 
     /** A colortex format token's Vulkan format, recording an approximation; null when unsupported. */
     private static Integer formatCode(int slot, String token, List<String> deviations) {
-        Integer code = FMT_TO_VK.get(FORMAT_ALIASES.getOrDefault(token, token));
-        if (code == null) {
-            code = APPROXIMATE_FMT_TO_VK.get(token);
-            if (code != null) {
-                deviations.add("POST_TARGET_FORMAT_APPROXIMATED:colortex"
-                        + slot + "=" + token + "->" + formatName(code));
-            }
+        IrisColorFormats.Format format = IrisColorFormats.of(token);
+        if (format == null) return null;
+        if (!format.exact()) {
+            deviations.add("POST_TARGET_FORMAT_APPROXIMATED:colortex"
+                    + slot + "=" + token + "->" + formatName(format.vkFormat()));
         }
-        return code;
+        return format.vkFormat();
     }
 
     /** Records a target's format, a later declaration replacing an earlier one; returns the previous format. */
     private static Integer putFormat(int slot, String token, int code, Collected collected) {
-        if (PADDED_ALPHA_FORMATS.contains(token)) {
+        IrisColorFormats.Format format = IrisColorFormats.of(token);
+        if (format != null && format.paddedAlpha()) {
             collected.paddedAlphaTargets.add(slot);
         } else {
             collected.paddedAlphaTargets.remove(slot);
@@ -393,81 +420,57 @@ public final class PackConfig {
         return collected.colortexFormats.put(slot, code);
     }
 
-    /** The {@code const int colortexNFormat} declarations of one program's fragment source. */
-    private static void collectSourceFormats(String program, String src, Collected collected) {
-        Matcher fmt = COLORTEX_FMT_CONST.matcher(src);
-        while (fmt.find()) {
-            int slot = parseTargetIndex(fmt.group(1), collected.deviations);
-            if (slot < 0) {
-                continue;
+    /**
+     * A colour target directive: a format token, a clear switch Iris reads only as exactly true or
+     * false, or a clear colour.
+     */
+    private static void acceptTargetDirective(String program, String target, String setting, String value,
+                                              Collected collected) {
+        int slot = parseTargetIndex(target, collected.deviations);
+        if (slot < 0) return;
+        switch (setting) {
+            case "Format" -> acceptFormatDirective(program, slot, value, collected);
+            case "Clear" -> {
+                if (value.equals("true") || value.equals("false")) {
+                    updateTargetSettings(collected.targetSettings, slot, null, value.equals("true"), null, null);
+                }
             }
-            String token = fmt.group(2);
-            Integer code = formatCode(slot, token, collected.deviations);
-            if (code == null) {
-                collected.deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:colortex" + slot + "=" + token);
-                LOGGER.warn("[chimera] pack {}: colortex{}Format {}: unhandled format, keeping default",
-                        program, slot, token);
-                continue;
-            }
-            Integer previous = putFormat(slot, token, code, collected);
-            if (previous != null && !previous.equals(code)) {
-                LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program, slot, previous, code);
-            }
-        }
-    }
-
-    /** One shaders.properties entry: a target format or directive, a shadow setting, or a pack constant. */
-    private static void applyProperty(String key, String value, Collected collected) {
-        Matcher colortexKey = COLORTEX_PROPERTY_KEY.matcher(key);
-        if (colortexKey.find()) {
-            if (!applyFormatProperty(key, value, colortexKey.group(1), collected)) {
-                return;
-            }
-        } else {
-            applyTargetProperty(key, value, collected);
-        }
-        if (SHADOW_PROPERTIES.contains(key)) {
-            collected.shadowValues.put(key, value);
-            LOGGER.info("[chimera] pack properties: {}={}", key, value);
-        } else if (PACK_CONSTANT_NAMES.contains(key)) {
-            if (isNumeric(value)) {
-                collected.shaderConstants.put(key, normalizeNumeric(value));
-                LOGGER.info("[chimera] pack properties: {}={}", key, value);
-            } else {
-                collected.deviations.add("PACK_CONSTANT_UNSUPPORTED:" + key);
+            default -> {
+                float[] parsed = parseColor(value);
+                if (parsed != null) {
+                    updateTargetSettings(collected.targetSettings, slot, null, null, parsed, null);
+                } else {
+                    collected.deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
+                }
             }
         }
     }
 
-    /** A {@code colortexNFormat} property; false when it names no target or no supported format. */
-    private static boolean applyFormatProperty(String key, String value, String index, Collected collected) {
-        int slot = parseTargetIndex(index, collected.deviations);
-        if (slot < 0) {
-            return false;
-        }
-        Integer code = formatCode(slot, value, collected.deviations);
+    private static void acceptFormatDirective(String program, int slot, String token, Collected collected) {
+        Integer code = formatCode(slot, token, collected.deviations);
         if (code == null) {
-            collected.deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:" + key + "=" + value);
-            LOGGER.warn("[chimera] pack properties {}: unhandled format, keeping default", value);
-            return false;
+            collected.deviations.add("POST_TARGET_FORMAT_UNSUPPORTED:colortex" + slot + "=" + token);
+            LOGGER.warn("[chimera] pack {}: colortex{}Format {}: unhandled format, keeping default",
+                    program, slot, token);
+            return;
         }
-        putFormat(slot, value, code, collected);
-        LOGGER.info("[chimera] pack properties: {}={}", key, value);
-        return true;
+        Integer previous = putFormat(slot, token, code, collected);
+        if (previous != null && !previous.equals(code)) {
+            LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program, slot, previous, code);
+        }
     }
 
-    /** A target size, clear, clear color or flip directive. */
-    private static void applyTargetProperty(String key, String value, Collected collected) {
+    /**
+     * One shaders.properties entry, as Iris's ShaderProperties reads target keys: a
+     * {@code size.buffer.<target>} size or a {@code flip.<pass>.<target>} switch. Formats, clears and
+     * shadow settings are source const directives only (PackRenderTargetDirectives,
+     * PackShadowDirectives, PackDirectives); a properties key with one of their names applies nothing.
+     */
+    private static void applyProperty(String key, String value, Collected collected) {
         Matcher sizeKey = TARGET_SIZE_PROPERTY_KEY.matcher(key);
-        Matcher clearKey = TARGET_CLEAR_PROPERTY_KEY.matcher(key);
-        Matcher clearColorKey = TARGET_CLEAR_COLOR_PROPERTY_KEY.matcher(key);
         Matcher flipKey = TARGET_FLIP_PROPERTY_KEY.matcher(key);
         if (sizeKey.matches()) {
             applyTargetSize(sizeKey.group(1), value, collected);
-        } else if (clearKey.matches()) {
-            applyTargetClear(clearKey.group(1), value, collected);
-        } else if (clearColorKey.matches()) {
-            applyTargetClearColor(clearColorKey.group(1), value, collected);
         } else if (flipKey.matches()) {
             applyTargetFlip(key, flipKey, value, collected);
         } else if (key.startsWith("size.buffer.") || key.startsWith("flip.")) {
@@ -483,28 +486,6 @@ public final class PackConfig {
         }
     }
 
-    /** A {@code colortexNClear} switch; a value that is no boolean is ignored. */
-    private static void applyTargetClear(String index, String value, Collected collected) {
-        int slot = parseTargetIndex(index, collected.deviations);
-        Boolean clear = parseBoolean(value);
-        if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && clear != null) {
-            updateTargetSettings(collected.targetSettings, slot, null, clear, null, null);
-        } else if (clear != null) {
-            collected.deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-        }
-    }
-
-    /** A {@code colortexNClearColor} colour. */
-    private static void applyTargetClearColor(String index, String value, Collected collected) {
-        int slot = parseTargetIndex(index, collected.deviations);
-        float[] color = parseColor(value);
-        if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && color != null) {
-            updateTargetSettings(collected.targetSettings, slot, null, null, color, null);
-        } else {
-            collected.deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-        }
-    }
-
     /** A {@code flip.<program>.colortexN} switch; a {@code <program>_pre} key's flips are kept apart. */
     private static void applyTargetFlip(String key, Matcher flipKey, String value, Collected collected) {
         int slot = parseTargetIndex(flipKey.group(2), collected.deviations);
@@ -517,78 +498,6 @@ public final class PackConfig {
         }
     }
 
-    /** The validated shadow settings the converted sources read as constants. */
-    private static void addShadowConstants(ShadowSettings shadowSettings, Map<String, String> shadowValues,
-                                           Map<String, String> shaderConstants) {
-        shaderConstants.put("shadowMapResolution", Integer.toString(shadowSettings.resolution()));
-        shaderConstants.put("shadowDistance", Float.toString(shadowSettings.distance()));
-        if (shadowValues.containsKey("shadowDistanceRenderMul")) {
-            shaderConstants.put("shadowDistanceRenderMul",
-                    Float.toString(shadowSettings.distanceRenderMultiplier()));
-        }
-        if (shadowValues.containsKey("sunPathRotation")) {
-            shaderConstants.put("sunPathRotation", Float.toString(shadowSettings.sunPathRotation()));
-        }
-        if (shadowValues.containsKey("sunPathOffset")) {
-            shaderConstants.put("sunPathOffset", Float.toString(shadowSettings.sunPathOffset()));
-        }
-    }
-
-    private static final List<String> SHADOW_PROPERTIES = List.of(
-            "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
-            "shadowDistanceRenderMul", "sunPathRotation", "sunPathOffset");
-    private static final Set<String> PACK_CONSTANT_NAMES = Set.of(
-            "shadowMapResolution", "shadowDistance", "shadowMapSize", "shadowMapFov",
-            "shadowDistanceRenderMul", "sunPathRotation", "sunPathOffset");
-
-    private static void collectShadowConstants(String source, Map<String, String> values) {
-        Matcher shadow = SHADOW_CONST.matcher(source == null ? "" : source);
-        while (shadow.find()) {
-            values.put(shadow.group(1), shadow.group(2));
-        }
-    }
-
-    private static void collectPackConstants(
-            String source,
-            Map<String, String> values,
-            List<String> deviations
-    ) {
-        Matcher constants = PACK_NUMERIC_CONST.matcher(source == null ? "" : source);
-        while (constants.find()) {
-            String name = constants.group(2);
-            String value = normalizeNumeric(constants.group(3));
-            String previous = values.putIfAbsent(name, value);
-            if (previous != null && !previous.equals(value)) {
-                deviations.add("PACK_CONSTANT_CONFLICT:" + name);
-            }
-        }
-    }
-
-    private static void collectTargetConstants(
-            String source,
-            Map<Integer, TargetSettings> values,
-            List<String> deviations
-    ) {
-        String text = source == null ? "" : source;
-        Matcher clear = COLORTEX_CLEAR_CONST.matcher(text);
-        while (clear.find()) {
-            int slot = parseTargetIndex(clear.group(1), deviations);
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET) {
-                updateTargetSettings(values, slot, null,
-                        Boolean.parseBoolean(clear.group(2)), null, null);
-            }
-        }
-        Matcher color = COLORTEX_CLEAR_COLOR_CONST.matcher(text);
-        while (color.find()) {
-            int slot = parseTargetIndex(color.group(1), deviations);
-            float[] parsed = parseColor(color.group(2));
-            if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && parsed != null) {
-                updateTargetSettings(values, slot, null, null, parsed, null);
-            } else {
-                deviations.add("POST_TARGET_CLEAR_DEFAULTED:colortex" + slot);
-            }
-        }
-    }
 
     /** Resolves colortexN, a legacy alias, or a bare index; -1 with a deviation when unsupported. */
     private static int parseTargetIndex(String value, List<String> deviations) {
@@ -650,7 +559,7 @@ public final class PackConfig {
         return null;
     }
 
-    private static float[] parseColor(String value) {
+    static float[] parseColor(String value) {
         if (value == null) {
             return null;
         }
@@ -675,14 +584,6 @@ public final class PackConfig {
         }
     }
 
-    private static boolean isNumeric(String value) {
-        try {
-            return Float.isFinite(Float.parseFloat(value));
-        } catch (NumberFormatException e) {
-            return false;
-        }
-    }
-
     private static String normalizeNumeric(String value) {
         String normalized = value == null ? "" : value.trim();
         if (normalized.endsWith("f") || normalized.endsWith("F")) {
@@ -691,85 +592,75 @@ public final class PackConfig {
         return normalized;
     }
 
-    private static ShadowSettings validateShadowSettings(Map<String, String> rawValues) {
+    private static ShadowSettings validateShadowSettings(Map<String, String> rawValues,
+                                                         ShadowTargetDirectives targets, int colorTargetCount,
+                                                         boolean shadowPass) {
         List<String> deviations = new ArrayList<>();
         int resolution = validShadowMapResolution(rawValues.get("shadowMapResolution"), deviations);
         float distance = validShadowDistance(rawValues.get("shadowDistance"), deviations);
-
-        validateFiniteShadowSetting(rawValues, deviations, "shadowDistanceRenderMul", 0.0F, 4.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "sunPathRotation", -360.0F, 360.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "sunPathOffset", -360.0F, 360.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "shadowIntervalSize", 0.0F, 64.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "entityShadowDistanceMul", -64.0F, 64.0F);
-        validateFiniteShadowSetting(rawValues, deviations, "voxelDistance", 0.0F, MAX_SHADOW_DISTANCE);
-
+        for (String name : FINITE_SHADOW_SETTINGS) {
+            if (rawValues.containsKey(name) && !finite(rawValues.get(name))) {
+                deviations.add("SHADOW_SETTING_DEFAULTED:" + name);
+            }
+        }
         for (String key : rawValues.keySet()) {
-            if (!SUPPORTED_SHADOW_SETTINGS.contains(key)) {
+            if (!isSupportedShadowSetting(key)) {
                 deviations.add("SHADOW_SETTING_UNSUPPORTED:" + key);
             }
         }
-        return new ShadowSettings(resolution, distance, rawValues, deviations);
+        deviations.addAll(targets.deviations());
+        // Iris builds these chains after its shadow pass (ShadowRenderer.generateMipmaps); Chimera
+        // samples the base level (KNOW-779).
+        for (int depth = 0; shadowPass && depth < 2; depth++) {
+            if (targets.depth(depth).mipmap()) deviations.add("SHADOW_DEPTH_MIPMAP_UNSUPPORTED:shadowtex" + depth);
+        }
+        return new ShadowSettings(resolution, distance, rawValues, deviations, targets, colorTargetCount);
     }
 
-    /** The shadow settings validated above; any other collected key is reported unsupported. */
-    private static final Set<String> SUPPORTED_SHADOW_SETTINGS = Set.of(
-            "shadowMapResolution", "shadowDistance", "shadowDistanceRenderMul", "shadowIntervalSize",
-            "sunPathRotation", "sunPathOffset", "entityShadowDistanceMul", "voxelDistance");
+    /** Whether Chimera applies the shadow setting {@code key}: resolution, distance and the finite settings. */
+    static boolean isSupportedShadowSetting(String key) {
+        return key.equals("shadowMapResolution") || key.equals("shadowDistance")
+                || FINITE_SHADOW_SETTINGS.contains(key);
+    }
 
-    /** The authored shadow map resolution when it is a whole number in range, else the default. */
+    /**
+     * The declared shadow map resolution, Iris's 1024 without one. Iris clamps none; one that is
+     * no positive whole number sizes no image, so it takes the default. The device's image limit
+     * applies when the map is created (ChimeraShadowMap).
+     */
     private static int validShadowMapResolution(String raw, List<String> deviations) {
         if (raw == null) {
-            return DEFAULT_SHADOW_MAP_RESOLUTION;
+            return IRIS_SHADOW_MAP_RESOLUTION;
         }
         try {
             double parsed = Double.parseDouble(raw);
-            if (parsed >= MIN_SHADOW_MAP_RESOLUTION && parsed <= MAX_SHADOW_MAP_RESOLUTION
-                    && parsed == Math.rint(parsed)) {
+            if (parsed >= 1.0 && parsed <= Integer.MAX_VALUE && parsed == Math.rint(parsed)) {
                 return (int) parsed;
             }
-            deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
-        } catch (NumberFormatException e) {
-            deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
+        } catch (NumberFormatException ignored) {
+            // A value that is no number defaults below.
         }
-        return DEFAULT_SHADOW_MAP_RESOLUTION;
+        deviations.add("SHADOW_SETTING_DEFAULTED:shadowMapResolution");
+        return IRIS_SHADOW_MAP_RESOLUTION;
     }
 
-    /** The authored shadow distance when it is finite and in range, else the default. */
+    /** The declared shadow distance (Iris's half plane length), Iris's 160 without one or when not finite. */
     private static float validShadowDistance(String raw, List<String> deviations) {
         if (raw == null) {
-            return DEFAULT_SHADOW_DISTANCE;
+            return IRIS_SHADOW_DISTANCE;
         }
-        try {
-            float parsed = Float.parseFloat(raw);
-            if (Float.isFinite(parsed)
-                    && parsed >= MIN_SHADOW_DISTANCE && parsed <= MAX_SHADOW_DISTANCE) {
-                return parsed;
-            }
-            deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
-        } catch (NumberFormatException e) {
-            deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
+        if (finite(raw)) {
+            return Float.parseFloat(raw);
         }
-        return DEFAULT_SHADOW_DISTANCE;
+        deviations.add("SHADOW_SETTING_DEFAULTED:shadowDistance");
+        return IRIS_SHADOW_DISTANCE;
     }
 
-    private static void validateFiniteShadowSetting(
-            Map<String, String> rawValues,
-            List<String> deviations,
-            String name,
-            float minimum,
-            float maximum
-    ) {
-        String raw = rawValues.get(name);
-        if (raw == null) {
-            return;
-        }
+    private static boolean finite(String raw) {
         try {
-            float value = Float.parseFloat(raw);
-            if (!Float.isFinite(value) || value < minimum || value > maximum) {
-                deviations.add("SHADOW_SETTING_DEFAULTED:" + name);
-            }
+            return Float.isFinite(Float.parseFloat(raw));
         } catch (NumberFormatException ignored) {
-            deviations.add("SHADOW_SETTING_DEFAULTED:" + name);
+            return false;
         }
     }
 
@@ -798,7 +689,7 @@ public final class PackConfig {
 
     /** Token name for a VK code (for logs); "code N" when unknown. */
     public static String formatName(int vkCode) {
-        String name = VK_TO_NAME.get(vkCode);
-        return name != null ? name : "code " + vkCode;
+        IrisColorFormats.Format format = IrisColorFormats.stored(vkCode);
+        return format != null ? format.token() : "code " + vkCode;
     }
 }

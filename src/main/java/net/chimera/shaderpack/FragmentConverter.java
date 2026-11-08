@@ -4,11 +4,14 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 /**
  * Converts a pack fragment stage to Vulkan GLSL for its family (post, terrain, water, shadow,
@@ -28,7 +31,7 @@ public final class FragmentConverter {
 
     /** The sampler types a descriptor binding is written onto. */
     private static final Set<String> BINDABLE_SAMPLERS = Set.of("sampler3D", "isampler3D", "usampler3D",
-            "sampler2D", "sampler2DShadow");
+            "sampler2D", "sampler2DShadow", "isampler2D", "usampler2D", "sampler1D", "isampler1D", "usampler1D");
     private static final Set<String> COVERAGE_PEER_TYPES = Set.of("float", "vec2", "vec3", "vec4");
 
     /**
@@ -55,22 +58,18 @@ public final class FragmentConverter {
             UniformRegistry.ProgramInterface interfacePlan,
             PostTargetPlan targetPlan,
             GeometryOutputPlan geometryOutputPlan,
-            Map<String, String> packConstants,
             PostVertexBridge.PostVaryingLayout postVaryingLayout,
-            Set<String> atlasSamplers,
-            PackAlphaTestPlan alphaTestPlan
+            Set<String> atlasSamplers
     ) {
         public FragmentConversionRequest {
-            packConstants = packConstants == null ? Map.of() : packConstants;
             atlasSamplers = atlasSamplers == null ? Set.of() : atlasSamplers;
-            alphaTestPlan = alphaTestPlan == null ? PackAlphaTestPlan.disabled() : alphaTestPlan;
         }
 
         /** Minimal request; every plan defaults to empty or disabled. */
         public static FragmentConversionRequest of(String source, Path sourceFile,
                 boolean geometryStage, int[] geometrySamplerSlots) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
-                    null, null, null, null, Map.of(), null, Set.of(), PackAlphaTestPlan.disabled());
+                    null, null, null, null, null, Set.of());
         }
 
         /** Minimal request with the interface plan derived from the source, as the old shims did. */
@@ -85,49 +84,37 @@ public final class FragmentConverter {
         public FragmentConversionRequest withTerrainLayout(LegacyGlslConverter.TerrainVaryingLayout terrainLayout) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withInterfacePlan(UniformRegistry.ProgramInterface interfacePlan) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withTargetPlan(PostTargetPlan targetPlan) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withGeometryOutputPlan(GeometryOutputPlan geometryOutputPlan) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
-        }
-
-        public FragmentConversionRequest withPackConstants(Map<String, String> packConstants) {
-            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
-                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withPostVaryingLayout(PostVertexBridge.PostVaryingLayout postVaryingLayout) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    postVaryingLayout, atlasSamplers);
         }
 
         public FragmentConversionRequest withAtlasSamplers(Set<String> atlasSamplers) {
             return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
                     terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
-        }
-
-        public FragmentConversionRequest withAlphaTestPlan(PackAlphaTestPlan alphaTestPlan) {
-            return new FragmentConversionRequest(source, sourceFile, geometryStage, geometrySamplerSlots,
-                    terrainLayout, interfacePlan, targetPlan, geometryOutputPlan,
-                    packConstants, postVaryingLayout, atlasSamplers, alphaTestPlan);
+                    postVaryingLayout, atlasSamplers);
         }
 
         /** Runs the conversion; returns null when the source is outside the executable contract. */
@@ -143,21 +130,9 @@ public final class FragmentConverter {
             UniformRegistry.ProgramInterface interfacePlan,
             PostTargetPlan targetPlan
     ) {
-        return convertPostFragment(source, sourceFile, interfacePlan, targetPlan, Map.of());
-    }
-
-    /** Converts a post fragment using the pack constants already parsed by PackConfig. */
-    public static String convertPostFragment(
-            String source,
-            Path sourceFile,
-            UniformRegistry.ProgramInterface interfacePlan,
-            PostTargetPlan targetPlan,
-            Map<String, String> packConstants
-    ) {
         return FragmentConversionRequest.of(source, sourceFile, false, null)
                 .withInterfacePlan(interfacePlan)
                 .withTargetPlan(targetPlan)
-                .withPackConstants(packConstants)
                 .convert();
     }
 
@@ -167,7 +142,6 @@ public final class FragmentConverter {
             Path sourceFile,
             UniformRegistry.ProgramInterface interfacePlan,
             PostTargetPlan targetPlan,
-            Map<String, String> packConstants,
             Map<String, Integer> varyingLocations,
             Map<String, String> varyingTypes
     ) {
@@ -176,7 +150,6 @@ public final class FragmentConverter {
         return FragmentConversionRequest.of(source, sourceFile, false, null)
                 .withInterfacePlan(interfacePlan)
                 .withTargetPlan(targetPlan)
-                .withPackConstants(packConstants)
                 .withPostVaryingLayout(layout)
                 .convert();
     }
@@ -230,8 +203,7 @@ public final class FragmentConverter {
             rewriteDeclarations();
             bindSamplers();
             String outputDeclarations = rewriteOutputs();
-            String terrainHostInstance = appendAlphaRejection();
-            return assemble(outputDeclarations, uniformBlock(terrainHostInstance));
+            return assemble(outputDeclarations, uniformBlock());
         }
 
         /** Inlines includes, drops unreachable functions and settles the version line. */
@@ -260,9 +232,7 @@ public final class FragmentConverter {
 
         /** Drops what the host serves (metadata constants, uniforms, entity ids) and maps the varyings. */
         private void rewriteDeclarations() {
-            Map<String, String> packConstants = request.packConstants();
             src = LegacyGlslConverter.removePackMetadataConstants(src);
-            src = LegacyGlslConverter.stripUnusedConsumedConsts(src, packConstants);
             src = LegacyGlslConverter.withoutKnownLegacyExtensions(src);
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (stage.perVertexEntityIdentity()) {
@@ -274,7 +244,6 @@ public final class FragmentConverter {
             }
             src = LegacyGlslConverter.convertVaryings(src, geometryStage, request.terrainLayout(),
                     request.postVaryingLayout(), stage);
-            src = LegacyGlslConverter.injectPackConstants(src, packConstants);
         }
 
         /**
@@ -354,65 +323,50 @@ public final class FragmentConverter {
         }
 
         /**
+         * Each shadowcolor target the program writes is the shadow pass attachment of its index.
          * Shadow colours keep the type the pack writes (Photon writes a vec3), as post outputs
-         * do; a colour the pack does not write is declared vec4.
+         * do; a colour below the highest written that the pack does not write is declared vec4,
+         * and its attachment's writes are masked.
          */
         private String rewriteShadowOutputs() {
-            PostTargetPlan shadowOutputs = PostTargetPlan.parse("shadow", src).plan();
+            PostTargetPlan shadowOutputs = PostTargetPlan.parseShadow("shadow", src, Map.of()).plan();
             if (!shadowOutputs.executable() || shadowOutputs.targetSlots().stream()
-                    .anyMatch(target -> target < 0 || target > 1)) {
+                    .anyMatch(target -> target < 0 || target >= ShadowTargetDirectives.MAX_COLOR_TARGETS)) {
                 throw new IllegalArgumentException("SHADOW_OUTPUT_TARGET_UNSUPPORTED");
             }
             src = convertPostOutputs(src, shadowOutputs);
             Map<String, String> outputs = new TreeMap<>();
-            String[] types = {"vec4", "vec4"};
+            int highest = shadowOutputs.targetSlots().stream().mapToInt(Integer::intValue).max().orElse(0);
+            int count = Math.max(2, highest + 1);
+            String[] types = new String[count];
+            int[] components = new int[count];
+            Arrays.fill(types, "vec4");
             for (int location : shadowOutputs.outputLocations()) {
                 int target = shadowOutputs.targetForOutput(location);
                 outputs.put("chimeraFragColor" + location, "chimeraShadowColor" + target);
                 types[target] = shadowOutputs.outputType(location);
+                components[target] = shadowOutputs.outputComponent(location);
             }
             src = GlslTokenRewriter.replaceIdentifiers(src, outputs);
-            return "layout(location = 0) out " + types[0] + " chimeraShadowColor0;\n"
-                    + "layout(location = 1) out " + types[1] + " chimeraShadowColor1;"
-                    + (shadowOutputs.discardedOutputs().isEmpty() ? ""
+            StringBuilder declarations = new StringBuilder();
+            for (int target = 0; target < count; target++) {
+                if (target > 0) declarations.append('\n');
+                declarations.append(outputLayout(target, components[target])).append(" out ").append(types[target])
+                        .append(" chimeraShadowColor").append(target).append(';');
+            }
+            return declarations + (shadowOutputs.discardedOutputs().isEmpty() ? ""
                     : "\n" + discardedOutputDeclarations(shadowOutputs).stripTrailing());
         }
 
-        /**
-         * Appends the pack's alpha test to a routed terrain stage; returns the host block
-         * instance its threshold reads, or null when it reads none.
-         */
-        private String appendAlphaRejection() {
-            PackAlphaTestPlan alpha = request.alphaTestPlan();
-            GeometryOutputPlan geometryOutputPlan = request.geometryOutputPlan();
-            if (!geometryStage || !terrainContract(stage) || geometryOutputPlan == null || !alpha.active()) {
-                return null;
-            }
-            String terrainHostInstance = alpha.needsHostThreshold()
-                    ? GlslTokenRewriter.uniqueIdentifier(src, "chimeraTerrainHost") : null;
-            String rejection = alpha.rejection(geometryOutputPlan.locationZeroOutputName(), terrainHostInstance);
-            if (!rejection.isBlank()) {
-                src = GlslTokenRewriter.appendMainEpilogue(src, rejection);
-            }
-            return terrainHostInstance;
-        }
-
         /** The generated uniform block of the stage's family, empty when it reads no uniforms. */
-        private String uniformBlock(String terrainHostInstance) {
+        private String uniformBlock() {
             List<UniformRegistry.UniformDeclaration> uniforms = interfacePlan.executableUniforms();
             if (stage.shadowPass() && !uniforms.isEmpty()) {
                 src = qualifyShadowUniformReferences(src, uniforms);
                 return generatedShadowUniformBlock(uniforms, shadowUniformBinding(stage));
             }
             if (geometryStage && terrainContract(stage)) {
-                StringBuilder geometryBlocks = new StringBuilder();
-                if (terrainHostInstance != null) {
-                    geometryBlocks.append(terrainHostUniformBlock(src, terrainHostInstance));
-                }
-                if (!uniforms.isEmpty()) {
-                    geometryBlocks.append(generatedGeometryUniformBlock(uniforms));
-                }
-                return geometryBlocks.toString();
+                return uniforms.isEmpty() ? "" : generatedGeometryUniformBlock(uniforms);
             }
             if ((entityStage(stage) || stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD)
                     && !uniforms.isEmpty()) {
@@ -434,10 +388,65 @@ public final class FragmentConverter {
                 declarations = SHADOW_RENDER_STAGE_DEFINES + declarations;
             }
             if (!geometryStage || !modern) {
-                return "#version 460\n" + declarations + src;
+                String assembled = "#version 460\n" + declarations + src;
+                return geometryStage ? withoutNanOutputs(assembled) : assembled;
             }
-            return declarations.isEmpty() ? src : LegacyGlslConverter.insertAfterFirstLine(src, declarations);
+            return withoutNanOutputs(declarations.isEmpty() ? src
+                    : LegacyGlslConverter.insertAfterFirstLine(src, declarations));
         }
+    }
+
+    /** The float output types a geometry fragment writes NaN through. */
+    private static final Pattern FLOAT_OUTPUT = Pattern.compile("float|vec[234]|float16_t|f16vec[234]");
+
+    /**
+     * {@code source} writing what a NaN shows in place of a NaN in its float outputs, at the end of
+     * main's body: a colour with a NaN component is opaque black, or nothing at alpha 0, and another
+     * output takes 0 for each NaN component. NVIDIA's GL driver blends a term weighed by zero to 0
+     * however NaN it is, and Vulkan to NaN. So under GL a NaN colour at alpha 0 adds nothing, and one
+     * at any other alpha blends to NaN, which shows black over what it covers; a later draw that
+     * weighs that NaN by zero then covers it. RenderPearl 2.8's float16 path computes NaN for texels
+     * of no colour: its rain quads' clear texels, at alpha 0, which drew a black quad over the world
+     * while opaque, and its name-tag background, at 25%, which Iris shows black under the glyphs. A 0
+     * there showed the unlit scene instead, bright at night, as the tag skips deferred lighting.
+     * Each output goes through a helper overloaded for its type, so it still resolves when a 16-bit
+     * output compiles as its 32-bit type.
+     */
+    static String withoutNanOutputs(String source) {
+        GlslTree tree = GlslTree.parse(source);
+        String helper = GlslTokenRewriter.uniqueIdentifier(source, "chimeraNoNan");
+        Set<String> types = new TreeSet<>();
+        StringBuilder statements = new StringBuilder();
+        for (GlslDeclarations.Variable output : GlslDeclarations.variables(tree)) {
+            // A built-in, as RenderPearl's depth_unchanged gl_FragDepth, and an output the program
+            // never writes stay unwritten: a write would store an undefined value.
+            if (!output.qualifiers().contains("out") || !output.plain() || output.name().startsWith("gl_")
+                    || !FLOAT_OUTPUT.matcher(output.type()).matches()
+                    || GlslTokenRewriter.identifierCount(source, output.name()) < 2) {
+                continue;
+            }
+            types.add(output.type());
+            // A 16-bit output may compile as its 32-bit type (GlslVendorExtensions.widenInterfaces).
+            String widened = GlslVendorExtensions.widenedType(output.type());
+            if (widened != null) types.add(widened);
+            statements.append(output.name()).append(" = ").append(helper).append('(').append(output.name())
+                    .append(");\n");
+        }
+        if (statements.isEmpty()) return source;
+        StringBuilder helpers = new StringBuilder();
+        for (String type : types) {
+            String guarded = type.endsWith("vec4")
+                    ? "any(isnan(value)) ? (value.a == " + type + "(0).a ? " + type + "(0) : " + type
+                            + "(0, 0, 0, 1)) : value"
+                    : "mix(value, " + type + "(0), isnan(value))";
+            helpers.append(type).append(' ').append(helper).append('(').append(type).append(" value) { return ")
+                    .append(guarded).append("; }\n");
+        }
+        int main = GlslTokenRewriter.mainDefinition(tree).range().start();
+        String withHelpers = tree.print(List.of(new GlslTree.Edit(new GlslTree.Range(main, main),
+                helpers.toString())));
+        // At the end of main's body, after the alpha test PackAlphaTestPlan appended: a NaN alpha is discarded first.
+        return GlslTokenRewriter.appendMainBody(withHelpers, statements.toString().strip());
     }
 
     private static boolean entityStage(UniformRegistry.Stage stage) {
@@ -507,11 +516,16 @@ public final class FragmentConverter {
     static String postOutputDeclarations(PostTargetPlan targetPlan) {
         StringBuilder declarations = new StringBuilder();
         for (int location : targetPlan.outputLocations()) {
-            declarations.append("layout(location = ").append(location).append(") out ")
+            declarations.append(outputLayout(location, targetPlan.outputComponent(location))).append(" out ")
                     .append(targetPlan.outputType(location))
                     .append(" chimeraFragColor").append(location).append(";\n");
         }
         return declarations.append(discardedOutputDeclarations(targetPlan)).toString();
+    }
+
+    /** An output's layout as the pack declared it: a component past 0 stays, or the value lands in .x. */
+    private static String outputLayout(int location, int component) {
+        return "layout(location = " + location + (component == 0 ? "" : ", component = " + component) + ")";
     }
 
     /** Private globals for discarded gl_FragData writes; a discarded modern output keeps its own. */
@@ -735,19 +749,6 @@ public final class FragmentConverter {
         return block.append("};\n").toString();
     }
 
-    /** chimera_terrain.json's binding-1 fog block, with an instance reserved for generated alpha testing. */
-    static String terrainHostUniformBlock(String source, String instance) {
-        String block = GlslTokenRewriter.uniqueIdentifier(source, "ChimeraTerrainHostBlock");
-        return """
-                layout(binding = 1) uniform %s {
-                    vec4 FogColor;
-                    float FogStart;
-                    float FogEnd;
-                    float AlphaCutout;
-                } %s;
-                """.formatted(block, instance);
-    }
-
     /** Generated entity fragment UBO. Vertex transform blocks are supplied by the host. */
     static String entityUniformBlock(List<UniformRegistry.UniformDeclaration> uniforms) {
         StringBuilder block = new StringBuilder("layout(binding = 2) uniform ChimeraEntityUniforms {\n");
@@ -779,9 +780,10 @@ public final class FragmentConverter {
     }
 
     /**
-     * A modern terrain fragment's one {@code out vec4 name;} becomes fragColor at location 0. The
-     * declaration goes with the blank lines before it and the whitespace after it, as the
-     * {@code (?m)^\s*out vec4 name;\s*} pattern it replaces removed them.
+     * A modern terrain fragment's one {@code out vec4 name;} becomes fragColor at location 0, with
+     * or without the layout a fragment stage keeps. The declaration goes with the blank lines
+     * before it and the whitespace after it, as the {@code (?m)^\s*out vec4 name;\s*} pattern it
+     * replaces removed them.
      */
     static String convertModernGeometryOutputs(String source) {
         GlslTree tree = GlslTree.parse(source);
@@ -789,8 +791,9 @@ public final class FragmentConverter {
         List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
         for (GlslDeclarations.Variable output : GlslDeclarations.variables(tree)) {
             int start = GlslDeclarations.lineStartBefore(source, tree.offset(output.declaration().range().start()));
-            if (start < 0 || !output.qualifiers().equals(List.of("out")) || !output.type().equals("vec4")
-                    || !output.plain()) {
+            List<String> qualifiers = output.qualifiers();
+            boolean plainOutput = qualifiers.equals(List.of("out")) || qualifiers.equals(List.of("layout", "out"));
+            if (start < 0 || !plainOutput || !output.type().equals("vec4") || !output.plain()) {
                 continue;
             }
             int end = tree.offset(output.declaration().range().end());

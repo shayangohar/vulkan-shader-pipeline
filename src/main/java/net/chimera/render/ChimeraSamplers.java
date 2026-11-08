@@ -7,6 +7,7 @@ import static org.lwjgl.opengl.GL11.GL_LEQUAL;
 import static org.lwjgl.opengl.GL11.GL_LINEAR;
 import static org.lwjgl.opengl.GL11.GL_LINEAR_MIPMAP_LINEAR;
 import static org.lwjgl.opengl.GL11.GL_NEAREST;
+import static org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST;
 import static org.lwjgl.opengl.GL11.GL_REPEAT;
 import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
 import static org.lwjgl.opengl.GL14.GL_COMPARE_R_TO_TEXTURE;
@@ -25,7 +26,15 @@ public final class ChimeraSamplers {
 
     /** Linear filtering clamped to the edge, reading levels 0 to {@code maxLevel}, linearly between them. */
     public static long linearMipmapped(int maxLevel) {
-        return SamplerManager.getTextureSampler(linearMipmappedKey(maxLevel));
+        return mipmapped(maxLevel, true);
+    }
+
+    /**
+     * Levels 0 to {@code maxLevel} clamped to the edge: linearly within and between levels, or the
+     * nearest texel of the nearest level (Iris's GL_NEAREST_MIPMAP_NEAREST for integer targets).
+     */
+    public static long mipmapped(int maxLevel, boolean linear) {
+        return SamplerManager.getTextureSampler(linear ? linearMipmappedKey(maxLevel) : nearestMipmappedKey(maxLevel));
     }
 
     /**
@@ -33,7 +42,12 @@ public final class ChimeraSamplers {
      * the reference depth is at most the stored one, as OpenGL's GL_LEQUAL comparison.
      */
     public static long depthCompare() {
-        return SamplerManager.getTextureSampler(depthCompareKey());
+        return depthCompare(true);
+    }
+
+    /** {@link #depthCompare()}, or its nearest variant (Iris GlSampler.NEAREST_HW for shadowtexNNearest). */
+    public static long depthCompare(boolean linear) {
+        return SamplerManager.getTextureSampler(linear ? depthCompareKey() : nearestDepthCompareKey());
     }
 
     static SamplerKey flatKey(boolean linear, boolean clamp) {
@@ -48,8 +62,19 @@ public final class ChimeraSamplers {
                 0.0F, maxLevel, 0.0F, 0, 0);
     }
 
+    static SamplerKey nearestMipmappedKey(int maxLevel) {
+        if (maxLevel <= 0) return flatKey(false, true);
+        return new SamplerKey(GL_NEAREST_MIPMAP_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE,
+                GL_CLAMP_TO_EDGE, 0.0F, maxLevel, 0.0F, 0, 0);
+    }
+
     static SamplerKey depthCompareKey() {
         return new SamplerKey(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE,
+                0.0F, 0.0F, 0.0F, GL_COMPARE_R_TO_TEXTURE, GL_LEQUAL);
+    }
+
+    static SamplerKey nearestDepthCompareKey() {
+        return new SamplerKey(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE,
                 0.0F, 0.0F, 0.0F, GL_COMPARE_R_TO_TEXTURE, GL_LEQUAL);
     }
 }

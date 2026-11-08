@@ -1,12 +1,14 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.TreeMap;
 import java.util.function.Function;
 
@@ -28,30 +30,37 @@ public final class GlslInterfaceScanner {
 
     private GlslInterfaceScanner() {}
 
-    /** {@code VARYING_UNWRITTEN_ZEROED:<name>}: a read fragment input no vertex output writes, declared as zero. */
-    public static final String UNWRITTEN_ZEROED = "VARYING_UNWRITTEN_ZEROED:";
+    /**
+     * The stage whose interface a source declares. A geometry stage's inputs are arrays with one
+     * element per vertex of its primitive ({@code in vec2 texcoord[]}); the scan reads each as the
+     * value one vertex passes, so it pairs with the vertex stage's output of that type. The
+     * tessellation stages' inputs are arrays the same way, and so are the control stage's outputs,
+     * one element per vertex of its output patch.
+     */
+    public enum Stage {
+        VERTEX, TESS_CONTROL, TESS_EVALUATION, GEOMETRY, FRAGMENT;
 
-    /** The zero a non-array scalar, vector or matrix input reads as; null for any other type. */
-    public static String zeroValue(Declaration declaration) {
-        if (declaration.arraySize() != 0) return null;
-        String type = declaration.type();
-        if (type.equals("float")) return "0.0";
-        if (type.equals("int")) return "0";
-        if (type.equals("uint")) return "0u";
-        if (type.equals("bool")) return "false";
-        if (type.matches("(?:[iub]?vec[234]|mat[234](?:x[234])?)")) {
-            return type + "(" + (type.startsWith("u") ? "0u" : type.startsWith("b") ? "false" : "0") + ")";
+        /** Whether a stage of this kind reads one value per vertex of a primitive or patch. */
+        boolean perVertexInputs() {
+            return this == TESS_CONTROL || this == TESS_EVALUATION || this == GEOMETRY;
         }
-        return null;
-    }
 
-    private static boolean zeroable(Declaration declaration) {
-        return zeroValue(declaration) != null;
+        /** The stage a program stage of this name (PackProbe's: vertex, tess_control, ...) declares. */
+        static Stage of(String programStage) {
+            return switch (programStage) {
+                case "vertex" -> VERTEX;
+                case "tess_control" -> TESS_CONTROL;
+                case "tess_evaluation" -> TESS_EVALUATION;
+                case "geometry" -> GEOMETRY;
+                default -> FRAGMENT;
+            };
+        }
     }
 
     /**
      * One declared name. {@code arraySize} is 0 for a non-array; {@code slots} is the number of
-     * locations the whole variable occupies.
+     * locations the whole variable occupies. A geometry stage's input is {@code perVertex}: its
+     * outer array dimension, one element per vertex, is not part of its type or size.
      */
     public record Declaration(
             String name,
@@ -61,7 +70,8 @@ public final class GlslInterfaceScanner {
             boolean output,
             boolean referenced,
             int arraySize,
-            int slots
+            int slots,
+            boolean perVertex
     ) {
         /** The type as a declaration spells it after the name, such as {@code vec3[9]}. */
         public String typeWithArray() {
@@ -70,13 +80,13 @@ public final class GlslInterfaceScanner {
 
         /** Whether the variable holds integers, which a fragment input must take {@code flat}. */
         public boolean integral() {
-            return type.equals("int") || type.equals("uint")
-                    || type.startsWith("ivec") || type.startsWith("uvec");
+            return type.equals("int") || type.equals("uint") || type.startsWith("ivec") || type.startsWith("uvec")
+                    || type.matches("u?int16_t|[iu]16vec[234]");
         }
 
-        /** {@code name} or {@code name[N]}, as the declarator is written. */
+        /** {@code name} or {@code name[N]}, as the declarator is written; a per-vertex input keeps its {@code []}. */
         public String declarator() {
-            return arraySize == 0 ? name : name + "[" + arraySize + "]";
+            return (perVertex ? name + "[]" : name) + (arraySize == 0 ? "" : "[" + arraySize + "]");
         }
     }
 
@@ -101,6 +111,21 @@ public final class GlslInterfaceScanner {
             return outputs.stream().filter(value -> value.name().equals(name)).findFirst().orElse(null);
         }
 
+        /** Each input the stage reads, at location 0: a fullscreen pass's inputs, which no vertex stage feeds. */
+        public Map<String, Integer> readInputLocations() {
+            Map<String, Integer> result = new TreeMap<>();
+            inputs.stream().filter(Declaration::referenced).forEach(input -> result.put(input.name(), 0));
+            return result;
+        }
+
+        /** Each input the stage reads, with its type. */
+        public Map<String, String> readInputTypes() {
+            Map<String, String> result = new TreeMap<>();
+            inputs.stream().filter(Declaration::referenced)
+                    .forEach(input -> result.put(input.name(), input.typeWithArray()));
+            return result;
+        }
+
         private static List<Declaration> sortedDeclarations(List<Declaration> values) {
             return values == null ? List.of() : values.stream()
                     .filter(value -> value != null)
@@ -119,7 +144,7 @@ public final class GlslInterfaceScanner {
         }
 
         public boolean executable() {
-            return deviations.stream().allMatch(deviation -> deviation.startsWith(UNWRITTEN_ZEROED));
+            return deviations.isEmpty();
         }
     }
 
@@ -129,7 +154,11 @@ public final class GlslInterfaceScanner {
     private record Parse(List<GlslLexer.Token> tokens, List<Statement> statements, List<String> deviations) {}
 
     public static StageInterface scan(String source, boolean vertexStage) {
-        Parse parse = parse(source, vertexStage);
+        return scan(source, vertexStage ? Stage.VERTEX : Stage.FRAGMENT);
+    }
+
+    public static StageInterface scan(String source, Stage stage) {
+        Parse parse = parse(source, stage);
         List<Declaration> inputs = new ArrayList<>();
         List<Declaration> outputs = new ArrayList<>();
         List<String> deviations = new ArrayList<>(parse.deviations());
@@ -157,17 +186,12 @@ public final class GlslInterfaceScanner {
         return new StageInterface(inputs, outputs, packedLocations(declarations.values()), deviations);
     }
 
-    public static ProgramMatch match(StageInterface vertex, StageInterface fragment) {
-        return match(vertex, fragment, false);
-    }
-
     /**
-     * Pairs each fragment input with the vertex output of its name. With {@code zeroUnwritten}, a
-     * read input the vertex never writes is not a failure: Iris adds a zeroed vertex output for it,
-     * so the converter declares it as a zero (VARYING_UNWRITTEN_ZEROED); Bliss's composite3 reads
-     * an exposure its vertex writes only under another option.
+     * Pairs each fragment input with the vertex output of its name. CrossStageRepair has already
+     * given the vertex every output Iris's repair adds, so a read input still unmatched, or matched
+     * to an output of another type, is one Iris's link refuses too.
      */
-    public static ProgramMatch match(StageInterface vertex, StageInterface fragment, boolean zeroUnwritten) {
+    public static ProgramMatch match(StageInterface vertex, StageInterface fragment) {
         List<String> deviations = new ArrayList<>();
         if (vertex == null || fragment == null) {
             return new ProgramMatch(Map.of(), List.of("PROGRAM_INTERFACE_STAGE_MISSING"));
@@ -177,8 +201,7 @@ public final class GlslInterfaceScanner {
             Declaration output = vertex.output(input.name());
             if (output == null) {
                 if (input.referenced()) {
-                    deviations.add((zeroUnwritten && zeroable(input) ? UNWRITTEN_ZEROED : "PROGRAM_VARYING_UNMATCHED:")
-                            + input.name());
+                    deviations.add("PROGRAM_VARYING_UNMATCHED:" + input.name());
                 }
                 continue;
             }
@@ -192,6 +215,29 @@ public final class GlslInterfaceScanner {
     }
 
     /**
+     * Pairs a vertex stage with a geometry stage's per-vertex inputs, and the geometry stage's
+     * outputs with a fragment stage, as Iris links three stages. The locations are the fragment
+     * stage's inputs'.
+     */
+    public static ProgramMatch match(StageInterface vertex, StageInterface geometry, StageInterface fragment) {
+        return match(Arrays.asList(vertex, geometry, fragment));
+    }
+
+    /**
+     * Pairs each stage of {@code chain}, vertex first and fragment last, with the stage after it,
+     * as Iris links every stage a program runs. The locations are the fragment stage's inputs'.
+     */
+    public static ProgramMatch match(List<StageInterface> chain) {
+        List<String> deviations = new ArrayList<>();
+        ProgramMatch last = null;
+        for (int index = 1; index < chain.size(); index++) {
+            last = match(chain.get(index - 1), chain.get(index));
+            deviations.addAll(last.deviations());
+        }
+        return new ProgramMatch(last == null ? Map.of() : last.locations(), deviations);
+    }
+
+    /**
      * Re-emits every interface statement of {@code source}: each declared name is replaced by
      * what {@code emit} returns for it (an empty string drops it), and the rest of the source is
      * untouched. A statement that declares several names becomes one declaration per name. When
@@ -200,7 +246,12 @@ public final class GlslInterfaceScanner {
      * @throws IllegalArgumentException when the interface itself cannot be parsed
      */
     public static String rewrite(String source, boolean vertexStage, Function<Declaration, String> emit) {
-        Parse parse = parse(source, vertexStage);
+        return rewrite(source, vertexStage ? Stage.VERTEX : Stage.FRAGMENT, emit);
+    }
+
+    /** {@link #rewrite(String, boolean, Function)} for a source of any {@link Stage}. */
+    public static String rewrite(String source, Stage stage, Function<Declaration, String> emit) {
+        Parse parse = parse(source, stage);
         if (!parse.deviations().isEmpty()) {
             throw new IllegalArgumentException("interface declarations unsupported: " + parse.deviations());
         }
@@ -246,7 +297,7 @@ public final class GlslInterfaceScanner {
      * The interface statements of the tree's file-scope declarations, in source order. A source
      * the tree cannot parse has an interface this cannot read.
      */
-    private static Parse parse(String source, boolean vertexStage) {
+    private static Parse parse(String source, Stage stage) {
         GlslTree tree;
         try {
             tree = GlslTree.parse(source);
@@ -262,7 +313,7 @@ public final class GlslInterfaceScanner {
                     : external instanceof GlslTree.InterfaceBlock block ? block.qualifiers() : List.of();
             int[] storage = storageQualifier(tree, qualifiers);
             if (storage == null) continue;
-            Statement statement = statement(tree, external, qualifiers, storage, vertexStage, structSlots, deviations);
+            Statement statement = statement(tree, external, qualifiers, storage, stage, structSlots, deviations);
             if (statement != null) statements.add(statement);
         }
         return new Parse(tree.tokens(), statements, deviations);
@@ -291,13 +342,13 @@ public final class GlslInterfaceScanner {
     }
 
     /**
-     * The interface statement a declaration makes, or null when it declares none this can read,
-     * with its deviation added. Only precision may follow the storage qualifier: another word
-     * there reads as the type, which no interface variable has.
+     * The declaration of a variable this can read the interface of, or null, with any deviation
+     * added. Only precision may follow the storage qualifier: another word there reads as the
+     * type, which no interface variable has. A default-qualifier statement, such as Alpha
+     * Piscium's {@code layout(early_fragment_tests) in;}, declares no variable and stays as written.
      */
-    private static Statement statement(GlslTree tree, GlslTree.External external, List<GlslTree.Qualifier> qualifiers,
-                                       int[] storage, boolean vertexStage, Map<String, Integer> structSlots,
-                                       List<String> deviations) {
+    private static GlslTree.Declaration variableDeclaration(GlslTree tree, GlslTree.External external,
+            List<GlslTree.Qualifier> qualifiers, int[] storage, List<String> deviations) {
         for (int index = storage[1] + 1; index < qualifiers.size(); index++) {
             if (!isPrecision(keyword(tree, qualifiers, index))) {
                 deviations.add("PROGRAM_VARYING_TYPE_UNSUPPORTED:" + keyword(tree, qualifiers, index));
@@ -309,22 +360,28 @@ public final class GlslInterfaceScanner {
             return null;
         }
         GlslTree.Declaration declaration = (GlslTree.Declaration) external;
-        if (declaration.type() == null) {
-            deviations.add(DECLARATION_UNSUPPORTED);
-            return null;
-        }
+        if (declaration.type() != null) return declaration;
+        if (!GlslDeclarations.qualifiersOnly(declaration)) deviations.add(DECLARATION_UNSUPPORTED);
+        return null;
+    }
+
+    /** The interface statement a declaration makes, or null when it declares none this can read. */
+    private static Statement statement(GlslTree tree, GlslTree.External external, List<GlslTree.Qualifier> qualifiers,
+                                       int[] storage, Stage stage, Map<String, Integer> structSlots,
+                                       List<String> deviations) {
+        GlslTree.Declaration declaration = variableDeclaration(tree, external, qualifiers, storage, deviations);
+        if (declaration == null) return null;
         String type = typeName(tree, declaration.type());
         Integer typeSlots = BUILTIN_SLOTS.containsKey(type) ? BUILTIN_SLOTS.get(type) : structSlots.get(type);
         if (typeSlots == null) {
             deviations.add("PROGRAM_VARYING_TYPE_UNSUPPORTED:" + type);
             return null;
         }
-        String direction = keyword(tree, qualifiers, storage[1]);
-        boolean varying = direction.equals("varying");
-        String interpolation = storage[1] > storage[0] && isInterpolation(keyword(tree, qualifiers, storage[1] - 1))
-                ? keyword(tree, qualifiers, storage[1] - 1) : null;
-        InterfaceType kind = new InterfaceType(type, interpolation, direction.equals("in") || varying && !vertexStage,
-                direction.equals("out") || varying && vertexStage, typeSlots);
+        InterfaceType kind = interfaceType(tree, qualifiers, storage, stage, type, typeSlots);
+        if (kind == null) {
+            deviations.add(DECLARATION_UNSUPPORTED);
+            return null;
+        }
         int start = qualifiers.get(storage[0]).range().start();
         int end = declaration.range().end();
         List<Declaration> declared = declarators(tree, declaration, start, end, kind);
@@ -335,46 +392,76 @@ public final class GlslInterfaceScanner {
         return new Statement(start, end, declared);
     }
 
+    /**
+     * What a statement's declarators share, or null for a {@code varying} in a geometry or
+     * tessellation stage, which GL does not have.
+     */
+    private static InterfaceType interfaceType(GlslTree tree, List<GlslTree.Qualifier> qualifiers, int[] storage,
+                                               Stage stage, String type, int typeSlots) {
+        String direction = keyword(tree, qualifiers, storage[1]);
+        boolean varying = direction.equals("varying");
+        if (varying && stage.perVertexInputs()) return null;
+        String interpolation = storage[1] > storage[0] && isInterpolation(keyword(tree, qualifiers, storage[1] - 1))
+                ? keyword(tree, qualifiers, storage[1] - 1) : null;
+        boolean input = direction.equals("in") || varying && stage == Stage.FRAGMENT;
+        boolean output = direction.equals("out") || varying && stage == Stage.VERTEX;
+        return new InterfaceType(type, interpolation, input, output, typeSlots,
+                input && stage.perVertexInputs() || output && stage == Stage.TESS_CONTROL);
+    }
+
     /** The type's name; {@code struct} for an inline struct. */
     private static String typeName(GlslTree tree, GlslTree.TypeSpec type) {
         return type.name() >= 0 ? tree.text(type.name()) : "struct";
     }
 
-    /** What one interface statement's declarators share: type, interpolation, direction and size. */
-    private record InterfaceType(String type, String interpolation, boolean input, boolean output, int slots) {}
+    /**
+     * What one interface statement's declarators share: type, interpolation, direction, size, and
+     * whether each is per-vertex: an input of a geometry or tessellation stage, or a control stage's output.
+     */
+    private record InterfaceType(String type, String interpolation, boolean input, boolean output, int slots,
+                                 boolean perVertex) {}
 
     /**
-     * The variables one interface statement declares, each with any array size, or null when the
-     * type has array sizes or a declarator has an initializer or a size this cannot read.
+     * The variables one interface statement declares, each with any array size, or null when a
+     * declarator has an initializer, a size this cannot read, or a size besides the type's. The
+     * size may sit on the type, as in Noble's {@code flat in vec3[9] skyIlluminanceCoefficients}.
+     * A per-vertex input's declarator starts with its per-vertex dimension, sized or not
+     * ({@code texcoord[]}, Rethinking Voxels' {@code texCoordV[3]}); the size is what follows it.
      */
     private static List<Declaration> declarators(GlslTree tree, GlslTree.Declaration declaration, int start, int end,
                                                  InterfaceType kind) {
-        if (!declaration.type().arrays().isEmpty()) return null;
+        int typeLength = arrayLength(tree, declaration.type().arrays());
+        if (typeLength < 0) return null;
         List<Declaration> declared = new ArrayList<>();
         for (GlslTree.Declarator declarator : declaration.declarators()) {
-            int length = arrayLength(tree, declarator);
+            List<GlslTree.Range> arrays = declarator.arrays();
+            if (kind.perVertex()) {
+                if (arrays.isEmpty()) return null;
+                arrays = arrays.subList(1, arrays.size());
+            }
+            int length = arrayLength(tree, arrays);
+            if (typeLength > 0 && length != 0) return null;
+            length = Math.max(length, typeLength);
             if (length < 0 || declarator.initializer() != null) return null;
             String name = tree.text(declarator.name());
             boolean referenced = referencedOutsideDeclaration(tree.tokens(), name, start, end);
             declared.add(new Declaration(name, kind.type(), kind.interpolation(), kind.input(), kind.output(),
-                    referenced, length, kind.slots() * Math.max(length, 1)));
+                    referenced, length, kind.slots() * Math.max(length, 1), kind.perVertex()));
         }
         return List.copyOf(declared);
     }
 
     /**
-     * A declarator's array length: 0 without one, the literal {@code N} of one {@code [N]}, or -1
+     * The length of a type's or a declarator's array sizes: 0 without one, the positive value of
+     * one {@code [N]} whose N is a constant expression of literals ({@link GlslIntConstant}), or -1
      * for anything else (a named or unsized length, more than one dimension).
      */
-    private static int arrayLength(GlslTree tree, GlslTree.Declarator declarator) {
-        if (declarator.arrays().isEmpty()) return 0;
-        if (declarator.arrays().size() > 1) return -1;
-        GlslTree.Range array = declarator.arrays().get(0);
-        int size = GlslLexer.nextSignificant(tree.tokens(), array.start());
-        int close = size < 0 ? -1 : GlslLexer.nextSignificant(tree.tokens(), size);
-        if (close != array.end() - 1) return -1;
-        int length = arraySize(tree.tokens().get(size));
-        return length > 0 ? length : -1;
+    private static int arrayLength(GlslTree tree, List<GlslTree.Range> arrays) {
+        if (arrays.isEmpty()) return 0;
+        if (arrays.size() > 1) return -1;
+        GlslTree.Range array = arrays.get(0);
+        OptionalInt length = GlslIntConstant.value(tree.tokens(), array.start() + 1, array.end() - 1);
+        return length.isPresent() && length.getAsInt() > 0 ? length.getAsInt() : -1;
     }
 
     /**
@@ -407,7 +494,7 @@ public final class GlslInterfaceScanner {
             Integer typeSlots = BUILTIN_SLOTS.containsKey(type) ? BUILTIN_SLOTS.get(type) : structs.get(type);
             if (typeSlots == null) return null;
             for (GlslTree.Declarator declarator : member.declarators()) {
-                int length = arrayLength(tree, declarator);
+                int length = arrayLength(tree, declarator.arrays());
                 if (length < 0 || declarator.initializer() != null) return null;
                 total += typeSlots * Math.max(length, 1);
             }
@@ -415,30 +502,21 @@ public final class GlslInterfaceScanner {
         return total;
     }
 
-    /** A literal array length; a named length is not resolved here. */
-    private static int arraySize(GlslLexer.Token token) {
-        if (token.kind() != GlslLexer.Kind.NUMBER) {
-            return -1;
-        }
-        try {
-            return Integer.parseInt(token.text().replaceAll("[uU]$", ""));
-        } catch (NumberFormatException failure) {
-            return -1;
-        }
-    }
-
     private static Map<String, Integer> builtinSlots() {
         Map<String, Integer> slots = new HashMap<>();
-        for (String scalar : List.of("float", "int", "uint")) {
+        // 16-bit types take the locations of the 32-bit types they widen to (GlslVendorExtensions).
+        for (String scalar : List.of("float", "int", "uint", "float16_t", "int16_t", "uint16_t")) {
             slots.put(scalar, 1);
         }
         for (int size = 2; size <= 4; size++) {
-            slots.put("vec" + size, 1);
-            slots.put("ivec" + size, 1);
-            slots.put("uvec" + size, 1);
+            for (String vector : List.of("vec", "ivec", "uvec", "f16vec", "i16vec", "u16vec")) {
+                slots.put(vector + size, 1);
+            }
             slots.put("mat" + size, size);
+            slots.put("f16mat" + size, size);
             for (int rows = 2; rows <= 4; rows++) {
                 slots.put("mat" + size + "x" + rows, size);
+                slots.put("f16mat" + size + "x" + rows, size);
             }
         }
         return Map.copyOf(slots);

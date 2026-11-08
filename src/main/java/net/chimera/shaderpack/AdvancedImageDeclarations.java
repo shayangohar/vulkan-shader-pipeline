@@ -1,11 +1,6 @@
 package net.chimera.shaderpack;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -22,13 +17,19 @@ import java.util.stream.Collectors;
  * dimensions, the compute programs that write them, and the memory budget they must fit.
  */
 final class AdvancedImageDeclarations {
+    /** The sampler name ShaderProperties reads as no sampler. */
+    private static final String NO_SAMPLER = "none";
+    /** Iris's image limit (ShaderProperties). */
+    static final int MAX_IMAGES = 16;
+
     private AdvancedImageDeclarations() {}
 
     /** Parses every image.<name> property, then admits the supported images the memory budget fits. */
     static Map<String, PackAdvancedResourcePlan.ImageSpec> parseImages(
             PackSettingsPlan settings, List<String> deviations) {
         Map<String, PackAdvancedResourcePlan.ImageSpec> images = new TreeMap<>();
-        // Sizes resolve against the macros shaders.properties was read with, option values included.
+        // Sizes resolve against the macros in effect at the end of shaders.properties: option values and
+        // the file's own defines.
         Map<String, String> macros = new TreeMap<>(settings.propertyMacros());
         macros.putAll(settings.preprocessorDefines());
         for (Map.Entry<String, String> entry : settings.propertyValues().entrySet()) {
@@ -36,14 +37,55 @@ final class AdvancedImageDeclarations {
             PackAdvancedResourcePlan.ImageSpec spec = parseImage(entry.getKey(), entry.getValue(), macros);
             images.put(spec.name(), spec);
             deviations.addAll(spec.deviations());
-            if (spec.supported()) {
-                deviations.add("ADVANCED_IMAGE_APPLIED:" + spec.name());
-            }
         }
-        applyBudget(images, deviations);
+        images.values().stream().filter(PackAdvancedResourcePlan.ImageSpec::supported)
+                .forEach(spec -> deviations.add("ADVANCED_IMAGE_APPLIED:" + spec.name()));
         return images;
     }
 
+    /** ShaderProperties's image values: the value split on single spaces. */
+    static String[] values(String raw) {
+        return raw == null ? new String[0] : raw.stripLeading().split(" ");
+    }
+
+    private static boolean relative(String[] values) {
+        return values.length > 5 && Boolean.parseBoolean(values[5]);
+    }
+
+    /**
+     * Whether ShaderProperties reads an image of these values: a relative one with both shares, or a
+     * fixed one of 7 to 9 values. On any other entry its parse throws (parts[6] or parts[7] out of
+     * range) and Iris loads no pack at all; Chimera refuses that image alone (ADVANCED_IMAGE_UNSUPPORTED).
+     */
+    private static boolean readable(String[] values) {
+        return relative(values) ? values.length >= 8 : values.length >= 7 && values.length <= 9;
+    }
+
+    /**
+     * Iris adds at most 16 images (ShaderProperties: "Only up to 16 images are allowed"): the first in
+     * file order. Every later image entry is dropped from {@code orderedProperties} before anything
+     * reads it. An entry Chimera refuses as unreadable ({@link #readable}) counts toward none.
+     */
+    static void dropImagesPastIrisLimit(Map<String, String> orderedProperties, List<String> deviations) {
+        int added = 0;
+        for (var entries = orderedProperties.entrySet().iterator(); entries.hasNext(); ) {
+            var entry = entries.next();
+            if (!entry.getKey().startsWith("image.")) continue;
+            if (added >= MAX_IMAGES) {
+                entries.remove();
+                deviations.add("ADVANCED_IMAGE_LIMIT_EXCEEDED:" + entry.getKey().substring("image.".length()));
+                continue;
+            }
+            if (readable(values(entry.getValue()))) added++;
+        }
+    }
+
+    /**
+     * One image.<name> declaration as Iris's ShaderProperties reads it: its sampler (or none), pixel
+     * format, internal format, pixel type, clear and relative flags, then a relative image's share
+     * of the screen, or a fixed image's width, height and depth, as many as it has dimensions (7, 8
+     * or 9 values), split on single spaces.
+     */
     static PackAdvancedResourcePlan.ImageSpec parseImage(
             String key,
             String raw,
@@ -51,52 +93,107 @@ final class AdvancedImageDeclarations {
     ) {
         String name = key.substring("image.".length());
         List<String> deviations = new ArrayList<>();
-        String[] values = raw == null ? new String[0] : raw.trim().split("\\s+");
-        if (values.length < 9) {
+        String[] values = values(raw);
+        boolean relative = relative(values);
+        if (!readable(values)) {
             deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-            return new PackAdvancedResourcePlan.ImageSpec(name, token(values, 0), token(values, 1), token(values, 2),
-                    token(values, 3), false, false, 0, 0, 0, null, null, null, 0,
-                            PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+            return image(name, values, new int[3], 0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }
-        String sampler = values[0];
-        String pixelFormat = values[1];
-        String internalFormat = values[2].toLowerCase();
-        String pixelType = values[3];
-        boolean clear = Boolean.parseBoolean(values[4]);
-        boolean relative = Boolean.parseBoolean(values[5]);
         try {
-            int width = resolveImageDimension(name, values[6], defines, deviations);
-            int height = resolveImageDimension(name, values[7], defines, deviations);
-            int depth = resolveImageDimension(name, values[8], defines, deviations);
-            if (width < 1 || height < 1 || depth < 1) {
-                deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-                return new PackAdvancedResourcePlan.ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                        clear, relative, width, height, depth, values[6], values[7], values[8],
-                        0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
-            }
-            long bytes = Math.multiplyExact(Math.multiplyExact((long) width, height), depth)
-                    * bytesPerVoxel(internalFormat);
-            if (width < 1 || height < 1 || depth < 1 || width > PackAdvancedResourcePlan.MAX_DIMENSION
-                    || height > PackAdvancedResourcePlan.MAX_DIMENSION
-                            || depth > PackAdvancedResourcePlan.MAX_DIMENSION) {
-                deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
-                return new PackAdvancedResourcePlan.ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                        clear, relative, width, height, depth, values[6], values[7], values[8],
-                        bytes, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
-            }
-            deviations.add("ADVANCED_IMAGE_DECLARED:" + name);
-            return new PackAdvancedResourcePlan.ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                    clear, relative, width, height, depth, values[6], values[7], values[8],
-                    bytes, PackAdvancedResourcePlan.Status.SUPPORTED, deviations);
+            return relative ? relativeImage(name, values, defines, deviations)
+                    : fixedImage(name, values, defines, deviations);
         } catch (RuntimeException failure) {
             if (deviations.stream().noneMatch(value -> value.startsWith(
                     "ADVANCED_IMAGE_DIMENSION_UNRESOLVED:" + name + ":"))) {
                 deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
             }
-            return new PackAdvancedResourcePlan.ImageSpec(name, sampler, pixelFormat, internalFormat, pixelType,
-                    clear, relative, 0, 0, 0, values[6], values[7], values[8],
-                    0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+            return image(name, values, new int[3], 0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }
+    }
+
+    /**
+     * A 1D, 2D or 3D image of fixed size. Iris creates any size the driver takes; so does Chimera,
+     * where the device's per-axis limit and the allocation bound it at creation
+     * (PackAdvancedImageOwner). Rethinking Voxels' VX_VOL_SIZE=3 asks for about 2.6 GB.
+     */
+    private static PackAdvancedResourcePlan.ImageSpec fixedImage(
+            String name, String[] values, Map<String, String> defines, List<String> deviations) {
+        int[] size = new int[3];
+        for (int axis = 0; axis < values.length - 6; axis++) {
+            size[axis] = resolveImageDimension(name, values[6 + axis], defines, deviations);
+        }
+        boolean unsized = size[0] < 1 || values.length > 7 && size[1] < 1 || values.length > 8 && size[2] < 1;
+        long bytes = unsized ? 0 : Math.multiplyExact(Math.multiplyExact((long) size[0], Math.max(1, size[1])),
+                Math.max(1, size[2])) * bytesPerVoxel(values[2].toLowerCase());
+        if (unsized) {
+            deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
+            return image(name, values, size, bytes, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+        }
+        deviations.add("ADVANCED_IMAGE_DECLARED:" + name);
+        return image(name, values, size, bytes, PackAdvancedResourcePlan.Status.SUPPORTED, deviations);
+    }
+
+    /**
+     * A relative image: 2D at a share of the screen (GlImage.Relative), so its size is the frame's
+     * and it is created and resized with the screen. Its tokens keep the shares.
+     */
+    private static PackAdvancedResourcePlan.ImageSpec relativeImage(
+            String name, String[] values, Map<String, String> defines, List<String> deviations) {
+        float width = relativeShare(name, values[6], defines, deviations);
+        float height = relativeShare(name, values[7], defines, deviations);
+        bytesPerVoxel(values[2].toLowerCase());
+        String[] shares = values.clone();
+        shares[6] = Float.toString(width);
+        shares[7] = Float.toString(height);
+        if (!(width > 0.0F) || !(height > 0.0F)) {
+            deviations.add("ADVANCED_IMAGE_UNSUPPORTED:" + name);
+            return image(name, shares, new int[3], 0, PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+        }
+        deviations.add("ADVANCED_IMAGE_DECLARED:" + name);
+        return image(name, shares, new int[3], 0, PackAdvancedResourcePlan.Status.SUPPORTED, deviations);
+    }
+
+    /** A relative image's share of one screen axis: a number, or a macro that names one. */
+    private static float relativeShare(String image, String token, Map<String, String> defines,
+                                       List<String> deviations) {
+        String value = token.trim();
+        for (int depth = 0; depth < 8 && defines != null && defines.containsKey(value); depth++) {
+            value = defines.get(value).trim();
+        }
+        try {
+            return Float.parseFloat(value);
+        } catch (NumberFormatException failure) {
+            deviations.add("ADVANCED_IMAGE_DIMENSION_UNRESOLVED:" + image + ":" + token);
+            throw failure;
+        }
+    }
+
+    /**
+     * The name an image's selector slot is kept under: its sampler's, or for an image whose sampler
+     * is {@code none} (ShaderProperties gives it no sampler), the image's own. GLSL gives a sampler
+     * and an image uniform different names, so the two never meet.
+     */
+    static String slotKey(String image, String samplerToken) {
+        return samplerToken.equals(NO_SAMPLER) ? image : samplerToken;
+    }
+
+    /** The spec of one declaration with this size; its tokens are the declaration's own. */
+    private static PackAdvancedResourcePlan.ImageSpec image(String name, String[] values, int[] size, long bytes,
+            PackAdvancedResourcePlan.Status status, List<String> deviations) {
+        IrisColorFormats.Format format = IrisColorFormats.of(token(values, 2));
+        if (status == PackAdvancedResourcePlan.Status.SUPPORTED && format != null && !format.exact()) {
+            deviations.add("ADVANCED_IMAGE_FORMAT_APPROXIMATED:" + name + "=" + format.token() + "->"
+                    + IrisColorFormats.stored(format.vkFormat()).token());
+        }
+        String sampler = token(values, 0).equals(NO_SAMPLER) ? "" : token(values, 0);
+        return new PackAdvancedResourcePlan.ImageSpec(name, sampler, token(values, 1), token(values, 2).toLowerCase(),
+                token(values, 3), Boolean.parseBoolean(token(values, 4)), Boolean.parseBoolean(token(values, 5)),
+                size[0], size[1], size[2], sizeToken(values, 6), sizeToken(values, 7), sizeToken(values, 8),
+                bytes, status, deviations);
+    }
+
+    private static String sizeToken(String[] values, int index) {
+        return values.length > index ? values[index] : null;
     }
 
     static int resolveImageDimension(
@@ -125,185 +222,6 @@ final class AdvancedImageDeclarations {
         return 0;
     }
 
-    static Map<String, PackAdvancedResourcePlan.ComputeSpec> discoverCompute(
-            Path shadersDir,
-            String selectedFolder,
-            Map<String, PackAdvancedResourcePlan.ImageSpec> images,
-            List<String> deviations,
-            Map<String, String> initialMacros,
-            Set<String> lockedMacros,
-            Set<String> graphicsProducedImages,
-            Map<String, UniformRegistry.UniformDescriptor> customDescriptors
-    ) {
-        if (shadersDir == null) return Map.of();
-        Map<String, PackAdvancedResourcePlan.ComputeSpec> result = new TreeMap<>();
-        Path source = shadowComputeSource(shadersDir, selectedFolder);
-        if (source == null) return result;
-        try {
-            String raw = Files.readString(source, StandardCharsets.UTF_8);
-            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
-                    shadersDir, source, raw,
-                    initialMacros, lockedMacros);
-            if (!prepared.successful()) {
-                deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-                return result;
-            }
-            // The plan reads what PackShadowCompute translates: one declaration per name.
-            String text = GlslTokenRewriter.splitUniformDeclarators(prepared.source());
-            List<String> localDeviations = new ArrayList<>(prepared.deviations());
-            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(text);
-            localDeviations.addAll(usage.deviations());
-            if (!usage.successful()) {
-                localDeviations.add("COMPUTE_RESOURCE_USAGE_UNCLASSIFIABLE");
-            }
-            WorkgroupSize size = workgroupSize(text, localDeviations);
-            // Compute stages exist from GLSL 430; any profile converts to Chimera's 450 module.
-            GlslVersion version = GlslVersion.first(text);
-            if (version == null || !version.supported() || version.number() < 430) {
-                localDeviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-            }
-            TreeSet<String> names = new TreeSet<>();
-            names.addAll(usage.liveImages());
-            TreeSet<String> samplers = usage.liveSamplers().stream()
-                    .filter(sampler -> PackAdvancedResourcePlan.imageBySampler(images, sampler) != null)
-                    .collect(Collectors.toCollection(TreeSet::new));
-            addImageDependencyDeviations(names, images, localDeviations);
-            addSamplerDependencyDeviations(samplers, names, images, graphicsProducedImages, localDeviations);
-            if (text.matches("(?s).*\\btexelFetch\\s*\\(.*")) {
-                localDeviations.add("COMPUTE_TEXEL_FETCH_CLAMPED");
-            }
-            addValueUniformDeviations(text, customDescriptors, localDeviations);
-            PackAdvancedResourcePlan.Status status = !hasBlockingComputeDeviation(localDeviations) && !names.isEmpty()
-                    ? PackAdvancedResourcePlan.Status.SUPPORTED : PackAdvancedResourcePlan.Status.UNSUPPORTED;
-            if (status == PackAdvancedResourcePlan.Status.SUPPORTED) deviations.add(
-                    "COMPUTE_STAGE_SUPPORTED:shadowcomp");
-            else deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-            String relative = shadersDir.normalize().relativize(source).toString().replace('\\', '/');
-            result.put("shadowcomp", new PackAdvancedResourcePlan.ComputeSpec("shadowcomp", relative,
-                    size.x(), size.y(), size.z(),
-                    new ArrayList<>(names), new ArrayList<>(samplers), status, localDeviations));
-        } catch (IOException | RuntimeException failure) {
-            deviations.add("COMPUTE_STAGE_UNSUPPORTED:shadowcomp");
-        }
-        return result;
-    }
-
-    /** The selected folder's shadowcomp.csh; null when it is missing or resolves outside the shaders. */
-    private static Path shadowComputeSource(Path shadersDir, String selectedFolder) {
-        Path root = selectedFolder == null || selectedFolder.isBlank()
-                ? shadersDir : shadersDir.resolve(selectedFolder);
-        Path source = root.resolve("shadowcomp.csh").normalize();
-        if (!source.startsWith(shadersDir.normalize()) || !Files.isRegularFile(source)) return null;
-        return source;
-    }
-
-    private record WorkgroupSize(int x, int y, int z) {}
-
-    /** The declared local workgroup size, or zero with a deviation when the stage declares none. */
-    private static WorkgroupSize workgroupSize(String text, List<String> localDeviations) {
-        Matcher size = PackAdvancedResourcePlan.LOCAL_SIZE.matcher(text);
-        if (!size.find()) {
-            localDeviations.add("COMPUTE_WORKGROUP_UNSUPPORTED:shadowcomp");
-            return new WorkgroupSize(0, 0, 0);
-        }
-        return new WorkgroupSize(Integer.parseInt(size.group(1)), Integer.parseInt(size.group(2)),
-                Integer.parseInt(size.group(3)));
-    }
-
-    /** Each image the compute stage writes needs a supported declaration, by image or sampler name. */
-    private static void addImageDependencyDeviations(Set<String> names,
-                                                     Map<String, PackAdvancedResourcePlan.ImageSpec> images,
-                                                     List<String> localDeviations) {
-        for (String name : names) {
-            PackAdvancedResourcePlan.ImageSpec dependency = PackAdvancedResourcePlan.imageBySymbol(images, name);
-            boolean declared = dependency != null && dependency.supported();
-            if (!declared) {
-                localDeviations.add("COMPUTE_IMAGE_UNAVAILABLE:" + name);
-            }
-        }
-    }
-
-    /** Each image the compute stage samples needs a supported declaration and something that fills it. */
-    private static void addSamplerDependencyDeviations(Set<String> samplers, Set<String> names,
-                                                       Map<String, PackAdvancedResourcePlan.ImageSpec> images,
-                                                       Set<String> graphicsProducedImages,
-                                                       List<String> localDeviations) {
-        for (String name : samplers) {
-            PackAdvancedResourcePlan.ImageSpec dependency = PackAdvancedResourcePlan.imageBySampler(images, name);
-            if (dependency == null || !dependency.supported()) {
-                localDeviations.add("COMPUTE_SAMPLER_UNAVAILABLE:" + name);
-            } else if (dependency.clear()
-                    && !names.contains(dependency.name())
-                    && !names.contains(name)
-                    && (graphicsProducedImages == null
-                    || !graphicsProducedImages.contains(dependency.name()))) {
-                // A clear-only image is not a producer. BSL uses its
-                // voxel image as compute input, but Chimera does not yet
-                // have the shadow-geometry voxel writer that populates it.
-                // Do not expose undefined image contents to dependent
-                // graphics programs.
-                localDeviations.add("COMPUTE_INPUT_UNAVAILABLE:" + name);
-            }
-        }
-    }
-
-    /** Each value uniform the compute stage declares: live or unused when resolvable, else unsupported if read. */
-    private static void addValueUniformDeviations(String text,
-                                                  Map<String, UniformRegistry.UniformDescriptor> customDescriptors,
-                                                  List<String> localDeviations) {
-        Matcher valueUniform = PackAdvancedResourcePlan.VALUE_UNIFORM_DECLARATION.matcher(text);
-        while (valueUniform.find()) {
-            String name = valueUniform.group(2);
-            if (UniformRegistry.resolve(name, valueUniform.group(1), customDescriptors) != null) {
-                if (GlslTokenRewriter.identifierCount(text, name) > 1) {
-                    localDeviations.add("COMPUTE_UNIFORM_LIVE:" + name);
-                } else {
-                    localDeviations.add("COMPUTE_UNIFORM_UNUSED:" + name);
-                }
-            } else if (GlslTokenRewriter.identifierCount(text, name) > 1) {
-                localDeviations.add("COMPUTE_UNIFORM_UNSUPPORTED:" + name);
-            }
-        }
-    }
-
-    static void applyBudget(Map<String, PackAdvancedResourcePlan.ImageSpec> images, List<String> deviations) {
-        List<Map.Entry<String, PackAdvancedResourcePlan.ImageSpec>> candidates = images.entrySet().stream()
-                .filter(entry -> entry.getValue().supported())
-                .sorted(Comparator.comparingLong((Map.Entry<String, PackAdvancedResourcePlan.ImageSpec> entry)
-                                -> entry.getValue().estimatedBytes())
-                        .thenComparing(Map.Entry::getKey))
-                .toList();
-        long admitted = 0L;
-        boolean rejected = false;
-        for (Map.Entry<String, PackAdvancedResourcePlan.ImageSpec> entry : candidates) {
-            PackAdvancedResourcePlan.ImageSpec spec = entry.getValue();
-            if (spec.estimatedBytes() > PackAdvancedResourcePlan.MAX_TOTAL_BYTES - admitted) {
-                List<String> next = new ArrayList<>(spec.deviations());
-                next.add("ADVANCED_IMAGE_BUDGET_EXCEEDED:" + spec.name());
-                images.put(entry.getKey(), new PackAdvancedResourcePlan.ImageSpec(spec.name(), spec.sampler(),
-                        spec.pixelFormat(), spec.internalFormat(), spec.pixelType(), spec.clear(),
-                        spec.relative(), spec.width(), spec.height(), spec.depth(),
-                        spec.widthToken(), spec.heightToken(), spec.depthToken(), spec.estimatedBytes(),
-                        PackAdvancedResourcePlan.Status.UNSUPPORTED, next));
-                deviations.add("ADVANCED_IMAGE_BUDGET_EXCEEDED:" + spec.name());
-                rejected = true;
-            } else {
-                admitted += spec.estimatedBytes();
-            }
-        }
-        if (rejected) deviations.add("ADVANCED_IMAGE_BUDGET_EXCEEDED");
-    }
-
-    static boolean hasBlockingComputeDeviation(List<String> deviations) {
-        return deviations.stream().anyMatch(value ->
-                value == null
-                        || (!ShaderSourcePreprocessor.isWarning(value)
-                        && !value.startsWith("COMPUTE_UNIFORM_DEFAULTED:")
-                        && !value.startsWith("COMPUTE_UNIFORM_LIVE:")
-                        && !value.startsWith("COMPUTE_UNIFORM_UNUSED:")
-                        && !value.equals("COMPUTE_TEXEL_FETCH_CLAMPED")));
-    }
-
     /**
      * Whether a stage reads or writes a pack image: a live image, an image's sampler, or a live
      * 3D sampler. A 3D sampler a pack raw texture serves ({@code packVolume}) is an ordinary texture.
@@ -327,22 +245,52 @@ final class AdvancedImageDeclarations {
         return usage.liveSamplers().stream().anyMatch(injectedSamplers::contains);
     }
 
+    /** Bytes per texel of an Iris internal format as stored; Iris skips an image whose format it does not know. */
     static int bytesPerVoxel(String format) {
-        return switch (format) {
-            case "r8ui" -> 1;
-            case "r16ui" -> 2;
-            case "rgba16f" -> 8;
-            default -> throw new IllegalArgumentException("unsupported advanced image format: " + format);
-        };
+        IrisColorFormats.Format known = IrisColorFormats.of(format);
+        if (known == null) throw new IllegalArgumentException("unsupported advanced image format: " + format);
+        return known.bytes();
     }
 
     static String storageImageType(PackAdvancedResourcePlan.ImageSpec spec) {
-        if (spec == null) return "image3D";
-        return switch (spec.internalFormat().toLowerCase(Locale.ROOT)) {
-            case "r8ui", "r16ui" -> "uimage3D";
-            case "rgba16f" -> "image3D";
-            default -> "image3D";
-        };
+        return spec == null || spec.format() == null ? "image3D" : spec.typePrefix() + "image" + spec.dimensionSuffix();
+    }
+
+    /** The GLSL type of an image read through {@code viewFormat}; its own type for an empty one. */
+    static String storageImageType(PackAdvancedResourcePlan.ImageSpec spec, String viewFormat) {
+        IrisColorFormats.Format view = viewFormat.isEmpty() ? null : IrisColorFormats.of(viewFormat);
+        if (view == null) return storageImageType(spec);
+        IrisColorFormats.Kind kind = view.kind();
+        String prefix = kind == IrisColorFormats.Kind.UINT ? "u" : kind == IrisColorFormats.Kind.SINT ? "i" : "";
+        return prefix + "image" + spec.dimensionSuffix();
+    }
+
+    /** The format a {@code layout(...)} list names, lower case; empty when it names none. */
+    static String declaredFormat(String layout) {
+        if (layout == null) return "";
+        for (String part : layout.split(",")) {
+            String token = part.trim();
+            if (!token.contains("=") && IrisColorFormats.of(token) != null) return token.toLowerCase(Locale.ROOT);
+        }
+        return "";
+    }
+
+    /**
+     * The format a declaration reads an image through when its qualifier names another one of the
+     * same texel size, as a GL image unit reinterprets the bits (Alpha Piscium declares its R32F
+     * uimg_csr32f r32i for integer atomics); empty for the image's own format or no qualifier, and
+     * null for a format of another size, which nothing reads the image as.
+     */
+    static String viewFormat(PackAdvancedResourcePlan.ImageSpec spec, String declared) {
+        return viewFormat(spec.format(), declared);
+    }
+
+    /** As {@link #viewFormat(PackAdvancedResourcePlan.ImageSpec, String)}, of any image stored in {@code own}. */
+    static String viewFormat(IrisColorFormats.Format own, String declared) {
+        IrisColorFormats.Format format = IrisColorFormats.of(declared);
+        if (format == null || format.vkFormat() == own.vkFormat()) return "";
+        return format.bytes() == own.bytes()
+                ? IrisColorFormats.stored(format.vkFormat()).token().toLowerCase(Locale.ROOT) : null;
     }
 
     static String token(String[] values, int index) {

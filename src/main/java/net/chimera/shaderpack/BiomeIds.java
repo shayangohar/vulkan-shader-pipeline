@@ -16,35 +16,41 @@ import java.util.TreeMap;
  *
  * <p>An expression such as {@code in(biome, BIOME_GROVE)} only means anything when the constant
  * and the value it is compared against come from the same table, so this is the one place that
- * hands out either. The table is Chimera's own and numbers the vanilla biomes in the order below:
- * the pinned packs write the symbols rather than the numbers, and the one pack that writes numbers
- * does so inside a pre-1.18 branch that is not active on this version.
+ * hands out either. Iris numbers the vanilla biomes in the order Minecraft's {@code Biomes}
+ * registers them (MixinBiomes: the_void 0, plains 1, ... end_barrens 63), and packs write those
+ * numbers too: Bliss tests {@code in(biome, 6, 52, 7)} for swamps and 5 for the desert.
  *
- * <p>A biome outside the table -- a modded one, or any other namespace -- is {@link #UNKNOWN}, which
- * matches no constant rather than standing in for one that happens to share a path.
+ * <p>A biome outside the table -- a modded one, or any other namespace -- reads {@link #UNKNOWN},
+ * 0, as Iris's map answers a key it lacks.
  */
 public final class BiomeIds {
     private static final String PREFIX = "BIOME_";
     private static final String VANILLA_NAMESPACE = "minecraft";
 
-    /** The biome a pack's constants do not name. */
-    public static final int UNKNOWN = -1;
+    /** What a biome Iris's map lacks reads: Object2IntMap.getInt's default, the_void's number. */
+    public static final int UNKNOWN = 0;
 
-    /** The vanilla biome names, in the order this table numbers them. */
+    /** The vanilla 1.21.1 biome names, in Biomes' registration order, which numbers them. */
     private static final List<String> VANILLA = List.of(
-            "badlands", "bamboo_jungle", "basalt_deltas", "beach", "birch_forest", "cherry_grove",
-            "cold_ocean", "crimson_forest", "dark_forest", "deep_cold_ocean", "deep_dark",
-            "deep_frozen_ocean", "deep_lukewarm_ocean", "deep_ocean", "desert", "dripstone_caves",
-            "end_barrens", "end_highlands", "end_midlands", "eroded_badlands", "flower_forest",
-            "forest", "frozen_ocean", "frozen_peaks", "frozen_river", "grove", "ice_spikes",
-            "jagged_peaks", "jungle", "lukewarm_ocean", "lush_caves", "mangrove_swamp", "meadow",
-            "mushroom_fields", "nether_wastes", "ocean", "old_growth_birch_forest",
-            "old_growth_pine_taiga", "old_growth_spruce_taiga", "pale_garden", "plains", "river",
-            "savanna", "savanna_plateau", "small_end_islands", "snowy_beach", "snowy_plains",
-            "snowy_slopes", "snowy_taiga", "soul_sand_valley", "sparse_jungle", "stony_peaks",
-            "stony_shore", "sunflower_plains", "swamp", "taiga", "the_end", "the_void",
-            "warm_ocean", "warped_forest", "windswept_forest", "windswept_gravelly_hills",
-            "windswept_hills", "windswept_savanna", "wooded_badlands");
+            "the_void", "plains", "sunflower_plains", "snowy_plains", "ice_spikes", "desert", "swamp",
+            "mangrove_swamp", "forest", "flower_forest", "birch_forest", "dark_forest",
+            "old_growth_birch_forest", "old_growth_pine_taiga", "old_growth_spruce_taiga", "taiga",
+            "snowy_taiga", "savanna", "savanna_plateau", "windswept_hills", "windswept_gravelly_hills",
+            "windswept_forest", "windswept_savanna", "jungle", "sparse_jungle", "bamboo_jungle",
+            "badlands", "eroded_badlands", "wooded_badlands", "meadow", "cherry_grove", "grove",
+            "snowy_slopes", "frozen_peaks", "jagged_peaks", "stony_peaks", "river", "frozen_river",
+            "beach", "snowy_beach", "stony_shore", "warm_ocean", "lukewarm_ocean", "deep_lukewarm_ocean",
+            "ocean", "deep_ocean", "cold_ocean", "deep_cold_ocean", "frozen_ocean", "deep_frozen_ocean",
+            "mushroom_fields", "dripstone_caves", "lush_caves", "deep_dark", "nether_wastes",
+            "warped_forest", "crimson_forest", "soul_sand_valley", "basalt_deltas", "the_end",
+            "end_highlands", "end_midlands", "small_end_islands", "end_barrens");
+    /**
+     * Biomes of later versions that packs name: Complementary, Escheridia and Rethinking Voxels test
+     * BIOME_PALE_GARDEN. Iris 1.21.1 has no such constant and drops the uniform, which reads 0; a
+     * number past the vanilla ones, which no 1.21.1 biome reads, gives the same 0 without refusing
+     * the program for an unknown name (KNOW-790).
+     */
+    private static final List<String> LATER = List.of("pale_garden");
 
     private static final Map<String, Integer> IDS = ids();
     private static final PackExpression.Constants CONSTANTS = buildConstants();
@@ -69,6 +75,9 @@ public final class BiomeIds {
         Map<String, Integer> result = new TreeMap<>();
         int id = 0;
         for (String name : VANILLA) {
+            result.put(name, id++);
+        }
+        for (String name : LATER) {
             result.put(name, id++);
         }
         return Map.copyOf(result);

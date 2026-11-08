@@ -1,15 +1,15 @@
-filename = 'RenderPearl v2.4.0.zip'
+filename = 'RenderPearl v2.8.0-beta.4.zip'
 name = 'RenderPearl'
 side = 'client'
-x-modrinth-version-number = '2.4.0'
-x-modrinth-release-type = 'release'
+x-modrinth-version-number = '2.8.0-beta.4'
+x-modrinth-release-type = 'beta'
 
 [download]
-hash = '47758c781bbebc9dd44a82dbdd9e7385a4937d1aad3abbc05fc302ab05222d224ce483ecd15619c52551d5a434780b7898b12798dc39e01bb41c7a6586408bfd'
+hash = 'e8f4f37c35bf54d8562a4d29771922b4bfce6fd4f5a25f38b4d6de58ee19907f73d12b980fc137dc2cb3b2b705264dfa8b2e441efaca8649a6a6d0f00cf5589b'
 hash-format = 'sha512'
 mode = 'url'
-url = 'https://cdn.modrinth.com/data/BrRak9pu/versions/4q8gfsTN/RenderPearl%20v2.4.0.zip'
+url = 'https://cdn.modrinth.com/data/BrRak9pu/versions/avpYqS0K/RenderPearl%20v2.8.0-beta.4.zip'
 
 [update.modrinth]
 mod-id = 'BrRak9pu'
-version = '4q8gfsTN'
+version = 'avpYqS0K'

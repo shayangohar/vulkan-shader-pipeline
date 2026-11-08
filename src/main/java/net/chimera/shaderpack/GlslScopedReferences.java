@@ -46,6 +46,22 @@ final class GlslScopedReferences {
         return binding == null || !insideFunction(tree, binding);
     }
 
+    /**
+     * Whether a parameter or local is named {@code name}: renaming a global to it would let that
+     * declaration capture the renamed references in its scope.
+     */
+    static boolean declaredLocally(GlslTree tree, String name) {
+        List<GlslLexer.Token> tokens = tree.tokens();
+        for (int token = 0; token < tokens.size(); token++) {
+            if (tokens.get(token).kind() != GlslLexer.Kind.IDENTIFIER || !tokens.get(token).text().equals(name)) {
+                continue;
+            }
+            GlslTree.Binding binding = tree.resolve(token);
+            if (binding != null && insideFunction(tree, binding)) return true;
+        }
+        return false;
+    }
+
     /** Whether a binding is a parameter or a declaration inside a function body. */
     static boolean insideFunction(GlslTree tree, GlslTree.Binding binding) {
         if (binding.node() instanceof GlslTree.Parameter) return true;

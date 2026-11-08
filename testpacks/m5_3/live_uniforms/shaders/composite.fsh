@@ -21,3 +21,6 @@ void main() {
     vec3 tint = mix(vec3(0.15, 0.45, 1.0), fogColor.rgb + sunPosition * 0.1, 0.25);
     gl_FragColor = vec4(mix(scene.rgb, tint, marker * 0.35), scene.a);
 }
+/*
+const int colortex0Format = RGBA16F;
+*/

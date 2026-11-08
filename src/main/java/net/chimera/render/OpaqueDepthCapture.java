@@ -78,20 +78,21 @@ final class OpaqueDepthCapture {
         }
         boolean captureOpaque = pass.packDepthTargets.isConfigured()
                 && pass.packDepthTargets.plan().depthtex1();
+        boolean capturePreHand = capturesPreHandBeforeTranslucent();
         boolean runEarlyPost = pass.packPostChainActive
                 && pass.packPostTargets.isConfigured()
                 && pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.EARLY);
-        if (!captureOpaque && !runEarlyPost) {
+        if (!captureOpaque && !capturePreHand && !runEarlyPost) {
             return;
         }
         VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
         Renderer.getInstance().endRenderPass(commandBuffer);
-        if (captureOpaque) {
-            boolean captured = pass.packDepthTargets.captureOpaque(
-                    commandBuffer, pass.targets.hdrFramebuffer.getDepthAttachment());
-            if (!captured) {
-                LOGGER.warn("[chimera] pack depth graph: depthtex1 capture unavailable");
-            }
+        VulkanImage worldDepth = pass.targets.hdrFramebuffer.getDepthAttachment();
+        if (captureOpaque && !pass.packDepthTargets.captureOpaque(commandBuffer, worldDepth)) {
+            LOGGER.warn("[chimera] pack depth graph: depthtex1 capture unavailable");
+        }
+        if (capturePreHand && !pass.packDepthTargets.capturePreHand(commandBuffer, worldDepth)) {
+            LOGGER.warn("[chimera] pack depth graph: depthtex2 capture before translucents unavailable");
         }
         if (runEarlyPost) {
             runEarlyPostWindow(commandBuffer);
@@ -105,17 +106,37 @@ final class OpaqueDepthCapture {
         this.hdrDepthReadable = false;
     }
 
+    /**
+     * Iris samples the centre depth at beginHand, before the hand and translucent terrain: the world
+     * depth here, since a pack hand draws into its own framebuffer. The layer then reopens its pass.
+     */
+    /**
+     * Samples the centre depth at Iris's beginHand: after the level's entity batches, before the
+     * hand draws (IrisRenderingPipeline.beginHand, CenterDepthSampler.sampleCenterDepth).
+     */
+    void sampleCenterDepthBeforeHand() {
+        if (pass.packCenterDepth == null || pass.shadowPass.shadowPassActive || !pass.levelPhase
+                || pass.targets.hdrFramebuffer == null) {
+            return;
+        }
+        VkCommandBuffer commandBuffer = Renderer.getCommandBuffer();
+        Renderer.getInstance().endRenderPass(commandBuffer);
+        pass.packCenterDepth.sample(commandBuffer, pass.targets.hdrFramebuffer.getDepthAttachment());
+        pass.rebindMainTarget();
+    }
+
+    /**
+     * Whether depthtex2 is captured before translucents. Iris beginHand copies it there; a pack solid
+     * hand already captured it at its segment, and otherwise no hand has drawn yet, so the opaque depth
+     * is the pre-hand depth water and the deferred passes read.
+     */
+    private boolean capturesPreHandBeforeTranslucent() {
+        return pass.packDepthTargets.isConfigured() && pass.packDepthTargets.plan().depthtex2()
+                && !pass.packDepthTargets.currentAvailable("depthtex2");
+    }
+
     /** Runs the deferred (EARLY) window over the opaque world, with the depth snapshots it reads. */
     private void runEarlyPostWindow(VkCommandBuffer commandBuffer) {
-        // Iris beginHand copies depthtex2 before deferred runs. A pack solid hand
-        // already captured it at its segment; otherwise no hand has drawn yet and
-        // the opaque depth is the pre-hand depth.
-        if (pass.packDepthTargets.isConfigured() && pass.packDepthTargets.plan().depthtex2()
-                && !pass.packDepthTargets.currentAvailable("depthtex2")
-                && !pass.packDepthTargets.capturePreHand(
-                        commandBuffer, pass.targets.hdrFramebuffer.getDepthAttachment())) {
-            LOGGER.warn("[chimera] pack depth graph: early depthtex2 capture unavailable");
-        }
         // Deferred passes read depthtex0 here, before translucents: the opaque depth, as Iris's
         // live depth is when translucent terrain begins. finishLevelSegment re-captures it for
         // composite.

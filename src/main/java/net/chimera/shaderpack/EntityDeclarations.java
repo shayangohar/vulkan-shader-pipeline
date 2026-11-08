@@ -21,7 +21,7 @@ final class EntityDeclarations {
     private static final Set<List<String>> INPUT_QUALIFIERS = Set.of(List.of("attribute"), List.of("in"));
     private static final Set<String> VECTOR_TYPES = Set.of("float", "vec2", "vec3", "vec4");
     private static final Set<String> TERRAIN_ATTRIBUTES =
-            Set.of("mc_Entity", "at_midBlock", "mc_midTexCoord", "at_tangent", "Tangent");
+            Set.of("mc_Entity", "at_midBlock", "mc_midTexCoord", "at_tangent");
     /** The whitespace after a removed identity declaration, up to the next text. */
     private static final Pattern WHITESPACE_TAIL = Pattern.compile("\\s*");
     /** The spaces after a removed attribute; its line break stays. */
@@ -152,12 +152,7 @@ final class EntityDeclarations {
 
     private static String unboundAttribute(String type, String name) {
         if (!name.equals("mc_Entity") && !name.equals("at_midBlock")) return "";
-        return "\nconst " + type + " " + name + " = " + switch (type) {
-            case "float" -> "0.0";
-            case "vec2" -> "vec2(0.0)";
-            case "vec3" -> "vec3(0.0)";
-            default -> "vec4(0.0, 0.0, 0.0, 1.0)";
-        } + ";";
+        return "\nconst " + type + " " + name + " = " + UnboundAttributes.defaultValue(type) + ";";
     }
 
     /**

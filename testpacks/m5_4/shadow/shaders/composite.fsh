@@ -20,3 +20,7 @@ void main() {
     vec3 tint = vec3(0.08, 0.35, 1.0);
     gl_FragColor = vec4(mix(scene.rgb, tint, marker * 0.55), scene.a);
 }
+/*
+const int shadowMapResolution = 1024;
+const float shadowDistance = 256;
+*/

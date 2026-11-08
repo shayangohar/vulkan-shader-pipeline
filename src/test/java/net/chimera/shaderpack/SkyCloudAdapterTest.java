@@ -2,10 +2,13 @@ package net.chimera.shaderpack;
 
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -43,8 +46,6 @@ final class SkyCloudAdapterTest {
                         .contains("layout(binding = 3)"),
                 "textured sky sampler did not use the geometry binding lane");
         assertNoUnstable(first.report().toJson(), fixture);
-        assertTrue(Files.isRegularFile(root.resolve("baselines/m8_5b.json")),
-                "baseline is missing");
     }
 
     /**
@@ -80,6 +81,57 @@ final class SkyCloudAdapterTest {
             assertTrue(converted.contains(expected), "cloud vertex lost " + expected + ": " + converted);
         }
         assertTrue(PackCompileTest.compile(converted, true) == null, "cloud vertex fails compilation");
+    }
+
+    /**
+     * Iris gives both stages of a program one sampler set: Ebin's clouds run gbuffers_textured, whose
+     * vertex stage reads colortex4. Sky and cloud vertex stages bind such a sampler where the fragment
+     * stage's layout puts it.
+     */
+    @Test
+    void skyAndCloudVertexStagesReadTheProgramsSamplers(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        String vertex = """
+                #version 120
+                uniform sampler2D colortex4;
+                varying vec4 color;
+                void main() { color = gl_Color * texture2D(colortex4, vec2(0.5)); gl_Position = ftransform(); }
+                """;
+        String fragment = """
+                #version 120
+                varying vec4 color;
+                void main() { gl_FragData[0] = color; }
+                """;
+        String bothStages = """
+                #version 120
+                uniform sampler2D colortex4;
+                varying vec4 color;
+                void main() { gl_FragData[0] = color * texture2D(colortex4, vec2(0.25)); }
+                """;
+        Files.writeString(shaders.resolve("gbuffers_clouds.vsh"), vertex);
+        Files.writeString(shaders.resolve("gbuffers_clouds.fsh"), fragment);
+        Files.writeString(shaders.resolve("gbuffers_skybasic.vsh"), vertex);
+        Files.writeString(shaders.resolve("gbuffers_skybasic.fsh"), bothStages);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        for (String name : List.of("gbuffers_clouds", "gbuffers_skybasic")) {
+            PackProgramPlan program = plan.program(name);
+            assertTrue(program.executable(), name + ": " + program.deviations());
+            String vertexBinding = colortex4Binding(program.convertedVertex());
+            assertTrue(vertexBinding != null, name + " vertex: " + program.convertedVertex());
+            assertTrue(PackCompileTest.compile(program.convertedVertex(), true) == null, name + " vertex compiles");
+            String fragmentBinding = colortex4Binding(program.convertedFragment());
+            if (fragmentBinding != null) {
+                assertEquals(fragmentBinding, vertexBinding, name + ": both stages read one descriptor");
+            }
+        }
+        assertTrue(colortex4Binding(plan.program("gbuffers_skybasic").convertedFragment()) != null,
+                "the sky fragment reads colortex4 too");
+    }
+
+    /** The binding a converted stage declares colortex4 at, or null. */
+    private static String colortex4Binding(String converted) {
+        var matcher = Pattern.compile("layout\\(binding = (\\d+)\\) uniform sampler2D colortex4;").matcher(converted);
+        return matcher.find() ? matcher.group(1) : null;
     }
 
     private static void assertProgram(PackPlan plan, String name, UniformRegistry.Stage stage,

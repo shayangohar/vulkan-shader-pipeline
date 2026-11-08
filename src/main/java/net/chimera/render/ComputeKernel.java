@@ -4,9 +4,12 @@ import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.SpirvLocalInitializer;
+import net.chimera.shaderpack.SpirvLocalSize;
 import net.chimera.shaderpack.UniformRegistry;
+import net.vulkanmod.config.Config;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.Vulkan;
+import net.vulkanmod.vulkan.device.DeviceManager;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
@@ -33,6 +36,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.List;
 import java.util.Map;
@@ -77,6 +81,7 @@ final class ComputeKernel implements AutoCloseable {
     private long descriptorPool;
     private long pipelineLayout;
     private long pipeline;
+    private int[] localSize;
     private FrameSlot[] frames = new FrameSlot[0];
 
     /** One frame in flight's descriptor set and uniform block. */
@@ -99,6 +104,7 @@ final class ComputeKernel implements AutoCloseable {
         ByteBuffer code = compileSpirv(label, source);
         if (code == null) return null;
         ComputeKernel kernel = new ComputeKernel(label, descriptorTypes, uniformBufferSize);
+        kernel.localSize = SpirvLocalSize.of(code);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             if (kernel.build(stack, SpirvLocalInitializer.apply(code))) return kernel;
             LOGGER.warn("[chimera] {} pipeline build failed", label);
@@ -112,8 +118,17 @@ final class ComputeKernel implements AutoCloseable {
         }
     }
 
+    /**
+     * Slots for every frame VulkanMod can have in flight. The kernel lives for the pack session, and
+     * the player can raise the frame queue size within it; slots sized to the count at build would
+     * then hand one slot to two frames still in flight, rewriting a set and block the other uses.
+     */
+    static int slotCount(int framesInFlight) {
+        return Math.max(Math.max(1, framesInFlight), Config.MAX_FRAME_QUEUE_SIZE);
+    }
+
     private boolean build(MemoryStack stack, ByteBuffer code) {
-        int frameCount = Math.max(1, Renderer.getFramesNum());
+        int frameCount = slotCount(Renderer.getFramesNum());
         frames = new FrameSlot[frameCount];
         for (int index = 0; index < frameCount; index++) {
             frames[index] = new FrameSlot();
@@ -129,10 +144,15 @@ final class ComputeKernel implements AutoCloseable {
 
     int frameCount() { return frames.length; }
 
+    /** The work group size the compiled module declares, as Iris reads it from GL; null when it declares none. */
+    int[] localSize() { return localSize == null ? null : localSize.clone(); }
+
     FrameSlot frame(int index) { return frames[index]; }
 
     /** This frame slot's fence has signalled, so its set and block are free to rewrite. */
-    FrameSlot currentFrame() { return frames[Renderer.getCurrentFrame() % frames.length]; }
+    FrameSlot currentFrame() { return frames[currentFrameIndex()]; }
+
+    int currentFrameIndex() { return Renderer.getCurrentFrame() % frames.length; }
 
     /** Points one image binding of a frame slot's set at an image view (and sampler, for a sampled one). */
     void writeImage(FrameSlot frame, int binding, long view, long sampler, int layout) {
@@ -143,6 +163,24 @@ final class ComputeKernel implements AutoCloseable {
             write.get(0).sType$Default().dstSet(frame.descriptorSet).dstBinding(binding)
                     .dstArrayElement(0).descriptorCount(1).descriptorType(descriptorTypes[binding])
                     .pImageInfo(image);
+            vkUpdateDescriptorSets(Vulkan.getVkDevice(), write, null);
+        }
+    }
+
+    /** Points one storage-buffer binding of a frame slot's set at a whole buffer. */
+    void writeBuffer(FrameSlot frame, int binding, long buffer, long range) {
+        writeBuffer(frame, binding, descriptorTypes[binding], buffer, range);
+    }
+
+    /** Points one buffer binding of a frame slot's set, of this descriptor type, at a buffer from offset 0. */
+    private static void writeBuffer(FrameSlot frame, int binding, int type, long buffer, long range) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkDescriptorBufferInfo.Buffer info = VkDescriptorBufferInfo.calloc(1, stack)
+                    .buffer(buffer).offset(0L).range(range);
+            VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack);
+            write.get(0).sType$Default().dstSet(frame.descriptorSet).dstBinding(binding)
+                    .dstArrayElement(0).descriptorCount(1).descriptorType(type)
+                    .pBufferInfo(info);
             vkUpdateDescriptorSets(Vulkan.getVkDevice(), write, null);
         }
     }
@@ -209,13 +247,8 @@ final class ComputeKernel implements AutoCloseable {
             FrameSlot frame = frames[index];
             frame.descriptorSet = sets.get(index);
             if (uniformBufferSize <= 0) continue;
-            VkDescriptorBufferInfo.Buffer buffer = VkDescriptorBufferInfo.calloc(1, stack)
-                    .buffer(frame.uniformBuffer).offset(0L).range(uniformBufferSize);
-            VkWriteDescriptorSet.Buffer write = VkWriteDescriptorSet.calloc(1, stack);
-            write.get(0).sType$Default().dstSet(frame.descriptorSet).dstBinding(descriptorTypes.length)
-                    .dstArrayElement(0).descriptorCount(1).descriptorType(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
-                    .pBufferInfo(buffer);
-            vkUpdateDescriptorSets(Vulkan.getVkDevice(), write, null);
+            writeBuffer(frame, descriptorTypes.length, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, frame.uniformBuffer,
+                    uniformBufferSize);
         }
         return true;
     }
@@ -273,17 +306,33 @@ final class ComputeKernel implements AutoCloseable {
         return true;
     }
 
-    /** The module, freed by the caller; null, with the error logged, when compilation fails. */
+    /**
+     * The module, freed by the caller; null, with the error logged, when compilation fails.
+     * gl_MaxComputeWorkGroupSize is the device's limit, as a GL driver on it reports.
+     */
     private static ByteBuffer compileSpirv(String label, String source) {
         try {
             return GlslCompiler.compile(label, source, Shaderc.shaderc_glsl_compute_shader, options -> {
                 Shaderc.shaderc_compile_options_set_auto_bind_uniforms(options, true);
                 Shaderc.shaderc_compile_options_set_auto_map_locations(options, true);
+                setWorkGroupLimits(options);
             });
         } catch (IllegalStateException failure) {
             LOGGER.warn("[chimera] {} shaderc compile failed: {}", label, failure.getMessage());
             return null;
         }
+    }
+
+    /** The device's maxComputeWorkGroupSize as shaderc's limits; shaderc's defaults before a device. */
+    private static void setWorkGroupLimits(long options) {
+        if (DeviceManager.deviceProperties == null) return;
+        IntBuffer size = DeviceManager.deviceProperties.limits().maxComputeWorkGroupSize();
+        Shaderc.shaderc_compile_options_set_limit(options, Shaderc.shaderc_limit_max_compute_work_group_size_x,
+                size.get(0));
+        Shaderc.shaderc_compile_options_set_limit(options, Shaderc.shaderc_limit_max_compute_work_group_size_y,
+                size.get(1));
+        Shaderc.shaderc_compile_options_set_limit(options, Shaderc.shaderc_limit_max_compute_work_group_size_z,
+                size.get(2));
     }
 
     @Override

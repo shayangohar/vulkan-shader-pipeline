@@ -24,6 +24,8 @@ import static org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE;
  * guess its fields.
  */
 public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
+    /** The level-of-detail bias VulkanMod gives every mipmapped sampler it builds from flags (MIP_BIAS). */
+    static final float HOST_MIP_BIAS = -0.5F;
 
     /** ID-only profile: the sampler exists, its fields were never observed. */
     public static SamplerProfile ofId(long id) {
@@ -36,14 +38,29 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
         return new SamplerProfile(id, keyOf(id));
     }
 
+    /**
+     * This profile as OpenGL samples {@code image} for Iris, for a pack draw. A sampler VulkanMod
+     * built from texture flags loses VulkanMod's {@link #HOST_MIP_BIAS}, which picks mip levels half
+     * a level finer and which Vulkan adds to an explicit textureLod too. It also clamps to the edge
+     * where vanilla's upload asked (EdgeClampedImages), which VulkanMod drops. Any other sampler is
+     * kept, and VulkanMod's own draws keep theirs.
+     */
+    public SamplerProfile asGl(VulkanImage image) {
+        SamplerManager.SamplerKey gl = glKey(flagKey(id), EdgeClampedImages.contains(image));
+        return gl == null ? this : new SamplerProfile(SamplerManager.getTextureSampler(gl), gl);
+    }
+
     /** True when every field needed to derive a sampler is known. */
     public boolean complete() {
         return key != null;
     }
 
     /**
-     * This profile's sampling with nearest texel filtering inside the same mip mode, and clamped
-     * to the base level when {@code baseLevelOnly}; null when the profile is incomplete.
+     * This profile's sampling, clamped to the base level when {@code baseLevelOnly}; null when the
+     * profile is incomplete. A {@code nearest} map reads the nearest texel of the nearest level, as
+     * Iris sets a labPBR specular map (TextureFormat.setupTextureParameters: GL_NEAREST_MIPMAP_NEAREST
+     * when mipmapped). Its classes (metal indices, emission 255 for none) must not blend between
+     * levels: Reverie read a level blend of 255 and 0 as half emission, and distant grass glowed.
      */
     public SamplerManager.SamplerKey derive(boolean nearest, boolean baseLevelOnly) {
         if (key == null) return null;
@@ -54,13 +71,11 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
                 Math.min(key.minLod(), maxLod), maxLod, key.lodBias(), key.compareMode(), key.compareFunc());
     }
 
-    private static int nearestOf(int minFilter) {
-        return switch (minFilter) {
-            case GL_LINEAR -> GL_NEAREST;
-            case GL_LINEAR_MIPMAP_NEAREST -> GL_NEAREST_MIPMAP_NEAREST;
-            case GL_LINEAR_MIPMAP_LINEAR -> GL_NEAREST_MIPMAP_LINEAR;
-            default -> minFilter;
-        };
+    /** GL_NEAREST_MIPMAP_NEAREST for any mipmapped filter, else GL_NEAREST. */
+    static int nearestOf(int minFilter) {
+        boolean mipmapped = minFilter == GL_NEAREST_MIPMAP_NEAREST || minFilter == GL_LINEAR_MIPMAP_NEAREST
+                || minFilter == GL_NEAREST_MIPMAP_LINEAR || minFilter == GL_LINEAR_MIPMAP_LINEAR;
+        return mipmapped ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST;
     }
 
     /** The key VulkanMod created {@code sampler} from, or null when it is not one of its cached samplers. */
@@ -70,16 +85,40 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
                 : ChimeraSamplerManagerAccessor.chimera$glSamplers().entrySet()) {
             if (entry.getValue() == sampler) return entry.getKey();
         }
+        int packed = flagKey(sampler);
+        return packed < 0 ? null : legacyKey((short) packed);
+    }
+
+    /**
+     * The flags (low byte) and mip ceiling (high byte) VulkanMod built {@code sampler} from, as its
+     * texture-sampler cache keys them; -1 when the sampler is not in that cache.
+     */
+    private static int flagKey(long sampler) {
+        if (sampler == 0L) return -1;
         for (var entry : ChimeraSamplerManagerAccessor.chimera$samplers().short2LongEntrySet()) {
-            if (entry.getLongValue() == sampler) return legacyKey(entry.getShortKey());
+            if (entry.getLongValue() == sampler) return entry.getShortKey() & 0xFFFF;
         }
-        return null;
+        return -1;
+    }
+
+    /**
+     * The key of the flag sampler {@code packed} (flagKey) at bias 0, clamped to the edge when
+     * {@code clampToEdge}; null when that changes nothing, or it is not a flag sampler with an
+     * OpenGL form.
+     */
+    static SamplerManager.SamplerKey glKey(int packed, boolean clampToEdge) {
+        SamplerManager.SamplerKey host = packed < 0 ? null : legacyKey((short) packed);
+        if (host == null) return null;
+        int wrap = clampToEdge ? GL_CLAMP_TO_EDGE : host.wrapS();
+        if (host.lodBias() == 0.0F && wrap == host.wrapS()) return null;
+        return new SamplerManager.SamplerKey(host.minFilter(), host.magFilter(), wrap, wrap, wrap,
+                host.minLod(), host.maxLod(), 0.0F, host.compareMode(), host.compareFunc());
     }
 
     /**
      * The OpenGL-style key of a texture sampler VulkanMod built from its flags (texture parameters):
      * the flags in the low byte and the mip ceiling in the high byte, mipmapped levels biased by
-     * {@code -0.5}. A min/max reduction sampler has no OpenGL form, so it stays unknown.
+     * {@link #HOST_MIP_BIAS}. A min/max reduction sampler has no OpenGL form, so it stays unknown.
      */
     static SamplerManager.SamplerKey legacyKey(short packed) {
         int flags = packed & 0xFF;
@@ -95,6 +134,6 @@ public record SamplerProfile(long id, SamplerManager.SamplerKey key) {
         int wrap = (flags & SamplerManager.CLAMP_BIT) != 0 ? GL_CLAMP_TO_EDGE : GL_REPEAT;
         float maxLod = mipmaps ? (packed >> 8) & 0xFF : 0.0F;
         return new SamplerManager.SamplerKey(min, mag, wrap, wrap, wrap, 0.0F, maxLod,
-                mipmaps ? -0.5F : 0.0F, GL_NONE, GL_LEQUAL);
+                mipmaps ? HOST_MIP_BIAS : 0.0F, GL_NONE, GL_LEQUAL);
     }
 }

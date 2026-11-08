@@ -16,7 +16,8 @@ final class TerrainDeclarations {
     static final Set<String> MODERN_STORAGES = Set.of("in", "out", "varying");
     static final Set<String> MODERN_INPUT_STORAGES = Set.of("in", "varying");
     private static final Set<String> INTERPOLATION = Set.of("flat", "noperspective", "smooth", "centroid", "sample");
-    private static final Set<String> SHADOW_ATTRIBUTES = Set.of("mc_Entity", "mc_midTexCoord", "at_midBlock");
+    private static final Set<String> SHADOW_ATTRIBUTES = Set.of(
+            "mc_Entity", "mc_midTexCoord", "at_midBlock", "at_tangent");
     /** What a shadow attribute's line ends with: its trailing spaces and its line break. */
     private static final Pattern SHADOW_ATTRIBUTE_TAIL = Pattern.compile("[ \\t]*(?:\\r?\\n|$)", Pattern.MULTILINE);
 
@@ -67,8 +68,8 @@ final class TerrainDeclarations {
     }
 
     /**
-     * Shadow-stage {@code attribute type name;} lines for mc_Entity, mc_midTexCoord and
-     * at_midBlock, with their indentation and line break; one with other text on its line is not one.
+     * Shadow-stage {@code attribute type name;} lines for mc_Entity, mc_midTexCoord, at_midBlock
+     * and at_tangent, with their indentation and line break; one with other text on its line is not one.
      */
     static List<Declaration> shadowAttributes(String source) {
         GlslTree tree = GlslTree.parse(source);

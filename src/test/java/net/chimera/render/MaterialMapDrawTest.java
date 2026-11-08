@@ -18,7 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.opengl.GL11.GL_LINEAR;
 import static org.lwjgl.opengl.GL11.GL_LINEAR_MIPMAP_LINEAR;
 import static org.lwjgl.opengl.GL11.GL_NEAREST;
-import static org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_LINEAR;
+import static org.lwjgl.opengl.GL11.GL_NEAREST_MIPMAP_NEAREST;
 import static org.lwjgl.opengl.GL11.GL_REPEAT;
 
 /**
@@ -130,12 +130,13 @@ final class MaterialMapDrawTest {
             assertEquals(0x7777L, normals.samplerOverride(), "normals left the albedo sampler");
             assertTrue(samplers.requests.isEmpty(), "normals allocated a sampler");
 
-            // Atlas labPBR specular filters NEAREST inside the source's mip mode, with its ceiling.
+            // Atlas labPBR specular reads the nearest texel of the nearest level, as Iris sets it
+            // (GL_NEAREST_MIPMAP_NEAREST), with the source's ceiling.
             var specular4 = owner.resolveDrawMaterial(lod4, "specular");
             var specular8 = owner.resolveDrawMaterial(lod8, "specular");
             assertEquals(2, samplers.requests.size(), "max-LOD variants aliased in the cache");
             SamplerManager.SamplerKey first = samplers.requests.get(0);
-            assertEquals(GL_NEAREST_MIPMAP_LINEAR, first.minFilter(), "labPBR min filter");
+            assertEquals(GL_NEAREST_MIPMAP_NEAREST, first.minFilter(), "labPBR min filter");
             assertEquals(GL_NEAREST, first.magFilter(), "labPBR mag filter");
             assertEquals(GL_REPEAT, first.wrapS(), "labPBR wrap S");
             assertEquals(GL_REPEAT, first.wrapT(), "labPBR wrap T");
@@ -193,7 +194,7 @@ final class MaterialMapDrawTest {
             assertEquals(GL_REPEAT, normalRequest.wrapS(), "simple normals wrap");
             assertEquals(0.0f, normalRequest.maxLod(), "simple normals LOD not clamped");
             SamplerManager.SamplerKey specularRequest = samplers.requests.get(1);
-            assertEquals(GL_NEAREST_MIPMAP_LINEAR, specularRequest.minFilter(), "simple specular min filter");
+            assertEquals(GL_NEAREST_MIPMAP_NEAREST, specularRequest.minFilter(), "simple specular min filter");
             assertEquals(GL_NEAREST, specularRequest.magFilter(), "simple specular mag filter");
             assertEquals(0.0f, specularRequest.maxLod(), "simple specular LOD not clamped");
             assertTrue(normals.samplerOverride() != specular.samplerOverride(),

@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -290,27 +291,19 @@ public final class UniformRegistry {
             PostTargetPlan targetPlan,
             boolean prepared
     ) {
-        return planProgram(fragmentSource, vertexSource, stage, targetPlan, prepared,
-                Map.of(), Map.of());
+        return planProgram(fragmentSource, vertexSource, null, stage, targetPlan, prepared, Map.of(), Map.of());
     }
 
-    /** Builds a program interface with the valid custom scalar descriptors for one pack session. */
+    /**
+     * A program interface over every stage the program runs, with pack-owned sampler slots: the
+     * uniforms and samplers of each stage it runs between its vertex and fragment stages
+     * ({@code betweenStages}, by stage name; null for none) join the program's, and project
+     * answers for each of them.
+     */
     public static ProgramInterfacePlan planProgram(
             String fragmentSource,
             String vertexSource,
-            Stage stage,
-            PostTargetPlan targetPlan,
-            boolean prepared,
-            Map<String, UniformDescriptor> customDescriptors
-    ) {
-        return planProgram(fragmentSource, vertexSource, stage, targetPlan, prepared,
-                customDescriptors, Map.of());
-    }
-
-    /** Builds a program interface with pack-owned sampler slots. */
-    public static ProgramInterfacePlan planProgram(
-            String fragmentSource,
-            String vertexSource,
+            Map<String, String> betweenStages,
             Stage stage,
             PostTargetPlan targetPlan,
             boolean prepared,
@@ -328,14 +321,17 @@ public final class UniformRegistry {
         List<UniformDeclaration> uniforms = new ArrayList<>(fragment.uniforms());
         List<SamplerBinding> samplers = new ArrayList<>(fragment.samplers());
         List<String> deviations = new ArrayList<>(fragment.deviations());
-        if (vertexSource != null) {
-            ProgramInterface vertex = InterfacePlanner.planInternal(vertexSource, effectiveStage, false, prepared,
+        Map<String, String> otherStages = new LinkedHashMap<>();
+        if (vertexSource != null) otherStages.put("vertex", vertexSource);
+        if (betweenStages != null) otherStages.putAll(betweenStages);
+        otherStages.forEach((name, source) -> {
+            ProgramInterface plan = InterfacePlanner.planInternal(source, effectiveStage, false, prepared,
                     customDescriptors, customSamplerSlots);
-            stagePlans.put("vertex", vertex);
-            uniforms.addAll(vertex.uniforms());
-            samplers.addAll(vertex.samplers());
-            deviations.addAll(vertex.deviations());
-        }
+            stagePlans.put(name, plan);
+            uniforms.addAll(plan.uniforms());
+            samplers.addAll(plan.samplers());
+            deviations.addAll(plan.deviations());
+        });
         return new ProgramInterfacePlan(stagePlans, uniforms, samplers, deviations);
     }
 
@@ -359,15 +355,9 @@ public final class UniformRegistry {
     );
 
     /**
-     * A pack may expose its block atlas through a custom texture named
-     * textureAtlas.  Complementary also uses the legacy name tex in the
-     * material helper that reads that same declared resource.  The alias is
-     * resolved only when the pack has already allocated textureAtlas; it is
-     * not a host-texture fallback and does not consume a second selector slot.
+     * Terrain, sky and clouds: the host slots and Iris's addWorldDepthSamplers depths on post's selectors
+     * (depthtex0 the world drawn before the group, KNOW-760; depthtex1 and depthtex2 their last captures).
      */
-    static final String PACK_ATLAS_SAMPLER = "textureAtlas";
-
-    /** Geometry stage: the host's registry slots the terrain draw path fills. */
     public static final Map<String, Integer> GEOMETRY_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
             Map.entry("tex", 0),
@@ -377,24 +367,32 @@ public final class UniformRegistry {
             Map.entry("shadowtex0", 5),
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", 3),
-            Map.entry("noisetex", 7)
+            Map.entry("noisetex", 7),
+            Map.entry("depthtex0", 6),
+            Map.entry("depthtex1", 12),
+            Map.entry("depthtex2", 13)
     );
 
-    /** Shadow writes must not sample the resource they are currently filling. */
+    /**
+     * Shadow writes must not sample the resource they are filling. shadowtex1 is the opaque copy,
+     * last frame's while casters draw and this frame's for the translucent layer, as Iris copies it.
+     */
     public static final Map<String, Integer> SHADOW_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
             Map.entry("tex", 0),
             // Iris core-profile name for the albedo atlas.
             Map.entry("gtexture", 0),
             Map.entry("lightmap", 2),
-            Map.entry("noisetex", 7)
+            Map.entry("noisetex", 7),
+            Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
+            // The entity casters' overlay, which only their injected entityColor reads (EntityOverlayColor).
+            Map.entry(PackResourcePlan.OVERLAY_SAMPLER, 1)
     );
 
     /**
-     * Translucent terrain is terrain on the host translucent lane: the
-     * geometry slots, plus the opaque depth Iris gives gbuffers_water as
-     * depthtex1. The pack colour targets it reads come from
-     * {@link #gbufferColorInputSlot}.
+     * Translucent terrain: the geometry slots with this frame's depths (depthtex0 and depthtex1 the
+     * opaque depth, depthtex2 the pre-hand depth Iris copies just before translucents). Its colour
+     * targets come from {@link #gbufferColorInputSlot}.
      */
     public static final Map<String, Integer> TRANSLUCENT_NAME_TO_SLOT = Map.ofEntries(
             Map.entry("texture", 0),
@@ -406,7 +404,9 @@ public final class UniformRegistry {
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", 3),
             Map.entry("noisetex", 7),
-            Map.entry("depthtex1", 12)
+            Map.entry("depthtex0", 6),
+            Map.entry("depthtex1", 12),
+            Map.entry("depthtex2", 13)
     );
 
     /**
@@ -423,35 +423,27 @@ public final class UniformRegistry {
             Map.entry("shadowtex0", 5),
             Map.entry("shadowtex1", SelectorNamespace.SHADOW_TEX1_SLOT),
             Map.entry("shadowcolor0", SelectorNamespace.SHADOW_COLOR0_SLOT),
-            // Noise stays on the canonical fixed selector 7, matching the
-            // post, geometry, and shadow tables and the resource plan. A
-            // custom pack-selector allocation here leaves the ordinary
-            // descriptor without a same-slot manifest resource and rejects
-            // the pipeline.
+            // Noise stays on selector 7, as in every table and the resource plan: a pack selector here
+            // leaves the descriptor without a same-slot manifest resource.
             Map.entry("noisetex", 7),
-            // Iris gives every gbuffers program its three depth textures (addWorldDepthSamplers),
-            // on the slots post reads them from. depthtex0 is the depth drawn so far there; while
-            // the world depth is an attachment, a draw reads a capture of the world drawn before
-            // its flush, and depthtex1 and depthtex2 their last capture.
+            // The three depth textures as in GEOMETRY_NAME_TO_SLOT; depthtex0 is captured per flush.
             Map.entry("depthtex0", 6),
             Map.entry("depthtex1", 12),
             Map.entry("depthtex2", 13)
     );
-    /**
-     * Resource-pack material maps ride fixed extended selectors, but only in
-     * stages whose draws bind a real albedo image. Sky and cloud reuse the
-     * geometry slot table without material draws, and post/shadow never
-     * serve material names, so the overlay is keyed on stage, not on table.
-     */
+    /** Resource-pack material maps on fixed extended selectors, in MATERIAL_STAGES; keyed on stage, not table. */
     public static final Map<String, Integer> MATERIAL_NAME_TO_SLOT = Map.of(
             "normals", SelectorNamespace.NORMALS_SLOT,
             "specular", SelectorNamespace.SPECULAR_SLOT
     );
 
-    /** Stages whose draws carry an albedo image that material maps can follow. */
+    /**
+     * Every gbuffers and shadow stage: addLevelSamplers registers normals and specular in each, which
+     * follow the draw's albedo; a texture without maps, such as clouds.png, reads the flat ones.
+     */
     public static final Set<Stage> MATERIAL_STAGES = Set.of(
-            Stage.GEOMETRY, Stage.TRANSLUCENT, Stage.ENTITY,
-            Stage.BLOCK, Stage.HAND, Stage.PARTICLE
+            Stage.GEOMETRY, Stage.TRANSLUCENT, Stage.ENTITY, Stage.BLOCK, Stage.HAND, Stage.PARTICLE,
+            Stage.SKY, Stage.CLOUD, Stage.SHADOW, Stage.SHADOW_ENTITY
     );
 
     static final Set<String> SUPPORTED_TYPES = Set.of(
@@ -554,21 +546,44 @@ public final class UniformRegistry {
             "ColorModulator", "LineWidth", "ChunkOffset", "EndPortalLayers", "screenSize");
 
     /**
-     * Names Iris 1.21.1 serves that Chimera does not yet: per-draw state, values that need Iris's
-     * ID maps or fog-mode plumbing, and the matrices Iris's core-profile transformers inject. A
-     * program reading one must not run on a zero Iris would never give it.
+     * Names Iris 1.21.1 serves that Chimera does not yet. A program reading one must not run on a
+     * zero Iris would never give it. A world program's alphaTestRef becomes its alpha-test
+     * reference before planning (PackAlphaTestPlan); a post program reads whatever the last world
+     * draw left in CapturedRenderingState, which has no equivalent here. The core-profile
+     * matrices and chunkOffset are not here: IrisCoreProfile serves them in the stages whose Iris
+     * transformer names them, and anywhere else Iris never sets them.
      */
-    private static final Set<String> IRIS_UNSERVED = Set.of(
-            "alphaTestRef", "blendFunc", "gtextureSize", "currentSelectedBlockId", "currentSelectedBlockPos",
-            "fogDensity", "fogMode", "fogShape",
-            "cloudTime", "constantMood",
-            "modelViewMatrix", "modelViewMatrixInverse", "projectionMatrix", "projectionMatrixInverse",
-            "normalMatrix", "textureMatrix", "chunkOffset");
+    private static final Set<String> IRIS_UNSERVED = Set.of("alphaTestRef");
+
+    /**
+     * Live values a fullscreen pass or compute dispatch cannot read. A pass's gtextureSize is the
+     * size of whatever texture the previous pass or world draw left on unit 0 when Program.use
+     * updates the uniforms, before the pass binds its own samplers; nothing names that texture.
+     * fogMode, fogShape and blendFunc are served into a pass as constants
+     * (ServedUniforms.servePostValues, serveFogOff) and refuse only where that could not run.
+     */
+    private static final Set<String> POST_UNSERVED = Set.of("gtextureSize", "blendFunc", "fogMode", "fogShape");
+
+    /** Whether a stage cannot read a name Iris serves elsewhere (POST_UNSERVED). */
+    static boolean unservedIn(String name, Stage stage) {
+        return stage == Stage.POST && POST_UNSERVED.contains(name);
+    }
+
+    /** {@link #resolve} for a compute dispatch, which reads what any pass left on the GL state. */
+    static UniformDescriptor resolveForCompute(String name, String glslType,
+                                               Map<String, UniformDescriptor> customDescriptors) {
+        return unservedIn(name, Stage.POST) ? null : resolve(name, glslType, customDescriptors);
+    }
 
     /** Whether Iris itself gives this name a value: the catalog, the unserved list, Iris internals. */
-    static boolean irisServes(String name) {
+    public static boolean irisServes(String name) {
         return UNIFORM_SPECS.containsKey(name) && !HOST_ONLY.contains(name)
                 || IRIS_UNSERVED.contains(name) || name.startsWith("iris_") || name.startsWith("u_");
+    }
+
+    /** Whether Iris sets a declared uniform: a name it serves, or one of the pack's custom uniforms. */
+    static boolean irisSets(String name, Map<String, UniformDescriptor> customDescriptors) {
+        return irisServes(name) || customDescriptors != null && customDescriptors.containsKey(name);
     }
 
     /**
@@ -720,7 +735,7 @@ public final class UniformRegistry {
 
     static boolean isHostAlias(String name) {
         return name.equals("shadowtex1")
-                || name.equals("shadowcolor0") || name.equals("shadowcolor1");
+                || PackResourcePlan.shadowColorIndex(name) >= 0;
     }
 
     record Variable(String name, boolean array) {}
@@ -780,7 +795,8 @@ public final class UniformRegistry {
                 unusedSamplers.add(deviation.substring("SAMPLER_DECLARATION_UNUSED:".length()));
             }
         }
-        Matcher matcher = UNIFORM_DECLARATION.matcher(maskComments(result));
+        String masked = maskComments(result);
+        Matcher matcher = UNIFORM_DECLARATION.matcher(masked);
         StringBuilder out = new StringBuilder();
         int last = 0;
         boolean changed = false;
@@ -793,7 +809,9 @@ public final class UniformRegistry {
                         .filter(variable -> !removed.contains(variable.name()))
                         .toList();
                 if (retained.size() != variables.size()) {
-                    out.append(result, last, matcher.start());
+                    // A declaration removed whole takes its layout qualifier (layout(rgba8) uniform image2D).
+                    out.append(result, last, retained.isEmpty()
+                            ? Math.max(last, GlslDeclarations.layoutStart(masked, matcher.start())) : matcher.start());
                     if (!retained.isEmpty()) {
                         out.append("uniform ").append(matcher.group(1)).append(' ')
                                 .append(retained.stream().map(Variable::name)
@@ -812,7 +830,8 @@ public final class UniformRegistry {
         return out.toString();
     }
 
-    private static boolean isExecutionBlocking(String deviation) {
+    /** Whether a deviation keeps the interface, and so the program, from executing. */
+    static boolean isExecutionBlocking(String deviation) {
         return deviation.startsWith("UNIFORM_TYPE_UNSUPPORTED:")
                 || deviation.startsWith("UNIFORM_NAME_UNSUPPORTED:")
                 || deviation.startsWith("CUSTOM_VALUE_REJECTED:")
@@ -832,7 +851,7 @@ public final class UniformRegistry {
     }
 
     static boolean isStorageImageType(String type) {
-        return "image3D".equals(type) || "iimage3D".equals(type) || "uimage3D".equals(type);
+        return type != null && type.matches("[iu]?image(?:1D|2D|3D)");
     }
 
     static String samplerResource(String name) {

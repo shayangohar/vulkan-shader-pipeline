@@ -28,13 +28,13 @@ import java.util.function.Supplier;
 /**
  * Render-thread state of the pack geometry families: which pack program draws which host draw.
  *
- * <p>Two kinds of lane exist. A family lane (entities, block entities, their text and moving blocks,
- * the hand and shadow casters) widens the host vertex format with Iris's attributes, so its
- * geometry is batched apart from the host's in a {@link FamilyRenderType} the moment it is written:
- * the lane is chosen from the render type and the context drawing it (EntityRenderDispatcher,
- * BlockEntityRenderDispatcher, the hand, the shadow casters). A host-layout lane (particles,
- * crumbling, and the {@link HostLayoutLane}s) keeps the host mesh and is chosen when it draws, by
- * shader name.</p>
+ * <p>Two kinds of lane exist. A family lane (entities, block entities, their text, moving blocks,
+ * the crumbling overlay, beacon beams, the hand and shadow casters) widens the host vertex format with Iris's
+ * attributes, so its geometry is batched apart from the host's in a {@link FamilyRenderType} the
+ * moment it is written: the lane is chosen from the render type and the context drawing it
+ * (EntityRenderDispatcher, BlockEntityRenderDispatcher, the hand, the shadow casters). A host-layout
+ * lane (particles and the {@link HostLayoutLane}s) keeps the host mesh and is chosen when it draws,
+ * by shader name.</p>
  *
  * <p>Either way the draw is open here while it runs, and the ShaderInstance pipeline seam
  * (ChimeraShaderPipelineMixin) hands Reforged the open draw's pack pipeline.</p>
@@ -66,10 +66,18 @@ public final class ChimeraEntityBridge {
         /** First-person glint: the glint program under the hand projection. */
         HAND_GLINT,
         LIGHTNING,
+        /**
+         * Beacon and end gateway beams, on the block layout widened as Iris widens it to TERRAIN,
+         * drawn with gbuffers_beaconbeam (Iris BEACON).
+         */
         BEACON_BEAM,
         LEASH,
         /** Text and name-tag backgrounds (Iris TEXT_BG), drawn with gbuffers_entities_translucent. */
         TEXT_BG,
+        /** World position_tex draws, the world border among them (Iris TEXTURED), drawn with gbuffers_textured. */
+        TEXTURED,
+        /** World position_tex_color draws (Iris TEXTURED_COLOR), with gbuffers_textured's chain. */
+        TEXTURED_COLOR,
         /**
          * The shadow pass's entity-format casters (Iris SHADOW_ENTITIES_CUTOUT), and on the block
          * layout its moving blocks.
@@ -81,10 +89,11 @@ public final class ChimeraEntityBridge {
         SHADOW_LINES,
         SHADOW_LEASH,
         SHADOW_LIGHTNING,
-        SHADOW_GLINT,
         SHADOW_TEXT,
         SHADOW_TEXT_BG,
-        SHADOW_BASIC
+        SHADOW_BASIC,
+        SHADOW_TEX,
+        SHADOW_TEX_COLOR
     }
 
     /**
@@ -130,6 +139,10 @@ public final class ChimeraEntityBridge {
             Map.entry("rendertype_eyes", EntityShader.EYES),
             Map.entry("rendertype_entity_translucent_emissive", EntityShader.EMISSIVE),
             Map.entry("rendertype_entity_alpha", EntityShader.ALPHA));
+    /** The block-breaking overlay's shader (RenderType.CRUMBLING, ModelBakery.DESTROY_TYPES). */
+    private static final String CRUMBLING_SHADER = "rendertype_crumbling";
+    /** The beam shader of RenderType.beaconBeam, which beacons and end gateways draw. */
+    private static final String BEACON_BEAM_SHADER = "rendertype_beacon_beam";
     /** The chunk shaders Iris draws as MOVING_BLOCK when an entity or block entity draws with them. */
     private static final Set<String> MOVING_BLOCK_SHADERS = Set.of("rendertype_solid", "rendertype_cutout_mipped",
             "rendertype_cutout", "rendertype_translucent", "rendertype_translucent_moving_block",
@@ -160,6 +173,8 @@ public final class ChimeraEntityBridge {
     private static GraphicsPipeline blockTranslucentTextPipeline;
     /** gbuffers_block on the block layout. */
     private static GraphicsPipeline movingBlockPipeline;
+    /** gbuffers_beaconbeam on the block layout. */
+    private static GraphicsPipeline beaconBeamPipeline;
     private static GraphicsPipeline particlePipeline;
     private static GraphicsPipeline translucentParticlePipeline;
     /** The installed lanes of {@link HostLayoutLane}, keyed by their family. */
@@ -245,6 +260,11 @@ public final class ChimeraEntityBridge {
         movingBlockPipeline = pipeline(movingBlock);
     }
 
+    /** Installs gbuffers_beaconbeam, Iris BEACON on the widened block layout, after {@link #install}. */
+    public static void installBeaconBeam(PackPipelines.PackParticle beam) {
+        beaconBeamPipeline = beam == null ? null : beam.pipeline();
+    }
+
     /** Installs the host-layout lanes after {@link #install}. A lane without a pipeline keeps its host draw. */
     public static void installHostLayout(Map<Family, PackPipelines.PackParticle> lanes) {
         hostLayoutPipelines.clear();
@@ -294,6 +314,7 @@ public final class ChimeraEntityBridge {
         translucentEntityTextPipeline = null;
         blockTranslucentTextPipeline = null;
         movingBlockPipeline = null;
+        beaconBeamPipeline = null;
         particlePipeline = null;
         translucentParticlePipeline = null;
         hostLayoutPipelines.clear();
@@ -310,7 +331,7 @@ public final class ChimeraEntityBridge {
         return entityPipeline != null || translucentEntityPipeline != null || spiderEyesPipeline != null
                 || blockPipeline != null || damagedBlockPipeline != null || handVariants != null
                 || handWaterVariants != null || particlePipeline != null || translucentParticlePipeline != null
-                || !hostLayoutPipelines.isEmpty() || shadowCasterPipeline != null;
+                || beaconBeamPipeline != null || !hostLayoutPipelines.isEmpty() || shadowCasterPipeline != null;
     }
 
     private static void resetFrameState() {
@@ -334,10 +355,16 @@ public final class ChimeraEntityBridge {
 
     /** Opens the world window at LevelRenderer.renderLevel's head; world buffers route families inside it. */
     public static void beginWorldWindow() {
+        // RenderType.draw has no finally: a draw or bolt draw that threw must not carry into the frame.
+        closeOpenDraw();
         worldWindow = enabled;
         contextDepth = 0;
-        // RenderType.draw has no finally: a bolt draw that threw must not mark later lane draws.
         lightningBoltDraw = false;
+    }
+
+    /** Ends a family draw a failed RenderType.draw left open, restoring the textures it saved. */
+    static void closeOpenDraw() {
+        if (drawActive) endDraw();
     }
 
     public static void endWorldWindow() {
@@ -345,6 +372,16 @@ public final class ChimeraEntityBridge {
         contextDepth = 0;
         currentEntityId = 0;
         currentBlockEntityId = 0;
+    }
+
+    /**
+     * Iris's ImmediateState.isRenderingLevel: from LevelRenderer.renderLevel's head to its return.
+     * Both hand halves fall inside it: Iris draws the translucent one at the return shifted before
+     * it (MixinLevelRenderer.iris$endLevelRender), ahead of the plain-RETURN injection that clears
+     * the flag.
+     */
+    public static boolean renderingLevel() {
+        return worldWindow;
     }
 
     /** True while RenderBuffers' sources route family render types (ChimeraRenderBuffersMixin). */
@@ -364,6 +401,7 @@ public final class ChimeraEntityBridge {
     }
 
     public static void endShadowCasters() {
+        closeOpenDraw();
         shadowCasterPass = false;
     }
 
@@ -498,8 +536,7 @@ public final class ChimeraEntityBridge {
         } else if (ChimeraHandRenderer.active()) {
             family = ChimeraHandRenderer.translucentPhase() ? Family.HAND_WATER : Family.HAND;
         } else {
-            Family context = worldWindow ? context() : null;
-            family = context == null ? null : worldFamily(shaderOf(type), format, context);
+            family = worldWindow ? worldTypeFamily(shaderOf(type), format) : null;
         }
         if (family != null && pipelineFor(family, widenedFormat(family, format)) == null) {
             family = fallback(family, format);
@@ -520,15 +557,32 @@ public final class ChimeraEntityBridge {
         };
     }
 
-    /** The shader a composite render type draws with, which Iris keys its overrides on; null for none. */
+    /**
+     * The shader a composite render type draws with, which Iris keys its overrides on, the bolt's
+     * through the lightning type it wraps; null for none.
+     */
     private static String shaderOf(RenderType type) {
-        if (!(type instanceof ChimeraCompositeRenderTypeAccessor composite)) return null;
+        if (!(LightningBoltRenderType.unwrap(type) instanceof ChimeraCompositeRenderTypeAccessor composite)) {
+            return null;
+        }
         var shard = ((ChimeraCompositeStateAccessor) (Object) composite.chimera$state()).chimera$shaderState();
         ShaderInstance shader = ((ChimeraShaderStateShardAccessor) shard).chimera$shader().map(Supplier::get)
                 .orElse(null);
         if (shader == null) return null;
         // VulkanMod Reforged loads breeze wind's shader as a second instance named rendertype_energy_swirl.
         return shader == GameRenderer.getRendertypeBreezeWindShader() ? "rendertype_breeze_wind" : shader.getName();
+    }
+
+    /**
+     * The family a render type written in the world window batches with: the crumbling overlay and
+     * beacon beams wherever they are written, as Iris widens every BLOCK buffer to TERRAIN, and
+     * otherwise the entity or block entity drawing it (worldFamily).
+     */
+    public static Family worldTypeFamily(String shader, VertexFormat format) {
+        if (format == DefaultVertexFormat.BLOCK && CRUMBLING_SHADER.equals(shader)) return Family.DAMAGED_BLOCK;
+        if (format == DefaultVertexFormat.BLOCK && BEACON_BEAM_SHADER.equals(shader)) return Family.BEACON_BEAM;
+        Family context = context();
+        return context == null ? null : worldFamily(shader, format, context);
     }
 
     /**
@@ -581,7 +635,7 @@ public final class ChimeraEntityBridge {
     static VertexFormat widenedFormat(Family family, VertexFormat format) {
         return switch (family) {
             case HAND, HAND_WATER, ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, BLOCK, BLOCK_TRANSLUCENT, MOVING_BLOCK,
-                 SHADOW_ENTITIES, SHADOW_BLOCK -> Objects.requireNonNullElse(
+                 DAMAGED_BLOCK, BEACON_BEAM, SHADOW_ENTITIES, SHADOW_BLOCK -> Objects.requireNonNullElse(
                          ChimeraVertexFormats.extendedLayout(format), format);
             default -> format;
         };
@@ -589,7 +643,7 @@ public final class ChimeraEntityBridge {
 
     /**
      * The host-layout lane that draws a host mesh now, by its shader, or null when the host draws
-     * it: a {@link HostLayoutLane} of the current pass, a particle, or the crumbling overlay.
+     * it: a {@link HostLayoutLane} of the current pass, or a particle.
      */
     public static Family hostLaneFor(String shader, VertexFormat format) {
         if (!enabled || drawActive || shader == null) return null;
@@ -600,24 +654,35 @@ public final class ChimeraEntityBridge {
         return pass == HostLayoutLane.Pass.WORLD ? worldHostLane(shader, format) : null;
     }
 
-    /** The pass a host draw belongs to now, or null outside every lane window. */
+    /**
+     * Whether a world host-layout lane draws {@code type}: the level's buffer source holds such a
+     * batch with the entities' (FamilyBufferSource), as Iris's batched source holds every batch.
+     */
+    public static boolean worldLaneDraws(RenderType type) {
+        return currentPass() == HostLayoutLane.Pass.WORLD && hostLaneFor(shaderOf(type), type.format()) != null;
+    }
+
+    /**
+     * The pass a host draw belongs to now, or null outside every lane window. The sky has no lane:
+     * Iris draws its host shaders with the sky keys, which ChimeraSkyBridge serves.
+     */
     private static HostLayoutLane.Pass currentPass() {
         if (shadowCasterPass) return HostLayoutLane.Pass.SHADOW;
         if (ChimeraHandRenderer.active()) return HostLayoutLane.Pass.HAND;
-        if (!worldWindow) return null;
+        if (!worldWindow || ChimeraSkyBridge.inSkyWindow()) return null;
         return weatherWindow ? HostLayoutLane.Pass.WEATHER : HostLayoutLane.Pass.WORLD;
     }
 
-    /** A world draw's particle or crumbling lane: the families outside the host-layout table. */
+    /**
+     * A world draw's particle lane, the family outside the host-layout table drawn on its host mesh.
+     * The crumbling overlay is a family batch on the widened block layout (familyFor).
+     */
     private static Family worldHostLane(String shader, VertexFormat format) {
-        if (particleWindow && shader.equals("particle") && format == DefaultVertexFormat.PARTICLE) {
-            // An opaque pack shader never draws translucent particles, nor the other way round:
-            // the host state and ordering are part of each lane's contract.
-            if (particleTranslucent) return translucentParticlePipeline != null ? Family.PARTICLE_TRANSLUCENT : null;
-            return particlePipeline != null ? Family.PARTICLE : null;
-        }
-        return shader.equals("rendertype_crumbling") && format == DefaultVertexFormat.BLOCK
-                && damagedBlockPipeline != null ? Family.DAMAGED_BLOCK : null;
+        if (!particleWindow || !shader.equals("particle") || format != DefaultVertexFormat.PARTICLE) return null;
+        // An opaque pack shader never draws translucent particles, nor the other way round:
+        // the host state and ordering are part of each lane's contract.
+        if (particleTranslucent) return translucentParticlePipeline != null ? Family.PARTICLE_TRANSLUCENT : null;
+        return particlePipeline != null ? Family.PARTICLE : null;
     }
 
     /**
@@ -699,6 +764,22 @@ public final class ChimeraEntityBridge {
         return lane != null && lane.whiteAlbedo();
     }
 
+    /** Iris ExtendedShader binds a white lightmap for a key with no light input (whiteLightmap(Family)). */
+    public static boolean whiteLightmap() {
+        return activeFamily != null && whiteLightmap(activeFamily);
+    }
+
+    /**
+     * Whether Iris samples a white lightmap for the family's key: a host-layout lane's format
+     * without UV2, or a FULLBRIGHT key, which are ENTITIES_EYES and ENTITIES_EYES_TRANS (the
+     * spider-eyes family outside block entities), BEACON and CRUMBLING.
+     */
+    public static boolean whiteLightmap(Family family) {
+        HostLayoutLane lane = HostLayoutLane.of(family);
+        if (lane != null) return lane.whiteLightmap();
+        return family == Family.SPIDER_EYES || family == Family.BEACON_BEAM || family == Family.DAMAGED_BLOCK;
+    }
+
     /** The pack pipeline a lane draws {@code format} with, or null when it has none installed. */
     public static GraphicsPipeline lanePipeline(Family family, VertexFormat format) {
         return pipelineFor(family, format);
@@ -714,13 +795,19 @@ public final class ChimeraEntityBridge {
             case BLOCK_TRANSLUCENT -> format == ChimeraVertexFormats.EXTENDED_GLYPH
                     ? blockTranslucentTextPipeline : blockTranslucentPipeline;
             case MOVING_BLOCK -> movingBlockPipeline;
-            case DAMAGED_BLOCK -> damagedBlockPipeline;
+            case DAMAGED_BLOCK, BEACON_BEAM -> widenedBlockPipeline(family, format);
             case HAND, HAND_WATER -> handPipeline(family, format);
             case PARTICLE -> particlePipeline;
             case PARTICLE_TRANSLUCENT -> translucentParticlePipeline;
             case SHADOW_ENTITIES, SHADOW_BLOCK -> shadowCasterPipeline(family, format);
             default -> hostLayoutPipelines.get(family);
         };
+    }
+
+    /** The crumbling overlay's or a beacon beam's pipeline, which draw only on the widened block layout. */
+    private static GraphicsPipeline widenedBlockPipeline(Family family, VertexFormat format) {
+        if (format != ChimeraVertexFormats.EXTENDED_BLOCK) return null;
+        return family == Family.DAMAGED_BLOCK ? damagedBlockPipeline : beaconBeamPipeline;
     }
 
     /** A shadow caster family's pipeline for {@code format}; null outside the caster window. */
@@ -739,10 +826,13 @@ public final class ChimeraEntityBridge {
     /**
      * The Iris rendering phase a family batch written now draws in: BLOCK_ENTITIES for whatever a
      * block entity draws, as Iris wraps a block entity's render types in BlockEntityRenderStateShard
-     * in either pass, and otherwise the family's own.
+     * in either pass, and otherwise the family's own. A block entity's crumbling overlay is written
+     * from the crumbling source, outside that wrapper, and draws in NONE: vanilla ends the crumbling
+     * batch after every block entity's wrapper has closed, and Iris never sets DESTROY.
      */
     public static PackRenderingPhase writePhase(Family family) {
-        return context() == Family.BLOCK ? PackRenderingPhase.BLOCK_ENTITIES : phase(family);
+        return family != Family.DAMAGED_BLOCK && context() == Family.BLOCK
+                ? PackRenderingPhase.BLOCK_ENTITIES : phase(family);
     }
 
     /** The Iris rendering phase a family outside the host-layout lanes draws in. */
@@ -751,7 +841,6 @@ public final class ChimeraEntityBridge {
             // Iris holds the ENTITIES phase for entities and their shadow casters.
             case ENTITY, ENTITY_TRANSLUCENT, SPIDER_EYES, MOVING_BLOCK, SHADOW_ENTITIES -> PackRenderingPhase.ENTITIES;
             case BLOCK, BLOCK_TRANSLUCENT, SHADOW_BLOCK -> PackRenderingPhase.BLOCK_ENTITIES;
-            case DAMAGED_BLOCK -> PackRenderingPhase.DESTROY;
             case HAND -> PackRenderingPhase.HAND_SOLID;
             case HAND_WATER -> PackRenderingPhase.HAND_TRANSLUCENT;
             case PARTICLE, PARTICLE_TRANSLUCENT -> PackRenderingPhase.PARTICLES;

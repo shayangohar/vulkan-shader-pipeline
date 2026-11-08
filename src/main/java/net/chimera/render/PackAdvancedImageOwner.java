@@ -1,12 +1,15 @@
 package net.chimera.render;
 
+import net.chimera.ChimeraMod;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -16,78 +19,110 @@ import java.util.TreeSet;
 /** Owns advanced writable images for one pack session. */
 public final class PackAdvancedImageOwner implements AutoCloseable {
     private final PackAdvancedResourcePlan plan;
+    /** The formats pass computes bind each image in (PassComputePlan.imageFormats). */
+    private final Map<String, Set<Integer>> computeFormats;
     private final Map<String, PackStorageImage> images = new TreeMap<>();
     private final Map<String, String> failures = new TreeMap<>();
+    private final Set<String> reportedLimits = new HashSet<>();
+    private int generation;
     private boolean closed;
-    private boolean computeInstalled;
-    private final Set<String> candidateGraphicsPrograms = new TreeSet<>();
-    private final Set<String> installedGraphicsPrograms = new TreeSet<>();
 
     /** Pure policy used by the owner and deterministic conformance tests. */
     public static boolean shouldInitializeImage(boolean clearEachFrame, boolean initialized) {
         return clearEachFrame || !initialized;
     }
 
-    private PackAdvancedImageOwner(PackAdvancedResourcePlan plan) {
+    private PackAdvancedImageOwner(PackAdvancedResourcePlan plan, Map<String, Set<Integer>> computeFormats) {
         this.plan = plan == null ? PackAdvancedResourcePlan.empty() : plan;
+        this.computeFormats = computeFormats;
     }
 
-    public static PackAdvancedImageOwner load(PackAdvancedResourcePlan plan) {
-        PackAdvancedImageOwner owner = new PackAdvancedImageOwner(plan);
+    /**
+     * The session's images, a relative one at its share of a screen this size (Iris creates it at
+     * the render target's size); the first frame refits it to the main target (fitRelativeImages).
+     * Each has a view in every other format programs and pass computes ({@code computeFormats})
+     * read it in.
+     */
+    public static PackAdvancedImageOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight,
+                                              Map<String, Set<Integer>> computeFormats) {
+        PackAdvancedImageOwner owner = new PackAdvancedImageOwner(plan, computeFormats);
         for (PackAdvancedResourcePlan.ImageSpec spec : owner.plan.images().values()) {
-            if (!spec.supported()) continue;
-            try {
-                owner.images.put(spec.name(), PackStorageImage.create(spec));
-            } catch (RuntimeException failure) {
-                owner.failures.put(spec.name(), failure.getMessage() == null
-                        ? "advanced image allocation failed" : failure.getMessage());
-            }
+            if (spec.supported()) owner.allocate(spec, spec.extent(screenWidth, screenHeight));
         }
         return owner;
     }
 
-    /** Capability remains false until the compute pipeline has been installed. */
-    public boolean capabilityEnabled() {
-        return computeInstalled && resourcesAvailable()
-                && plan.capabilityPossible()
-                && (!plan.requiresGraphicsProducer()
-                || producerCoverage(installedGraphicsPrograms));
+    /** The other formats an image is read in, by programs and pass computes. */
+    private Set<Integer> viewFormats(PackAdvancedResourcePlan.ImageSpec spec) {
+        Set<Integer> formats = new TreeSet<>(plan.viewFormats(spec.name()));
+        formats.addAll(computeFormats.getOrDefault(spec.name(), Set.of()));
+        formats.remove(spec.format().vkFormat());
+        return formats;
+    }
+
+    private void allocate(PackAdvancedResourcePlan.ImageSpec spec, int[] extent) {
+        try {
+            images.put(spec.name(), PackStorageImage.create(spec, extent, viewFormats(spec)));
+        } catch (RuntimeException failure) {
+            images.remove(spec.name());
+            failures.put(spec.name(), failure.getMessage() == null
+                    ? "advanced image allocation failed" : failure.getMessage());
+        }
     }
 
     /**
-     * True while the planned graphics producers are compiled and their images
-     * are available. This admits dependent pipeline construction only; runtime
-     * dispatch still requires the committed producer set from capabilityEnabled.
+     * Creates each relative image at its share of the screen, and recreates it when the screen
+     * changes size, as Iris's GlImage.Relative.updateNewSize does. A replaced image is freed once
+     * the frames that used it have finished. The new one starts uninitialized, so it is cleared.
      */
-    public boolean producerCandidatesReady() {
-        return computeInstalled && resourcesAvailable() && plan.capabilityPossible()
-                && (!plan.requiresGraphicsProducer()
-                || producerCoverage(candidateGraphicsPrograms));
-    }
-
-    /** Records a compiled producer before dependent consumer pipelines build. */
-    public void markGraphicsProducerCandidate(String program) {
-        if (program != null && !program.isBlank()
-                && plan.graphicsImages().containsKey(program)
-                && requiredGraphicsImagesAvailable()) {
-            candidateGraphicsPrograms.add(program);
+    private void fitRelativeImages(int width, int height) {
+        for (PackAdvancedResourcePlan.ImageSpec spec : plan.images().values()) {
+            if (!spec.supported() || !spec.relative() || failures.containsKey(spec.name())) continue;
+            int[] extent = spec.extent(width, height);
+            PackStorageImage current = images.get(spec.name());
+            if (current != null && current.width == extent[0] && current.height == extent[1]) continue;
+            String limit = PackStorageImage.extentLimitFailure(spec, extent);
+            if (limit != null) {
+                // The screen outgrew the device: the image keeps its last size, as a buffer does.
+                if (reportedLimits.add(limit)) ChimeraMod.LOGGER.warn("[chimera] {}", limit);
+                continue;
+            }
+            if (current != null) MemoryManager.getInstance().addFrameOp(current::free);
+            allocate(spec, extent);
+            generation++;
         }
     }
 
-    /** Commits a candidate only after a compatible consumer is installed. */
-    public void commitGraphicsProducer(String program) {
-        if (candidateGraphicsPrograms.contains(program)) {
-            installedGraphicsPrograms.add(program);
+    /** Counts the images replaced since load, so a compute's descriptors can follow them. */
+    int generation() {
+        return generation;
+    }
+
+    /**
+     * Whether every image {@code program} binds exists. Iris runs each program on its own: a
+     * consumer runs whether or not the program that writes its images does, and reads what the
+     * frame's clear left.
+     */
+    public boolean programImagesAvailable(String program) {
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
+            // A colour target's colorimgN is the target graph's (PostTargetStorage), not this owner's.
+            if (binding.target() < 0 && !availableForSymbol(binding.symbol())) return false;
         }
+        return true;
     }
 
-    /** True when every image needed by the planned graphics or compute path exists. */
-    public boolean resourcesAvailable() {
-        return requiredImagesAvailable() && requiredGraphicsImagesAvailable();
+    /** Whether the image a symbol names exists; a relative one is made at load, at the window's size. */
+    private boolean availableForSymbol(String symbol) {
+        return imageForSymbol(symbol) != null;
     }
 
-    public void markComputeInstalled() {
-        if (plan.hasSupportedCompute() && resourcesAvailable()) computeInstalled = true;
+    /**
+     * Makes every earlier shader write to the images visible to later shader reads and writes, as
+     * Iris's glMemoryBarrier before each program does. Recorded outside a render pass.
+     */
+    public void afterImageWrites(VkCommandBuffer commandBuffer) {
+        if (commandBuffer == null || closed || images.isEmpty()) return;
+        PackVulkanBarriers.afterShaderImageWrites(commandBuffer);
     }
 
     public boolean needsGraphicsTransition(ProgramImageBindingManifest manifest) {
@@ -111,7 +146,8 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
     }
 
     /**
-     * Applies the pack clear policy at the start of each shadow frame.
+     * Applies the pack clear policy at the start of each world frame, before any program runs
+     * (Iris clears its clear images at beginLevelRendering).
      *
      * A non-clear image is persistent after its first frame, but Vulkan does
      * not initialize newly allocated image memory. Seed every new image once
@@ -120,8 +156,10 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
      * same compute stage. Later frames preserve those contents unless the
      * pack explicitly requested a clear.
      */
-    public void prepareFrame(VkCommandBuffer commandBuffer) {
-        if (commandBuffer == null || closed || images.isEmpty()) return;
+    public void prepareFrame(VkCommandBuffer commandBuffer, int screenWidth, int screenHeight) {
+        if (commandBuffer == null || closed) return;
+        fitRelativeImages(screenWidth, screenHeight);
+        if (images.isEmpty()) return;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             boolean hasClear = plan.images().values().stream().anyMatch(
                     spec -> {
@@ -174,37 +212,6 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         return images.containsKey(name) && failures.get(name) == null;
     }
 
-    private boolean requiredImagesAvailable() {
-        for (PackAdvancedResourcePlan.ComputeSpec compute : plan.computeStages().values()) {
-            if (!compute.supported()) continue;
-            for (String name : compute.imageNames()) {
-                if (imageForSymbol(name) == null) return false;
-            }
-            for (String name : compute.samplerNames()) {
-                if (imageForSymbol(name) == null) return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean requiredGraphicsImagesAvailable() {
-        for (String program : plan.graphicsImageReaders().keySet()) {
-            for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
-                if (imageForSymbol(binding.symbol()) == null) return false;
-            }
-        }
-        for (String program : plan.graphicsImages().keySet()) {
-            for (PackAdvancedResourcePlan.GraphicsImageBinding binding : plan.imageBindings(program)) {
-                if (imageForSymbol(binding.symbol()) == null) return false;
-            }
-        }
-        return true;
-    }
-
-    private boolean producerCoverage(Set<String> programs) {
-        return plan.graphicsImageNames(programs).containsAll(plan.requiredGraphicsImageNames());
-    }
-
     @Override
     public void close() {
         if (closed) return;
@@ -212,8 +219,5 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         images.values().forEach(PackStorageImage::free);
         images.clear();
         failures.clear();
-        computeInstalled = false;
-        candidateGraphicsPrograms.clear();
-        installedGraphicsPrograms.clear();
     }
 }

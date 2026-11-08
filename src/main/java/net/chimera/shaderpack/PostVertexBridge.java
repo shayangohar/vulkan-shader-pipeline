@@ -50,7 +50,8 @@ final class PostVertexBridge {
                 case GlslTree.InterfaceBlock block -> block.qualifiers();
                 default -> List.of();
             };
-            if (qualifiers.size() < 2 || !keyword(tree, qualifiers.get(0)).equals("layout")) continue;
+            if (qualifiers.size() < 2 || !keyword(tree, qualifiers.get(0)).equals("layout")
+                    || GlslDeclarations.qualifiersOnly(external)) continue;
             int storage = INTERPOLATION.contains(keyword(tree, qualifiers.get(1))) && qualifiers.size() > 2 ? 2 : 1;
             if (INPUT_STORAGE.contains(keyword(tree, qualifiers.get(storage)))) {
                 edits.add(new GlslDeclarations.TextEdit(tree.offset(qualifiers.get(0).range().start()),
@@ -110,8 +111,7 @@ final class PostVertexBridge {
             GlslInterfaceScanner.StageInterface vertexInterface,
             GlslInterfaceScanner.StageInterface fragmentInterface,
             GlslInterfaceScanner.ProgramMatch match,
-            UniformRegistry.ProgramInterface interfacePlan,
-            Map<String, String> packConstants
+            UniformRegistry.ProgramInterface interfacePlan
     ) {
         try {
             if (source == null || !executableInterfaces(vertexInterface, fragmentInterface, match, interfacePlan)) {
@@ -147,8 +147,6 @@ final class PostVertexBridge {
             converted = UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
             converted = LegacyGlslConverter.withoutKnownLegacyExtensions(converted);
             converted = LegacyGlslConverter.removePackMetadataConstants(converted);
-            converted = LegacyGlslConverter.stripUnusedConsumedConsts(converted, packConstants);
-            converted = LegacyGlslConverter.injectPackConstants(converted, packConstants);
             converted = LegacyGlslConverter.convertTextureCalls(converted);
             converted = bindPostSamplers(converted, interfacePlan);
             converted = GlslTokenRewriter.replaceIdentifiers(converted, fullscreenInputs());
@@ -291,11 +289,6 @@ final class PostVertexBridge {
             }
             Integer location = layout.locations().get(declaration.name());
             String type = layout.types().get(declaration.name());
-            String zero = location == null ? GlslInterfaceScanner.zeroValue(declaration) : null;
-            if (zero != null) {
-                // No vertex output writes it: Iris zeroes it (GlslInterfaceScanner.UNWRITTEN_ZEROED).
-                return declaration.type() + " " + declaration.name() + " = " + zero + ";\n";
-            }
             if (location == null || !declaration.typeWithArray().equals(type)) {
                 throw new IllegalArgumentException("post varying is not matched: " + declaration.name());
             }

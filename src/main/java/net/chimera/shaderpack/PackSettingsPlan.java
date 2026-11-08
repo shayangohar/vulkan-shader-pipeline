@@ -22,6 +22,7 @@ import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /** Immutable defaults-only interpretation of shaders.properties and pack options. */
 record PackSettingsPlan(
@@ -46,8 +47,9 @@ record PackSettingsPlan(
         ParticleDirectives particleDirectives
 ) {
     private static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
+    // A directive's name follows its '#' directly: PropertiesPreprocessor reads "# define" as a comment.
     private static final Pattern DEFINE = Pattern.compile(
-            "^\\s*#\\s*define\\s+([A-Za-z_]\\w*)(?:\\s+(.*?))?\\s*$");
+            "^\\s*#define\\s+([A-Za-z_]\\w*)(?:\\s+(.*?))?\\s*$");
     private static final Pattern COMMENTED_DEFINE = Pattern.compile(
             "^\\s*//\\s*#\\s*define\\s+([A-Za-z_]\\w*)(?:\\s+(.*?))?\\s*$");
     private static final Pattern CONST = Pattern.compile(
@@ -60,7 +62,7 @@ record PackSettingsPlan(
     private static final Pattern CUSTOM_VALUE = Pattern.compile(
             "^\\s*(uniform|variable)\\.(float|int|bool|vec2|vec3|vec4)\\.([A-Za-z_]\\w*)\\s*=\\s*(.*)$");
     private static final Pattern CONDITION = Pattern.compile(
-            "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
+            "^\\s*#(if|ifdef|ifndef|elif|else|endif)\\b(.*)$");
     private static final Pattern OPTION_VALUES = Pattern.compile("\\[([^]]*)]");
     private static final Pattern SAFE_OVERRIDE_VALUE = Pattern.compile(
             "[-+]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][-+]?\\d+)?[fF]?|true|false",
@@ -148,12 +150,13 @@ record PackSettingsPlan(
             toggles.addAll(disabled);
             macros = parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
                     required, optional, customValues, resourceDeclarations, deviations, macros, toggles);
+            AdvancedImageDeclarations.dropImagesPastIrisLimit(properties, deviations);
         }
         // Iris drops a !program.NAME program of the matching profile whatever its own switch says.
         environment.disabledPrograms().forEach(program -> programEnabled.put(program, false));
         Set<String> unsupportedRequired = unsupportedFeatures(required, deviations);
         PackRuntimeSettings runtimeSettings = PackRuntimeSettings.build(
-                customValues, defaults, deviations, BiomeIds.constants());
+                customValues, deviations, BiomeIds.constants());
         return new PackSettingsPlan(options, defaults, profiles, properties, programEnabled,
                 required, optional, unsupportedRequired, runtimeSettings.deviations(), "default",
                 runtimeSettings, resourceDeclarations, Map.of(), false, macros,
@@ -242,17 +245,16 @@ record PackSettingsPlan(
     }
 
     /**
-     * Active defaults seed the shared shader preprocessor, with Iris's defines for the optional
-     * features the pack lists and Chimera provides.
+     * The launcher's option choices seed the shared shader preprocessor, with Iris's defines for the
+     * optional features the pack lists and Chimera provides. Defines authored in an executable stage
+     * are local to that variant. Those in shaders.properties stay inside that file: Iris preprocesses
+     * it on its own (PropertiesPreprocessor), and nothing it defines reaches a program or an id map.
      */
     Map<String, String> preprocessorDefines() {
         Map<String, String> result = new TreeMap<>();
         defaults.forEach((name, value) -> {
             Option option = options.get(name);
-            // Defines authored in an executable stage are local to that
-            // variant. Only explicit property defines are pack-wide inputs.
-            if (option != null && ("shaders.properties".equals(option.source())
-                    || "chimera.option".equals(option.source()))) {
+            if (option != null && "chimera.option".equals(option.source())) {
                 result.put(name, value);
             }
         });
@@ -270,6 +272,16 @@ record PackSettingsPlan(
 
     boolean enabled(String name) {
         return programEnabled.getOrDefault(name, true);
+    }
+
+    /** Whether Iris reads the pack's tessellation stages: it lists TESSELLATION_SHADERS (ProgramSet). */
+    boolean readsTessellation() {
+        return hasFeature(PackFeatureFlags.TESSELLATION_SHADERS);
+    }
+
+    /** Iris ShaderPack.hasFeature: the pack lists the flag as required or optional. */
+    boolean hasFeature(String flag) {
+        return PackFeatureFlags.active(requiredFeatures, optionalFeatures, flag);
     }
 
     /**
@@ -310,9 +322,6 @@ record PackSettingsPlan(
 
     private String runtimeSettingsFingerprint() {
         StringBuilder value = new StringBuilder();
-        value.append(runtimeSettings.wetnessRiseHalfLife()).append('|')
-                .append(runtimeSettings.wetnessFallHalfLife()).append('|')
-                .append(runtimeSettings.eyeBrightnessHalfLife()).append('|');
         runtimeSettings.customDescriptors().keySet().stream().sorted()
                 .forEach(name -> value.append(name).append(';'));
         return ConformanceReport.sha256(value.toString().getBytes(StandardCharsets.UTF_8));
@@ -349,7 +358,7 @@ record PackSettingsPlan(
         // WSR or voxel sampler. The ordering remains deterministic by the
         // property key.
         for (Map.Entry<String, String> entry : propertyValues.entrySet()) {
-            String sampler = imageSampler(entry);
+            String sampler = imageSlotKey(entry);
             if (sampler == null) {
                 continue;
             }
@@ -392,17 +401,16 @@ record PackSettingsPlan(
         return reserved;
     }
 
-    /** The sampler an {@code image.<name>} entry names first, or null for any other or malformed entry. */
-    private static String imageSampler(Map.Entry<String, String> entry) {
+    /** The slot key of an {@code image.<name>} entry (AdvancedImageDeclarations.slotKey), or null for any other. */
+    private static String imageSlotKey(Map.Entry<String, String> entry) {
         if (!entry.getKey().startsWith("image.")) {
             return null;
         }
-        String[] values = entry.getValue() == null
-                ? new String[0] : entry.getValue().trim().split("\\s+");
+        String[] values = AdvancedImageDeclarations.values(entry.getValue());
         if (values.length == 0 || !values[0].matches("[A-Za-z_]\\w*")) {
             return null;
         }
-        return values[0];
+        return AdvancedImageDeclarations.slotKey(entry.getKey().substring("image.".length()), values[0]);
     }
 
     private Map<String, Integer> defaultSamplerSlots() {
@@ -416,7 +424,7 @@ record PackSettingsPlan(
             }
         }
         for (Map.Entry<String, String> entry : propertyValues.entrySet()) {
-            String sampler = imageSampler(entry);
+            String sampler = imageSlotKey(entry);
             if (sampler == null) continue;
             if (slots.containsKey(sampler) || UniformRegistry.NAME_TO_SLOT.containsKey(sampler)) continue;
             if (next < SelectorNamespace.PACK_SELECTOR_SLOTS.size()) {
@@ -556,9 +564,9 @@ record PackSettingsPlan(
                 for (int index = 0; index <= physical.size(); index++) {
                     String raw = index < physical.size() ? physical.get(index) : null;
                     String line;
-                    if (raw != null && PropertyLineJoiner.isDirective(raw) && joiner.pending()) {
-                        // The directive ends the open continuation: handle that line first,
-                        // then revisit the directive.
+                    if (raw != null && PropertyLineJoiner.endsContinuation(raw) && joiner.pending()) {
+                        // The # line ends the open continuation: handle that line first,
+                        // then revisit the # line.
                         line = joiner.finish();
                         index--;
                     } else if (raw == null) {
@@ -566,7 +574,7 @@ record PackSettingsPlan(
                     } else if (applyCondition(raw) || invalidCondition || !conditions.active()) {
                         continue;
                     } else {
-                        line = PropertyLineJoiner.isDirective(raw) ? raw : joiner.accept(raw);
+                        line = PropertyLineJoiner.endsContinuation(raw) ? raw : joiner.accept(raw);
                     }
                     if (line != null) {
                         accept(line);
@@ -615,6 +623,13 @@ record PackSettingsPlan(
             String value = line.substring(equals + 1).trim();
             if (key.isBlank()) {
                 return;
+            }
+            // Iris preprocesses shaders.properties as C (PropertiesPreprocessor), so a resource's
+            // value reads the macros defined so far: Alpha Piscium sizes its restir textures with
+            // RESTIR_REUSE_TEX_WIDTH. Switches and option lists keep their names; Chimera
+            // evaluates those itself.
+            if (RESOURCE_PREFIXES.stream().anyMatch(key::startsWith)) {
+                value = PackConditionals.expandMacros(value, conditions.macros()).trim();
             }
             values.put(key, value);
             acceptEntry(line, key, value);
@@ -677,23 +692,28 @@ record PackSettingsPlan(
             }
             Matcher custom = CUSTOM_VALUE.matcher(line);
             if (custom.matches()) {
+                // Iris preprocesses shaders.properties with the option values as macros
+                // (PropertiesPreprocessor): Reverie's betaRfact reads RAYLEIGH_DENSITY_VARIANCE's value.
                 customValues.add(PackRuntimeSettings.declaration(
                         custom.group(1).equals("uniform"), custom.group(2),
-                        custom.group(3), custom.group(4).trim()));
+                        custom.group(3), PackConditionals.expandMacros(custom.group(4), conditions.macros()).trim()));
                 return;
             }
-            if (key.startsWith("image.") || key.startsWith("customImage.")) {
-                deviations.add("CUSTOM_IMAGE_UNSUPPORTED:" + key);
-            } else if (key.startsWith("bufferObject.")) {
-                // Bounded bufferObject.N declarations are admitted. The
-                // source plan remains responsible for proving that a
-                // matching std430 block and supported schedule exist.
-                deviations.add("STORAGE_BUFFER_DECLARED:" + key);
-            } else if (key.startsWith("ssbo.") || key.startsWith("storage.")) {
-                deviations.add("STORAGE_RESOURCE_UNSUPPORTED:" + key);
-            } else if (!isSupportedProperty(key)) {
-                deviations.add("SETTING_UNSUPPORTED:" + key);
-            }
+            String unread = unreadKey(key);
+            if (unread != null) deviations.add(unread + ":" + key);
+        }
+
+        /**
+         * Why a key no other reading took is recorded, or null for a property Chimera reads
+         * elsewhere (PackPropertyKeys). image.* is AdvancedImageDeclarations', which names an image
+         * it cannot serve.
+         */
+        private static String unreadKey(String key) {
+            // Bounded bufferObject.N declarations are admitted. The source plan remains responsible
+            // for proving that a matching std430 block and supported schedule exist.
+            if (key.startsWith("bufferObject.")) return "STORAGE_BUFFER_DECLARED";
+            if (key.startsWith("texture.")) return "TEXTURE_STAGE_UNKNOWN";
+            return PackPropertyKeys.unread(key);
         }
 
         /**
@@ -725,25 +745,23 @@ record PackSettingsPlan(
         }
     }
 
-    private static final Pattern PREPROCESSOR_LINE = Pattern.compile(
-            "^#\\s*(?:define|undef|include|line|pragma|error|warning|if|ifdef|ifndef|elif|else|endif)\\b");
-
     /**
-     * Joins backslash continuations the way Iris's PropertiesPreprocessor and Properties
-     * loader do. Iris drops blank and plain {@code #} comment lines before preprocessing,
-     * so neither ends a continuation. Preprocessing then turns every directive line into
-     * an empty line, which does end one: Photon closes a multi-line
-     * {@code moon_phase_brightness} with {@code ") \"} right before its {@code #else}, and
-     * Bliss's conditioned {@code block.56} ends at its {@code #endif}. Callers evaluate
-     * conditions on physical lines, end an open continuation at each directive line, and
-     * feed only active non-directive lines to {@link #accept}.
+     * Joins shaders.properties' backslash continuations the way Iris's PropertiesPreprocessor
+     * and Properties loader do. Iris drops blank lines before preprocessing, so a blank line does
+     * not end a continuation. Every {@code #} line becomes an empty line: a comment at once, a
+     * directive once JCPP has read it. An empty line ends a continuation in Properties.load: Photon
+     * closes a multi-line {@code moon_phase_brightness} with {@code ") \"} right before its
+     * {@code #else}, and Bliss's {@code screen} list ends at the commented-out one under it. (The
+     * id maps differ: IdMap rejoins across those lines, see {@link IdMapProperties}.) Callers
+     * evaluate conditions on physical lines, end an open continuation at each {@code #} line, and
+     * feed only active other lines to {@link #accept}.
      */
     static final class PropertyLineJoiner {
         private final StringBuilder pending = new StringBuilder();
 
-        /** A preprocessor directive line, which ends an open continuation. */
-        static boolean isDirective(String raw) {
-            return PREPROCESSOR_LINE.matcher(raw.strip()).find();
+        /** A {@code #} line, directive or comment, which ends an open continuation. */
+        static boolean endsContinuation(String raw) {
+            return raw.strip().startsWith("#");
         }
 
         boolean pending() {
@@ -757,7 +775,7 @@ record PackSettingsPlan(
          */
         String accept(String raw) {
             String trimmed = raw.strip();
-            if (trimmed.isEmpty() || trimmed.startsWith("#")) return null;
+            if (trimmed.isEmpty()) return null;
             if (trimmed.endsWith("\\")) {
                 pending.append(trimmed, 0, trimmed.length() - 1).append(' ');
                 return null;
@@ -777,19 +795,19 @@ record PackSettingsPlan(
         }
     }
 
-    /** Property key prefixes Chimera reads; "shadow" covers every shadow setting. */
-    private static final List<String> SUPPORTED_PROPERTY_PREFIXES = List.of(
-            "profile.", "program.", "iris.features.", "size.buffer.colortex", "flip.", "customTexture.",
-            "texture.", "alphaTest.", "shadow");
-    private static final Set<String> SUPPORTED_PROPERTY_NAMES = Set.of("sunPathRotation", "sunPathOffset");
-    private static final Pattern SUPPORTED_TARGET_PROPERTY = Pattern.compile(
-            "colortex\\d+(?:Format|Clear|ClearColor|MipmapEnabled)");
-
-    private static boolean isSupportedProperty(String key) {
-        return SUPPORTED_PROPERTY_PREFIXES.stream().anyMatch(key::startsWith)
-                || SUPPORTED_PROPERTY_NAMES.contains(key)
-                || SUPPORTED_TARGET_PROPERTY.matcher(key).matches();
-    }
+    /**
+     * The keys whose values name pack resources, read after macro expansion as Iris reads them.
+     * image. values resolve their size tokens themselves (AdvancedImageDeclarations), keeping the
+     * option each size came from.
+     */
+    private static final List<String> RESOURCE_PREFIXES = List.of(
+            "customTexture.", "texture.", "bufferObject.", "indirect.");
+    /** The fullscreen and compute passes among Iris's texture stages, each covering its numbered programs. */
+    static final List<String> PASS_TEXTURE_STAGES = List.of(
+            "setup", "begin", "shadowcomp", "prepare", "deferred", "composite");
+    /** The stages a {@code texture.<stage>.<sampler>} may name (Iris TextureStage.parse). */
+    static final Set<String> TEXTURE_STAGES = Stream.concat(PASS_TEXTURE_STAGES.stream(), Stream.of("gbuffers"))
+            .collect(Collectors.toUnmodifiableSet());
 
     private static PackResourceDeclaration resourceDeclaration(String key, String value) {
         // Iris: a value with more than one word is a raw texture (file, type, format, size).
@@ -805,7 +823,8 @@ record PackSettingsPlan(
         }
         if (key.startsWith("texture.")) {
             String[] parts = key.split("\\.", 3);
-            if (parts.length == 3 && !parts[1].isBlank() && !parts[2].isBlank()) {
+            // Iris ignores, with a warning, a stage it does not know: a program name, shadow, *.
+            if (parts.length == 3 && TEXTURE_STAGES.contains(parts[1]) && !parts[2].isBlank()) {
                 // Iris keeps only the sampler name: `texture.deferred.colortex6.1` declares a
                 // second texture for colortex6, told apart from the first by its type.
                 String sampler = parts[2].split("\\.")[0];
@@ -858,6 +877,12 @@ record PackSettingsPlan(
         return STAGE_CONTEXT_MACROS.contains(name) || STAGE_CONTEXT_MACRO_FAMILIES.matcher(name).matches();
     }
 
+    /**
+     * The dimension a world folder's programs name for themselves (world0 defines OVERWORLD). Like the
+     * stage macros, its define holds for those files only. Chimera applies option defaults to every
+     * program and to shaders.properties, so it must not become a pack-wide default. Iris edits an option's
+     * line in place and injects no defaults, so it needs no such rule (OptionAnnotatedSource).
+     */
     private static boolean isDimensionContextMacro(String name) {
         return name.equals("OVERWORLD") || name.equals("NETHER") || name.equals("END");
     }

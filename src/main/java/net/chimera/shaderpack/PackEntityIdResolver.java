@@ -46,17 +46,17 @@ public final class PackEntityIdResolver {
      * Chimera's vertex attribute holds an id from 0 to 65535; an id outside that is reported.
      */
     public static ParseResult parse(Path shadersDir, Map<String, String> macros) {
-        IdMapProperties.Lines lines = IdMapProperties.read(shadersDir, "entity.properties", macros);
-        if (!lines.present()) {
+        IdMapProperties.Loaded file = IdMapProperties.read(shadersDir, "entity.properties", macros);
+        if (!file.present()) {
             return new ParseResult(empty(), false, null, List.of());
         }
         Set<String> deviations = new TreeSet<>();
-        if (lines.failure() != null) {
-            deviations.add("ENTITY_PROPERTIES_" + lines.failure());
+        if (file.failure() != null) {
+            deviations.add("ENTITY_PROPERTIES_" + file.failure());
         }
         List<String> invalidKeys = new ArrayList<>();
         Map<String, Integer> ids = new TreeMap<>();
-        IdMapProperties.ids(IdMapProperties.entries(lines.lines()), "entity.", invalidKeys).forEach((name, id) -> {
+        IdMapProperties.ids(file.entries(), "entity.", invalidKeys).forEach((name, id) -> {
             if (id < 0 || id > 0xFFFF) {
                 deviations.add("ENTITY_ID_UNSUPPORTED:" + id);
             } else {
@@ -69,7 +69,7 @@ public final class PackEntityIdResolver {
             deviations.add("ENTITY_ID_MAP_APPLIED");
         }
         return new ParseResult(new PackEntityIdResolver(ids, List.copyOf(deviations), usable),
-                usable, lines.sourceHash(), List.copyOf(deviations));
+                usable, file.sourceHash(), List.copyOf(deviations));
     }
 
     public static PackEntityIdResolver empty() {

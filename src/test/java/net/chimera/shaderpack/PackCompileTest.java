@@ -5,7 +5,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.chimera.render.PackShadowCompute;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.vertex.ChimeraVertexFormats;
@@ -32,6 +31,7 @@ import java.util.SortedSet;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongConsumer;
 
 /**
  * Compiles every program a pack plan would install, through the runtime preparation seam
@@ -41,6 +41,15 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 @Tag("packs")
 final class PackCompileTest {
+    /** The file extension each stage between the vertex and fragment stages records under. */
+    private static final Map<String, String> BETWEEN_EXTENSIONS = Map.of("tess_control", ".tcs",
+            "tess_evaluation", ".tes", "geometry", ".gsh");
+    /** The shaderc kind each stage between the vertex and fragment stages compiles as. */
+    private static final Map<String, Integer> BETWEEN_KINDS = Map.of(
+            "tess_control", Shaderc.shaderc_glsl_tess_control_shader,
+            "tess_evaluation", Shaderc.shaderc_glsl_tess_evaluation_shader,
+            "geometry", Shaderc.shaderc_glsl_geometry_shader);
+
     record Result(int compiled, List<String> failures, List<String> passComputes) {
         Result(int compiled, List<String> failures) {
             this(compiled, failures, List.of());
@@ -81,12 +90,6 @@ final class PackCompileTest {
                 continue;
             }
             if (compiler.compiles(program)) compiled++;
-        }
-        String computeError = compileShadowCompute(pack, shadersDir, analysis.plan(), snapshot);
-        if (computeError != null) {
-            failures.add("shadowcomp: " + computeError);
-        } else if (hasShadowCompute(analysis.plan())) {
-            compiled++;
         }
         List<String> passComputes = new ArrayList<>();
         compiled += compilePassComputes(pack, shadersDir, analysis.plan(), failures, passComputes, snapshot);
@@ -148,8 +151,13 @@ final class PackCompileTest {
 
         /** Compiles one prepared stage and records it under {@code key}; returns the error, or null. */
         private String check(String key, String source, boolean vertex) {
-            Outcome outcome = vertex ? outcome(source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh")
-                    : outcome(source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
+            return vertex ? check(key, source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh")
+                    : check(key, source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh");
+        }
+
+        /** Compiles one prepared stage of shaderc {@code kind} and records it under {@code key}. */
+        private String check(String key, String source, int kind, String file) {
+            Outcome outcome = outcome(source, kind, file);
             if (snapshot != null) snapshot.record(key, source, outcome.spirvHash());
             return outcome.error();
         }
@@ -161,6 +169,14 @@ final class PackCompileTest {
             PackPipelines.PreparedPipeline prepared;
             try {
                 prepared = PackPipelines.prepare(program, resources, stage, vertex);
+                // The runtime checks a post or shadow program's whole descriptor set before creating it
+                // (PackPipelines.buildPost, buildShadow, buildGeometry); a mismatch there stops the game.
+                // So it does for a program with stages between vertex and fragment: Shrimple's hand
+                // evaluation stage declared the terrain lanes' uniform block and stopped it at launch.
+                if (stage == UniformRegistry.Stage.POST || FamilyAdapterRegistry.isShadowFamily(program.name())
+                        || !prepared.between().present().isEmpty()) {
+                    PackPipelines.prepareLayout(prepared, program.name(), resources);
+                }
             } catch (RuntimeException failure) {
                 failures.add(program.name() + " preparation: " + failure);
                 return false;
@@ -168,22 +184,39 @@ final class PackCompileTest {
             vertexError = program.convertedVertex() == null ? null
                     : check(program.name() + ".vsh", prepared.vertex(), true);
             String fragmentError = check(program.name() + ".fsh", prepared.fragment(), false);
+            boolean betweenCompiles = prepared.between().present().stream()
+                    .map(between -> checkBetween(program.name(), between)).toList().stream().allMatch(ok -> ok);
             compileInputVariants(program, stage);
             // -Pchimera.packCompile.dumpProgram=<name> writes that program's prepared stages for review.
             if (program.name().equals(System.getProperty("chimera.packCompile.dumpProgram"))) {
                 dump(pack, program.name() + ".vsh", prepared.vertex());
+                prepared.between().present().forEach(between -> dump(pack,
+                        program.name() + BETWEEN_EXTENSIONS.get(between.name()), between.source()));
                 dump(pack, program.name() + ".fsh", prepared.fragment());
             }
             if (vertexError != null) failures.add(program.name() + " vertex: " + vertexError
                     + " [" + dump(pack, program.name() + ".vsh", prepared.vertex()) + "]");
             if (fragmentError != null) failures.add(program.name() + " fragment: " + fragmentError
                     + " [" + dump(pack, program.name() + ".fsh", prepared.fragment()) + "]");
-            return vertexError == null && fragmentError == null;
+            return vertexError == null && betweenCompiles && fragmentError == null;
         }
 
-        /** The runtime pairs a pack fragment with Chimera's fixed vertex where the pack has none. */
+        /** Compiles one stage the program runs between its vertex and fragment stages; false when it fails. */
+        private boolean checkBetween(String program, BetweenStages.Stage between) {
+            String extension = BETWEEN_EXTENSIONS.get(between.name());
+            String error = check(program + extension, between.source(), BETWEEN_KINDS.get(between.name()),
+                    "pack" + extension);
+            if (error != null) failures.add(program + " " + between.name() + ": " + error
+                    + " [" + dump(pack, program + extension, between.source()) + "]");
+            return error == null;
+        }
+
+        /**
+         * The vertex the runtime draws the program with (a family's own inputs, PackFamilyPipelines),
+         * or Chimera's fixed vertex where the pack has none.
+         */
         private String pairedVertex(PackProgramPlan program, UniformRegistry.Stage stage) {
-            if (program.convertedVertex() != null) return program.convertedVertex();
+            if (program.convertedVertex() != null) return PackFamilyPipelines.familyVertex(program);
             if (stage == UniformRegistry.Stage.POST) return fixedPostVertex;
             if (stage == UniformRegistry.Stage.GEOMETRY || stage == UniformRegistry.Stage.TRANSLUCENT) {
                 return fixedTerrainVertex;
@@ -250,48 +283,6 @@ final class PackCompileTest {
 
         private static String variantKey(PackProgramPlan program, String label, String extension) {
             return program.name() + " [" + label + "]" + extension;
-        }
-    }
-
-    private static boolean hasShadowCompute(PackPlan plan) {
-        PackAdvancedResourcePlan advanced = plan.advancedResources();
-        if (advanced == null || !advanced.capabilityPossible()) return false;
-        PackAdvancedResourcePlan.ComputeSpec spec = advanced.computeStages().get("shadowcomp");
-        return spec != null && spec.supported();
-    }
-
-    /**
-     * Translates the plan's supported shadowcomp exactly as the runtime does
-     * ({@link net.chimera.render.PackShadowCompute#translatedModule}), compiles it, and checks
-     * its uniform block against the offsets dispatch writes. Returns the first error, or null
-     * when it passes or the plan schedules no shadowcomp. Solas fell to vanilla in game on a
-     * translation failure no offline check ran.
-     */
-    static String compileShadowCompute(Path pack, PackPlan plan) {
-        if (!hasShadowCompute(plan)) return null;
-        try (PackSource.LoadResult loaded = PackSource.loadResult(pack)) {
-            return compileShadowCompute(pack, loaded.shadersDir(), plan);
-        }
-    }
-
-    static String compileShadowCompute(Path pack, Path shadersDir, PackPlan plan) {
-        return compileShadowCompute(pack, shadersDir, plan, null);
-    }
-
-    static String compileShadowCompute(Path pack, Path shadersDir, PackPlan plan, ConvertedOutputSnapshot snapshot) {
-        if (!hasShadowCompute(plan)) return null;
-        try {
-            var module = PackShadowCompute.translatedModule(
-                    plan.advancedResources(), shadersDir,
-                    plan.settingsPreprocessorDefines(), plan.settingsOverriddenNames());
-            Map<String, Integer> written = new LinkedHashMap<>();
-            for (var uniform : module.uniforms()) written.put(uniform.name(), uniform.offset());
-            String error = compileComputeValues(module.source(), "ChimeraShadowComputeValues", written,
-                    snapshot, "shadowcomp.csh");
-            if (error != null) error += " [" + dump(pack, "shadowcomp.csh", module.source()) + "]";
-            return error;
-        } catch (IOException | RuntimeException failure) {
-            return "translation failed: " + failure.getMessage();
         }
     }
 
@@ -370,6 +361,11 @@ final class PackCompileTest {
     }
 
     /** VulkanMod's shaderc settings; returns the first error line, or null on success. */
+    /** The compile error of {@code source} as the stage between vertex and fragment named {@code stage}, or null. */
+    static String compileBetween(String source, String stage) {
+        return outcome(source, BETWEEN_KINDS.get(stage), "pack" + BETWEEN_EXTENSIONS.get(stage)).error();
+    }
+
     static String compile(String source, boolean vertex) {
         return vertex ? outcome(source, Shaderc.shaderc_glsl_vertex_shader, "pack.vsh").error()
                 : outcome(source, Shaderc.shaderc_glsl_fragment_shader, "pack.fsh").error();
@@ -383,12 +379,14 @@ final class PackCompileTest {
 
     /**
      * Each distinct source compiles once per run: the option sweep prepares the same program
-     * source under most of its variants.
+     * source under most of its variants. The device's sized types are part of the key, since a
+     * vendor extension compiles as its equivalent only with them (GlslVendorExtensions).
      */
     private static final Map<String, Outcome> COMPILED = new ConcurrentHashMap<>();
 
     private static Outcome outcome(String source, int kind, String fileName) {
-        String key = kind + ":" + ConformanceReport.sha256(source.getBytes(StandardCharsets.UTF_8));
+        String key = kind + ":" + PackDevice.current() + ":"
+                + ConformanceReport.sha256(source.getBytes(StandardCharsets.UTF_8));
         return COMPILED.computeIfAbsent(key, ignored -> {
             Compiled compiled = spirv(source, kind, fileName);
             return new Outcome(compiled.error(), compiled.words() == null ? null : spirvHash(compiled.words()));
@@ -402,11 +400,17 @@ final class PackCompileTest {
         return ConformanceReport.sha256(bytes.array()).substring(0, 16);
     }
 
-    /** Compiled as the runtime compiles (GlslCompiler), without the optimizer. */
+    /**
+     * Compiled as the runtime compiles each kind (GlslCompiler). A graphics stage takes the
+     * optimizer HostPipelineLayout runs; shaderc validates the module before it optimizes, so a
+     * stage the Vulkan validator rejects fails here as it does in game (Noble's unwritten
+     * gl_FragDepth reads passed a plain compile). A compute takes none, as in ComputeKernel.
+     */
     private static Compiled spirv(String source, int kind, String fileName) {
+        LongConsumer configure = kind == Shaderc.shaderc_glsl_compute_shader ? options -> {} : GlslCompiler::optimize;
         ByteBuffer bytes;
         try {
-            bytes = GlslCompiler.compile(fileName, source, kind, options -> {});
+            bytes = GlslCompiler.compile(fileName, source, kind, configure);
         } catch (IllegalStateException failure) {
             String message = failure.getMessage().strip();
             // Warnings precede errors in shaderc's report; name the first error.
@@ -473,12 +477,17 @@ final class PackCompileTest {
      * rewrites the baseline after review. Every compiled shader must also match its
      * converted-output baseline ({@link ConvertedOutputSnapshot}); {@code -Pchimera.snapshot.update=true}
      * rewrites that, and {@code -Pchimera.snapshot.spirvOnly=true} compares SPIR-V alone.
+     * {@code -Pchimera.device=amd} or {@code intel} compiles for that GPU (PackDevice), whose
+     * vendor paths differ, against its own admission baseline and without converted output.
      */
     @Test
     void compileLockedPacks() throws Exception {
         List<Path> packs = new ArrayList<>(List.of(TestPacks.complementary(), TestPacks.bsl()));
         packs.addAll(TestPacks.extra());
-        Path baselinePath = TestPacks.baseline("pack_admission");
+        // Each device profile admits its own programs; converted output is recorded for the default, NVIDIA.
+        String profile = PackDevice.current().profile();
+        boolean defaultProfile = profile.equals(PackDevice.DEFAULT_PROFILE);
+        Path baselinePath = TestPacks.baseline(defaultProfile ? "pack_admission" : "pack_admission-" + profile);
         boolean update = Boolean.getBoolean("chimera.packCompile.updateAdmission");
         Gson gson = new GsonBuilder().setPrettyPrinting().create();
         Type baselineType =
@@ -490,10 +499,12 @@ final class PackCompileTest {
         for (Path pack : packs) {
             String key = pack.getFileName().toString();
             PackProbe.Analysis analysis = PackProbe.analyze(pack);
-            ConvertedOutputSnapshot snapshot = new ConvertedOutputSnapshot(key);
+            ConvertedOutputSnapshot snapshot = defaultProfile ? new ConvertedOutputSnapshot(key) : null;
             Result result = run(pack, analysis, snapshot);
-            failures.addAll(snapshot.compareWithBaseline(Boolean.getBoolean("chimera.snapshot.update"),
-                    Boolean.getBoolean("chimera.snapshot.spirvOnly")));
+            if (snapshot != null) {
+                failures.addAll(snapshot.compareWithBaseline(Boolean.getBoolean("chimera.snapshot.update"),
+                        Boolean.getBoolean("chimera.snapshot.spirvOnly")));
+            }
             SortedSet<String> rejected = rejectedPrograms(pack, analysis);
             System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected,"
                     + " pass computes %s%n", key, result.compiled(), result.failures().size(), rejected.size(),

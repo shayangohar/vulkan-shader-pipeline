@@ -31,21 +31,25 @@ final class PackPipelineSet {
 
     /** All successfully built post programs, sorted by deterministic pass order. */
     final List<PackPipelines.PackPost> postStages = new ArrayList<>();
+    /** The shadowcomp passes' programs, over the shadowcolor targets (PackShadowComposites). */
+    final List<PackPipelines.PackPost> shadowcompStages = new ArrayList<>();
 
     /** The final pass is retained separately because it runs before hand/GUI composition. */
     PackPipelines.PackPost finalPost;
 
     /** Pack geometry program (gbuffers_terrain) on the terrain path; null = chimera's terrain pipeline. */
     GraphicsPipeline terrainPipeline;
-    int[] terrainSlots;
 
     /** Pack water program on the host translucent terrain path; null = host/chimera fallback. */
     GraphicsPipeline waterPipeline;
-    int[] waterSlots;
 
     /** Pack shadow program on the shadow terrain path; null means fixed identity shadow. */
     GraphicsPipeline shadowPipeline;
     int[] shadowSlots;
+    /** shadow_water for the shadow pass's translucent terrain (Iris SHADOW_TRANS); null draws it with shadow. */
+    GraphicsPipeline shadowWaterPipeline;
+    /** shadow_cutout for the shadow pass's cutout terrain layers (Iris SHADOW_CUTOUT); null draws them with shadow. */
+    GraphicsPipeline shadowCutoutPipeline;
 
     /** shadow_entities on the shadow pass's entity lane; null leaves entities out of the shadow map. */
     PackPipelines.PackEntity shadowEntities;
@@ -91,6 +95,9 @@ final class PackPipelineSet {
     /** Pack translucent particle program on the host translucent particle window. */
     PackPipelines.PackParticle translucentParticle;
 
+    /** gbuffers_beaconbeam on the beam's widened block layout (Iris BEACON). */
+    PackPipelines.PackParticle beaconBeam;
+
     /** Pack programs of the installed host-layout lanes (weather, lines, glint, lightning, ...). */
     final EnumMap<ChimeraEntityBridge.Family, PackPipelines.PackParticle> hostLayout =
             new EnumMap<>(ChimeraEntityBridge.Family.class);
@@ -109,14 +116,14 @@ final class PackPipelineSet {
         for (PackPipelines.PackPost post : postStages) {
             postPipelines.add(post.pipeline());
         }
+        shadowcompStages.forEach(post -> postPipelines.add(post.pipeline()));
         if (compositePipeline != null) postPipelines.add(compositePipeline);
         if (finalPipeline != null) postPipelines.add(finalPipeline);
         postPipelines.forEach(GraphicsPipeline::cleanUp);
-        if (terrainPipeline != null) terrainPipeline.cleanUp();
-        if (waterPipeline != null) waterPipeline.cleanUp();
+        Stream.of(terrainPipeline, waterPipeline, shadowPipeline, shadowWaterPipeline, shadowCutoutPipeline)
+                .filter(Objects::nonNull).forEach(GraphicsPipeline::cleanUp);
         terrainRoute = null;
         waterRoute = null;
-        if (shadowPipeline != null) shadowPipeline.cleanUp();
         Stream.of(shadowEntities, shadowMovingBlock, shadowBlock, entity, translucentEntity, spiderEyes, block,
                         blockTranslucent, movingBlock, damagedBlock, translucentEntityText, blockTranslucentText)
                 .filter(Objects::nonNull).forEach(value -> value.pipeline().cleanUp());
@@ -124,6 +131,7 @@ final class PackPipelineSet {
         if (handWater != null) handWater.cleanUp();
         if (particle != null) particle.pipeline().cleanUp();
         if (translucentParticle != null) translucentParticle.pipeline().cleanUp();
+        if (beaconBeam != null) beaconBeam.pipeline().cleanUp();
         hostLayout.values().forEach(lane -> lane.pipeline().cleanUp());
         if (skyBasic != null) skyBasic.cleanUp();
         if (skyTextured != null) skyTextured.cleanUp();
@@ -133,6 +141,7 @@ final class PackPipelineSet {
     /** Forgets every pipeline, leaving each family to its host draw. */
     void clear() {
         postStages.clear();
+        shadowcompStages.clear();
         compositePipeline = null;
         compositeSlots = null;
         compositeSamplerNames = List.of();
@@ -141,13 +150,13 @@ final class PackPipelineSet {
         finalSamplerNames = List.of();
         finalPost = null;
         terrainPipeline = null;
-        terrainSlots = null;
         terrainRoute = null;
         waterPipeline = null;
-        waterSlots = null;
         waterRoute = null;
         shadowPipeline = null;
         shadowSlots = null;
+        shadowWaterPipeline = null;
+        shadowCutoutPipeline = null;
         shadowEntities = null;
         shadowMovingBlock = null;
         shadowBlock = null;
@@ -164,6 +173,7 @@ final class PackPipelineSet {
         handWater = null;
         particle = null;
         translucentParticle = null;
+        beaconBeam = null;
         hostLayout.clear();
         skyBasic = null;
         skyTextured = null;
@@ -199,11 +209,12 @@ final class PackPipelineSet {
         return lane == null ? null : lane.outputPlan();
     }
 
-    /** The selected host-particle or host-layout lane retains its own authored output contract. */
+    /** A particle, beacon-beam or host-layout lane retains its own authored output contract. */
     private PackPipelines.PackParticle particlePipeline(ChimeraEntityBridge.Family family) {
         return switch (family) {
             case PARTICLE -> this.particle;
             case PARTICLE_TRANSLUCENT -> this.translucentParticle;
+            case BEACON_BEAM -> this.beaconBeam;
             default -> this.hostLayout.get(family);
         };
     }

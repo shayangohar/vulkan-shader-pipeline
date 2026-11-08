@@ -54,8 +54,15 @@ final class MaterialMapRuntime {
                     return Optional.empty();
                 }
             };
-            this.materialMapOwner.pumpPendingBuilds(lookup, MaterialCompanionPixels::decodeNative,
-                    () -> SimpleTextureIndex.snapshot(Minecraft.getInstance().getTextureManager()));
+            // One recording for every companion write of the pump: animated maps write each mip
+            // level of each changed slot, and alone each write waited on the GPU (TextureUploadBatch).
+            MaterialCompanionPixels.UPLOADS.open();
+            try {
+                this.materialMapOwner.pumpPendingBuilds(lookup, MaterialCompanionPixels::decodeNative,
+                        () -> SimpleTextureIndex.snapshot(Minecraft.getInstance().getTextureManager()));
+            } finally {
+                MaterialCompanionPixels.UPLOADS.close();
+            }
         } catch (RuntimeException failure) {
             ChimeraMainPass.LOGGER.warn("[chimera] material maps: pump failed", failure);
         }

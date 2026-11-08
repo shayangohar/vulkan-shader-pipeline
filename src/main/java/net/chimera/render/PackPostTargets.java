@@ -1,9 +1,9 @@
 package net.chimera.render;
 
 import net.chimera.mixin.ChimeraDeviceAccessor;
-import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.PackConfig;
+import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
@@ -19,12 +19,6 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
-import org.lwjgl.vulkan.VkFormatProperties;
-import org.lwjgl.vulkan.VkImageBlit;
-import org.lwjgl.vulkan.VkImageCopy;
-import org.lwjgl.vulkan.VkImageMemoryBarrier;
-import org.lwjgl.vulkan.VkImageSubresourceLayers;
-import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkRect2D;
 import org.lwjgl.vulkan.VkRenderingAttachmentInfo;
 import org.lwjgl.vulkan.VkRenderingInfo;
@@ -43,42 +37,11 @@ import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_A
 import static org.lwjgl.vulkan.KHRDynamicRendering.VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdBeginRenderingKHR;
 import static org.lwjgl.vulkan.KHRDynamicRendering.vkCmdEndRenderingKHR;
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_SHADER_READ_BIT;
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_READ_BIT;
-import static org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_LOAD_OP_LOAD;
 import static org.lwjgl.vulkan.VK10.VK_ATTACHMENT_STORE_OP_STORE;
-import static org.lwjgl.vulkan.VK10.VK_FILTER_LINEAR;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_DST_BIT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_BLIT_SRC_BIT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_UNORM;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16_UNORM;
-import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16_UNORM;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_STORAGE_BIT;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT;
-import static org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED;
-import static org.lwjgl.vulkan.VK10.vkCmdBlitImage;
-import static org.lwjgl.vulkan.VK10.vkCmdClearColorImage;
-import static org.lwjgl.vulkan.VK10.vkCmdCopyImage;
-import static org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier;
 import static org.lwjgl.vulkan.VK10.vkCmdSetScissor;
-import static org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFormatProperties;
-import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 
 /**
  * Render-thread executor for the immutable target graph. Logical
@@ -102,6 +65,12 @@ public final class PackPostTargets {
     private final VulkanImage[] pendingImages = new VulkanImage[TARGET_COUNT];
     /** Copies a geometry window samples in place of the targets it draws into. */
     private final VulkanImage[] snapshotImages = new VulkanImage[TARGET_COUNT];
+    /** What world programs read (worldImages), refilled on each call. */
+    private final VulkanImage[] worldImages = new VulkanImage[TARGET_COUNT];
+    /** The targets the drawing post pass stores to as colorimgN, held in GENERAL for its draw. */
+    private final PostTargetStorage storage = new PostTargetStorage();
+    /** The targets the drawing hand lane stores to as colorimgN, held in GENERAL for its run. */
+    private final PostTargetStorage worldStorage = new PostTargetStorage();
 
     private VulkanImage hdrIdentitySource;
     private PackTargetGraphPlan graph;
@@ -109,18 +78,23 @@ public final class PackPostTargets {
     private boolean configured;
     private boolean rendering;
     private final PackTemporalState temporal = new PackTemporalState();
-    /** Images whose sampler reads their generated mip chain until the window ends. */
+    /** Images whose sampler reads their generated mip chain until the frame ends. */
     private final Set<VulkanImage> mipSampling = Collections.newSetFromMap(new IdentityHashMap<>());
     private TargetStep currentStep;
     private PostTargetPlan currentPlan;
+    /** The post window now running (openPostWindow); null before the frame's first. */
+    private PackFrameSchedulePlan.PostWindow openWindow;
 
     /** Installs the validated graph and allocates only required physical sides. */
     public boolean configure(PackTargetGraphPlan graph) {
-        return configure(graph, Set.of());
+        return configure(graph, Map.of());
     }
 
-    /** As {@link #configure(PackTargetGraphPlan)}, with the targets a pass compute writes allowing storage. */
-    public boolean configure(PackTargetGraphPlan graph, Set<Integer> storageTargets) {
+    /**
+     * As {@link #configure(PackTargetGraphPlan)}, with the targets a pass compute writes allowing
+     * storage in the formats it binds them in (PackPassComputes.storageTargets).
+     */
+    public boolean configure(PackTargetGraphPlan graph, Map<Integer, Set<Integer>> storageTargets) {
         trace("configure begin oldTarget0=" + imageId(this.images[0][0])
                 + " oldTarget1=" + imageId(this.images[1][0]));
         cleanUp();
@@ -128,12 +102,7 @@ public final class PackPostTargets {
             return false;
         }
         this.graph = graph;
-        // The 16-bit normalized formats' sampled/attachment features are not mandatory on every
-        // device. Reject unsupported storage rather than silently substituting floating point.
-        graph.targets().stream().map(TargetSpec::format).filter(NORMALIZED_16_FORMATS::contains)
-                .distinct().forEach(PackPostTargets::verifyNormalized16Support);
-        graph.targets().stream().filter(TargetSpec::mipmapped).map(TargetSpec::format)
-                .distinct().forEach(PackPostTargets::verifyMipmapSupport);
+        PackTargetImages.verifyFormats(graph.targets());
         Arrays.fill(this.used, false);
         Arrays.fill(this.valid, false);
         Arrays.fill(this.doubled, false);
@@ -149,13 +118,13 @@ public final class PackPostTargets {
             this.used[index] = true;
             this.doubled[index] = target.doubled();
             this.sideCounts[index] = target.doubled() ? (target.requiresHistory() ? 3 : 2) : 1;
-            boolean storage = storageTargets.contains(index);
-            this.images[0][index] = createTargetImage(target, "Side0", storage);
+            Set<Integer> storage = storageTargets.getOrDefault(index, Set.of());
+            this.images[0][index] = PackTargetImages.createTargetImage(target, storage);
             if (this.doubled[index]) {
-                this.images[1][index] = createTargetImage(target, "Side1", storage);
+                this.images[1][index] = PackTargetImages.createTargetImage(target, storage);
             }
             if (this.sideCounts[index] == 3) {
-                this.images[2][index] = createTargetImage(target, "History", storage);
+                this.images[2][index] = PackTargetImages.createTargetImage(target, storage);
             }
         }
         if (this.images[0][0] == null) {
@@ -167,71 +136,6 @@ public final class PackPostTargets {
                 + " target1=" + imageId(this.images[1][0])
                 + " sides=" + this.sideCounts[0] + " doubled=" + this.doubled[0]);
         return true;
-    }
-
-    /** A target image; one a pass compute writes through {@code colorimgN} also allows storage. */
-    private static VulkanImage createTargetImage(TargetSpec target, String side, boolean storage) {
-        VulkanImage image = VulkanImage.builder(target.width(), target.height())
-                .setFormat(target.format())
-                .setUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-                        | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
-                        | (storage && PackPassComputes.storageSupported(target.format())
-                        ? VK_IMAGE_USAGE_STORAGE_BIT : 0))
-                .setMipLevels(target.mipLevels())
-                // Reforged makes per-level views only on request. A mipmapped target renders to level 0
-                // through one, as does a padded-alpha target, whose main view reads alpha as 1.
-                .setLevelViews(target.mipLevels() > 1 || target.paddedAlpha())
-                .setLinearFiltering(true)
-                .setClamp(true)
-                .createVulkanImage();
-        if (target.paddedAlpha()) ImageViews.sampleAlphaAsOne(image);
-        // Iris samples the base level until a program's pass generates the chain.
-        if (image.mipLevels > 1) sampleWith(image, baseLevelSampler());
-        return image;
-    }
-
-    /** The mip chain is built by linear blits; reject a format that cannot be blitted that way. */
-    private static void verifyMipmapSupport(int format) {
-        if (DeviceManager.physicalDevice == null) {
-            throw new IllegalStateException("Vulkan physical device is unavailable for mipmapped targets");
-        }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkFormatProperties properties = VkFormatProperties.calloc(stack);
-            vkGetPhysicalDeviceFormatProperties(DeviceManager.physicalDevice, format, properties);
-            int required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT
-                    | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
-            if ((properties.optimalTilingFeatures() & required) != required) {
-                throw new IllegalArgumentException("mipmapped target format " + format
-                        + " lacks linear blit support (required=0x" + Integer.toHexString(required)
-                        + ", supported=0x" + Integer.toHexString(properties.optimalTilingFeatures()) + ")");
-            }
-        }
-    }
-
-    /** R16, RG16 and RGBA16 in their exact normalized formats, whose target features are optional. */
-    private static final Set<Integer> NORMALIZED_16_FORMATS = Set.of(
-            VK_FORMAT_R16_UNORM, VK_FORMAT_R16G16_UNORM, VK_FORMAT_R16G16B16A16_UNORM);
-
-    /** Check an optional exact normalized format before allocating any target images. */
-    private static void verifyNormalized16Support(int format) {
-        if (DeviceManager.physicalDevice == null) {
-            throw new IllegalStateException("Vulkan physical device is unavailable for 16-bit normalized targets");
-        }
-        try (MemoryStack stack = MemoryStack.stackPush()) {
-            VkFormatProperties properties = VkFormatProperties.calloc(stack);
-            vkGetPhysicalDeviceFormatProperties(DeviceManager.physicalDevice, format, properties);
-            int required = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT
-                    | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
-                    | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT
-                    | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BLEND_BIT
-                    | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-            if ((properties.optimalTilingFeatures() & required) != required) {
-                throw new IllegalArgumentException("16-bit normalized target format " + format + " lacks "
-                        + "sampled/linear/attachment/blend/transfer support"
-                        + " (required=0x" + Integer.toHexString(required)
-                        + ", supported=0x" + Integer.toHexString(properties.optimalTilingFeatures()) + ")");
-            }
-        }
     }
 
     /** Compatibility entry point retained for earlier callers. */
@@ -261,7 +165,7 @@ public final class PackPostTargets {
                 declaredFormats == null ? Map.of() : declaredFormats, 1,
                 new PackConfig.ShadowSettings(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
                         PackConfig.DEFAULT_SHADOW_DISTANCE, Map.of(), List.of()),
-                Map.of(), List.of());
+                List.of());
         int maxAttachments = deviceMaxColorAttachments();
         PackTargetGraphPlan legacy = PackTargetGraphPlan.build(
                 plans, config, width, height, maxAttachments, Integer.MAX_VALUE);
@@ -274,6 +178,7 @@ public final class PackPostTargets {
             throw new IllegalStateException("pack target graph is not configured");
         }
         this.hdrIdentitySource = hdrColor;
+        this.openWindow = null;
         this.temporal.beginFrame(hdrColor != null);
         resetMipmapSampling();
         Arrays.fill(this.pendingImages, null);
@@ -284,6 +189,7 @@ public final class PackPostTargets {
                 + " target1=" + imageId(this.images[1][0])
                 + " activeSide=" + this.activeSide[0]
                 + " sides=" + this.sideCounts[0]);
+        Set<Integer> unwrittenFlips = this.graph.unwrittenFlips();
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (TargetSpec target : this.graph.targets()) {
                 int index = target.index();
@@ -291,8 +197,8 @@ public final class PackPostTargets {
                     continue;
                 }
                 if (target.clear() && !target.persistent()) {
+                    clearEverySide(stack, commandBuffer, target);
                     VulkanImage image = imageFor(index, this.activeSide[index]);
-                    clearImage(stack, commandBuffer, image, target.clearColorCopy());
                     this.valid[index] = true;
                     this.sourceImages[index] = image;
                     this.temporal.seedCurrent(index);
@@ -304,14 +210,40 @@ public final class PackPostTargets {
                     // contents on its first allocation. Seed it once so the
                     // first read/write pass cannot sample undefined memory.
                     VulkanImage image = imageFor(index, this.activeSide[index]);
-                    clearImage(stack, commandBuffer, image, target.clearColorCopy());
+                    PackTargetImages.clearImage(stack, commandBuffer, image, target.clearColorCopy());
                     this.valid[index] = true;
                     this.sourceImages[index] = image;
                     this.temporal.seedCurrent(index);
                     trace("seedPersistent target=" + index + " image=" + imageId(image));
                 }
+                if (this.valid[index] && unwrittenFlips.contains(index)) matchOtherSide(stack, commandBuffer, index);
             }
         }
+    }
+
+    /**
+     * Clears each side of a cleared target, as Iris clears both its images at frame open
+     * (ClearPassCreator). A flip can hand a pass the other side before any pass writes it:
+     * Shrimple's translucent geometry draws into the other sides of colortex1, 3 and 9. That side
+     * must hold the clear colour, not an older frame's translucent data.
+     */
+    private void clearEverySide(MemoryStack stack, VkCommandBuffer commandBuffer, TargetSpec target) {
+        for (int side = 0; side < this.sideCounts[target.index()]; side++) {
+            PackTargetImages.clearImage(stack, commandBuffer, imageFor(target.index(), side), target.clearColorCopy());
+        }
+    }
+
+    /**
+     * Copies a target's current side over the side a step that leaves it unwritten will make current.
+     * Iris's FinalPassRenderer copies each flipped buffer back at frame end, and clears both sides of
+     * a cleared one, so that flip hands back what the frame started with, never an older frame's.
+     */
+    private void matchOtherSide(MemoryStack stack, VkCommandBuffer commandBuffer, int target) {
+        if (this.sideCounts[target] < 2) return;
+        int other = nextWriteSide(target);
+        PackTargetImages.copyImage(stack, commandBuffer, imageFor(target, this.activeSide[target]),
+                imageFor(target, other));
+        this.previousSide[target] = other;
     }
 
     public void requireFrameStarted() {
@@ -366,17 +298,23 @@ public final class PackPostTargets {
         }
     }
 
-    /** Copies each written target the window also samples, and makes the copy what it samples. */
+    /**
+     * Copies each written target the window also samples, and makes the copy what it samples. A
+     * target a skipped pass dropped is copied from the image it holds, which is the window's
+     * attachment: its world programs read it (worldImages), and must not read what they draw into.
+     */
     private void snapshotOutputs(VkCommandBuffer commandBuffer, List<Integer> outputTargets,
                                  List<Integer> snapshotTargets) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (int target : snapshotTargets) {
-                if (target <= 0 || target >= TARGET_COUNT || !outputTargets.contains(target)
-                        || !this.valid[target] || this.sourceImages[target] == null) continue;
+                if (target <= 0 || target >= TARGET_COUNT || !outputTargets.contains(target)) continue;
+                VulkanImage held = worldImage(target, this.sourceImages[target], this.used[target],
+                        imageFor(target, this.activeSide[target]));
+                if (held == null) continue;
                 if (this.snapshotImages[target] == null) {
-                    this.snapshotImages[target] = createTargetImage(targetSpec(target), "Snapshot", false);
+                    this.snapshotImages[target] = PackTargetImages.createTargetImage(targetSpec(target), false);
                 }
-                copyImage(stack, commandBuffer, this.sourceImages[target], this.snapshotImages[target]);
+                PackTargetImages.copyImage(stack, commandBuffer, held, this.snapshotImages[target]);
                 this.sourceImages[target] = this.snapshotImages[target];
                 trace("snapshot target=" + target + " image=" + imageId(this.snapshotImages[target]));
             }
@@ -432,7 +370,7 @@ public final class PackPostTargets {
             return;
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
-            copyImage(stack, commandBuffer, this.sourceImages[0], hdrColor);
+            PackTargetImages.copyImage(stack, commandBuffer, this.sourceImages[0], hdrColor);
         }
         trace("adoptTarget0 source=" + imageId(this.sourceImages[0]) + " hdr=" + imageId(hdrColor));
         this.hdrIdentitySource = hdrColor;
@@ -459,13 +397,19 @@ public final class PackPostTargets {
         this.sourceImages[0] = target;
     }
 
-    /** Invalidates logical outputs while retaining physical images. */
+    /**
+     * Invalidates a skipped stage's outputs while retaining physical images. An auxiliary target
+     * loses its producer, so its readers fall back too: its last image holds another pass's
+     * meaning (BSL's bloom atlas in colortex1). colortex0 keeps its last committed write, the
+     * scene as the passes that ran left it: resetting it to the pre-post scene would also drop
+     * every earlier pass's output (Glimmer's composite3 water when composite4 was skipped).
+     */
     public void invalidateOutputs(List<Integer> targets) {
         if (targets == null) return;
         for (int target : targets) {
-            if (target < 0 || target >= TARGET_COUNT) continue;
+            if (target <= 0 || target >= TARGET_COUNT) continue;
             this.valid[target] = false;
-            this.sourceImages[target] = target == 0 ? this.hdrIdentitySource : null;
+            this.sourceImages[target] = null;
             this.temporal.invalidate(target);
         }
     }
@@ -473,8 +417,8 @@ public final class PackPostTargets {
     /**
      * Iris CompositeRenderer.setupMipmapping: before a program that declares
      * colortexNMipmapEnabled, rebuild the chain of the image the program
-     * reads and sample that image through its mips until
-     * {@link #resetMipmapSampling()}. Call before the program's images are bound.
+     * reads and sample that image through its mips until the next frame starts. Call before the
+     * program's images are bound.
      */
     public void generateMipmaps(VkCommandBuffer commandBuffer, String programName) {
         TargetStep step = this.graph == null ? null : this.graph.step(programName);
@@ -486,9 +430,8 @@ public final class PackPostTargets {
                 // A minimized window sizes targets 1x1: their whole chain is level 0.
                 if (!needsMipChain(image == null || graphImage == null ? 0 : graphImage.mipLevels)) continue;
                 if (image == this.hdrIdentitySource) image = adoptIdentitySource(stack, commandBuffer, target, image);
-                buildMipChain(stack, commandBuffer, image);
-                sampleWith(image, ChimeraSamplers.linearMipmapped(image.mipLevels - 1));
-                this.mipSampling.add(image);
+                PackTargetImages.buildMipChain(stack, commandBuffer, image);
+                noteMipSampling(image);
             }
         }
         trace("mipmaps program=" + programName + " targets=" + step.mipmapTargets());
@@ -499,17 +442,55 @@ public final class PackPostTargets {
         return levels > 1;
     }
 
-    /** Iris resets every target's filter after each deferred, composite and final renderer. */
-    public void resetMipmapSampling() {
+    /**
+     * Opens {@code window}'s pass group: flips the targets it names in a {@code flip.<group>_pre}
+     * directive, as Iris's CompositeRenderer does once as the group opens, before any of its passes.
+     * Mip sampling carries on. Iris resets a target's filter only after final
+     * (FinalPassRenderer.resetRenderTarget), so a chain built in prepare is still read through its
+     * mips by deferred, the translucents, composite and final (Glimmer's sky in colortex7).
+     */
+    public void openPostWindow(VkCommandBuffer commandBuffer, PackFrameSchedulePlan.PostWindow window) {
+        this.openWindow = window;
+        if (this.graph != null) flip(commandBuffer, this.graph.preFlips(window));
+    }
+
+    void noteMipSampling(VulkanImage image) {
+        this.mipSampling.add(image);
+    }
+
+    boolean samplesMips(VulkanImage image) {
+        return this.mipSampling.contains(image);
+    }
+
+    /** Iris resets every target's filter after final; Chimera does it as the next frame starts. */
+    private void resetMipmapSampling() {
         for (VulkanImage image : this.mipSampling) {
-            sampleWith(image, baseLevelSampler());
+            PackTargetImages.sampleWith(image, PackTargetImages.baseLevelSampler(image));
         }
         this.mipSampling.clear();
+    }
+
+    /** A pack target's clear colour in its format's kind (PackTargetImages.clearValue). */
+    public static void clearColorValue(MemoryStack stack, VkClearColorValue clear, int vkFormat, float[] color) {
+        PackTargetImages.clearValue(stack, clear, vkFormat, color);
     }
 
     /** Pack targets render to level 0 only, through an identity view of exactly one level. */
     public static long attachmentView(VulkanImage image) {
         return image.getLevelImageViews() != null ? image.getLevelImageView(0) : image.getImageView();
+    }
+
+    /**
+     * The image a pass compute writes as {@code colorimgN}: the one the chain reads now. colortex0
+     * still in the live HDR image moves into its graph image first, as for a mip chain: the HDR
+     * image is a render attachment without storage usage, while a graph image a compute writes has it.
+     */
+    public VulkanImage storageSource(VkCommandBuffer commandBuffer, int target) {
+        VulkanImage image = target >= 0 && target < TARGET_COUNT ? this.sourceImages[target] : null;
+        if (image == null || image != this.hdrIdentitySource) return image;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            return adoptIdentitySource(stack, commandBuffer, target, image);
+        }
     }
 
     /**
@@ -523,72 +504,10 @@ public final class PackPostTargets {
         if (target != 0 || graphImage == null) {
             throw new IllegalStateException("identity source stands in for colortex" + target);
         }
-        copyImage(stack, commandBuffer, source, graphImage);
+        PackTargetImages.copyImage(stack, commandBuffer, source, graphImage);
         this.sourceImages[target] = graphImage;
         this.valid[target] = true;
         return graphImage;
-    }
-
-    private static void buildMipChain(MemoryStack stack, VkCommandBuffer commandBuffer, VulkanImage image) {
-        // One tracked layout covers the chain; TRANSFER_DST keeps level 0's contents.
-        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        recordMipChain(stack, commandBuffer, image.getId(), image.width, image.height, image.mipLevels);
-        image.setCurrentLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    }
-
-    /**
-     * glGenerateMipmap: each level is a linear downsample of the one above.
-     * Every level enters in TRANSFER_DST and leaves in SHADER_READ_ONLY.
-     */
-    static void recordMipChain(MemoryStack stack, VkCommandBuffer commandBuffer,
-                               long image, int width, int height, int levels) {
-        for (int level = 1; level < levels; level++) {
-            levelBarrier(stack, commandBuffer, image, level - 1, 1,
-                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-            int nextWidth = Math.max(1, width / 2);
-            int nextHeight = Math.max(1, height / 2);
-            VkImageBlit.Buffer blit = VkImageBlit.calloc(1, stack);
-            blit.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level - 1).layerCount(1);
-            blit.srcOffsets(1).set(width, height, 1);
-            blit.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(level).layerCount(1);
-            blit.dstOffsets(1).set(nextWidth, nextHeight, 1);
-            vkCmdBlitImage(commandBuffer, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                    image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, blit, VK_FILTER_LINEAR);
-            width = nextWidth;
-            height = nextHeight;
-        }
-        int last = levels - 1;
-        if (last > 0) {
-            levelBarrier(stack, commandBuffer, image, 0, last,
-                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                    VK_ACCESS_TRANSFER_READ_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-        }
-        levelBarrier(stack, commandBuffer, image, last, 1,
-                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-    }
-
-    private static void levelBarrier(MemoryStack stack, VkCommandBuffer commandBuffer, long image,
-                                     int baseLevel, int levelCount, int oldLayout, int newLayout,
-                                     int sourceAccess, int destinationAccess, int destinationStage) {
-        VkImageMemoryBarrier.Buffer barrier = VkImageMemoryBarrier.calloc(1, stack)
-                .sType$Default().oldLayout(oldLayout).newLayout(newLayout)
-                .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .image(image).srcAccessMask(sourceAccess).dstAccessMask(destinationAccess);
-        barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT)
-                .baseMipLevel(baseLevel).levelCount(levelCount).layerCount(1);
-        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, destinationStage,
-                0, null, null, barrier);
-    }
-
-    /** Iris samples a target's base level, linearly and clamped to the edge. */
-    private static long baseLevelSampler() {
-        return ChimeraSamplers.flat(true, true);
-    }
-
-    private static void sampleWith(VulkanImage image, long sampler) {
-        ((ChimeraVulkanImageAccessor) image).chimera$setSampler(sampler);
     }
 
     /** Begins dynamic rendering for the graph step represented by this post. */
@@ -602,7 +521,6 @@ public final class PackPostTargets {
             throw new IllegalStateException("post step is not executable: " + post.name());
         }
         pendingWriteSideReset();
-        flip(step.flipsBefore());
         this.currentStep = step;
         this.currentPlan = plan;
         int attachmentCount = plan.targetSlots().size();
@@ -613,6 +531,9 @@ public final class PackPostTargets {
         }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             claimOutputSides(stack, commandBuffer, step);
+            // After the copies above, which move images through VulkanMod's tracked layouts, and
+            // outside the render pass: VulkanMod moves no image out of GENERAL ("Unexpected value:1").
+            this.storage.begin(commandBuffer, target -> storageSource(commandBuffer, target), post.storageTargets());
             PostAttachments attachments = colorAttachments(stack, commandBuffer, plan, step);
             int renderWidth = attachments.width();
             int renderHeight = attachments.height();
@@ -626,7 +547,9 @@ public final class PackPostTargets {
             renderingInfo.layerCount(1);
             renderingInfo.pColorAttachments(attachments.buffer());
 
-            MrtPipelineContext.begin(plan.outputFormatsArray(), deviceLimit);
+            // The pass draws unblended unless its blend.<program> says otherwise (CompositeRenderer).
+            MrtPipelineContext.begin(plan.outputFormatsArray(), deviceLimit,
+                    post.blendPlan().attachments(plan.targetSlots()));
             Renderer.getInstance().setBoundFramebuffer(this.pipelineFramebuffer);
             Renderer.getInstance().setBoundRenderPass(ChimeraRenderingPass.of(plan.outputFormatsArray(), 0, false));
             Renderer.setViewport(0, 0, renderWidth, renderHeight, stack);
@@ -646,22 +569,49 @@ public final class PackPostTargets {
         }
     }
 
-    /** Picks each output's write side and, when the step also reads it, copies its source in first. */
+    /**
+     * Picks each output's write side and, when the step also reads it, copies its source in first.
+     * A target the step leaves unwritten takes its other side as that side stands, as Iris's flip
+     * does, except where that flip lands on the world's side ({@link #keepsWorldDraws}).
+     */
     private void claimOutputSides(MemoryStack stack, VkCommandBuffer commandBuffer, TargetStep step) {
         for (int target : step.outputTargets()) {
             if (target < 0 || target >= TARGET_COUNT || !this.used[target]) {
                 throw new IllegalStateException("missing output target " + target);
             }
-            int side = this.doubled[target]
-                    ? nextWriteSide(target) : this.activeSide[target];
+            boolean unwritten = step.unwrittenTargets().contains(target);
+            int side = writeSide(unwritten, this.doubled[target], this.activeSide[target],
+                    this.previousSide[target], this.sideCounts[target]);
             this.pendingWriteSide[target] = side;
             VulkanImage destination = imageFor(target, side);
             this.pendingImages[target] = destination;
-            if (step.reads(target) && this.sourceImages[target] != null
-                    && this.sourceImages[target] != destination) {
-                copyImage(stack, commandBuffer, this.sourceImages[target], destination);
+            VulkanImage source = this.sourceImages[target];
+            boolean copyIn = unwritten
+                    ? keepsWorldDraws(this.openWindow, source != null && source == this.hdrIdentitySource)
+                    : step.reads(target);
+            if (copyIn && source != null && source != destination) {
+                PackTargetImages.copyImage(stack, commandBuffer, source, destination);
             }
         }
+    }
+
+    /**
+     * Whether a prepare pass that leaves colortex0 unwritten hands back the world image, which still
+     * holds colortex0. Iris draws the world into the side its prepare flips end on
+     * (flippedAfterPrepare), the sky it draws before prepare included, so that flip lands on what the
+     * world drew. Glimmer's prepare2 writes nothing; its deferred sky adds colortex0 under the sky,
+     * where the pre-prepare sky draw left zero. Handed last frame's final image instead, the horizon
+     * no geometry covers summed frame after frame up to the half-float limit. Later windows flip onto
+     * the older side, as Iris's do.
+     */
+    static boolean keepsWorldDraws(PackFrameSchedulePlan.PostWindow window, boolean heldByWorldImage) {
+        return window == PackFrameSchedulePlan.PostWindow.PREPARE && heldByWorldImage;
+    }
+
+    /** The side a step writes a target to: the other side of one it leaves unwritten, else the next or current. */
+    static int writeSide(boolean unwritten, boolean doubled, int activeSide, int previousSide, int sideCount) {
+        if (unwritten) return previousSide;
+        return doubled ? nextSide(activeSide, sideCount) : activeSide;
     }
 
     /** One post draw's color attachments and its render extent, the first attachment's size. */
@@ -704,6 +654,7 @@ public final class PackPostTargets {
         boolean committed = false;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             vkCmdEndRenderingKHR(commandBuffer);
+            this.storage.end(commandBuffer);
             transitionWrittenTargetsForSampling(stack, commandBuffer);
             committed = true;
         } finally {
@@ -717,7 +668,7 @@ public final class PackPostTargets {
                         this.temporal.stageWrite(target);
                     }
                 }
-                if (this.currentStep != null) flip(this.currentStep.flipsAfter());
+                if (this.currentStep != null) flip(commandBuffer, this.currentStep.flipsAfter());
             }
             clearPendingState();
             finishRendererState();
@@ -750,6 +701,7 @@ public final class PackPostTargets {
     public void abort(VkCommandBuffer commandBuffer) {
         if (this.rendering) vkCmdEndRenderingKHR(commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
+            this.storage.end(commandBuffer);
             transitionWrittenTargetsForSampling(stack, commandBuffer);
         } finally {
             this.temporal.abort();
@@ -760,6 +712,61 @@ public final class PackPostTargets {
 
     public VulkanImage[] sourceImages() { return this.sourceImages; }
     public PackTargetGraphPlan graph() { return this.graph; }
+
+    /**
+     * The images world programs read the targets through: each one's source, or, for a target a
+     * skipped pass dropped from the chain (invalidateOutputs), the image it still holds. A post
+     * reader of such a target falls back with its pass; a world program has no fallback, and Iris
+     * samples whatever the target holds. Reading it as missing crashed the game: Rethinking
+     * Voxels' terrain reads colortex8, which its unsupported prepare passes write.
+     */
+    public VulkanImage[] worldImages() {
+        for (int target = 0; target < TARGET_COUNT; target++) {
+            this.worldImages[target] = worldImage(target, this.sourceImages[target], this.used[target],
+                    imageFor(target, this.activeSide[target]));
+        }
+        return this.worldImages;
+    }
+
+    /**
+     * The image a world program reads as {@code target}: its {@code source} while the chain holds
+     * one, else the {@code held} image of a target the session made. colortex0 keeps its source;
+     * the resolver reads the HDR image in its place.
+     */
+    static VulkanImage worldImage(int target, VulkanImage source, boolean used, VulkanImage held) {
+        return source != null || target == 0 || !used ? source : held;
+    }
+
+    /**
+     * The image a hand program stores to as colorimgN: the one world programs read as colortexN
+     * (Iris binds gbuffers programs the texture of their flip state, IrisImages.addRenderTargetImages).
+     */
+    public VulkanImage worldStorageImage(int target) {
+        if (target <= 0 || target >= TARGET_COUNT) return null;
+        return worldImage(target, this.sourceImages[target], this.used[target],
+                imageFor(target, this.activeSide[target]));
+    }
+
+    /** Holds {@code targets}' world images in GENERAL for a hand lane's run. Recorded outside a render pass. */
+    public void holdWorldStorage(VkCommandBuffer commandBuffer, List<Integer> targets) {
+        this.worldStorage.begin(commandBuffer, this::worldStorageImage, targets);
+    }
+
+    /** Whether a hand lane's run holds any target in GENERAL. */
+    public boolean holdsWorldStorage() {
+        return this.worldStorage.holding();
+    }
+
+    /** Whether a hand lane's run already holds each of {@code targets} that has an image. */
+    public boolean holdsWorldStorage(List<Integer> targets) {
+        return targets.stream().map(this::worldStorageImage).allMatch(image -> image == null
+                || this.worldStorage.holds(image));
+    }
+
+    /** Returns the targets a hand lane's run held to the sampled layout. Recorded outside a render pass. */
+    public void releaseWorldStorage(VkCommandBuffer commandBuffer) {
+        this.worldStorage.end(commandBuffer);
+    }
 
     public boolean areInputsAvailable(List<Integer> requiredTargets) {
         if (requiredTargets == null) return true;
@@ -789,27 +796,6 @@ public final class PackPostTargets {
         Arrays.fill(this.previousSide, 0);
     }
 
-    static boolean isTargetAvailable(int target, boolean hdrIdentity, boolean[] written) {
-        return written != null && target >= 0 && target < TARGET_COUNT && target < written.length
-                && (target == 0 ? hdrIdentity || written[target] : written[target]);
-    }
-
-    static boolean areTargetsAvailable(List<Integer> targets, boolean hdrIdentity, boolean[] written) {
-        if (targets == null) return true;
-        for (int target : targets) if (!isTargetAvailable(target, hdrIdentity, written)) return false;
-        return true;
-    }
-
-    static void invalidateWrittenTargets(boolean[] written, List<Integer> targets) {
-        if (written == null || targets == null) return;
-        for (int target : targets) if (target >= 0 && target < TARGET_COUNT
-                && target < written.length) written[target] = false;
-    }
-
-    static int bankAfterFinish(int activeBank, int destinationBank, boolean committed) {
-        return committed ? destinationBank : activeBank;
-    }
-
     static boolean deviceSupportsMrt(int attachments, int maxColorAttachments) {
         return attachments > 0 && maxColorAttachments > 0
                 && attachments <= Math.min(PackTargetGraphPlan.LOGICAL_ATTACHMENT_LIMIT, maxColorAttachments);
@@ -828,7 +814,7 @@ public final class PackPostTargets {
         for (int side = 0; side < images.length; side++) {
             for (int target = 0; target < TARGET_COUNT; target++) {
                 if (this.images[side][target] != null) {
-                    this.images[side][target].free();
+                    TargetFormatViews.free(this.images[side][target]);
                     this.images[side][target] = null;
                 }
             }
@@ -874,14 +860,45 @@ public final class PackPostTargets {
      * written before its current one, becomes current for later passes and the next frame. After
      * a pass that wrote the target this restores the pre-pass image, as Iris's write flip and the
      * explicit flip cancel. Photon's flip.composite1.colortex6 hands deferred3 back its AO
-     * history after composite wrote fog transmittance there. Target 0 is the HDR identity source.
+     * history after composite wrote fog transmittance there. colortex0 still in the HDR image moves
+     * to its graph side first (adoptIdentitySource), so the flip hands that side to the next write.
      */
-    private void flip(List<Integer> targets) {
+    private void flip(VkCommandBuffer commandBuffer, List<Integer> targets) {
         for (int target : targets) {
-            if (target <= 0 || target >= TARGET_COUNT || !this.doubled[target]) continue;
-            swapSides(this.activeSide, this.previousSide, target);
+            if (target < 0 || target >= TARGET_COUNT || !flips(target, this.doubled[target])) continue;
+            VulkanImage source = this.sourceImages[target];
+            if (source != null && source == this.hdrIdentitySource) {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    adoptIdentitySource(stack, commandBuffer, target, source);
+                }
+            }
+            flipSides(this.activeSide, this.previousSide, target, this.sideCounts[target]);
             if (this.valid[target]) this.sourceImages[target] = imageFor(target, this.activeSide[target]);
         }
+    }
+
+    /**
+     * Whether a flip directive flips {@code target}: any double-buffered one, colortex0 too, as in
+     * Iris. Shrimple's flip.composite21.colortex0 hands its last bloom pass, composite38, the scene
+     * to blend onto. Skipped, composite38 blended onto colortex0's other side, last frame's final
+     * image, so the bloom added up frame after frame and the VANILLA profile went white.
+     */
+    static boolean flips(int target, boolean doubled) {
+        return target >= 0 && doubled;
+    }
+
+    /**
+     * Iris's BufferFlipper.flip: the target's other side becomes current. That is the side written
+     * before the current one. A target no post pass has written since the session made it has
+     * none recorded, and its next side is the other one: Shrimple's flip.deferred12 of colortex1,
+     * 3, 7 and 9, which only geometry writes, sends its translucent geometry to their other sides,
+     * apart from the opaque data its composite passes read.
+     */
+    static void flipSides(int[] activeSide, int[] previousSide, int target, int sideCount) {
+        if (activeSide[target] == previousSide[target]) {
+            previousSide[target] = nextSide(activeSide[target], sideCount);
+        }
+        swapSides(activeSide, previousSide, target);
     }
 
     /** Makes a target's previous side current, and its current side previous. */
@@ -926,26 +943,6 @@ public final class PackPostTargets {
                 .chimera$properties().limits().maxColorAttachments();
     }
 
-    private static void clearImage(
-            MemoryStack stack,
-            VkCommandBuffer commandBuffer,
-            VulkanImage image,
-            float[] color
-    ) {
-        if (image == null) throw new IllegalStateException("cannot clear missing target image");
-        VkClearColorValue clear = VkClearColorValue.calloc(stack);
-        clear.float32(stack.floats(color[0], color[1], color[2], color[3]));
-        VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
-        range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-        range.get(0).baseMipLevel(0);
-        range.get(0).levelCount(1);
-        range.get(0).baseArrayLayer(0);
-        range.get(0).layerCount(1);
-        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        vkCmdClearColorImage(commandBuffer, image.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, clear, range);
-        image.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    }
-
     private static boolean contains(VulkanImage[] images, VulkanImage needle) {
         for (VulkanImage image : images) if (image == needle) return true;
         return false;
@@ -959,35 +956,5 @@ public final class PackPostTargets {
         if (Boolean.getBoolean("chimera.traceTransitions")) {
             LOGGER.info("[chimera] pack target {}", message);
         }
-    }
-
-    private static void copyImage(
-            MemoryStack stack,
-            VkCommandBuffer commandBuffer,
-            VulkanImage source,
-            VulkanImage destination
-    ) {
-        if (source.format != destination.format || source.width != destination.width
-                || source.height != destination.height) {
-            throw new IllegalStateException("POST_TARGET_SEED_CONVERSION");
-        }
-        source.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-        destination.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        VkImageCopy.Buffer copy = VkImageCopy.calloc(1, stack);
-        VkImageSubresourceLayers sourceSubresource = copy.srcSubresource();
-        sourceSubresource.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-        sourceSubresource.mipLevel(0);
-        sourceSubresource.baseArrayLayer(0);
-        sourceSubresource.layerCount(1);
-        VkImageSubresourceLayers destinationSubresource = copy.dstSubresource();
-        destinationSubresource.aspectMask(VK_IMAGE_ASPECT_COLOR_BIT);
-        destinationSubresource.mipLevel(0);
-        destinationSubresource.baseArrayLayer(0);
-        destinationSubresource.layerCount(1);
-        copy.extent().set(source.width, source.height, 1);
-        vkCmdCopyImage(commandBuffer, source.getId(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                destination.getId(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, copy);
-        source.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-        destination.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     }
 }

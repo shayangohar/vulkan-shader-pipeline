@@ -8,7 +8,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import static net.chimera.shaderpack.GlslLexer.stripComments;
@@ -25,13 +24,12 @@ final class ProgramReportRules {
             PackConfig.PackConfigData packConfig,
             PackProgramPlan programPlan,
             PackResourcePlan resourcePlan,
-            PackPlan packPlan
+            PackPlan packPlan,
+            PassComputePlan passComputes
     ) {
         String name = inventory.name;
-        PackAdvancedResourcePlan.ComputeSpec computeSpec = nativeComputeSpec(inventory, packPlan);
-        if (computeSpec != null) {
-            return computeProgram(inventory, computeSpec, packPlan);
-        }
+        ConformanceReport.ProgramReport compute = computeOnlyProgram(inventory, packPlan, passComputes);
+        if (compute != null) return compute;
         ReportSources sources = ReportSources.of(inventory);
         boolean relaxed = sources.relaxed();
         String source = sources.source();
@@ -39,7 +37,7 @@ final class ProgramReportRules {
         String stripped = stripComments(source);
         boolean postName = PostTargetPlan.isPostProgramName(name);
         boolean hasFragment = inventory.stages.contains("fragment");
-        boolean modern = !modernTerrainPlan(name, programPlan) && !validatedConversion(inventory, programPlan)
+        boolean modern = !modernTerrainPlan(name, programPlan) && !validatedConversion(inventory, programPlan, packPlan)
                 && usesUnsupportedModernGlsl(stripped, postName, FamilyAdapterRegistry.isEntityLike(name));
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
         // The report has historically exposed all uniform declarations,
@@ -54,7 +52,7 @@ final class ProgramReportRules {
         if (resourcePlan != null) {
             deviations.addAll(reportedResourceDeviations(resourcePlan, name));
         }
-        deviations.addAll(relevantTargetDeviations(packConfig.deviations(), targetResult));
+        deviations.addAll(relevantTargetDeviations(packConfig, targetResult));
         UniformRegistry.ProgramInterface interfacePlan =
                 interfacePlan(name, fragment, programPlan, targetResult, relaxed, postName);
         if (programPlan != null) {
@@ -63,38 +61,34 @@ final class ProgramReportRules {
         deviations.addAll(interfacePlan.deviations());
         addTargetRouteDeviations(targetResult, postName, programPlan, deviations);
         if (programPlan == null && postName && hasFragment && !modern) {
-            addUnplannedPostDeviations(inventory, packConfig, fragment, relaxed, targetResult, interfacePlan,
+            addUnplannedPostDeviations(inventory, fragment, relaxed, targetResult, interfacePlan,
                     deviations);
         }
-        if (postName) {
-            addPackConstantDeviations(fragment, packConfig, deviations);
-        }
-        addVertexDeviations(inventory, programPlan, fragment, postName, deviations);
-        addSourceDeviations(inventory, packPlan, programPlan, source, samplers, relaxed, modern, deviations);
+        addVertexDeviations(inventory, packPlan, programPlan, fragment, postName, deviations);
+        addSourceDeviations(inventory, packPlan, programPlan, sources.advancedDeclarations(), samplers, relaxed,
+                modern, deviations);
         addTargetCountDeviations(name, programPlan, targetResult, targets, deviations);
         if (!hasFragment) {
             deviations.add("MISSING_FRAGMENT_SOURCE");
         }
+        addUnlanedDeviation(inventory, postName || !hasFragment, deviations);
 
         return new ConformanceReport.ProgramReport(
                 name, PackProbe.familyOf(name), modern ? "MODERN_GLSL" : "LEGACY_GLSL",
                 PackProbe.sorted(inventory.stages), inventory.sourceHashes, samplers, uniformNames,
-                targets, supportStatus(executableName(name, inventory, postName), hasFragment, deviations),
+                targets, supportStatus(executableName(name, inventory, postName), hasFragment,
+                        planRuns(programPlan, packPlan, name),
+                        deviations),
                 ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.copyOf(deviations));
-    }
-
-    /** The plan's compute stage for a program that ships compute source; null for a graphics program. */
-    static PackAdvancedResourcePlan.ComputeSpec nativeComputeSpec(PackProbe.Inventory inventory, PackPlan packPlan) {
-        PackAdvancedResourcePlan.ComputeSpec computeSpec = packPlan == null
-                ? null : packPlan.advancedResources().computeStages().get(inventory.name);
-        return computeSpec != null && inventory.stages.contains("compute") ? computeSpec : null;
     }
 
     /**
      * The sources a program's report reads, joined by stage name: a variant's prepared sources when
-     * it has them, else the authored ones.
+     * it has them, else the authored ones. Advanced declarations are judged per stage, as each stage
+     * compiles alone and as the plan judges them (PackAdvancedResourcePlan.addUnplannedDeclarations):
+     * an image both stages only declare is no use of it.
      */
-    private record ReportSources(boolean relaxed, String source, String fragment) {
+    private record ReportSources(boolean relaxed, String source, String fragment, boolean advancedDeclarations) {
         static ReportSources of(PackProbe.Inventory inventory) {
             boolean relaxed = !inventory.variantFolder.isBlank();
             Map<String, String> sourceView = relaxed && !inventory.preparedSources.isEmpty()
@@ -104,7 +98,9 @@ final class ProgramReportRules {
                     .sorted(Map.Entry.comparingByKey())
                     .forEach(entry -> combinedSource.append(entry.getValue()).append('\n'));
             String source = combinedSource.toString();
-            return new ReportSources(relaxed, source, sourceView.getOrDefault("fragment", source));
+            boolean advanced = sourceView.values().stream()
+                    .anyMatch(PackAdvancedResourcePlan::containsAdvancedDeclarations);
+            return new ReportSources(relaxed, source, sourceView.getOrDefault("fragment", source), advanced);
         }
     }
 
@@ -125,8 +121,7 @@ final class ProgramReportRules {
     }
 
     /** A post program without a plan must still convert; say why it cannot. */
-    static void addUnplannedPostDeviations(PackProbe.Inventory inventory, PackConfig.PackConfigData packConfig,
-                                                   String fragment, boolean relaxed,
+    static void addUnplannedPostDeviations(PackProbe.Inventory inventory, String fragment, boolean relaxed,
                                                    PostTargetPlan.ParseResult targetResult,
                                                    UniformRegistry.ProgramInterface interfacePlan,
                                                    Set<String> deviations) {
@@ -134,7 +129,7 @@ final class ProgramReportRules {
         Path sourcePath = relaxed && !inventory.preparedSources.isEmpty()
                 ? null : inventory.sourcePaths.get("fragment");
         String converted = FragmentConverter.convertPostFragment(
-                fragment, sourcePath, interfacePlan, targetResult.plan(), packConfig.shaderConstants());
+                fragment, sourcePath, interfacePlan, targetResult.plan());
         if (converted == null) {
             deviations.addAll(PostVertexBridge.postVaryingDeviations(fragment));
             deviations.add("POST_CONVERTER_UNSUPPORTED");
@@ -142,13 +137,13 @@ final class ProgramReportRules {
     }
 
     /** The vertex bridge the program takes, and what its installed family fixes to the host. */
-    static void addVertexDeviations(PackProbe.Inventory inventory, PackProgramPlan programPlan, String fragment,
-                                            boolean postName, Set<String> deviations) {
+    static void addVertexDeviations(PackProbe.Inventory inventory, PackPlan packPlan, PackProgramPlan programPlan,
+                                    String fragment, boolean postName, Set<String> deviations) {
         String name = inventory.name;
         boolean hasVertex = inventory.stages.contains("vertex");
         String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         String vertexBridge = programPlan != null
-                ? plannedVertexBridge(name, hasVertex, programPlan, postName)
+                ? plannedVertexBridge(name, hasVertex, programPlan, packPlan, postName)
                 : unplannedVertexBridge(name, hasVertex, vertex, fragment);
         if (vertexBridge != null) {
             deviations.add(vertexBridge);
@@ -161,23 +156,40 @@ final class ProgramReportRules {
         }
     }
 
+    /**
+     * Whether Iris would run a stage of the program that Chimera does not: a geometry stage, or a
+     * tessellation stage the pack enables, that the plan did not convert (TASK-648), or a compute
+     * stage that is not a pass compute (Noble's composite99.csh is one, planned and run apart from
+     * composite99's draw).
+     */
+    private static boolean runsUnsupportedStage(PackProbe.Inventory inventory, PackPlan packPlan,
+                                                PackProgramPlan programPlan) {
+        boolean passCompute = PassComputePlan.isPassComputeProgram(inventory.name);
+        boolean tessellation = packPlan != null && packPlan.settings() != null
+                && packPlan.settings().readsTessellation();
+        Set<String> converted = programPlan == null ? Set.of() : programPlan.betweenStages().present().stream()
+                .map(BetweenStages.Stage::name).collect(Collectors.toSet());
+        return inventory.stages.stream().anyMatch(stage -> PackProgram.runsBetweenStages(stage, tessellation)
+                && !converted.contains(stage)
+                || stage.equals("compute") && !passCompute);
+    }
+
     /** Stages, GLSL dialect, advanced resources and samplers the program's sources use. */
     static void addSourceDeviations(PackProbe.Inventory inventory, PackPlan packPlan, PackProgramPlan programPlan,
-                                            String source, List<String> samplers, boolean relaxed, boolean modern,
-                                            Set<String> deviations) {
-        // Noble's composite99.csh is a pass compute, planned and run apart from composite99's draw.
-        boolean passCompute = PassComputePlan.isPassComputeProgram(inventory.name);
-        if (inventory.stages.stream().anyMatch(stage ->
-                stage.equals("geometry") || stage.equals("tess_control")
-                        || stage.equals("tess_evaluation") || stage.equals("compute") && !passCompute)) {
+                                            boolean advancedDeclarations, List<String> samplers, boolean relaxed,
+                                            boolean modern, Set<String> deviations) {
+        if (runsUnsupportedStage(inventory, packPlan, programPlan)) {
             deviations.add("UNSUPPORTED_PACK_STAGE");
         }
         if (modern) {
             deviations.add("MODERN_GLSL_UNSUPPORTED");
         }
-        if (PackAdvancedResourcePlan.containsAdvancedDeclarations(source)
-                && !advancedResourcesArePlanned(inventory.name, packPlan)) {
+        if (advancedDeclarations && !advancedResourcesArePlanned(inventory.name, packPlan)) {
             deviations.add("ADVANCED_RESOURCE_UNSUPPORTED");
+        }
+        if (packPlan != null && packPlan.advancedResources() != null) {
+            packPlan.advancedResources().unservedImages(inventory.name)
+                    .forEach(image -> deviations.add("ADVANCED_IMAGE_UNSERVED:" + image));
         }
         // PackPlanBuilder already resolved standard aliases and pack-owned
         // sampler slots through the shared interface plan. Keep the legacy
@@ -209,17 +221,21 @@ final class ProgramReportRules {
 
     /** Modern terrain, water and shadow sources run through their own planned bridge. */
     static boolean modernTerrainPlan(String name, PackProgramPlan programPlan) {
-        return (name.equals("gbuffers_terrain") || name.equals("gbuffers_water") || name.equals("shadow"))
+        String lane = FamilyAdapterRegistry.laneProgram(name);
+        return (lane.equals("gbuffers_terrain") || lane.equals("gbuffers_water") || lane.equals("shadow"))
                 && programPlan != null && programPlan.terrainMaterial().modern();
     }
 
     /**
      * A validated conversion is authoritative for every family, not just post and particles: the
-     * lexical modern-GLSL veto must not reject a program whose converters already accepted it.
+     * lexical modern-GLSL veto must not reject a program whose converters already accepted it. A
+     * cloud program that runs empty (PackPlan.cloudRunsEmpty) has nothing left to convert.
      */
-    static boolean validatedConversion(PackProbe.Inventory inventory, PackProgramPlan programPlan) {
+    static boolean validatedConversion(PackProbe.Inventory inventory, PackProgramPlan programPlan, PackPlan packPlan) {
+        if (packPlan != null && packPlan.cloudRunsEmpty(inventory.name)) return true;
         return programPlan != null && programPlan.executable() && programPlan.convertedFragment() != null
-                && (!inventory.stages.contains("vertex") || programPlan.convertedVertex() != null);
+                && (!inventory.stages.contains("vertex") || programPlan.convertedVertex() != null)
+                && (!inventory.stages.contains("geometry") || programPlan.convertedGeometry() != null);
     }
 
     static PostTargetPlan.ParseResult targetResult(
@@ -295,24 +311,36 @@ final class ProgramReportRules {
                 && (!needsVertex || inventory.stages.contains("vertex"));
     }
 
+    /**
+     * Whether the plan lets the program run: no plan judges it, the plan admits it, or it is an
+     * authored-empty cloud program, which the runtime installs as drawing nothing (PackPlan.cloudRunsEmpty).
+     */
+    static boolean planRuns(PackProgramPlan plan, PackPlan packPlan, String name) {
+        return plan == null || plan.executable() || packPlan != null && packPlan.cloudRunsEmpty(name);
+    }
+
+    /** A program's status. A plan that refused the program leaves it on the fallback whatever it recorded. */
     static ConformanceReport.SupportStatus supportStatus(
-            boolean executableName, boolean hasFragment, Collection<String> deviations) {
+            boolean executableName, boolean hasFragment, boolean planExecutable, Collection<String> deviations) {
         if (!executableName) {
             return ConformanceReport.SupportStatus.UNSUPPORTED;
         }
-        if (!hasFragment || hasSevereDeviation(deviations)) {
+        if (!hasFragment || !planExecutable || hasSevereDeviation(deviations)) {
             return ConformanceReport.SupportStatus.IDENTITY_FALLBACK;
         }
         return deviations.isEmpty() ? ConformanceReport.SupportStatus.SUPPORTED
                 : ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION;
     }
 
-    /** How a planned program's vertex stage is bridged, as its report names it; null when it has none. */
+    /**
+     * How a planned program's vertex stage is bridged, as its report names it; null when it has none.
+     * A cloud program that runs empty (PackPlan.cloudRunsEmpty) has no vertex bridge to name.
+     */
     static String plannedVertexBridge(
-            String name, boolean hasVertex, PackProgramPlan plan, boolean postName) {
+            String name, boolean hasVertex, PackProgramPlan plan, PackPlan packPlan, boolean postName) {
         boolean converted = plan.convertedVertex() != null;
         if (hasVertex) {
-            if (FamilyAdapterRegistry.isCloudFamily(name) && plan.cloudDrawsNothing()) {
+            if (packPlan != null && packPlan.cloudRunsEmpty(name)) {
                 return PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT;
             }
             boolean modern = plan.terrainMaterial().modern();
@@ -326,7 +354,7 @@ final class ProgramReportRules {
                 }
             };
             if (bridge != null) {
-                return bridge;
+                return reached(bridge, converted, plan);
             }
             if (converted && postName) {
                 return plan.deviations().contains("POST_VERTEX_AUTHORED_TRANSLATED")
@@ -336,13 +364,24 @@ final class ProgramReportRules {
         return unbridgedVertex(name, hasVertex);
     }
 
+    /**
+     * The bridge as reported. A plan its admission refused first never runs the entity,
+     * host-layout or particle bridges, so an unconverted vertex with no failed bridge recorded
+     * reports the bridge as not reached ({@code <LANE>_VERTEX_BRIDGE_NOT_REACHED}).
+     */
+    private static String reached(String bridge, boolean converted, PackProgramPlan plan) {
+        boolean attempted = converted || plan.deviations().stream().anyMatch(deviation ->
+                deviation.endsWith("_VERTEX_BRIDGE_UNSUPPORTED") || deviation.contains("_VERTEX_CONVERSION_FAILED:"));
+        return attempted ? bridge : bridge.replace("_UNSUPPORTED", "_NOT_REACHED");
+    }
+
     /** The bridge a program without a plan would get, judged from its authored sources alone. */
     static String unplannedVertexBridge(String name, boolean hasVertex, String vertex, String fragment) {
         if (hasVertex) {
             if (FamilyAdapterRegistry.isCloudFamily(name) && AuthoredOutput.producesNothing(vertex, fragment)) {
                 return PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT;
             }
-            String bridge = switch (name) {
+            String bridge = switch (FamilyAdapterRegistry.laneProgram(name)) {
                 case "gbuffers_terrain" -> TerrainVertexBridge.supportsTerrainVertex(vertex, fragment)
                         ? "LEGACY_TERRAIN_VERTEX_BRIDGE" : "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED";
                 case "gbuffers_water" -> TerrainVertexBridge.supportsModernTerrain(vertex, fragment)
@@ -385,10 +424,11 @@ final class ProgramReportRules {
      * name theirs by the material contract.
      */
     static String vertexBridgeLabel(String name) {
-        if (name.equals("shadow")) return "SHADOW";
-        if (name.equals("gbuffers_entities")) return "ENTITY";
-        if (name.equals("gbuffers_block") || name.equals("gbuffers_block_translucent")) return "BLOCK";
-        if (name.equals("gbuffers_hand")) return "HAND";
+        if (FamilyAdapterRegistry.isShadowTerrain(name)) return "SHADOW";
+        // Every entity-like family converts on the entity bridge (PackPlanBuilder.convertEntityVertex).
+        if (FamilyAdapterRegistry.isEntityLike(name)) {
+            return VertexBridgeDeviations.entity(name, false).replace("_VERTEX_BRIDGE", "");
+        }
         if (FamilyAdapterRegistry.isShadowEntityFamily(name)) return "SHADOW_ENTITY";
         if (FamilyAdapterRegistry.isParticleLike(name)) return "PARTICLE";
         if (FamilyAdapterRegistry.isWeatherFamily(name)) return "WEATHER";
@@ -404,7 +444,7 @@ final class ProgramReportRules {
     /** A vertex stage no bridge serves: water draws on the fixed host vertex, shadow programs fail. */
     static String unbridgedVertex(String name, boolean hasVertex) {
         if (name.equals("gbuffers_water")) return "FIXED_VERTEX_SUBSTITUTION";
-        if (name.equals("shadow")) return "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
+        if (FamilyAdapterRegistry.isShadowTerrain(name)) return "SHADOW_VERTEX_BRIDGE_UNSUPPORTED";
         if (FamilyAdapterRegistry.isShadowEntityFamily(name)) return "SHADOW_ENTITY_VERTEX_BRIDGE_UNSUPPORTED";
         return hasVertex ? "FIXED_VERTEX_SUBSTITUTION" : null;
     }
@@ -420,7 +460,7 @@ final class ProgramReportRules {
                     "BLOCK_ENTITY_ID_DEFAULTED", "ENTITY_STATE_FIXED_TO_HOST");
             case BLOCK_TRANSLUCENT -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
                     "BLOCK_TRANSLUCENT_INSTALLED", "ENTITY_STATE_FIXED_TO_HOST");
-            case DAMAGED_BLOCK -> List.of("DAMAGED_BLOCK_HOST_FORMAT_INSTALLED");
+            case DAMAGED_BLOCK -> List.of("DAMAGED_BLOCK_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED");
             case HAND -> List.of("FAMILY_ADAPTER_INSTALLED", "ENTITY_VERTEX_FORMAT_EXTENDED",
                     "HAND_STATE_FIXED_TO_HOST");
             case HAND_WATER -> List.of("FAMILY_ADAPTER_INSTALLED", "HAND_TRANSLUCENT_ITEM_PHASE");
@@ -478,24 +518,33 @@ final class ProgramReportRules {
                 || FamilyAdapterRegistry.isHostLayoutFamily(name);
     }
 
-    /** Builds a truthful report for a native compute stage without applying graphics rules. */
-    static ConformanceReport.ProgramReport computeProgram(
-            PackProbe.Inventory inventory,
-            PackAdvancedResourcePlan.ComputeSpec computeSpec,
-            PackPlan packPlan
-    ) {
-        TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
-        deviations.addAll(computeSpec.deviations());
-        boolean capability = packPlan != null
-                && packPlan.advancedResources().capabilityPossible();
-        boolean executable = computeSpec.supported() && capability;
-        if (executable) {
-            deviations.add("COMPUTE_NATIVE_BRIDGE");
-        } else if (!computeSpec.supported()) {
-            deviations.add("COMPUTE_STAGE_UNSUPPORTED:" + computeSpec.program());
-        } else {
-            deviations.add("COMPUTE_CAPABILITY_UNAVAILABLE:" + computeSpec.program());
+    /** The report of a program that is only a compute: a pass compute; else null. */
+    private static ConformanceReport.ProgramReport computeOnlyProgram(PackProbe.Inventory inventory, PackPlan packPlan,
+                                                                      PassComputePlan passComputes) {
+        PassComputePlan.PassCompute passCompute = passComputes == null ? null : passComputes.compute(inventory.name);
+        // <pass>_x.csh is its own row; <pass>.csh shares the pass's, which is the compute's when it runs alone.
+        if (passCompute != null && (!passCompute.name().equals(passCompute.pass())
+                || PassComputePlan.runsAlone(packPlan, passCompute.pass()))) {
+            return passComputeProgram(inventory, passCompute);
         }
+        return null;
+    }
+
+    /**
+     * The report of {@code <pass>[_x].csh} in a pass with no fragment stage: its own translation.
+     * Iris runs it before the pass, or alone as a ComputeOnlyPass where the pass has no program.
+     */
+    static ConformanceReport.ProgramReport passComputeProgram(PackProbe.Inventory inventory,
+                                                             PassComputePlan.PassCompute compute) {
+        TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
+        deviations.addAll(compute.deviations());
+        deviations.add(compute.supported() ? "PASS_COMPUTE_BRIDGE:" + compute.pass()
+                : "PASS_COMPUTE_UNSUPPORTED:" + compute.name());
+        return computeReport(inventory, compute.supported(), deviations);
+    }
+
+    private static ConformanceReport.ProgramReport computeReport(PackProbe.Inventory inventory, boolean executable,
+                                                                 TreeSet<String> deviations) {
         ConformanceReport.SupportStatus support = executable
                 ? ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION
                 : ConformanceReport.SupportStatus.IDENTITY_FALLBACK;
@@ -535,9 +584,47 @@ final class ProgramReportRules {
         if (!usesImages && !usesStorage) {
             return false;
         }
-        boolean imagesReady = !usesImages || advanced.imageProgramsServable();
+        boolean imagesReady = !usesImages || advanced.imagesServable(program);
         boolean storageReady = !usesStorage || advanced.storageBufferProgramSupported(program);
         return imagesReady && storageReady;
+    }
+
+    /**
+     * Programs Iris 1.21.1 reads only as other programs' fallback sources: no shader key draws them
+     * (ShaderKey, SodiumPrograms), so neither does Chimera; the programs they stand in for do.
+     */
+    static final Set<String> IRIS_FALLBACK_SOURCES = Set.of(
+            "gbuffers_textured_lit", "gbuffers_item", "gbuffers_entities_glowing");
+
+    /** Names why a world program runs in no lane (unlanedProgram); {@code skip} a post or fragmentless one. */
+    static void addUnlanedDeviation(PackProbe.Inventory inventory, boolean skip, Set<String> deviations) {
+        String unlaned = skip ? null : unlanedProgram(inventory.name, inventory);
+        if (unlaned != null) deviations.add(unlaned);
+    }
+
+    /**
+     * Why a world program with a fragment stage runs in no lane, or null when it has one
+     * (laneReason); or, in a lane that needs an authored vertex stage, that it has none, where
+     * Iris draws it with a default one (ProgramSet.readProgramSource).
+     */
+    static String unlanedProgram(String name, PackProbe.Inventory inventory) {
+        if (!FamilyAdapterRegistry.isExecutableFamily(name)) return laneReason(name);
+        return executableName(name, inventory, false) ? null : "IRIS_DEFAULT_VERTEX_UNSUPPORTED";
+    }
+
+    /**
+     * Why Chimera runs a world program in no lane: Iris draws it under no key of its own; it is a
+     * begin program, which Iris's composite renderer runs and Chimera does not; Iris
+     * draws it and Chimera routes none of those draws to it (the per-layer terrain and shadow
+     * programs, dh_*); or Iris never runs a program
+     * of that name at all (setup.fsh, names that are no ProgramId).
+     */
+    private static String laneReason(String name) {
+        if (IRIS_FALLBACK_SOURCES.contains(name)) return "IRIS_FALLBACK_SOURCE_ONLY";
+        if (name.matches("begin\\d*")) return "PASS_PROGRAM_UNSUPPORTED:" + name;
+        if (FamilyAdapterRegistry.isMergedLayerProgram(name)) return "TERRAIN_LAYER_MERGED_BY_HOST:" + name;
+        return PackResolutionPlan.isIrisProgram(name) ? "FAMILY_LANE_UNSUPPORTED:" + name
+                : "IRIS_PROGRAM_UNUSED:" + name;
     }
 
     /** A host-layout lane (LINE, GLINT, LIGHTNING, ...) whose vertex could not be bridged. */
@@ -552,26 +639,26 @@ final class ProgramReportRules {
             "POST_TARGET_DIRECTIVE_MALFORMED", "POST_TARGET_DIRECTIVE_CONFLICT", "FINAL_MRT_UNSUPPORTED",
             "TERRAIN_VERTEX_BRIDGE_UNSUPPORTED", "MODERN_TERRAIN_VERTEX_BRIDGE_UNSUPPORTED",
             "MODERN_WATER_VERTEX_BRIDGE_UNSUPPORTED", "SHADOW_VERTEX_BRIDGE_UNSUPPORTED",
-            "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED", "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",
+            "TRANSLUCENT_VERTEX_BRIDGE_UNSUPPORTED",
             "ENTITY_VERTEX_BRIDGE_UNSUPPORTED", "BLOCK_VERTEX_BRIDGE_UNSUPPORTED",
             "HAND_VERTEX_BRIDGE_UNSUPPORTED", "PARTICLE_VERTEX_BRIDGE_UNSUPPORTED",
             "WEATHER_VERTEX_BRIDGE_UNSUPPORTED", "SKY_VERTEX_BRIDGE_UNSUPPORTED",
-            "CLOUD_VERTEX_BRIDGE_UNSUPPORTED", "DAMAGED_BLOCK_HOST_FORMAT_UNSUPPORTED",
-            "SHADOW_COLOR_INPUT_UNSUPPORTED", "MISSING_FRAGMENT_SOURCE", "POST_CONVERTER_UNSUPPORTED");
+            "CLOUD_VERTEX_BRIDGE_UNSUPPORTED",
+            "MISSING_FRAGMENT_SOURCE", "POST_CONVERTER_UNSUPPORTED");
 
-    /** Deviation families that do the same, matched by prefix. */
+    /**
+     * Deviation families that do the same, matched by prefix. The interface plan's own blocking
+     * deviations (UniformRegistry.isExecutionBlocking) are severe too.
+     */
     static final List<String> SEVERE_PREFIXES = List.of(
             "POST_TARGET_DIRECTIVE_DUPLICATE:", "POST_TARGET_INDEX_UNSUPPORTED:",
-            "POST_TARGET_FORMAT_UNSUPPORTED:", "ENTITY_SAMPLER_UNSUPPORTED:", "ENTITY_ID_UNSUPPORTED:",
-            "UNIFORM_TYPE_UNSUPPORTED:", "UNIFORM_NAME_UNSUPPORTED:", "UNIFORM_CONFLICT:",
-            "SAMPLER_NOT_MAPPED:", "SAMPLER_SLOT_CONFLICT:", "PACK_TEXTURE_MISSING:",
+            "POST_TARGET_FORMAT_UNSUPPORTED:", "PACK_TEXTURE_MISSING:",
             "PACK_RAW_TEXTURE_UNSUPPORTED:", "PACK_RAW_TEXTURE_SIZE_MISMATCH:", "PACK_TEXTURE_PATH_UNSAFE:",
-            "PACK_TEXTURE_LOAD_FAILED:",
-            "PACK_RESOURCE_SLOT_LIMIT:", "STANDARD_RESOURCE_UNAVAILABLE:", "SHADOW_SAMPLER_UNSUPPORTED:",
-            "TRANSLUCENT_SAMPLER_UNSUPPORTED:", "GBUFFER_TARGET_FEEDBACK:", "PROGRAM_", "SOURCE_INCLUDE_",
+            "PACK_TEXTURE_LOAD_FAILED:", "PACK_RESOURCE_SLOT_LIMIT:", "STANDARD_RESOURCE_UNAVAILABLE:",
+            "GBUFFER_TARGET_FEEDBACK:", "PROGRAM_", "SOURCE_INCLUDE_",
             "TRANSLATION_UNSUPPORTED:", "STORAGE_BUFFER_", "POST_VARYING_UNSUPPORTED:",
-            "ALPHA_TEST_MALFORMED:", "LEGACY_FOG_FIELD_UNSUPPORTED:", "SOURCE_NORMALIZATION_FAILED:",
-            "PREPROCESSOR_");
+            "LEGACY_FOG_FIELD_UNSUPPORTED:", "SOURCE_NORMALIZATION_FAILED:",
+            "PREPROCESSOR_", "ADVANCED_IMAGE_UNSERVED:");
 
     /** Members of a severe family that only record a fact. */
     static final List<String> BENIGN_PREFIXES = List.of(
@@ -583,28 +670,12 @@ final class ProgramReportRules {
     }
 
     static boolean isSevere(String deviation) {
-        if (SEVERE_DEVIATIONS.contains(deviation) || HOST_LAYOUT_BRIDGE_FAILURES.contains(deviation)) return true;
+        if (SEVERE_DEVIATIONS.contains(deviation) || HOST_LAYOUT_BRIDGE_FAILURES.contains(deviation)
+                || deviation.endsWith("_VERTEX_BRIDGE_NOT_REACHED") || UniformRegistry.isExecutionBlocking(deviation)) {
+            return true;
+        }
         return BENIGN_PREFIXES.stream().noneMatch(deviation::startsWith)
                 && SEVERE_PREFIXES.stream().anyMatch(deviation::startsWith);
-    }
-
-    static void addPackConstantDeviations(
-            String source,
-            PackConfig.PackConfigData packConfig,
-            Collection<String> deviations
-    ) {
-        String stripped = stripComments(source);
-        for (String name : packConfig.shaderConstants().keySet()) {
-            if (!Pattern.compile("\\b" + Pattern.quote(name) + "\\b").matcher(stripped).find()) {
-                continue;
-            }
-            if (packConfig.shadowSettings().deviations().contains(
-                    "SHADOW_SETTING_DEFAULTED:" + name)) {
-                deviations.add("PACK_CONSTANT_DEFAULTED:" + name);
-            } else {
-                deviations.add("PACK_CONSTANT_INJECTED:" + name);
-            }
-        }
     }
 
     /**
@@ -630,22 +701,35 @@ final class ProgramReportRules {
         return GlslTokenRewriter.containsIdentifier(source, MODERN_STAGE_SYNTAX::contains);
     }
 
+    /**
+     * The pack's target deviations that concern a target the program writes, and the integer targets
+     * whose mip chain it asks for. The GL spec refuses glGenerateMipmap on a format it cannot filter,
+     * so Iris's chain depends on the driver (incomplete, reading zero, or built); Chimera downsamples
+     * it nearest (PackTargetImages).
+     */
     static List<String> relevantTargetDeviations(
-            Collection<String> configDeviations,
+            PackConfig.PackConfigData config,
             PostTargetPlan.ParseResult targetResult
     ) {
         if (targetResult == null) {
             return List.of();
         }
         List<String> result = new ArrayList<>();
-        for (String deviation : configDeviations) {
+        for (String deviation : config.deviations()) {
             if (deviation.startsWith("POST_TARGET_INDEX_UNSUPPORTED:")
                     || deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:")
-                    || deviation.startsWith("POST_TARGET_FORMAT_APPROXIMATED:")) {
+                    || deviation.startsWith("POST_TARGET_FORMAT_APPROXIMATED:")
+                    || deviation.startsWith("POST_TARGET_INTEGER_CLEAR_CHIMERA:")) {
                 Integer target = PackProbe.targetIndex(deviation);
                 if (target != null && targetResult.plan().targetSlots().contains(target)) {
                     result.add(deviation);
                 }
+            }
+        }
+        for (int target : targetResult.plan().mipmappedTargets()) {
+            Integer format = config.colortexFormats().get(target);
+            if (format != null && IrisColorFormats.integer(format)) {
+                result.add("POST_TARGET_INTEGER_MIPMAP_CHIMERA:colortex" + target);
             }
         }
         return result;

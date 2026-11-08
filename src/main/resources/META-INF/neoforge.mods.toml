@@ -27,9 +27,12 @@ ordering = "NONE"
 side = "CLIENT"
 
 # The Vulkan host renderer, VulkanMod Reforged; Chimera mixes into it, so it loads first.
+# Every Chimera mixin into Reforged's internals must apply, so the range is the Reforged line
+# Chimera was built and tested on. A newer Reforged (0.3.5 moved the hooks) or another mod with
+# the vulkanmod id then meets NeoForge's dependency screen instead of a crash at launch.
 [[dependencies.chimera]]
 modId = "vulkanmod"
 type = "required"
-versionRange = "[0.3.0-ALPHA,)"
+versionRange = "[0.3.0-ALPHA,0.3.1)"
 ordering = "AFTER"
 side = "CLIENT"

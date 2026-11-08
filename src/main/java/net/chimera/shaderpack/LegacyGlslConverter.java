@@ -99,11 +99,6 @@ public final class LegacyGlslConverter {
     private static final Pattern OPAQUE_TYPE = Pattern.compile("[iu]?sampler\\w*|u?i?image\\w*");
 
     /** Pack metadata declarations consumed by PackConfig, not executable GLSL. */
-    private static final Pattern CONSUMED_CONST_NAME = Pattern.compile(
-            "colortex\\d+Format|gaux\\d+Format|colortex\\d+(?:Clear|ClearColor|MipmapEnabled)"
-                    + "|shadowMapResolution|shadowDistance|shadowMapDistance|shadowMapSize|shadowMapFov"
-                    + "|shadowDistanceRenderMul|sunPathRotation|sunPathOffset");
-    private static final Pattern CONSUMED_CONST_VALUE = Pattern.compile("[A-Za-z0-9+_.(), /-]+");
     private static final Pattern METADATA_CONST_NAME = Pattern.compile(
             "(?:colortex|gaux)\\d+(?:Format|Clear|ClearColor|MipmapEnabled)");
 
@@ -140,32 +135,6 @@ public final class LegacyGlslConverter {
                 .map(span -> new GlslDeclarations.TextEdit(span.start(), span.end(), "")).toList());
     }
 
-    /**
-     * Removes consumed metadata constants unless something reads them
-     * without a replacement. A referenced constant stays when no pack
-     * constant will be injected for it (BSL's shadowMapBias initializer
-     * reading shadowDistance); it goes when injection supplies the value,
-     * and dead ones always go.
-     */
-    static String stripUnusedConsumedConsts(
-            String source, Map<String, String> packConstants) {
-        if (source == null || source.isBlank()) return source;
-        GlslTree tree = GlslTree.parse(source);
-        List<Span> consumed = lineSpans(source, tree, TAIL_TO_LINE_END, variable -> {
-            GlslTree.Range value = variable.declarator().initializer();
-            return variable.declaration().declarators().size() == 1 && value != null
-                    && variable.qualifiers().stream().allMatch("const"::equals)
-                    && CONSTANT_TYPES.contains(variable.type()) && variable.declarator().arrays().isEmpty()
-                    && CONSUMED_CONST_NAME.matcher(variable.name()).matches()
-                    && CONSUMED_CONST_VALUE.matcher(tree.text(value)).matches();
-        });
-        String checkSource = without(source, consumed);
-        return without(source, consumed.stream().filter(span -> {
-            boolean injected = packConstants != null && packConstants.containsKey(span.name());
-            return !GlslTokenRewriter.containsIdentifier(checkSource, span.name()) || injected;
-        }).toList());
-    }
-
     /** The source without its {@code precision lowp|mediump|highp float|int;} statements. */
     static String withoutPrecisionStatements(String source) {
         GlslTree tree = GlslTree.parse(source);
@@ -200,9 +169,11 @@ public final class LegacyGlslConverter {
     /**
      * An interface declaration's {@code layout(...)} goes with the space after it, and its
      * interpolation and storage qualifiers stay. Only a layout written on one line, on a line of
-     * its own declaration's, is removed.
+     * its own declaration's, is removed. With {@code keepOutputs} (a fragment stage) an output keeps
+     * its layout: its location names the draw buffer it writes, as GL links it for Iris, and
+     * PostTargetPlan.modernOutputs routes it by that location.
      */
-    static String withoutInterfaceLayouts(String source) {
+    static String withoutInterfaceLayouts(String source, boolean keepOutputs) {
         GlslTree tree = GlslTree.parse(source);
         List<GlslDeclarations.TextEdit> removals = new ArrayList<>();
         for (GlslTree.External external : tree.externals()) {
@@ -212,13 +183,15 @@ public final class LegacyGlslConverter {
                 default -> List.of();
             };
             if (qualifiers.size() < 2 || !tree.text(qualifiers.get(0).keyword()).equals("layout")
+                    || GlslDeclarations.qualifiersOnly(external)
                     || tree.text(qualifiers.get(0).range()).matches("(?s).*[\\r\\n].*")
                     || GlslDeclarations.indentationStart(source, tree.offset(external.range().start())) < 0) {
                 continue;
             }
             int storage = INTERPOLATION.contains(tree.text(qualifiers.get(1).keyword())) && qualifiers.size() > 2
                     ? 2 : 1;
-            if (INTERFACE_STORAGE.contains(tree.text(qualifiers.get(storage).keyword()))) {
+            String keyword = tree.text(qualifiers.get(storage).keyword());
+            if (INTERFACE_STORAGE.contains(keyword) && !(keepOutputs && keyword.equals("out"))) {
                 removals.add(new GlslDeclarations.TextEdit(tree.offset(qualifiers.get(0).range().start()),
                         tree.offset(qualifiers.get(1).range().start()), ""));
             }
@@ -363,7 +336,7 @@ public final class LegacyGlslConverter {
             ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
                     root, sourceFile, source,
                     PackEngineDefines.forPack(Map.of()),
-                    PackEngineDefines.lockedNames(Set.of(), false, false));
+                    PackEngineDefines.lockedNames(Set.of(), false));
             if (!prepared.successful()) {
                 throw new IllegalArgumentException(prepared.deviations().toString());
             }
@@ -373,7 +346,9 @@ public final class LegacyGlslConverter {
         if (!normalized.successful()) {
             throw new IllegalArgumentException(normalized.deviations().toString());
         }
-        return normalized.source();
+        // A vertex input Iris binds no data to reads GL's generic default in every lane.
+        return vertexStage ? UnboundAttributes.substitute(normalized.source(), UnboundAttributes::irisUnbound)
+                : normalized.source();
     }
 
     static String convertVaryings(
@@ -491,39 +466,6 @@ public final class LegacyGlslConverter {
         return without(source, metadata);
     }
 
-    static String injectPackConstants(String source, Map<String, String> packConstants) {
-        if (packConstants == null || packConstants.isEmpty()) {
-            return source;
-        }
-        String stripped = stripComments(source);
-        // A constant the source defines as a macro keeps its own value.
-        Set<String> defined = new HashSet<>();
-        for (GlslDirectives.Line line : GlslDirectives.lines(stripped)) {
-            if (line.is("define") && line.adjacent() && !line.words().isEmpty()) defined.add(line.words().get(0));
-        }
-        StringBuilder declarations = new StringBuilder();
-        for (Map.Entry<String, String> entry : new TreeMap<>(packConstants).entrySet()) {
-            if (!containsIdentifier(stripped, entry.getKey()) || defined.contains(entry.getKey())) {
-                continue;
-            }
-            String type = entry.getKey().equals("shadowMapResolution") ? "int" : "float";
-            declarations.append("const ").append(type).append(' ')
-                    .append(entry.getKey()).append(" = ").append(entry.getValue()).append(";\n");
-        }
-        if (declarations.length() == 0) {
-            return source;
-        }
-        return startsWithVersion(source)
-                ? insertAfterFirstLine(source, declarations.toString())
-                : declarations + source;
-    }
-
-    /** Whether the source's first text, after whitespace, is a {@code #version} directive. */
-    private static boolean startsWithVersion(String source) {
-        GlslDirectives.Line version = GlslDirectives.version(source);
-        return version != null && version.adjacent() && source.substring(0, version.hash()).isBlank();
-    }
-
     /**
      * Removes value-type uniform declarations the pipeline can already
      * serve or safely ignore: every declarator is either served through
@@ -576,12 +518,12 @@ public final class LegacyGlslConverter {
     }
 
     /**
-     * Drops functions the vertex main never reaches so dead library code
-     * cannot ghost-reference samplers or uniforms into the feature checks.
-     * Best-effort: an unanalyzable source keeps its dead code and fails
-     * loudly downstream instead of being rewritten on a guess.
+     * Drops functions a stage's main never reaches, as GL compiles them away, so dead
+     * library code cannot ghost-reference samplers, images or uniforms into the feature
+     * checks. Best-effort: an unanalyzable source keeps its dead code and fails loudly
+     * downstream instead of being rewritten on a guess.
      */
-    static String pruneUnreachableVertexFunctions(String src) {
+    static String pruneUnreachableFunctions(String src) {
         try {
             GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(src);
             if (!usage.successful()) {

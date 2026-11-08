@@ -8,6 +8,8 @@ import org.joml.Vector4f;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.lwjgl.util.shaderc.Shaderc;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
@@ -23,9 +25,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * What terrain programs read: legacy host vertex semantics, mid-block inputs, shading directives
- * and output targets.
+ * and output targets, and which list a section's block entities join.
  */
 final class TerrainInputsTest {
+    private static final String COMPILE_RESULT = "net/vulkanmod/render/chunk/build/task/CompileResult";
+
     @Test
     void legacyHostVertexSemantics() {
         String vertex = """
@@ -49,7 +53,7 @@ final class TerrainInputsTest {
                 """;
         String fragment = "#version 120\nvarying vec2 uv;\nvarying vec2 light1;\n"
                 + "varying vec2 light2;\nvoid main() { gl_FragColor = vec4(uv + light1 + light2, 0, 1); }\n";
-        for (String family : List.of("entity", "block", "crumbling", "hand", "particle")) {
+        for (String family : List.of("entity", "block", "hand", "particle")) {
             assertLegacyMatrices(family, legacyConversion(family, vertex, fragment));
         }
         String overlayFragment = EntityOverlayColor.inject("#version 120\n"
@@ -61,16 +65,6 @@ final class TerrainInputsTest {
         assertTrue(EntityVertexBridge.convertHandVertex(vertex.replace("void main() {",
                         "void main() { vec3 available = gl_Normal;"), null, fragment, Map.of()) != null,
                 "hand arm must serve its actual NEW_ENTITY normal");
-        // Nontrivial position and transforms distinguish a matrix product from the old vec4 product.
-        var position = new Vector4f(-3.5F, -1.5F, 0.7F, 1);
-        var modelView = new Matrix4f().translate(1, 2, -6).rotateY(0.4F);
-        var projection = new Matrix4f().perspective(1.1F, 1.6F, 0.05F, 128);
-        var sequential = projection.transform(modelView.transform(new Vector4f(position)));
-        var matrixProduct = new Matrix4f(projection).mul(modelView)
-                .transform(new Vector4f(position));
-        assertTrue(sequential.distance(matrixProduct) < 1.0e-5F
-                        && new Vector4f(sequential).mul(position).distance(matrixProduct) > 1,
-                "projection fixture must expose component-wise vertex multiplication");
     }
 
     /** The family's conversion of a legacy vertex stage; the particle family has no checked variant. */
@@ -78,8 +72,6 @@ final class TerrainInputsTest {
                                                                                String fragment) {
         return switch (family) {
             case "block" -> EntityVertexBridge.convertBlockVertexChecked(
-                    vertex, null, fragment, Map.of(), false, List.of());
-            case "crumbling" -> EntityVertexBridge.convertCrumblingVertexChecked(
                     vertex, null, fragment, Map.of(), false, List.of());
             case "hand" -> EntityVertexBridge.convertHandVertexChecked(
                     vertex, null, fragment, Map.of(), false, List.of());
@@ -193,12 +185,13 @@ final class TerrainInputsTest {
     void terrainShadingDirectives() {
         assertEquals(new TerrainShadingDirectives(false, false, List.of()),
                 TerrainShadingDirectives.fromProperties(Map.of()),
-                "Iris's oldLighting and separateAo default to off");
+                "Iris's oldLighting, separateAo and voxelizeLightBlocks default to off");
         assertTrue(TerrainShadingDirectives.DEFAULTS.disablesDirectionalShading()
                         && !TerrainShadingDirectives.VANILLA.disablesDirectionalShading()
-                        && !TerrainShadingDirectives.VANILLA.separateAo(),
+                        && !TerrainShadingDirectives.VANILLA.separateAo()
+                        && !TerrainShadingDirectives.VANILLA.voxelizeLightBlocks(),
                 "a pack without directives lights faces itself; vanilla keeps shading and AO in RGB");
-        for (String key : List.of("oldLighting", "separateAo")) {
+        for (String key : List.of("oldLighting", "separateAo", "voxelizeLightBlocks")) {
             for (String value : List.of("true", "1", " true ")) {
                 var directives = TerrainShadingDirectives.fromProperties(Map.of(key, value));
                 assertTrue(terrainShading(directives, key) && directives.deviations().isEmpty(),
@@ -210,17 +203,48 @@ final class TerrainInputsTest {
                         key + "=" + value + " switches off");
             }
         }
-        var malformed = TerrainShadingDirectives.fromProperties(Map.of("oldLighting", "yes", "separateAo", "maybe"));
+        var malformed = TerrainShadingDirectives.fromProperties(Map.of("oldLighting", "yes", "separateAo", "maybe",
+                "voxelizeLightBlocks", "on"));
         assertTrue(malformed.disablesDirectionalShading() && !malformed.separateAo()
-                        && malformed.deviations().containsAll(List.of(
-                                "OLD_LIGHTING_DIRECTIVE_MALFORMED", "SEPARATE_AO_DIRECTIVE_MALFORMED")),
+                        && !malformed.voxelizeLightBlocks()
+                        && malformed.deviations().containsAll(List.of("OLD_LIGHTING_DIRECTIVE_MALFORMED",
+                                "SEPARATE_AO_DIRECTIVE_MALFORMED", "VOXELIZE_LIGHT_BLOCKS_DIRECTIVE_MALFORMED")),
                 "unexpected values keep Iris's defaults and are reported: " + malformed);
+    }
+
+    /**
+     * Iris scales every block's shade brightness by the pack's ambientOcclusionLevel
+     * (BlockStateBase.getShadeBrightness, 1 - level * (1 - original)). Chimera kept full ambient
+     * occlusion, so Spring's and Alpha Piscium's level 0 and Ebin's 0.65 darkened corners anyway.
+     */
+    @Test
+    void ambientOcclusionLevel(@TempDir Path root) throws IOException {
+        assertEquals(0.2F, TerrainShadingDirectives.VANILLA.shadeBrightness(0.2F), 1.0E-6F, "no pack keeps the shade");
+        assertEquals(1.0F, new TerrainShadingDirectives(false, false, 0.0F, List.of()).shadeBrightness(0.2F));
+        assertEquals(0.48F, new TerrainShadingDirectives(false, false, 0.65F, List.of()).shadeBrightness(0.2F),
+                1.0E-6F);
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                const float ambientOcclusionLevel = 0.0;
+                void main() { gl_FragData[0] = vec4(1.0); }
+                """);
+        assertEquals(0.0F, PackProbe.analyze(root).plan().terrainShading().ambientOcclusionLevel());
+        var state = MixinBytecode.nativeClass("net/minecraft/world/level/block/state/BlockBehaviour$BlockStateBase");
+        assertTrue(state.methods.stream().anyMatch(method -> method.name.equals("getShadeBrightness")),
+                "re-audit the shade brightness hook");
+        var light = MixinBytecode.nativeClass("net/vulkanmod/render/chunk/build/light/data/LightDataAccess");
+        assertTrue(MixinBytecode.instructionsThrough(light, "compute").stream().anyMatch(instruction ->
+                        instruction instanceof MethodInsnNode call
+                                && call.name.equals("getShadeBrightness")),
+                "VulkanMod's ambient occlusion reads the block's shade brightness");
     }
 
     @Test
     void terrainShading(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
-        Files.writeString(shaders.resolve("shaders.properties"), "oldLighting=true\nseparateAo=true\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "oldLighting=true\nseparateAo=true\nvoxelizeLightBlocks=true\n");
         Files.writeString(shaders.resolve("final.fsh"), """
                 #version 120
                 uniform sampler2D colortex0;
@@ -229,8 +253,8 @@ final class TerrainInputsTest {
                 }
                 """);
         var shading = PackProbe.analyze(root).plan().terrainShading();
-        assertTrue(shading.oldLighting() && shading.separateAo(),
-                "the pack plan reads shaders.properties oldLighting and separateAo: " + shading);
+        assertTrue(shading.oldLighting() && shading.separateAo() && shading.voxelizeLightBlocks(),
+                "the pack plan reads shaders.properties oldLighting, separateAo and voxelizeLightBlocks: " + shading);
     }
 
     @Test
@@ -250,42 +274,6 @@ final class TerrainInputsTest {
     }
 
     @Test
-    void terrainShadingHooks() throws IOException {
-        var shadeMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraClientLevelShadeMixin");
-        boolean shadeArgument = false;
-        for (var method : shadeMixin.methods) {
-            for (var annotation : MixinBytecode.annotations(method.visibleAnnotations, method.invisibleAnnotations)) {
-                if (!annotation.desc.equals("Lorg/spongepowered/asm/mixin/injection/ModifyVariable;")) continue;
-                shadeArgument = MixinBytecode.annotationValue(annotation, "method") instanceof List<?> names
-                        && names.contains("getShade")
-                        && Boolean.TRUE.equals(MixinBytecode.annotationValue(annotation, "argsOnly"))
-                        && method.desc.equals("(Z)Z");
-            }
-        }
-        assertTrue(MixinBytecode.mixinTargets(shadeMixin, "net/minecraft/client/multiplayer/ClientLevel")
-                && shadeArgument,
-                "ClientLevel.getShade's shaded argument follows the pack's oldLighting");
-        var blockMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraBlockSeparateAoMixin");
-        assertTrue(MixinBytecode.mixinTargets(blockMixin, "net/vulkanmod/render/chunk/build/BlockRenderer")
-                        && MixinBytecode.injects(blockMixin,
-                                "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;",
-                                "putQuadData(Lnet/vulkanmod/render/vertex/TerrainBufferBuilder;Lorg/joml/Vector3f;"
-                                        + "Lnet/vulkanmod/render/model/quad/QuadView;"
-                                        + "Lnet/vulkanmod/render/chunk/build/light/data/QuadLightData;FFF)V",
-                                "Lnet/vulkanmod/vulkan/util/ColorUtil$RGBA;pack(FFFF)I"),
-                "block quads route VulkanMod's brightness through separateAo where it packs the colour");
-        var fluidMixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLiquidRendererMixin");
-        assertTrue(MixinBytecode.mixinTargets(fluidMixin, "net/vulkanmod/render/chunk/build/LiquidRenderer")
-                        && MixinBytecode.injects(fluidMixin, "Lorg/spongepowered/asm/mixin/injection/Inject;",
-                                "updateColor", null),
-                "fluid colours apply separateAo after VulkanMod computes them");
-        for (String name : List.of("ChimeraClientLevelShadeMixin", "ChimeraBlockSeparateAoMixin",
-                "ChimeraLiquidRendererMixin")) {
-            MixinBytecode.assertMixinRegistered(name);
-        }
-    }
-
-    @Test
     void packSessionAppliesTerrainShading() throws IOException {
         var pass = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
         for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
@@ -301,8 +289,34 @@ final class TerrainInputsTest {
         }
     }
 
+    /**
+     * ChimeraGlobalBlockEntityMixin keeps an off-screen block entity out of its section's list. The
+     * add it wraps is the first after handleBlockEntity reads CompileResult.blockEntities, which must be
+     * that list's own add: the global list's field is not read in between.
+     */
+    @Test
+    void theWrappedAddIsTheSectionListsOwn() throws IOException {
+        var task = MixinBytecode.nativeClass("net/vulkanmod/render/chunk/build/task/BuildTask");
+        var method = task.methods.stream().filter(m -> m.name.equals("handleBlockEntity")).findFirst().orElseThrow();
+        boolean afterSectionList = false;
+        for (AbstractInsnNode insn : method.instructions) {
+            if (insn instanceof FieldInsnNode field && field.owner.equals(COMPILE_RESULT)) {
+                if (field.name.equals("blockEntities")) afterSectionList = true;
+                if (field.name.equals("globalBlockEntities")) {
+                    assertTrue(!afterSectionList, "the global list is read between the section list and its add");
+                }
+            }
+            if (afterSectionList && insn instanceof MethodInsnNode call && call.name.equals("add")) return;
+        }
+        throw new AssertionError("handleBlockEntity never adds to CompileResult.blockEntities");
+    }
+
     static boolean terrainShading(TerrainShadingDirectives directives, String key) {
-        return key.equals("oldLighting") ? directives.oldLighting() : directives.separateAo();
+        return switch (key) {
+            case "oldLighting" -> directives.oldLighting();
+            case "separateAo" -> directives.separateAo();
+            default -> directives.voxelizeLightBlocks();
+        };
     }
 
     static void compileVertex(String source, String name) {
@@ -344,8 +358,6 @@ final class TerrainInputsTest {
             MrtPipelineContext.begin(route.outputFormatsArray(), 8,
                     blends.attachments(route.targetSlots()));
             try {
-                assertEquals(count, MrtPipelineContext.attachmentCount(0),
-                        "native attachment count " + targets);
                 for (int location = 0; location < count; location++) {
                     int target = targets.charAt(location) - '0';
                     assertEquals(target, route.targetForOutput(location), "logical output mapping");

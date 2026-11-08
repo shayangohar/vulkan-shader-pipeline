@@ -18,18 +18,18 @@ import java.util.TreeSet;
 public final class PackEngineDefines {
     public static final String IS_IRIS = "IS_IRIS";
     public static final String CUSTOM_IMAGES = "IRIS_FEATURE_CUSTOM_IMAGES";
-    public static final String COMPUTE_SHADER = "COMPUTE_SHADER";
-    public static final String SHADOWCOMP = "SHADOWCOMP";
 
     /**
      * Iris's fixed standard environment (StandardMacros) as Iris 1.8.14 defines it
      * on Minecraft 1.21.1, the one version Chimera targets. Packs branch on these
      * everywhere, {@code MC_VERSION} above all: undefined, it reads as 0 and
-     * selects a pack's pre-1.13 paths. Vendor, mipmap-level and texture-format macros
-     * depend on the live device and options, and IRIS_TAG_SUPPORT promises
-     * block.properties tags Chimera does not read yet; none are defined here.
+     * selects a pack's pre-1.13 paths. The device's macros (PackDeviceMacros) and
+     * MC_MIPMAP_LEVEL join them in {@link #standard()}; texture-format macros are not
+     * defined. IRIS_TAG_SUPPORT promises block.properties tags (PackMaterialResolver).
      */
     private static final Map<String, String> STANDARD = standardMacros();
+    /** Minecraft's default mipmap levels, until a pack load reads the game's option. */
+    private static volatile int mipmapLevel = 4;
 
     private PackEngineDefines() {}
 
@@ -41,6 +41,7 @@ public final class PackEngineDefines {
         result.put("MC_GLSL_VERSION", "460");
         result.put(osMacro(), "1");
         result.put("IRIS_HAS_TRANSLUCENCY_SORTING", "1");
+        result.put("IRIS_TAG_SUPPORT", "2");
         result.put("MC_NORMAL_MAP", "1");
         result.put("MC_SPECULAR_MAP", "1");
         result.put("MC_RENDER_QUALITY", "1.0");
@@ -60,31 +61,31 @@ public final class PackEngineDefines {
         return "MC_OS_UNKNOWN";
     }
 
-    /** The engine's standard macros alone, for sources preprocessed outside a program. */
+    /**
+     * The engine's standard macros with the device's and the mipmap level, alone, for sources
+     * preprocessed outside a program.
+     */
     public static Map<String, String> standard() {
-        return STANDARD;
+        TreeMap<String, String> result = new TreeMap<>(STANDARD);
+        result.put("MC_MIPMAP_LEVEL", Integer.toString(mipmapLevel));
+        result.putAll(PackDeviceMacros.macros(PackDevice.current()));
+        return Collections.unmodifiableMap(result);
+    }
+
+    /** The game's mipmap levels option, which Iris gives packs as MC_MIPMAP_LEVEL. */
+    public static void setMipmapLevel(int levels) {
+        mipmapLevel = levels;
     }
 
     public static Map<String, String> forPack(Map<String, String> packDefines) {
-        return with(packDefines, false, false);
+        return with(packDefines, false);
     }
 
     public static Map<String, String> forCustomImages(Map<String, String> packDefines) {
-        return with(packDefines, true, false);
+        return with(packDefines, true);
     }
 
-    public static Map<String, String> forCompute(
-            Map<String, String> packDefines,
-            boolean customImages
-    ) {
-        return with(packDefines, customImages, true);
-    }
-
-    public static Set<String> lockedNames(
-            Collection<String> packNames,
-            boolean customImages,
-            boolean compute
-    ) {
+    public static Set<String> lockedNames(Collection<String> packNames, boolean customImages) {
         TreeSet<String> result = new TreeSet<>();
         if (packNames != null) {
             packNames.stream()
@@ -92,22 +93,14 @@ public final class PackEngineDefines {
                     .forEach(result::add);
         }
         result.add(IS_IRIS);
-        result.addAll(STANDARD.keySet());
+        result.addAll(standard().keySet());
         if (customImages) {
             result.add(CUSTOM_IMAGES);
-        }
-        if (compute) {
-            result.add(COMPUTE_SHADER);
-            result.add(SHADOWCOMP);
         }
         return Collections.unmodifiableSet(result);
     }
 
-    private static Map<String, String> with(
-            Map<String, String> packDefines,
-            boolean customImages,
-            boolean compute
-    ) {
+    private static Map<String, String> with(Map<String, String> packDefines, boolean customImages) {
         TreeMap<String, String> result = new TreeMap<>();
         if (packDefines != null) {
             packDefines.forEach((name, value) -> {
@@ -118,18 +111,11 @@ public final class PackEngineDefines {
             });
         }
         result.put(IS_IRIS, "1");
-        result.putAll(STANDARD);
+        result.putAll(standard());
         if (customImages) {
             result.put(CUSTOM_IMAGES, "1");
         } else {
             result.remove(CUSTOM_IMAGES);
-        }
-        if (compute) {
-            result.put(COMPUTE_SHADER, "1");
-            result.put(SHADOWCOMP, "1");
-        } else {
-            result.remove(COMPUTE_SHADER);
-            result.remove(SHADOWCOMP);
         }
         return Collections.unmodifiableMap(result);
     }

@@ -14,8 +14,11 @@ import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
+import net.chimera.shaderpack.PackResourcePlan;
+import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
+import net.chimera.shaderpack.TargetSpec;
 import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import org.slf4j.Logger;
@@ -45,7 +48,6 @@ final class PackPipelineInstaller {
     private final PackStorageBufferOwner storage;
     private final PackAdvancedImageOwner advancedImages;
     private final PackResourceOwner resources;
-    private final PackShadowCompute shadowCompute;
 
     /** An installer for the session the pass has loaded. */
     PackPipelineInstaller(ChimeraMainPass pass) {
@@ -57,7 +59,6 @@ final class PackPipelineInstaller {
         this.storage = pass.packStorageBufferOwner;
         this.advancedImages = pass.packAdvancedImageOwner;
         this.resources = pass.packResourceOwner;
-        this.shadowCompute = pass.packShadowCompute;
     }
 
     /**
@@ -77,7 +78,7 @@ final class PackPipelineInstaller {
         for (PackProgram program : pipelinePrograms) {
             String name = program.name();
             PackProgramPlan programPlan = plan == null ? null : plan.program(name);
-            if (authoredCloudDrawsNothing(name, programPlan)) {
+            if (authoredCloudDrawsNothing(name)) {
                 pipelines.cloudsDrawNothing = true;
                 markFamilyPipelineInstalled(name, PackProgramPlan.CLOUD_AUTHORED_NO_OUTPUT);
                 continue;
@@ -102,6 +103,8 @@ final class PackPipelineInstaller {
         if (!advancedImagesAllowed(name, advanced)) {
             return "ADVANCED_RESOURCE_BRIDGE_UNAVAILABLE";
         }
+        String unstorable = unstorableTargetImage(name, advanced);
+        if (unstorable != null) return "TARGET_IMAGE_FORMAT_UNSUPPORTED:" + unstorable;
         boolean storageAllowed = plan == null
                 || !advanced.bufferDependentPrograms().contains(name)
                 || (storage != null && storage.programAvailable(name));
@@ -111,6 +114,23 @@ final class PackPipelineInstaller {
         }
         if (resources != null && !resources.programAvailable(name)) {
             return resources.failureDeviationForProgram(name);
+        }
+        return null;
+    }
+
+    /**
+     * The first colorimgN the program stores to whose target this device cannot make a storage
+     * image, in the target's format or the one the program binds it in; null when there is none.
+     * A pass compute's such binding is refused the same way (PackPassComputes.bindingRefusal).
+     */
+    private String unstorableTargetImage(String name, PackAdvancedResourcePlan advanced) {
+        for (PackAdvancedResourcePlan.GraphicsImageBinding binding : advanced.graphicsImages(name)) {
+            if (binding.target() < 0) continue;
+            TargetSpec target = pass.packTargetGraph == null ? null : pass.packTargetGraph.target(binding.target());
+            if (target == null || !PackPassComputes.storageSupported(target.format())
+                    || !PackPassComputes.storageSupported(binding.viewVkFormat())) {
+                return binding.symbol();
+            }
         }
         return null;
     }
@@ -131,19 +151,15 @@ final class PackPipelineInstaller {
     }
 
     /**
-     * True unless the program reads advanced images the session cannot serve: it needs the image
-     * owner, its resources, an installed shadowcomp, and either its own producer role or ready producers.
+     * True unless the program reads or writes pack images the session cannot serve: the plan binds
+     * them all and the session created them. As in Iris, it runs whether or not the programs that
+     * write its images do; it reads what the frame's clear left.
      */
     private boolean advancedImagesAllowed(String name, PackAdvancedResourcePlan advanced) {
-        boolean advancedProducer = plan != null && !advanced.graphicsImages(name).isEmpty();
         return plan == null
                 || !advanced.dependentPrograms().contains(name)
-                || (advancedImages != null
-                && advanced.capabilityPossible()
-                && advancedImages.resourcesAvailable()
-                && shadowCompute != null
-                && shadowCompute.isInstalled()
-                && (advancedProducer || advancedImages.producerCandidatesReady()));
+                || (advancedImages != null && advanced.imagesServable(name)
+                && advancedImages.programImagesAvailable(name));
     }
 
     PackAdvancedResourcePlan advancedResources() {
@@ -157,11 +173,11 @@ final class PackPipelineInstaller {
     /** Installs one admitted program's pipelines through its family's installer. */
     void installProgram(PackProgram program, PackProgramPlan programPlan, String fixedVertex) {
         String name = program.name();
-        if (name.equals("shadow")) {
+        if (FamilyAdapterRegistry.isShadowTerrain(name)) {
             installShadow(name, programPlan);
         } else if (FamilyAdapterRegistry.isShadowEntityFamily(name)) {
             installShadowEntities(name, programPlan);
-        } else if (PostTargetPlan.isPostProgramName(name)) {
+        } else if (PostTargetPlan.isFullscreenProgramName(name)) {
             installPost(name, programPlan, fixedVertex);
         } else if (name.equals("gbuffers_terrain")) {
             installTerrain(program, name, programPlan);
@@ -177,7 +193,7 @@ final class PackPipelineInstaller {
     }
 
     /**
-     * Installs an entity, block, hand, particle or host-layout program; an exact program name
+     * Installs an entity, block, hand, particle, beacon-beam or host-layout program; an exact program name
      * takes its own installer before the family it belongs to.
      */
     void installFamilyProgram(String name, PackProgramPlan programPlan) {
@@ -197,6 +213,8 @@ final class PackPipelineInstaller {
             installParticles(name, programPlan);
         } else if (FamilyAdapterRegistry.isParticleLike(name)) {
             installTranslucentParticles(name, programPlan);
+        } else if (name.equals("gbuffers_beaconbeam")) {
+            installBeaconBeam(name, programPlan);
         } else if (!HostLayoutLane.forProgram(name).isEmpty()) {
             installHostLayoutLanes(name, programPlan);
         } else {
@@ -204,7 +222,10 @@ final class PackPipelineInstaller {
         }
     }
 
-    /** The shadow terrain program, on the pack-wide terrain format. */
+    /**
+     * The shadow terrain program, shadow_cutout for its cutout layers or shadow_water for its
+     * translucent layer, on the pack-wide terrain format.
+     */
     void installShadow(String name, PackProgramPlan programPlan) {
         PackPipelines.PackShadow shadow = PackPipelines.buildShadow(programPlan,
                 terrainMaterial(),
@@ -218,18 +239,17 @@ final class PackPipelineInstaller {
             LOGGER.warn("[chimera] pack shadow: fallback=IDENTITY (build failed)");
             return;
         }
-        pipelines.shadowPipeline = shadow.pipeline();
-        pipelines.shadowSlots = shadow.samplerSlots();
         if (!attachPackStoragePipeline(name, shadow.pipeline(), shadow.imageBindings())) {
             shadow.pipeline().cleanUp();
-            pipelines.shadowPipeline = null;
             return;
         }
-        if (advancedImages != null) {
-            // The producer must be available before its terrain
-            // consumer can build. Runtime use remains gated by the
-            // committed producer set and usePackShadowRuntime().
-            advancedImages.markGraphicsProducerCandidate(name);
+        if (name.equals("shadow_water")) {
+            pipelines.shadowWaterPipeline = shadow.pipeline();
+        } else if (name.equals("shadow_cutout")) {
+            pipelines.shadowCutoutPipeline = shadow.pipeline();
+        } else {
+            pipelines.shadowPipeline = shadow.pipeline();
+            pipelines.shadowSlots = shadow.samplerSlots();
         }
         if (report != null) {
             report.markRuntime(name,
@@ -238,8 +258,7 @@ final class PackPipelineInstaller {
         if (storage != null) {
             storage.markPipelineInstalled(name);
         }
-        LOGGER.info("[chimera] pack shadow: ok (samplers={})",
-                Arrays.toString(shadow.samplerSlots()));
+        LOGGER.info("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(shadow.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack shadow converted fragment:\n{}", shadow.convertedFragment());
         }
@@ -270,10 +289,13 @@ final class PackPipelineInstaller {
         markFamilyPipelineInstalled(name, "SHADOW_ENTITY_PIPELINE_INSTALLED");
     }
 
-    /** A post program; composite and final are also kept for the resolve and present seams. */
+    /**
+     * A fullscreen program: a post stage, or a shadowcomp pass over the shadowcolor targets;
+     * composite and final are also kept for the resolve and present seams.
+     */
     void installPost(String name, PackProgramPlan programPlan, String fixedVertex) {
         PackPipelines.PackPost post = PackPipelines.buildPost(programPlan, fixedVertex,
-                advancedResources(), storage);
+                plan == null ? PackResourcePlan.empty() : plan.resources(), advancedResources(), storage);
         if (post == null) {
             if (report != null) {
                 report.markRuntime(name,
@@ -287,7 +309,7 @@ final class PackPipelineInstaller {
             post.pipeline().cleanUp();
             return;
         }
-        pipelines.postStages.add(post);
+        (PassComputePlan.isShadowcomp(name) ? pipelines.shadowcompStages : pipelines.postStages).add(post);
         if (name.equals("composite")) {
             pipelines.compositePipeline = post.pipeline();
             pipelines.compositeSlots = post.samplerSlots();
@@ -334,16 +356,11 @@ final class PackPipelineInstaller {
         }
         pipelines.terrainRoute = terrain;
         pipelines.terrainPipeline = terrain.pipeline();
-        pipelines.terrainSlots = terrain.samplerSlots();
         if (!attachPackStoragePipeline(name, terrain.pipeline(), terrain.imageBindings())) {
             terrain.pipeline().cleanUp();
             pipelines.terrainRoute = null;
             pipelines.terrainPipeline = null;
-            pipelines.terrainSlots = null;
             return;
-        }
-        if (advancedImages != null) {
-            advancedImages.commitGraphicsProducer("shadow");
         }
         ChimeraTerrainPipelines.setGeometryOverride(terrain.pipeline());
         if (report != null) {
@@ -378,17 +395,11 @@ final class PackPipelineInstaller {
         }
         pipelines.waterRoute = water;
         pipelines.waterPipeline = water.pipeline();
-        pipelines.waterSlots = water.samplerSlots();
         if (!attachPackStoragePipeline(name, water.pipeline(), water.imageBindings())) {
             water.pipeline().cleanUp();
             pipelines.waterRoute = null;
             pipelines.waterPipeline = null;
-            pipelines.waterSlots = null;
             return;
-        }
-        if (advancedImages != null) {
-            advancedImages.markGraphicsProducerCandidate(name);
-            advancedImages.commitGraphicsProducer(name);
         }
         ChimeraTerrainPipelines.setTranslucentOverride(water.pipeline());
         if (report != null) {
@@ -593,9 +604,9 @@ final class PackPipelineInstaller {
         markFamilyPipelineInstalled(name, "BLOCK_TRANSLUCENT_INSTALLED");
     }
 
-    /** gbuffers_damagedblock on the host block format. */
+    /** gbuffers_damagedblock on the crumbling overlay's widened block layout. */
     void installDamagedBlock(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity damaged = PackFamilyPipelines.buildEntityFamily(programPlan,
+        PackPipelines.PackEntity damaged = PackFamilyPipelines.buildDamagedBlock(programPlan,
                 advancedResources(), storage);
         if (damaged == null) {
             markFamilyPipelineFallback(name, "DAMAGED_BLOCK_PIPELINE_BUILD_FAILED");
@@ -606,7 +617,23 @@ final class PackPipelineInstaller {
             return;
         }
         pipelines.damagedBlock = damaged;
-        markFamilyPipelineInstalled(name, "DAMAGED_BLOCK_HOST_FORMAT_INSTALLED");
+        markFamilyPipelineInstalled(name, "DAMAGED_BLOCK_INSTALLED");
+    }
+
+    /** gbuffers_beaconbeam on the beam's block layout, widened as Iris widens it to TERRAIN. */
+    void installBeaconBeam(String name, PackProgramPlan programPlan) {
+        PackPipelines.PackParticle beam = PackFamilyPipelines.buildHostLayout(programPlan,
+                advancedResources(), storage);
+        if (beam == null) {
+            markFamilyPipelineFallback(name, "BEACON_BEAM_PIPELINE_BUILD_FAILED");
+            return;
+        }
+        if (!attachPackStoragePipeline(name, beam.pipeline(), beam.imageBindings())) {
+            beam.pipeline().cleanUp();
+            return;
+        }
+        pipelines.beaconBeam = beam;
+        markFamilyPipelineInstalled(name, "BEACON_BEAM_PIPELINE_INSTALLED");
     }
 
     /** gbuffers_hand or gbuffers_hand_water, one pipeline per native hand mesh shape. */
@@ -705,12 +732,8 @@ final class PackPipelineInstaller {
     }
 
     /** The pack's own resolved cloud program is active and provably draws nothing. */
-    boolean authoredCloudDrawsNothing(String name, PackProgramPlan programPlan) {
-        return programPlan != null && programPlan.cloudDrawsNothing()
-                && plan != null
-                && !plan.isProgramDisabled(name)
-                && !plan.isProgramAlias(name)
-                && plan.resources().programAllowed(name);
+    boolean authoredCloudDrawsNothing(String name) {
+        return plan != null && plan.cloudRunsEmpty(name);
     }
 
     /**

@@ -17,6 +17,9 @@ import java.util.stream.Collectors;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_ALL_GRAPHICS;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_GEOMETRY_BIT;
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
 
 /**
@@ -27,6 +30,8 @@ final class PackDescriptorContracts {
     /** Stages whose layout comes from a pipeline JSON; every other stage has a guarded family contract. */
     private static final Set<UniformRegistry.Stage> PIPELINE_JSON_STAGES = Set.of(UniformRegistry.Stage.SHADOW,
             UniformRegistry.Stage.GEOMETRY, UniformRegistry.Stage.TRANSLUCENT, UniformRegistry.Stage.POST);
+    private static final int TESSELLATION_STAGES = VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT
+            | VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
 
     private PackDescriptorContracts() {}
 
@@ -63,13 +68,29 @@ final class PackDescriptorContracts {
         int[] slots = ordinarySamplerSlots(iface, stage, advancedSamplerNames);
         for (int slot : slots) PackPipelines.requireSelector(slot);
         PackDescriptorLayout layout = PIPELINE_JSON_STAGES.contains(stage)
-                ? pipelineJsonLayout(stage, iface, slots) : familyLayout(plan, stage, iface, slots);
+                ? pipelineJsonLayout(stage, iface, slots, hostBlockStages(plan))
+                : familyLayout(plan, stage, iface, slots);
         return new OrdinaryDescriptorContract(layout, ordinaryResources(layout, iface));
     }
 
-    /** A shadow, terrain, water or post layout: its pipeline JSON's blocks, the pack's uniforms, then samplers. */
+    /**
+     * The stages between the vertex and fragment stages that every host block of a pipeline JSON
+     * layout reaches: a tessellated program's evaluation stage reads the host's view block
+     * (TessellationStageBridge), and so does a terrain geometry stage that declares it
+     * (GeometryStageBridge.convertWorld).
+     */
+    private static int hostBlockStages(PackProgramPlan plan) {
+        return (plan.betweenStages().tessellated() ? TESSELLATION_STAGES : 0)
+                | declaring(plan.convertedGeometry(), "uniform ViewUBO", VK_SHADER_STAGE_GEOMETRY_BIT);
+    }
+
+    /**
+     * A shadow, terrain, water or post layout: its pipeline JSON's blocks, the pack's uniforms, then
+     * samplers. Every host block also reaches {@code betweenStages} (hostBlockStages).
+     */
     private static PackDescriptorLayout pipelineJsonLayout(UniformRegistry.Stage stage,
-                                                           UniformRegistry.ProgramInterface iface, int[] slots) {
+                                                           UniformRegistry.ProgramInterface iface, int[] slots,
+                                                           int betweenStages) {
         PackDescriptorLayout layout;
         if (stage == UniformRegistry.Stage.POST) {
             // A post program's only block is the pack's uniforms, at binding 0, and it pushes nothing.
@@ -78,7 +99,10 @@ final class PackDescriptorContracts {
         } else {
             PackDescriptorLayout host = PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson(
                     stage == UniformRegistry.Stage.SHADOW ? "chimera_shadow.json" : "chimera_terrain.json"));
-            List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(host.uniformBlocks());
+            List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(host.uniformBlocks().stream()
+                    .map(block -> betweenStages == 0 ? block : new PackDescriptorLayout.UniformBlock(
+                            block.binding(), block.stages() | betweenStages, block.size(), block.fields()))
+                    .toList());
             blocks.addAll(packUniformBlock(iface, host.bindingAfterBlocks(), VK_SHADER_STAGE_ALL_GRAPHICS));
             layout = new PackDescriptorLayout(blocks, List.of(), host.pushConstants());
         }
@@ -102,39 +126,68 @@ final class PackDescriptorContracts {
     static List<PackDescriptorLayout.ImageSlot> samplerImages(int base, int[] slots) {
         List<PackDescriptorLayout.ImageSlot> images = new ArrayList<>();
         for (int index = 0; index < slots.length; index++) images.add(new PackDescriptorLayout.ImageSlot(
-                base + index, "sampler2D", "Sampler" + slots[index], slots[index]));
+                base + index, "sampler2D", "Sampler" + slots[index], slots[index], samplerAccess(slots[index])));
         return images;
+    }
+
+    /**
+     * The centre-depth slot holds iris_centerDepthSmooth, a storage image its compute kernel keeps in
+     * the general layout (PackCenterDepth), so it is sampled there as the pack's own images are. A
+     * shader-read descriptor made VulkanMod transition it from GENERAL, which its helper rejects
+     * ("Unexpected value:1"), and the first depth-of-field frame dropped the whole pack to vanilla.
+     */
+    static PackDescriptorLayout.ImageAccess samplerAccess(int slot) {
+        return slot == SelectorNamespace.CENTER_DEPTH_SLOT
+                ? PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL : PackDescriptorLayout.ImageAccess.SAMPLED;
     }
 
     /** A family layout: the host transform blocks, the pack's uniform block, then samplers. */
     private static PackDescriptorLayout familyLayout(PackProgramPlan plan, UniformRegistry.Stage stage,
                                                      UniformRegistry.ProgramInterface iface, int[] slots) {
+        // A hand's tessellation or geometry stages read the draw's matrices from the same host blocks.
         List<PackDescriptorLayout.UniformBlock> blocks = new ArrayList<>(List.of(
                 new PackDescriptorLayout.UniformBlock(UniformRegistry.DYNAMIC_TRANSFORMS_BINDING,
-                        VK_SHADER_STAGE_VERTEX_BIT, 0, List.of(
+                        VK_SHADER_STAGE_VERTEX_BIT | betweenStages(plan, "uniform DynamicTransforms"), 0, List.of(
                         new PackDescriptorLayout.Field("mat4", "ModelViewMat"),
                         new PackDescriptorLayout.Field("vec4", "ColorModulator"),
                         new PackDescriptorLayout.Field("float", "LineWidth"),
                         new PackDescriptorLayout.Field("mat4", "TextureMat"))),
                 new PackDescriptorLayout.UniformBlock(UniformRegistry.PROJECTION_BINDING,
-                        VK_SHADER_STAGE_VERTEX_BIT, 0, List.of(new PackDescriptorLayout.Field("mat4", "ProjMat")))));
+                        VK_SHADER_STAGE_VERTEX_BIT | betweenStages(plan, "uniform Projection"), 0,
+                        List.of(new PackDescriptorLayout.Field("mat4", "ProjMat")))));
         boolean sky = stage == UniformRegistry.Stage.SKY || stage == UniformRegistry.Stage.CLOUD;
         if (!iface.executableUniforms().isEmpty()) {
-            // Entity-family vertex shaders may declare the same pack
-            // uniform block the fragment uses (live cameraPosition; a
-            // shadow vertex reads its shadow matrices). The buffer is
-            // shared, so the binding must be visible to both stages
-            // whenever the converted vertex actually declares it.
-            boolean vertexUniforms = plan.convertedVertex() != null && plan.convertedVertex()
-                    .contains("layout(binding = 2) uniform ");
-            blocks.addAll(packUniformBlock(iface, 2, vertexUniforms
-                    ? VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT
-                    : VK_SHADER_STAGE_FRAGMENT_BIT));
+            // Entity-family vertex, tessellation and geometry stages may
+            // declare the same pack uniform block the fragment uses (live
+            // cameraPosition; a shadow stage reads its shadow matrices).
+            // The buffer is shared, so the binding must be visible to
+            // every stage whose converted source actually declares it.
+            blocks.addAll(packUniformBlock(iface, 2, VK_SHADER_STAGE_FRAGMENT_BIT
+                    | declaringStage(plan.convertedVertex(), VK_SHADER_STAGE_VERTEX_BIT)
+                    | declaringStage(plan.convertedTessControl(), VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT)
+                    | declaringStage(plan.convertedTessEvaluation(), VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT)
+                    | declaringStage(plan.convertedGeometry(), VK_SHADER_STAGE_GEOMETRY_BIT)));
         } else if (sky) {
             blocks.add(new PackDescriptorLayout.UniformBlock(2, VK_SHADER_STAGE_FRAGMENT_BIT, 16, List.of()));
         }
         int base = sky || !iface.executableUniforms().isEmpty() ? 3 : 2;
         return new PackDescriptorLayout(blocks, samplerImages(base, slots), null);
+    }
+
+    /** {@code stage} when the converted {@code source} declares the family's pack uniform block; none otherwise. */
+    private static int declaringStage(String source, int stage) {
+        return declaring(source, "layout(binding = 2) uniform ", stage);
+    }
+
+    /** The stages between the vertex and fragment stages whose converted source declares {@code block}. */
+    private static int betweenStages(PackProgramPlan plan, String block) {
+        return declaring(plan.convertedTessControl(), block, VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT)
+                | declaring(plan.convertedTessEvaluation(), block, VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT)
+                | declaring(plan.convertedGeometry(), block, VK_SHADER_STAGE_GEOMETRY_BIT);
+    }
+
+    private static int declaring(String source, String declaration, int stage) {
+        return source != null && source.contains(declaration) ? stage : 0;
     }
 
     static ProgramImageBindingManifest legacyImageBindings(PackDescriptorLayout layout,
@@ -193,8 +246,8 @@ final class PackDescriptorContracts {
 
     static UniformRegistry.Stage stageForProgram(String name) {
         if (name == null) return UniformRegistry.Stage.ENTITY;
-        if (PostTargetPlan.isPostProgramName(name)) return UniformRegistry.Stage.POST;
-        if (name.equals("shadow")) return UniformRegistry.Stage.SHADOW;
+        if (PostTargetPlan.isFullscreenProgramName(name)) return UniformRegistry.Stage.POST;
+        if (FamilyAdapterRegistry.isShadowTerrain(name)) return UniformRegistry.Stage.SHADOW;
         // shadow_entities and the host-layout shadow lanes share the entity-layout shadow descriptors.
         if (FamilyAdapterRegistry.stageFor(name) == UniformRegistry.Stage.SHADOW_ENTITY) {
             return UniformRegistry.Stage.SHADOW_ENTITY;
@@ -230,9 +283,9 @@ final class PackDescriptorContracts {
         }
         List<PackDescriptorLayout.ImageSlot> images = new ArrayList<>();
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding : layout.storageImages()) {
-            images.add(new PackDescriptorLayout.ImageSlot(layout.imageBase() + images.size(), "image3D",
+            images.add(new PackDescriptorLayout.ImageSlot(layout.imageBase() + images.size(), binding.glslType(),
                     "Sampler" + binding.selectorSlot(), binding.selectorSlot(),
-                    PackDescriptorLayout.ImageAccess.STORAGE));
+                    PackDescriptorLayout.ImageAccess.STORAGE, binding.viewVkFormat()));
         }
         int samplerIndex = 0;
         for (PackAdvancedResourcePlan.GraphicsImageBinding binding : layout.advancedSamplers()) {
@@ -257,8 +310,10 @@ final class PackDescriptorContracts {
         List<PackAdvancedResourcePlan.GraphicsImageBinding> bindings = layout.storageImages();
         List<PackAdvancedResourcePlan.GraphicsImageBinding> readers = layout.advancedSamplers();
         if (bindings.isEmpty() && readers.isEmpty()) {
-            if (PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(source).find()) {
-                throw new PackPipelines.PreparationFailure("resource-rewrite", "STORAGE_IMAGE_UNPLANNED");
+            Matcher declaration = PackPipelines.STORAGE_IMAGE_DECLARATION.matcher(source);
+            if (declaration.find()) {
+                throw new PackPipelines.PreparationFailure("resource-rewrite",
+                        "STORAGE_IMAGE_UNPLANNED:" + declaration.group(2));
             }
             return source;
         }
@@ -352,8 +407,13 @@ final class PackDescriptorContracts {
     }
 
     /** The admitted image a storage binding writes; an unsupported one fails the rewrite. */
+    /**
+     * The pack image a storage binding names; null for a colour target's colorimgN, whose binding
+     * carries the format it is declared in (GraphicsImageScan.addTargetWriter).
+     */
     private static PackAdvancedResourcePlan.ImageSpec supportedImage(
             PackAdvancedResourcePlan advancedResources, PackAdvancedResourcePlan.GraphicsImageBinding binding) {
+        if (binding.target() >= 0) return null;
         PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
                 .get(binding.imageName());
         if (spec == null || !spec.supported()) throw new PackPipelines.PreparationFailure(
@@ -363,7 +423,8 @@ final class PackDescriptorContracts {
 
     private static String imageDeclaration(PackAdvancedResourcePlan.ImageSpec spec,
                                            PackAdvancedResourcePlan.GraphicsImageBinding binding, int descriptor) {
-        return "layout(" + spec.internalFormat() + ", binding = " + descriptor + ") uniform " + binding.glslType()
+        String format = binding.viewFormat().isEmpty() ? spec.layoutQualifier() : binding.viewFormat();
+        return "layout(" + format + ", binding = " + descriptor + ") uniform " + binding.glslType()
                 + " " + binding.symbol() + ";";
     }
 
@@ -392,8 +453,9 @@ final class PackDescriptorContracts {
             PackAdvancedResourcePlan.DescriptorBinding descriptor = layout.ordinaryDescriptors().stream()
                     .filter(value -> value.identity().equals("resource:" + sampler.slot() + ":1"))
                     .findFirst().orElse(null);
-            if (descriptor == null || !hasSamplerDeclaration(rewritten, sourceName)) continue;
-            rewritten = rewriteSamplerDeclaration(rewritten, sourceName, descriptor.binding());
+            // The converters' own matcher: every bindable sampler type, 1D and integer ones included.
+            if (descriptor == null || !FragmentConverter.hasSamplerDeclaration(rewritten, sourceName)) continue;
+            rewritten = FragmentConverter.rewriteSamplerDeclaration(rewritten, sourceName, descriptor.binding());
         }
         return rewritten;
     }
@@ -401,25 +463,6 @@ final class PackDescriptorContracts {
     static String sourceSamplerName(UniformRegistry.Stage stage, String name) {
         return stage != UniformRegistry.Stage.POST && "texture".equals(name)
                 ? "chimeraTexture" : name;
-    }
-
-    static boolean hasSamplerDeclaration(String source, String name) {
-        Matcher matcher = PackPipelines.SAMPLER_DECLARATION.matcher(source == null ? "" : source);
-        while (matcher.find()) {
-            if (matcher.group(2).equals(name)) return true;
-        }
-        return false;
-    }
-
-    static String rewriteSamplerDeclaration(String source, String name, int binding) {
-        Matcher matcher = PackPipelines.SAMPLER_DECLARATION.matcher(source == null ? "" : source);
-        while (matcher.find()) {
-            if (!matcher.group(2).equals(name)) continue;
-            String replacement = "layout(binding = " + binding + ") uniform "
-                    + matcher.group(1) + " " + name + ";";
-            return source.substring(0, matcher.start()) + replacement + source.substring(matcher.end());
-        }
-        return source;
     }
 
     static Set<String> advancedSamplerNames(
@@ -436,10 +479,17 @@ final class PackDescriptorContracts {
     static void verifyAdvancedLayout(PackDescriptorLayout layout, String program,
             PackAdvancedResourcePlan resources, String vertex, String fragment,
             PackStorageBufferOwner owner) {
+        verifyAdvancedLayout(layout, program, resources, vertex, BetweenStages.NONE, fragment, owner);
+    }
+
+    /** The same over every stage the program runs, the stages {@code between} its vertex and fragment included. */
+    static void verifyAdvancedLayout(PackDescriptorLayout layout, String program,
+            PackAdvancedResourcePlan resources, String vertex, BetweenStages between, String fragment,
+            PackStorageBufferOwner owner) {
         List<PackAdvancedResourcePlan.DescriptorBinding> descriptors = layout.descriptorBindings();
         String mismatch = owner == null ? PackAdvancedResourcePlan.layoutMismatch(
-                resources.bindingLayout(program), vertex, fragment, descriptors)
-                : owner.verifyLayout(program, vertex, fragment, descriptors);
+                resources.bindingLayout(program), vertex, between, fragment, descriptors)
+                : owner.verifyLayout(program, vertex, between, fragment, descriptors);
         if (mismatch != null) throw new PackPipelines.PreparationFailure("descriptor-contract", mismatch);
     }
 
@@ -449,10 +499,7 @@ final class PackDescriptorContracts {
     ) {
         PackAdvancedResourcePlan.ImageSpec spec = advancedResources.images()
                 .get(binding.imageName());
-        if (spec != null && (spec.internalFormat().equalsIgnoreCase("r8ui")
-                || spec.internalFormat().equalsIgnoreCase("r16ui"))) {
-            return "usampler3D";
-        }
-        return "sampler3D";
+        return spec == null || spec.format() == null ? "sampler3D"
+                : spec.samplerType();
     }
 }

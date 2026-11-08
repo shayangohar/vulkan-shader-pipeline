@@ -261,12 +261,9 @@ final class OptionSweepTest {
                 if (report != null && report.deviations().contains("MISSING_FRAGMENT_SOURCE")) continue;
                 rejected.put(program, PackCompileTest.rejectionReasons(analysis, program));
             }
-            // shadowcomp and the other advanced computes are planned apart from the program list.
-            var advanced = analysis.plan() == null ? null : analysis.plan().advancedResources();
-            if (advanced != null) {
-                advanced.computeStages().forEach((name, spec) -> {
-                    if (!spec.supported()) rejected.put(name, spec.deviations());
-                });
+            // The pass computes, shadowcomp.csh included, are planned apart from the program list.
+            for (var compute : analysis.passComputes().computes()) {
+                if (!compute.supported()) rejected.put(compute.name(), compute.deviations());
             }
             SortedSet<String> failures = new TreeSet<>();
             for (String failure : PackCompileTest.run(pack, loaded.shadersDir(), analysis).failures()) {

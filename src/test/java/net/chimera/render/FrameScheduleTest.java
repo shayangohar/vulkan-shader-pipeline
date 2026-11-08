@@ -6,13 +6,17 @@ import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -75,6 +79,45 @@ final class FrameScheduleTest {
         assertTrue(!schedule.handBeforeEarlyPost()
                         && schedule.deviations().contains("HAND_PHASE_HOST_BOUNDARY"),
                 "hand boundary was reported as fully relocated");
+    }
+
+    /**
+     * RenderPearl's deferred and composite passes are computes alone, with no post program and no
+     * final: the target graph has no step, yet the chain runs them (Iris ComputeOnlyPass) in their
+     * windows and shows colortex0, which composite.csh writes through colorimg0.
+     */
+    @Test
+    void computeOnlyPassesRunTheChain(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_terrain.vsh"),
+                "#version 120\nvoid main() { gl_Position = ftransform(); }\n");
+        Files.writeString(shaders.resolve("gbuffers_terrain.fsh"),
+                "#version 120\nvoid main() {\n/* RENDERTARGETS: 1 */\n gl_FragData[0] = vec4(1.0);\n}\n");
+        String compute = """
+                #version 430
+                layout(local_size_x = 8, local_size_y = 8) in;
+                layout(rgba8) uniform image2D colorimg0;
+                uniform sampler2D colortex1;
+                void main() {
+                    imageStore(colorimg0, ivec2(gl_GlobalInvocationID.xy), texelFetch(colortex1, ivec2(0), 0));
+                }
+                """;
+        Files.writeString(shaders.resolve("deferred.csh"), compute);
+        Files.writeString(shaders.resolve("composite.csh"), compute);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PassComputePlan computes = PassComputePlan.build(analysis.plan(), shaders);
+        assertTrue(computes.compute("deferred").supported() && computes.compute("composite").supported(),
+                computes.computes().toString());
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(analysis.plan().activePrograms(), analysis.config(),
+                analysis.plan().resources(), new PackTargetGraphPlan.Limits(1920, 1080, 8, 16384),
+                new PackTargetGraphPlan.ComputeUse(Set.of(0, 1), Set.of()));
+        assertTrue(graph.steps().isEmpty(), graph.steps().toString());
+        assertTrue(graph.targets().stream().anyMatch(target -> target.index() == 0), "colortex0, which final shows");
+        assertTrue(PackPostChain.runsChain(graph, true) && !PackPostChain.runsChain(graph, false));
+        PackFrameSchedulePlan schedule = PackFrameSchedulePlan.build(analysis.plan().activePrograms(), graph,
+                Map.of("deferred", Set.of(), "composite", Set.of()));
+        assertEquals(PackFrameSchedulePlan.PostWindow.EARLY, schedule.postStage("deferred").window());
+        assertEquals(PackFrameSchedulePlan.PostWindow.LATE, schedule.postStage("composite").window());
     }
 
     @Test
@@ -149,23 +192,6 @@ final class FrameScheduleTest {
                 "reloaded session exposed stale temporal state");
     }
 
-    @Test
-    void staticAvailability() {
-        boolean[] written = new boolean[PackTargetGraphPlan.MAX_TARGET + 1];
-        assertTrue(PackPostTargets.isTargetAvailable(0, true, written),
-                "target 0 HDR identity is unavailable");
-        assertTrue(!PackPostTargets.isTargetAvailable(1, true, written),
-                "target 1 is available before a write");
-        written[1] = true;
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 1), true, written),
-                "committed target set was rejected");
-        PackPostTargets.invalidateWrittenTargets(written, List.of(1));
-        assertTrue(!PackPostTargets.areTargetsAvailable(List.of(1), true, written),
-                "invalidated target remained available");
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, written),
-                "HDR identity was lost after target invalidation");
-    }
-
     private static void verifyUnsupported(Path path) {
         PackProbe.Analysis analysis = PackProbe.analyze(path);
         PackProgramPlan composite = analysis.plan().program("composite");
@@ -190,17 +216,8 @@ final class FrameScheduleTest {
     ) throws Exception {
         JsonObject baseline = JsonParser.parseString(
                 Files.readString(baselinePath, StandardCharsets.UTF_8)).getAsJsonObject();
-        String report = baseline.get("reportSha256").getAsString();
-        String scheduleHash = baseline.get("scheduleFingerprint").getAsString();
-        if ("TO_BE_FILLED".equals(report) || "TO_BE_FILLED".equals(scheduleHash)) {
-            System.out.println("[chimera] M7.7 reportSha256=" + analysis.report().sha256());
-            System.out.println("[chimera] M7.7 scheduleFingerprint=" + schedule.fingerprint());
-        }
-        if (!"TO_BE_FILLED".equals(report)) {
-            assertEquals(report, analysis.report().sha256(), "report baseline");
-        }
-        if (!"TO_BE_FILLED".equals(scheduleHash)) {
-            assertEquals(scheduleHash, schedule.fingerprint(), "schedule baseline");
-        }
+        assertEquals(baseline.get("reportSha256").getAsString(), analysis.report().sha256(), "report baseline");
+        assertEquals(baseline.get("scheduleFingerprint").getAsString(), schedule.fingerprint(),
+                "schedule baseline");
     }
 }

@@ -101,20 +101,24 @@ final class MainPassTargets {
         ChimeraRasterOrientation.markGlOriented(this.hdrAuxRenderPass);
         ChimeraRasterOrientation.markGlOriented(this.hdrAuxClearDepthRenderPass);
 
+        // Output depth is stored for the same reason: the hand and the GUI split
+        // the output pass many times (rebindMainTarget), each resuming with a
+        // depth load. A DONT_CARE store left every GUI draw after a split testing
+        // against discarded depth; NVIDIA keeps it, other drivers need not.
         b = RenderPass.builder(this.compositeFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
         this.compositeRenderPass = b.build();
 
         b = RenderPass.builder(this.compositeFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.compositeAuxRenderPass = b.build();
 
         b = RenderPass.builder(this.compositeFramebuffer);
         b.getColorAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE);
-        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE);
+        b.getDepthAttachmentInfo().setOps(VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE);
         b.getColorAttachmentInfo().setFinalLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         this.compositeAuxClearDepthRenderPass = b.build();
 

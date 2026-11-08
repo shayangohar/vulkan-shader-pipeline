@@ -1,6 +1,7 @@
 package net.chimera.render.shader;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.MeshData;
 import net.chimera.render.shader.ChimeraEntityBridge.Family;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.minecraft.client.renderer.RenderType;
@@ -21,6 +22,8 @@ public final class FamilyRenderType extends RenderType {
     private final Family family;
     private final PackRenderingPhase phase;
     private final RenderType host;
+    /** The host type's transparency, as Iris batches it. */
+    private final IrisTransparency transparency;
     /** The FamilyBufferSource flush that last drew this type. */
     private long lastDrawn;
 
@@ -31,6 +34,17 @@ public final class FamilyRenderType extends RenderType {
         this.family = family;
         this.phase = phase;
         this.host = host;
+        this.transparency = IrisTransparency.of(host);
+    }
+
+    /** The host type's transparency, which orders the batch's draw as Iris orders its batches. */
+    IrisTransparency transparency() {
+        return transparency;
+    }
+
+    /** Whether a pack with separateEntityDraws draws this batch before its deferred passes. */
+    boolean drawsBeforeDeferred() {
+        return transparency.drawsBeforeDeferred();
     }
 
     public Family family() {
@@ -66,6 +80,20 @@ public final class FamilyRenderType extends RenderType {
     public void clearRenderState() {
         if (ChimeraEntityBridge.isDrawActive()) ChimeraEntityBridge.endDraw();
         super.clearRenderState();
+    }
+
+    /**
+     * RenderType.draw has no finally: a draw that throws between setup and clear would leave the
+     * family draw open, so every later ShaderInstance draw got this family's pipeline. The shadow
+     * pass catches its casters' failures and carries on, so the draw closes here whatever happens.
+     */
+    @Override
+    public void draw(MeshData mesh) {
+        try {
+            super.draw(mesh);
+        } finally {
+            if (ChimeraEntityBridge.isDrawActive()) ChimeraEntityBridge.endDraw();
+        }
     }
 
     @Override

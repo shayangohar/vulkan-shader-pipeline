@@ -181,6 +181,11 @@ record PackResolutionPlan(
         return ConformanceReport.sha256(snapshotJson().getBytes(StandardCharsets.UTF_8));
     }
 
+    /** Whether Iris reads {@code name} as a gbuffers, shadow, dh or final program (ProgramId). */
+    static boolean isIrisProgram(String name) {
+        return FALLBACKS.containsKey(name);
+    }
+
     static Map<String, List<String>> fallbackTable() {
         Map<String, List<String>> result = new LinkedHashMap<>();
         addChain(result, "shadow");
@@ -194,9 +199,12 @@ record PackResolutionPlan(
         addKeyChain(result, "shadow_lines", "shadow");
         addKeyChain(result, "shadow_leash", "shadow");
         addKeyChain(result, "shadow_basic", "shadow");
-        addKeyChain(result, "shadow_glint", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text", "shadow_entities", "shadow");
         addKeyChain(result, "shadow_text_bg", "shadow_entities", "shadow");
+        addKeyChain(result, "shadow_tex", "shadow");
+        addKeyChain(result, "shadow_tex_color", "shadow");
+        // Iris TEXTURED_COLOR: ProgramId.Textured on the host position_tex_color draws.
+        addKeyChain(result, "textured_color", "gbuffers_textured", "gbuffers_basic");
         // Iris TEXT_BG: ProgramId.EntitiesTrans on the host text-background quads.
         addKeyChain(result, "text_bg", "gbuffers_entities_translucent", "gbuffers_entities",
                 "gbuffers_textured_lit", "gbuffers_textured", "gbuffers_basic");
@@ -261,6 +269,11 @@ record PackResolutionPlan(
      */
     private static void addKeyChain(Map<String, List<String>> map, String key, String... programs) {
         map.put(key, List.of(programs));
+    }
+
+    /** Iris's ProgramId names, in its declaration order. */
+    static List<String> programIds() {
+        return FALLBACKS.keySet().stream().filter(name -> !isShaderKey(name)).toList();
     }
 
     /** True for a requested name that is a shader key, never an authorable program. */

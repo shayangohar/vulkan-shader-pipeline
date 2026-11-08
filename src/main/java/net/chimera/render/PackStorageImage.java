@@ -1,5 +1,6 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.IrisColorFormats;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.device.DeviceManager;
@@ -18,6 +19,9 @@ import org.lwjgl.vulkan.VkSamplerCreateInfo;
 
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
 
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.util.vma.Vma.vmaCreateImage;
@@ -41,11 +45,15 @@ import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TILING_OPTIMAL;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_1D;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_2D;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_TYPE_3D;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_SAMPLED_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_STORAGE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_1D;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_2D;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_3D;
 import static org.lwjgl.vulkan.VK10.VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
@@ -53,7 +61,7 @@ import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BI
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT;
 import static org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED;
-import static org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_REPEAT;
+import static org.lwjgl.vulkan.VK10.VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 import static org.lwjgl.vulkan.VK10.VK_SAMPLER_MIPMAP_MODE_NEAREST;
 import static org.lwjgl.vulkan.VK10.VK_SAMPLE_COUNT_1_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHARING_MODE_EXCLUSIVE;
@@ -65,10 +73,13 @@ import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
 import static org.lwjgl.vulkan.VK10.vkDestroySampler;
 import static org.lwjgl.vulkan.VK10.vkGetPhysicalDeviceFormatProperties;
 
-/** A pack-owned true 3D image with storage and sampled descriptor views. */
+/** A pack-owned 1D, 2D or 3D image (Iris's custom image) with storage and sampled descriptor views. */
 final class PackStorageImage extends VulkanImage {
     private final long allocation;
     private final long view;
+    private final int ownFormat;
+    private final int viewType;
+    private final Map<Integer, Long> views = new HashMap<>();
     private final int depth;
     private long sampler;
     private boolean freed;
@@ -83,27 +94,41 @@ final class PackStorageImage extends VulkanImage {
             int depth,
             int usage,
             long view,
+            int viewType,
             int formatSize,
             long sampler
     ) {
         super(image, format, 1, width, height, formatSize, usage, view);
         this.allocation = allocation;
         this.view = view;
+        this.ownFormat = format;
+        this.viewType = viewType;
         this.depth = depth;
         this.sampler = sampler;
         setCurrentLayout(VK_IMAGE_LAYOUT_UNDEFINED);
         this.initialized = false;
     }
 
-    static PackStorageImage create(PackAdvancedResourcePlan.ImageSpec spec) {
-        int format = format(spec.internalFormat());
+    /**
+     * The image {@code spec} declares at {@code extent} (width, height, depth), of its own dimensions.
+     * A program reading it through another format of its size needs it mutable, with a storage view
+     * in each of {@code viewFormats}; a format the device cannot store refuses the image.
+     */
+    static PackStorageImage create(PackAdvancedResourcePlan.ImageSpec spec, int[] extent, Set<Integer> viewFormats) {
+        int format = spec.format().vkFormat();
+        boolean integer = IrisColorFormats.integer(format);
+        boolean mutableFormat = !viewFormats.isEmpty();
         verifyFormatSupport(format, spec.name());
+        viewFormats.forEach(view -> verifyStorageSupport(view, spec.name()));
+        String limit = extentLimitFailure(spec, extent);
+        if (limit != null) throw new IllegalStateException(limit);
         int usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
                 | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         try (MemoryStack stack = stackPush()) {
             VkImageCreateInfo info = VkImageCreateInfo.calloc(stack)
                     .sType(VK10.VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
-                    .imageType(VK_IMAGE_TYPE_3D)
+                    .flags(mutableFormat ? VK10.VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : 0)
+                    .imageType(imageType(spec.dimensions()))
                     .format(format)
                     .mipLevels(1)
                     .arrayLayers(1)
@@ -112,7 +137,7 @@ final class PackStorageImage extends VulkanImage {
                     .usage(usage)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE)
                     .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
-            info.extent().width(spec.width()).height(spec.height()).depth(spec.depth());
+            info.extent().width(extent[0]).height(extent[1]).depth(extent[2]);
             VmaAllocationCreateInfo allocationInfo = VmaAllocationCreateInfo.calloc(stack)
                     .requiredFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             LongBuffer image = stack.mallocLong(1);
@@ -123,16 +148,16 @@ final class PackStorageImage extends VulkanImage {
                 throw new IllegalStateException("advanced image allocation failed: " + result);
             }
             long imageId = image.get(0);
-            long imageView = ImageViews.create(imageId, VK_IMAGE_VIEW_TYPE_3D, format, VK_IMAGE_ASPECT_COLOR_BIT);
+            long imageView = ImageViews.create(imageId, viewType(spec.dimensions()), format, VK_IMAGE_ASPECT_COLOR_BIT);
             LongBuffer sampler = stack.mallocLong(1);
             VkSamplerCreateInfo samplerInfo = VkSamplerCreateInfo.calloc(stack)
                     .sType$Default()
-                    .magFilter(isInteger(spec.internalFormat()) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
-                    .minFilter(isInteger(spec.internalFormat()) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
+                    .magFilter(integer ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
+                    .minFilter(integer ? VK_FILTER_NEAREST : VK_FILTER_LINEAR)
                     .mipmapMode(VK_SAMPLER_MIPMAP_MODE_NEAREST)
-                    .addressModeU(VK_SAMPLER_ADDRESS_MODE_REPEAT)
-                    .addressModeV(VK_SAMPLER_ADDRESS_MODE_REPEAT)
-                    .addressModeW(VK_SAMPLER_ADDRESS_MODE_REPEAT)
+                    .addressModeU(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    .addressModeV(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+                    .addressModeW(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
                     .borderColor(VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK)
                     .unnormalizedCoordinates(false)
                     .minLod(0.0f)
@@ -142,9 +167,43 @@ final class PackStorageImage extends VulkanImage {
                 vmaDestroyImage(Vulkan.getAllocator(), imageId, allocation.get(0));
                 throw new IllegalStateException("advanced image sampler allocation failed");
             }
-            return new PackStorageImage(imageId,
-                    allocation.get(0), format, spec.width(), spec.height(), spec.depth(),
-                    usage, imageView, bytesPerVoxel(spec.internalFormat()), sampler.get(0));
+            PackStorageImage created = new PackStorageImage(imageId,
+                    allocation.get(0), format, extent[0], extent[1], extent[2],
+                    usage, imageView, viewType(spec.dimensions()), spec.format().bytes(), sampler.get(0));
+            try {
+                viewFormats.forEach(view -> created.views.put(view,
+                        ImageViews.createStorage(imageId, viewType(spec.dimensions()), view)));
+            } catch (RuntimeException failure) {
+                created.free();
+                throw failure;
+            }
+            return created;
+        }
+    }
+
+    private static int imageType(int dimensions) {
+        return dimensions == 1 ? VK_IMAGE_TYPE_1D : dimensions == 2 ? VK_IMAGE_TYPE_2D : VK_IMAGE_TYPE_3D;
+    }
+
+    private static int viewType(int dimensions) {
+        return dimensions == 1 ? VK_IMAGE_VIEW_TYPE_1D
+                : dimensions == 2 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_3D;
+    }
+
+    /** Why the device cannot create {@code spec} at {@code extent} (PackImageLimits), or null when it can. */
+    static String extentLimitFailure(PackAdvancedResourcePlan.ImageSpec spec, int[] extent) {
+        return PackImageLimits.deviceFailure("advanced image " + spec.name(), spec.dimensions(), extent);
+    }
+
+    /** A view format must store: a program writes the image through it. */
+    private static void verifyStorageSupport(int format, String name) {
+        try (MemoryStack stack = stackPush()) {
+            VkFormatProperties properties = VkFormatProperties.calloc(stack);
+            vkGetPhysicalDeviceFormatProperties(DeviceManager.physicalDevice, format, properties);
+            if ((properties.optimalTilingFeatures() & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) == 0) {
+                throw new IllegalArgumentException("advanced image view format lacks storage support: "
+                        + name + " format=" + format);
+            }
         }
     }
 
@@ -178,7 +237,7 @@ final class PackStorageImage extends VulkanImage {
     void clearToZero(MemoryStack stack, VkCommandBuffer commandBuffer) {
         if (commandBuffer == null) return;
         VkClearColorValue clear = VkClearColorValue.calloc(stack);
-        if (isIntegerFormat()) {
+        if (IrisColorFormats.integer(format)) {
             IntBuffer values = stack.callocInt(4);
             clear.int32(values);
         } else {
@@ -278,6 +337,12 @@ final class PackStorageImage extends VulkanImage {
     @Override
     public long getImageView() { return view; }
 
+    /** The image's storage view in {@code format}, made with the image; its own view for its own format. */
+    long view(int format) {
+        if (format == ownFormat || format == 0) return view;
+        return views.getOrDefault(format, view);
+    }
+
     /** The image's own sampler: nearest for integer formats, linear otherwise, repeating, on one level. */
     @Override
     public long getSampler() { return sampler; }
@@ -291,33 +356,8 @@ final class PackStorageImage extends VulkanImage {
             sampler = 0L;
         }
         vkDestroyImageView(Vulkan.getVkDevice(), view, null);
+        views.values().forEach(alias -> vkDestroyImageView(Vulkan.getVkDevice(), alias, null));
+        views.clear();
         vmaDestroyImage(Vulkan.getAllocator(), getId(), allocation);
-    }
-
-    private static int format(String value) {
-        return switch (value.toLowerCase()) {
-            case "r8ui" -> VK10.VK_FORMAT_R8_UINT;
-            case "r16ui" -> VK10.VK_FORMAT_R16_UINT;
-            case "rgba16f" -> VK10.VK_FORMAT_R16G16B16A16_SFLOAT;
-            default -> throw new IllegalArgumentException("unsupported advanced image format: " + value);
-        };
-    }
-
-    private static int bytesPerVoxel(String value) {
-        return switch (value.toLowerCase()) {
-            case "r8ui" -> 1;
-            case "r16ui" -> 2;
-            case "rgba16f" -> 8;
-            default -> 0;
-        };
-    }
-
-    private static boolean isInteger(String value) {
-        return "r8ui".equalsIgnoreCase(value) || "r16ui".equalsIgnoreCase(value);
-    }
-
-    private boolean isIntegerFormat() {
-        return format == VK10.VK_FORMAT_R8_UINT
-                || format == VK10.VK_FORMAT_R16_UINT;
     }
 }

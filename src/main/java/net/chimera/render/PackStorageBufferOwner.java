@@ -1,6 +1,7 @@
 package net.chimera.render;
 
 import net.chimera.ChimeraMod;
+import net.chimera.shaderpack.BetweenStages;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
@@ -17,6 +18,7 @@ import java.util.TreeSet;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
+import static org.lwjgl.vulkan.VK10.VK_WHOLE_SIZE;
 import static org.lwjgl.vulkan.VK10.vkCmdFillBuffer;
 
 /** Owns the bounded read/write storage buffers for one pack session. */
@@ -29,20 +31,18 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     private final Set<String> installedPrograms = new TreeSet<>();
     private final Set<String> verifiedLayouts = new TreeSet<>();
     private final long plannedBytes;
+    private int screenWidth;
+    private int screenHeight;
     private boolean initialized;
     private boolean closed;
     private final Map<Integer, String> drawnWriters = new HashMap<>();
     private final Set<Integer> synchronizedWrites = new TreeSet<>();
     private final Set<String> reportedReaders = new TreeSet<>();
-    private int dispatchCount;
 
     public void beginExecutionFrame() {
         drawnWriters.clear();
         synchronizedWrites.clear();
-        dispatchCount = 0;
     }
-
-    public void recordDispatch() { dispatchCount++; }
 
     /** Called only after a native draw command was recorded, never on descriptor upload. */
     public void recordDraw(String program, int stage) {
@@ -57,48 +57,55 @@ public final class PackStorageBufferOwner implements AutoCloseable {
                     && drawnWriters.containsKey(index) && synchronizedWrites.contains(index)
                     && reportedReaders.add(program + ":" + index)) {
                 ChimeraMod.LOGGER.info("[chimera] storage execution: writer={},reader={},offset=0,range={},"
-                        + "writerDrawn=true,barrierRecorded=true,readerDrawn=true,dispatchCount={}",
-                        drawnWriters.get(index), program, binding.size(), dispatchCount);
+                        + "writerDrawn=true,barrierRecorded=true,readerDrawn=true",
+                        drawnWriters.get(index), program, binding.size());
             }
         }
     }
 
     public PackStorageBufferOwner(PackAdvancedResourcePlan plan) {
+        this(plan, 1, 1, Set.of());
+    }
+
+    private PackStorageBufferOwner(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight,
+                                   Set<Integer> computeBuffers) {
         this.plan = plan == null ? PackAdvancedResourcePlan.empty() : plan;
-        this.plannedBytes = this.plan.storageBuffers().entrySet().stream()
-                .filter(entry -> this.plan.storageEligiblePrograms().contains(entry.getKey()))
-                .flatMap(entry -> entry.getValue().stream())
-                .filter(PackAdvancedResourcePlan.StorageBufferBinding::supported)
-                .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                .distinct()
+        this.screenWidth = screenWidth;
+        this.screenHeight = screenHeight;
+        this.plannedBytes = used(this.plan, computeBuffers).stream()
                 .map(this.plan.buffers()::get)
                 .filter(Objects::nonNull)
-                .mapToLong(PackAdvancedResourcePlan.BufferSpec::size)
+                .mapToLong(spec -> spec.bytes(screenWidth, screenHeight))
                 .sum();
     }
 
-    public static PackStorageBufferOwner load(PackAdvancedResourcePlan plan) {
-        PackStorageBufferOwner owner = new PackStorageBufferOwner(plan);
-        long maxRange = DeviceManager.deviceProperties == null
-                ? Long.MAX_VALUE
-                : unsignedStorageBufferRange(
-                DeviceManager.deviceProperties.limits().maxStorageBufferRange());
-        Set<Integer> used = new TreeSet<>();
-        owner.plan.storageBuffers().values().forEach(values -> values.stream()
-                .filter(PackAdvancedResourcePlan.StorageBufferBinding::supported)
-                .filter(value -> owner.plan.storageEligiblePrograms().contains(value.program()))
-                .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                .forEach(used::add));
-        for (Integer index : used) {
+    /** The buffers a program or a pass compute binds. */
+    private static Set<Integer> used(PackAdvancedResourcePlan plan, Set<Integer> computeBuffers) {
+        Set<Integer> used = new TreeSet<>(plan.programBuffers());
+        used.addAll(computeBuffers);
+        return used;
+    }
+
+    /**
+     * The session's buffers: those a program or a pass compute ({@code computeBuffers}) binds, a
+     * relative one sized for a screen of this size (Iris sizes it at creation). As in Iris, only the
+     * device bounds a buffer: its storage range, then the allocation.
+     */
+    public static PackStorageBufferOwner load(PackAdvancedResourcePlan plan, int screenWidth, int screenHeight,
+                                              Set<Integer> computeBuffers) {
+        PackStorageBufferOwner owner = new PackStorageBufferOwner(plan, screenWidth, screenHeight, computeBuffers);
+        long maxRange = maxRange();
+        for (Integer index : used(owner.plan, computeBuffers)) {
             PackAdvancedResourcePlan.BufferSpec spec = owner.plan.buffers().get(index);
             if (spec == null || !spec.supported()) continue;
+            long bytes = spec.bytes(screenWidth, screenHeight);
             // The host sizes buffers with an int.
-            if (spec.size() > Math.min(maxRange, Integer.MAX_VALUE)) {
+            if (bytes > maxRange) {
                 owner.failures.put(index, "STORAGE_BUFFER_DEVICE_RANGE_UNSUPPORTED:" + index);
                 continue;
             }
             try {
-                owner.buffers.put(index, new PackStorageBuffer((int) spec.size()));
+                owner.buffers.put(index, new PackStorageBuffer((int) bytes));
             } catch (RuntimeException failure) {
                 owner.failures.put(index, "STORAGE_BUFFER_ALLOCATION_FAILED:" + index);
             }
@@ -106,9 +113,45 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         return owner;
     }
 
+    /** The largest buffer the device binds and the host can size, which sizes buffers with an int. */
+    private static long maxRange() {
+        long device = DeviceManager.deviceProperties == null ? Long.MAX_VALUE
+                : unsignedStorageBufferRange(DeviceManager.deviceProperties.limits().maxStorageBufferRange());
+        return Math.min(device, Integer.MAX_VALUE);
+    }
+
     /** Vulkan exposes this limit as an unsigned 32-bit value. */
     public static long unsignedStorageBufferRange(int rawValue) {
         return Integer.toUnsignedLong(rawValue);
+    }
+
+    /**
+     * Recreates each relative buffer for the main target's new size and zero-fills it, as Iris's
+     * ShaderStorageBufferHolder.hasResizedScreen does: contents do not survive a resize. Recorded
+     * outside a render pass. A size past the device's range keeps the old buffer and is logged.
+     */
+    public void fitRelativeBuffers(VkCommandBuffer commandBuffer, int width, int height) {
+        if (commandBuffer == null || closed || (width == screenWidth && height == screenHeight)) return;
+        screenWidth = width;
+        screenHeight = height;
+        boolean filled = false;
+        for (Map.Entry<Integer, PackStorageBuffer> entry : buffers.entrySet()) {
+            PackAdvancedResourcePlan.BufferSpec spec = plan.buffers().get(entry.getKey());
+            if (spec == null || !spec.relative()) continue;
+            long bytes = spec.bytes(width, height);
+            if (bytes > maxRange()) {
+                ChimeraMod.LOGGER.warn("[chimera] storage buffer {} needs {} bytes at {}x{}, past the device range",
+                        entry.getKey(), bytes, width, height);
+                continue;
+            }
+            entry.getValue().recreate((int) bytes);
+            // Before the session's first fill (initialize), that fill covers the new buffer.
+            if (initialized) {
+                vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, VK_WHOLE_SIZE, 0);
+                filled = true;
+            }
+        }
+        if (filled) PackVulkanBarriers.afterStorageBufferTransfer(commandBuffer);
     }
 
     /** Returns the session-owned buffer for an admitted logical index. */
@@ -135,6 +178,11 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         return null;
     }
 
+    /** Why {@code bufferObject.<index>} was not allocated, or null. */
+    public String failure(int index) {
+        return failures.get(index);
+    }
+
     public boolean programAvailable(String program) {
         if (program == null || plan.storageBuffers(program).isEmpty()) return true;
         var bindings = plan.storageBuffers(program);
@@ -157,28 +205,41 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         }
         if (DeviceManager.deviceProperties != null) {
             var limits = DeviceManager.deviceProperties.limits();
-            long descriptorCount = bindings.stream()
-                    .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                    .distinct().count();
-            if (descriptorCount > limits.maxDescriptorSetStorageBuffersDynamic()) {
-                programFailures.put(program, "STORAGE_BUFFER_DESCRIPTOR_LIMIT:" + program);
-                return false;
-            }
-            long fragmentCount = bindings.stream()
-                    .filter(value -> (value.stageMask() & VK_SHADER_STAGE_FRAGMENT_BIT) != 0)
-                    .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                    .distinct().count();
-            long vertexCount = bindings.stream()
-                    .filter(value -> (value.stageMask() & VK_SHADER_STAGE_VERTEX_BIT) != 0)
-                    .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
-                    .distinct().count();
-            int perStageLimit = limits.maxPerStageDescriptorStorageBuffers();
-            if (fragmentCount > perStageLimit || vertexCount > perStageLimit) {
-                programFailures.put(program, "STORAGE_BUFFER_STAGE_LIMIT:" + program);
+            String limit = limitFailure(program, bindings, limits.maxDescriptorSetStorageBuffersDynamic(),
+                    limits.maxPerStageDescriptorStorageBuffers());
+            if (limit != null) {
+                programFailures.put(program, limit);
                 return false;
             }
         }
         return true;
+    }
+
+    /**
+     * Why the device's descriptor limits refuse {@code program}'s storage buffers, or null. Vulkan
+     * reports each limit as an unsigned 32-bit count: AMD's driver gives the per-stage one as
+     * 0xFFFFFFFF, no limit, which Java reads as -1, and every program binding a buffer, RenderPearl's
+     * terrain, water and hand among them, was refused on the Radeon.
+     */
+    static String limitFailure(String program, List<PackAdvancedResourcePlan.StorageBufferBinding> bindings,
+                               int setDynamicLimit, int perStageLimit) {
+        long all = bindings.stream().map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
+                .distinct().count();
+        if (all > Integer.toUnsignedLong(setDynamicLimit)) {
+            return "STORAGE_BUFFER_DESCRIPTOR_LIMIT:" + program;
+        }
+        long stageLimit = Integer.toUnsignedLong(perStageLimit);
+        if (descriptors(bindings, VK_SHADER_STAGE_FRAGMENT_BIT) > stageLimit
+                || descriptors(bindings, VK_SHADER_STAGE_VERTEX_BIT) > stageLimit) {
+            return "STORAGE_BUFFER_STAGE_LIMIT:" + program;
+        }
+        return null;
+    }
+
+    /** The distinct buffers {@code bindings} give the stages in {@code stages}. */
+    private static long descriptors(List<PackAdvancedResourcePlan.StorageBufferBinding> bindings, int stages) {
+        return bindings.stream().filter(value -> (value.stageMask() & stages) != 0)
+                .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex).distinct().count();
     }
 
     public Map<Integer, String> failures() {
@@ -201,7 +262,7 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         return failures.keySet().stream()
                 .map(plan.buffers()::get)
                 .filter(Objects::nonNull)
-                .mapToLong(PackAdvancedResourcePlan.BufferSpec::size)
+                .mapToLong(spec -> spec.bytes(screenWidth, screenHeight))
                 .sum();
     }
 
@@ -226,9 +287,8 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     public boolean initialize(VkCommandBuffer commandBuffer) {
         if (commandBuffer == null || closed || initialized || buffers.isEmpty()) return false;
         for (Map.Entry<Integer, PackStorageBuffer> entry : buffers.entrySet()) {
-            PackAdvancedResourcePlan.BufferSpec spec = plan.buffers().get(entry.getKey());
-            if (spec == null) return false;
-            vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, spec.size(), 0);
+            if (!plan.buffers().containsKey(entry.getKey())) return false;
+            vkCmdFillBuffer(commandBuffer, entry.getValue().getId(), 0L, VK_WHOLE_SIZE, 0);
         }
         PackVulkanBarriers.afterStorageBufferTransfer(commandBuffer);
         initialized = true;
@@ -238,8 +298,14 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     /** Records shader/layout agreement before native pipeline creation. */
     public String verifyLayout(String program, String vertex, String fragment,
             List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
+        return verifyLayout(program, vertex, BetweenStages.NONE, fragment, descriptors);
+    }
+
+    /** The same over every stage the program runs, the stages {@code between} its vertex and fragment too. */
+    public String verifyLayout(String program, String vertex, BetweenStages between, String fragment,
+            List<PackAdvancedResourcePlan.DescriptorBinding> descriptors) {
         String mismatch = PackAdvancedResourcePlan.layoutMismatch(
-                plan.bindingLayout(program), vertex, fragment, descriptors);
+                plan.bindingLayout(program), vertex, between, fragment, descriptors);
         if (mismatch == null) {
             verifiedLayouts.add(program);
             programFailures.remove(program);

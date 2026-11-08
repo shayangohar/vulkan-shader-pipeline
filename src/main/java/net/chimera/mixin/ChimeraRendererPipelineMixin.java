@@ -10,6 +10,7 @@ import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -17,9 +18,10 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
  * Uploads a pack draw's uniforms under its per-draw state, and binds each pipeline's pack images
- * with its descriptor sets. A family draw uploads with its alpha test, entityId, albedo, atlas size
- * and Iris rendering phase; a sky or cloud draw with the atlas size of its texture, in the phase its
- * LevelRenderer hooks set.
+ * with its descriptor sets. A family draw uploads with its alpha test, entityId, albedo, lightmap,
+ * atlas size and Iris rendering phase; a sky or cloud draw with its albedo and lightmap and the atlas
+ * size of its texture, in the phase its LevelRenderer hooks set. Every draw uploads with its unit-0
+ * texture size and blend (gtextureSize, blendFunc).
  */
 @Mixin(value = Renderer.class, remap = false)
 public abstract class ChimeraRendererPipelineMixin {
@@ -27,22 +29,30 @@ public abstract class ChimeraRendererPipelineMixin {
     private void chimera$drawState(Pipeline pipeline, Operation<Void> original) {
         if (pipeline == ChimeraSkyBridge.pipeline()) {
             PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
+            PackUniformProvider.updateDrawState(pipeline);
+            VulkanImage[] bound = ChimeraSkyBridge.bindLevelSamplers();
             try {
                 original.call(pipeline);
             } finally {
+                ChimeraSkyBridge.restoreLevelSamplers(bound);
                 PackUniformProvider.restoreFrameAtlasSize();
             }
             return;
         }
         if (pipeline != ChimeraEntityBridge.pipeline()) {
+            PackUniformProvider.updateDrawState(pipeline);
             original.call(pipeline);
             return;
         }
         PackUniformProvider.updateDrawAlphaReference(ChimeraEntityBridge.alphaReference());
         PackUniformProvider.updateDrawEntityId(ChimeraEntityBridge.hostLayoutEntityId());
+        // Iris reads atlasSize and gtextureSize from RenderSystem's shader texture 0; a textureless
+        // draw samples its white pixel from another unit (IrisSamplers.addLevelSamplers).
+        PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
+        PackUniformProvider.updateDrawState(pipeline);
         // Restored with the family's texture snapshot when the draw ends.
         if (ChimeraEntityBridge.whiteAlbedo()) VTextureSelector.bindTexture(0, VTextureSelector.getWhiteTexture());
-        PackUniformProvider.updateDrawAtlasSize(VTextureSelector.getBoundTexture(0));
+        if (ChimeraEntityBridge.whiteLightmap()) VTextureSelector.bindTexture(2, VTextureSelector.getWhiteTexture());
         var previous = PackUniformProvider.setRenderingPhase(ChimeraEntityBridge.renderingPhase());
         try {
             original.call(pipeline);

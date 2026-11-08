@@ -35,8 +35,6 @@ import static org.lwjgl.vulkan.VK10.*;
  * through VulkanMod's image upload commands, as pack PNG textures do, and stays read-only.
  */
 final class PackRawTexture extends VulkanImage implements PackResourceOwner.LoadedTexture {
-    /** Iris reads the whole file; this only refuses a declaration far past any real lookup table. */
-    private static final long MAX_BYTES = 256L * 1024 * 1024;
     /** Vulkan formats by kind and bits, for one, two and four channels. */
     private static final Map<String, int[]> FORMATS = Map.ofEntries(
             Map.entry("UNORM8", new int[] {VK_FORMAT_R8_UNORM, VK_FORMAT_R8G8_UNORM, VK_FORMAT_R8G8B8A8_UNORM}),
@@ -71,11 +69,22 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
         setCurrentLayout(VK_IMAGE_LAYOUT_UNDEFINED);
     }
 
-    /** Reads, creates and queues the upload of one raw texture; filter and wrap are the plan's. */
+    /**
+     * Reads, creates and queues the upload of one raw texture; filter and wrap are the plan's. Iris
+     * reads the whole file, so only the device's image limits (PackImageLimits) and the one upload
+     * buffer the texels pass through bound it.
+     */
     static PackRawTexture load(Path file, RawTextureSpec spec, String name, String filter, String wrap)
             throws IOException {
         if (spec.unsupportedReason() != null) throw new IOException("raw texture " + spec.unsupportedReason());
-        if (spec.requiredBytes() > MAX_BYTES) throw new IOException("raw texture exceeds size limit");
+        String limit = PackImageLimits.deviceFailure("raw texture", spec.dimensions(),
+                spec.width(), spec.extentHeight(), spec.extentDepth());
+        if (limit != null) throw new IOException(limit);
+        long uploaded = (long) spec.width() * spec.extentHeight() * spec.extentDepth()
+                * spec.storage().uploadedChannels() * (spec.storage().bits() / 8);
+        if (spec.requiredBytes() > Integer.MAX_VALUE || uploaded > Integer.MAX_VALUE) {
+            throw new IOException("raw texture needs more bytes than one upload buffer holds");
+        }
         byte[] bytes = Files.readAllBytes(file);
         if (bytes.length < spec.requiredBytes()) {
             throw new IOException("raw texture holds " + bytes.length + " bytes, needs " + spec.requiredBytes());

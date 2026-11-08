@@ -7,6 +7,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.LongBinaryOperator;
+import java.util.function.LongSupplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -32,11 +33,27 @@ final class PreprocessorExpression {
         this.tokens = tokens;
     }
 
+    /**
+     * An operand JCPP finds missing, as when a macro defined with no body is tested ({@code #if X}
+     * after {@code #define X}). JCPP reports the bad token and the expr() call that wanted the operand
+     * reads 0 without consuming it; at the top, the directive skips the rest of its line.
+     */
+    private static final class MissingOperand extends RuntimeException {
+        MissingOperand() {
+            super(null, null, false, false);
+        }
+    }
+
     /** Whether {@code expression} holds under {@code macros}; throws when it is not one JCPP evaluates. */
     static boolean evaluate(String expression, Map<String, String> macros) {
         List<String> expanded = expand(lex(expression), macros, new HashSet<>(), new int[1]);
         PreprocessorExpression parser = new PreprocessorExpression(expanded);
-        long value = parser.conditional();
+        long value;
+        try {
+            value = parser.conditional();
+        } catch (MissingOperand missing) {
+            return false;
+        }
         if (parser.index != expanded.size()) throw new IllegalArgumentException("unsupported expression");
         return value != 0;
     }
@@ -104,10 +121,19 @@ final class PreprocessorExpression {
     private long conditional() {
         long condition = binary(0);
         if (!take("?")) return condition;
-        long whenTrue = conditional();
+        long whenTrue = nested(this::conditional);
         if (!take(":")) throw new IllegalArgumentException("conditional needs a colon");
-        long whenFalse = conditional();
+        long whenFalse = nested(this::conditional);
         return condition != 0 ? whenTrue : whenFalse;
+    }
+
+    /** An operand JCPP reads with its own expr() call: 0 when its first token is missing. */
+    private static long nested(LongSupplier operand) {
+        try {
+            return operand.getAsLong();
+        } catch (MissingOperand missing) {
+            return 0;
+        }
     }
 
     /** Operators bind tighter as the level rises, as in C; each level is left-associative. */
@@ -141,7 +167,7 @@ final class PreprocessorExpression {
         long left = binary(level + 1);
         while (index < tokens.size() && LEVELS.get(level).contains(tokens.get(index))) {
             LongBinaryOperator operator = OPERATORS.get(tokens.get(index++));
-            left = operator.applyAsLong(left, binary(level + 1));
+            left = operator.applyAsLong(left, nested(() -> binary(level + 1)));
         }
         return left;
     }
@@ -151,7 +177,7 @@ final class PreprocessorExpression {
     }
 
     private long unary() {
-        if (index >= tokens.size()) throw new IllegalArgumentException("expression ends early");
+        if (index >= tokens.size() || !startsOperand(tokens.get(index))) throw new MissingOperand();
         if (++depth > PackConditionals.MAX_EXPRESSION_DEPTH) {
             throw new IllegalArgumentException("expression is too deep");
         }
@@ -162,14 +188,21 @@ final class PreprocessorExpression {
         }
     }
 
+    /** Whether JCPP's expr() can begin an operand with {@code token}: a name, a number, '(' or a unary operator. */
+    private static boolean startsOperand(String token) {
+        char first = token.charAt(0);
+        return identifier(token) || Character.isDigit(first) || first == '.' || token.equals("(")
+                || token.equals("!") || token.equals("~") || token.equals("-") || token.equals("+");
+    }
+
     private long operand(String token) {
         return switch (token) {
-            case "!" -> unary() == 0 ? 1 : 0;
-            case "~" -> ~unary();
-            case "-" -> -unary();
-            case "+" -> unary();
+            case "!" -> nested(this::unary) == 0 ? 1 : 0;
+            case "~" -> ~nested(this::unary);
+            case "-" -> -nested(this::unary);
+            case "+" -> nested(this::unary);
             case "(" -> {
-                long value = conditional();
+                long value = nested(this::conditional);
                 if (!take(")")) throw new IllegalArgumentException("missing closing parenthesis");
                 yield value;
             }

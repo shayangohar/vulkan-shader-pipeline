@@ -279,9 +279,9 @@ final class EntityRealPackTest {
             String converted = prepared.vertex();
             assertTrue(converted.contains("chimeraAuthoredShadowMain();"),
                     pack + " shadow vertex has no clip-range wrapper");
-            assertTrue(converted.contains(
-                            "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);"),
-                    pack + " shadow vertex has no clip-range remap");
+            String remap = "gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);";
+            assertTrue(converted.contains(remap) && converted.indexOf(remap) == converted.lastIndexOf(remap),
+                    pack + " shadow vertex must remap its clip range exactly once");
             assertTrue(!converted.contains("0.2 * gl_Position.z"),
                     pack + " converter duplicated the pack-authored shadow depth compression");
             assertTrue(converted.indexOf("chimeraAuthoredShadowMain();")
@@ -357,9 +357,10 @@ final class EntityRealPackTest {
         boolean requireNoise = declaresNoise
                 || (expectation.pack().equals("bsl") && expectation.program().equals("gbuffers_block"));
         if (requireNoise) {
+            // "noisetex" is the generated noise; a declared one is "noisetex:<source>" (BSL's texture.noise).
             boolean noiseOk = manifest.entries().stream().anyMatch(entry -> entry.slot() == 7
                     && entry.kind() == ProgramImageBindingManifest.Kind.PACK_TEXTURE
-                    && entry.resourceKey().equals("noisetex"));
+                    && entry.resourceKey().startsWith("noisetex"));
             assertTrue(noiseOk, what + " declares noisetex but the manifest has no "
                     + "slot-7 PACK_TEXTURE noisetex entry: " + manifest.entries());
         }
@@ -415,7 +416,7 @@ final class EntityRealPackTest {
         try {
             MemoryUtil.memFree(GlslCompiler.compile(vertex ? "entity.vsh" : "entity.fsh", source,
                     vertex ? Shaderc.shaderc_glsl_vertex_shader : Shaderc.shaderc_glsl_fragment_shader,
-                    options -> {}));
+                    GlslCompiler::optimize));
         } catch (IllegalStateException failure) {
             throw new AssertionError(what + " did not compile: " + failure.getMessage()
                     + " [source dumped to " + dumpSource(source, what) + "]", failure);

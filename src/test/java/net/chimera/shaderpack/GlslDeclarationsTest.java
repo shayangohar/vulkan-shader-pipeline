@@ -3,7 +3,7 @@ package net.chimera.shaderpack;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -50,15 +50,15 @@ final class GlslDeclarationsTest {
         String main = "\nvoid main() { gl_Position = vec4(strength); }\n";
         IllegalArgumentException custom = assertThrows(IllegalArgumentException.class,
                 () -> EntityVertexFeatureCheck.rejectEntityVertexFeatures(
-                        "uniform highp float strength;" + main, false, false));
+                        "uniform highp float strength;" + main, false, false, Set.of()));
         assertEquals("unsupported entity vertex uniform: strength", custom.getMessage());
         IllegalArgumentException attribute = assertThrows(IllegalArgumentException.class,
                 () -> EntityVertexFeatureCheck.rejectEntityVertexFeatures(
                         "in highp vec3 mc_midTexCoord;\nvoid main() { gl_Position = vec4(mc_midTexCoord, 1.0); }\n",
-                        false, false));
+                        false, false, Set.of()));
         assertEquals("unsupported entity attribute: mc_midTexCoord", attribute.getMessage());
         EntityVertexFeatureCheck.rejectEntityVertexFeatures("uniform float unread;\nin vec2 mc_midTexCoord;\n"
-                + "void main() { gl_Position = vec4(mc_midTexCoord, 0.0, 1.0); }\n", false, false);
+                + "void main() { gl_Position = vec4(mc_midTexCoord, 0.0, 1.0); }\n", false, false, Set.of());
     }
 
     /** Core-profile names are read from the tree: a precision qualifier or trailing comment no longer hides one. */
@@ -69,7 +69,7 @@ final class GlslDeclarationsTest {
                 layout(location = 0) in highp vec3 vaPosition;
                 uniform mat4 modelViewMatrix; // host matrix
                 void main() { gl_Position = modelViewMatrix * vec4(vaPosition, 1.0); }
-                """, null, true, IrisCoreProfile.NO_OVERLAY, true);
+                """, null, true, IrisCoreProfile.NO_OVERLAY, true, IrisCoreProfile.Patch.VANILLA);
         assertEquals("""
                 #version 330 core
 
@@ -130,7 +130,11 @@ final class GlslDeclarationsTest {
                         "#version 330\nuniform float a;\n\n  out vec4 color;\n\nvoid main() { color = vec4(a); }\n"));
     }
 
-    /** Mipmap directives are const bool declarations; a later false removes an earlier true, in source order. */
+    /**
+     * Mipmap directives are Iris's line-based const directives (ConstDirectiveParser): one inside a
+     * block comment counts, as Photon declares them, and one behind // does not. A later false
+     * removes an earlier true, in source order. colortex16 is past Iris's targets and is dropped.
+     */
     @Test
     void mipmapDirectivesAreConstDeclarations() {
         PostTargetPlan plan = PostTargetPlan.parse("composite1", """
@@ -138,21 +142,26 @@ final class GlslDeclarationsTest {
                 const bool colortex3MipmapEnabled = true; // bloom
                 const bool gaux1MipmapEnabled = true;
                 const bool colortex3MipmapEnabled = false;
+                const bool colortex16MipmapEnabled = true;
+                /*
+                const bool colortex5MipmapEnabled = true;
+                */
+                // const bool colortex6MipmapEnabled = true;
                 void main() { gl_FragColor = vec4(0.0); }
                 """).plan();
-        assertEquals(List.of(4), plan.mipmappedTargets());
+        assertEquals(List.of(4, 5), plan.mipmappedTargets());
     }
 
     /**
-     * Consumed constants go with the blank lines their old pattern took, each span starting where
+     * Metadata constants go with the blank lines their old pattern took, each span starting where
      * the previous one ended; a format directive inside a comment stays as written.
      */
     @Test
-    void consumedConstantsChainTheirSpansAndLeaveComments() {
-        String source = "/*\nconst int colortex0Format = RGBA16;\n*/\n    const float sunPathRotation = 0.0;\n\n\n"
-                + "            const int shadowMapResolution = 2048;\n\n\nvoid main() {}\n";
+    void metadataConstantsChainTheirSpansAndLeaveComments() {
+        String source = "/*\nconst int colortex0Format = RGBA16;\n*/\n    const int colortex1Format = RGBA16F;\n\n\n"
+                + "            const bool colortex2Clear = false;\n\n\nvoid main() {}\n";
         assertEquals("/*\nconst int colortex0Format = RGBA16;\n*/\n\nvoid main() {}\n",
-                LegacyGlslConverter.stripUnusedConsumedConsts(source, Map.of()));
+                LegacyGlslConverter.removePackMetadataConstants(source));
     }
 
     /**
@@ -236,6 +245,12 @@ final class GlslDeclarationsTest {
                 EntityDeclarations.removeEntityAttributes(
                         "in vec4 at_tangent; \n\n  attribute vec2 mc_Entity;\nin vec3 vaNormal;\n"));
         assertEquals("vec4(MidTexCoord, 0.0, 1.0)", EntityDeclarations.midTexCoordValue("in vec4 mc_midTexCoord;\n"));
+        // Iris's entity vertex format has no mc_Entity: GL reads the unbound default (0, 0, 0, 1).
+        String entity = EntityDeclarations.removeEntityAttributes(
+                "attribute vec4 mc_Entity;\nattribute vec2 mc_midTexCoord;\nvoid main() {}\n");
+        assertTrue(entity.contains("const vec4 mc_Entity = vec4(0.0, 0.0, 0.0, 1.0);")
+                        && !entity.contains("mc_midTexCoord"),
+                "entity mc_Entity default:\n" + entity);
     }
 
     /**
@@ -273,6 +288,23 @@ final class GlslDeclarationsTest {
 
                 in vec3 vaNormal;
                 void main() { gl_Position = vec4(vec2(0.0), vec4(0.0, 0.0, 0.0, 1.0).w, 1.0); }
+                """, converted);
+    }
+
+    /** A parameter named after the attribute hides it, as Bloop's computeTBNMatrix(..., vec4 at_tangent) does. */
+    @Test
+    void unboundMaterialAttributesKeepParametersOfTheSameName() {
+        String converted = HostLayoutVertexBridge.unboundMaterialAttributes("""
+                #version 140
+                in vec4 at_tangent;
+                vec3 tangentOf(vec4 at_tangent) { return at_tangent.xyz; }
+                void main() { gl_Position = vec4(tangentOf(at_tangent), 1.0); }
+                """);
+        assertEquals("""
+                #version 140
+
+                vec3 tangentOf(vec4 at_tangent) { return at_tangent.xyz; }
+                void main() { gl_Position = vec4(tangentOf(vec4(0.0, 0.0, 0.0, 1.0)), 1.0); }
                 """, converted);
     }
 }

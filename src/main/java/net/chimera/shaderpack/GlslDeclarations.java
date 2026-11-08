@@ -2,11 +2,14 @@ package net.chimera.shaderpack;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * The file-scope variable declarations of a {@link GlslTree}, and text edits on them. The
@@ -42,8 +45,17 @@ final class GlslDeclarations {
 
         /** Whether this is the declaration's only name, without array sizes or an initializer. */
         boolean plain() {
-            return declaration.declarators().size() == 1 && declarator.arrays().isEmpty()
-                    && declarator.initializer() == null
+            return single() && declarator.initializer() == null;
+        }
+
+        /** Whether this is the declaration's only name, without array sizes. */
+        boolean single() {
+            return declaration.declarators().size() == 1 && unarrayed();
+        }
+
+        /** Whether neither the declarator nor its type has array sizes. */
+        boolean unarrayed() {
+            return declarator.arrays().isEmpty()
                     && (declaration.type() == null || declaration.type().arrays().isEmpty());
         }
     }
@@ -72,6 +84,15 @@ final class GlslDeclarations {
         int start = offset;
         while (start > 0 && (source.charAt(start - 1) == ' ' || source.charAt(start - 1) == '\t')) start--;
         return start == 0 || source.charAt(start - 1) == '\n' || source.charAt(start - 1) == '\r' ? start : -1;
+    }
+
+    /**
+     * A statement of qualifiers alone, such as {@code layout(early_fragment_tests) in;}: it sets a
+     * default and declares nothing, so its layout is no interface variable's.
+     */
+    static boolean qualifiersOnly(GlslTree.External external) {
+        return external instanceof GlslTree.Declaration declaration && declaration.type() == null
+                && declaration.declarators().isEmpty();
     }
 
     /** Every name declared by a variable declaration at file scope, in source order. */
@@ -109,6 +130,33 @@ final class GlslDeclarations {
     }
 
     /**
+     * Edits that remove these variables, one per declaration: a declaration keeps its other names,
+     * or goes whole when it names no other. {@code in vec3 vaNormal, vaPosition;} declares two
+     * core inputs at once.
+     */
+    static List<TextEdit> removeVariables(GlslTree tree, List<Variable> variables) {
+        Map<GlslTree.Declaration, Set<String>> names = new LinkedHashMap<>();
+        for (Variable variable : variables) {
+            names.computeIfAbsent(variable.declaration(), ignored -> new HashSet<>()).add(variable.name());
+        }
+        List<TextEdit> edits = new ArrayList<>();
+        names.forEach((declaration, removed) -> {
+            List<GlslTree.Declarator> kept = declaration.declarators().stream()
+                    .filter(declarator -> !removed.contains(tree.text(declarator.name()))).toList();
+            if (kept.isEmpty()) {
+                edits.add(remove(tree, declaration));
+                return;
+            }
+            int from = tree.offset(declaration.declarators().getFirst().range().start());
+            int to = tree.offset(declaration.declarators().getLast().range().end());
+            edits.add(new TextEdit(from, to, kept.stream().map(declarator -> tree.source().substring(
+                    tree.offset(declarator.range().start()), tree.offset(declarator.range().end())))
+                    .collect(Collectors.joining(", "))));
+        });
+        return edits;
+    }
+
+    /**
      * The arguments of a {@code layout(...)} qualifier, name to value ({@code ""} for a bare
      * name): {@code layout(location = 2, index = 0)} gives location 2 and index 0.
      */
@@ -140,8 +188,18 @@ final class GlslDeclarations {
 
     /** The {@code location} a declaration's layout gives it; null without one. */
     static Integer location(GlslTree tree, GlslTree.Declaration declaration) {
+        return layoutInteger(tree, declaration, "location");
+    }
+
+    /** The {@code component} a declaration's layout gives it; 0 without one, as GLSL defaults it. */
+    static int component(GlslTree tree, GlslTree.Declaration declaration) {
+        Integer component = layoutInteger(tree, declaration, "component");
+        return component == null ? 0 : component;
+    }
+
+    private static Integer layoutInteger(GlslTree tree, GlslTree.Declaration declaration, String name) {
         for (GlslTree.Qualifier qualifier : declaration.qualifiers()) {
-            String value = layoutArguments(tree, qualifier).get("location");
+            String value = layoutArguments(tree, qualifier).get(name);
             if (value != null && value.matches("\\d+")) return Integer.parseInt(value);
         }
         return null;
@@ -220,5 +278,19 @@ final class GlslDeclarations {
 
     private static boolean isLineBreak(char value) {
         return value == '\n' || value == '\r';
+    }
+
+    private static final Pattern LAYOUT_BEFORE = Pattern.compile("\\blayout\\s*\\([^()]*\\)\\s*$");
+
+    /**
+     * Where a {@code layout(...)} written directly before the keyword at {@code keyword} starts,
+     * within the statement holding it, or {@code keyword} without one. {@code source} has its
+     * comments masked.
+     */
+    static int layoutStart(String source, int keyword) {
+        int statement = Math.max(Math.max(source.lastIndexOf(';', keyword - 1), source.lastIndexOf('}', keyword - 1)),
+                source.lastIndexOf('{', keyword - 1)) + 1;
+        Matcher layout = LAYOUT_BEFORE.matcher(source).region(statement, keyword);
+        return layout.find() ? layout.start() : keyword;
     }
 }

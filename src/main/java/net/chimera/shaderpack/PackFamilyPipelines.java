@@ -7,6 +7,7 @@ import net.chimera.render.vertex.ChimeraVertexFormats;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 
 /**
  * Builds the pipelines of the host geometry families a pack program can replace: entities, block
@@ -28,16 +29,36 @@ public final class PackFamilyPipelines {
         }
         FamilyAdapterPlan.Family family = plan.familyAdapter().family();
         UniformRegistry.Stage stage = switch (family) {
-            case BLOCK, BLOCK_TRANSLUCENT, DAMAGED_BLOCK -> UniformRegistry.Stage.BLOCK;
+            case BLOCK, BLOCK_TRANSLUCENT -> UniformRegistry.Stage.BLOCK;
             case HAND, HAND_WATER -> UniformRegistry.Stage.HAND;
             default -> UniformRegistry.Stage.ENTITY;
         };
-        VertexFormat format = switch (family) {
-            case DAMAGED_BLOCK -> DefaultVertexFormat.BLOCK;
-            case HAND, HAND_WATER -> ChimeraVertexFormats.EXTENDED_ENTITY;
-            default -> ChimeraVertexFormats.EXTENDED_ENTITY;
-        };
-        return buildEntityLike(plan, stage, "pack_" + plan.name(), format, advancedResources, storageOwner);
+        return buildEntityLike(plan, stage, "pack_" + plan.name(), ChimeraVertexFormats.EXTENDED_ENTITY,
+                advancedResources, storageOwner, familyVertex(plan));
+    }
+
+    /**
+     * The converted vertex a family draws with. The spider-eyes family is Iris's ENTITIES_EYES and
+     * ENTITIES_EYES_TRANS, fullbright keys, so its light reads (240, 240)
+     * (EntityVertexBridge.fullbrightLight).
+     */
+    static String familyVertex(PackProgramPlan plan) {
+        String vertex = plan.convertedVertex();
+        return vertex != null && plan.familyAdapter().family() == FamilyAdapterPlan.Family.SPIDER_EYES
+                ? EntityVertexBridge.fullbrightLight(vertex) : vertex;
+    }
+
+    /**
+     * gbuffers_damagedblock on the crumbling overlay's BLOCK buffers widened to EXTENDED_BLOCK, as Iris
+     * widens every BLOCK buffer to TERRAIN: the mid-coordinate and tangent come per quad, from the
+     * decal's own coordinates. The overlay draws fullbright, and its entity ids read 0
+     * (EntityVertexBridge.crumblingInputs).
+     */
+    public static PackPipelines.PackEntity buildDamagedBlock(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return buildLayoutVariant(plan, DefaultVertexFormat.BLOCK, "crumbling", advancedResources, storageOwner,
+                EntityVertexBridge::crumblingInputs);
     }
 
     /** Builds the block-entity adapter on the same append-only host format. */
@@ -63,10 +84,18 @@ public final class PackFamilyPipelines {
             PackProgramPlan plan, VertexFormat host, String layout,
             PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
+        return buildLayoutVariant(plan, host, layout, advancedResources, storageOwner, UnaryOperator.identity());
+    }
+
+    /** {@link #buildLayoutVariant}, with {@code inputs} rewriting the layout's vertex inputs. */
+    private static PackPipelines.PackEntity buildLayoutVariant(
+            PackProgramPlan plan, VertexFormat host, String layout, PackAdvancedResourcePlan advancedResources,
+            PackStorageBufferOwner storageOwner, UnaryOperator<String> inputs
+    ) {
         VertexFormat extended = host == null ? null : ChimeraVertexFormats.extendedLayout(host);
         if (plan == null || !plan.executable() || extended == null) return null;
         try {
-            String vertex = EntityVertexBridge.layoutVertexForFormat(plan.convertedVertex(), host);
+            String vertex = inputs.apply(EntityVertexBridge.layoutVertexForFormat(plan.convertedVertex(), host));
             return buildEntityLike(plan, plan.familyAdapter().stage(), "pack_" + plan.name() + "_" + layout,
                     extended, advancedResources, storageOwner, vertex);
         } catch (IllegalArgumentException unsupported) {
@@ -149,10 +178,11 @@ public final class PackFamilyPipelines {
     }
 
     /**
-     * Builds a host-layout lane on the host vertex format of its contract: in the main pass
-     * lines, glint, lightning, beacon beams and leads (Iris ShaderKey.LINES, GLINT, LIGHTNING,
-     * BEACON and LEASH); in the shadow pass the shadow keys Iris draws on those layouts, into the
-     * shadow map's attachments with blending off, as shadow_entities is built.
+     * Builds a host-layout lane on the vertex format of its contract: in the main pass lines,
+     * glint, lightning, beacon beams and leads (Iris ShaderKey.LINES, GLINT, LIGHTNING, BEACON and
+     * LEASH); in the shadow pass the shadow keys Iris draws on those layouts, into the
+     * shadow map's attachments with the shadow blend (PackBlendPlan.shadowAttachments), as
+     * shadow_entities is built.
      */
     public static PackPipelines.PackParticle buildHostLayout(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
@@ -169,16 +199,21 @@ public final class PackFamilyPipelines {
                 shadow.convertedVertex(), shadow.convertedFragment(), shadow.outputPlan(), shadow.imageBindings());
     }
 
-    /** The host vertex format a host-layout contract draws on. */
+    /**
+     * The vertex format a host-layout contract draws on: the host's own, and for beacon beams the
+     * block layout widened as Iris widens it to TERRAIN.
+     */
     public static VertexFormat hostLayoutFormat(FamilyAdapterPlan.VertexContract contract) {
         return switch (contract) {
             case HOST_LINE -> DefaultVertexFormat.POSITION_COLOR_NORMAL;
             case HOST_GLINT -> DefaultVertexFormat.POSITION_TEX;
             case HOST_LIGHTNING -> DefaultVertexFormat.POSITION_COLOR;
-            case HOST_BEACON -> DefaultVertexFormat.BLOCK;
+            case HOST_BEACON -> ChimeraVertexFormats.EXTENDED_BLOCK;
             case HOST_LEASH, HOST_TEXT_BACKGROUND -> DefaultVertexFormat.POSITION_COLOR_LIGHTMAP;
             case HOST_TEXT -> DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP;
             case HOST_WATER_MASK -> DefaultVertexFormat.POSITION;
+            case HOST_POSITION_TEX -> DefaultVertexFormat.POSITION_TEX;
+            case HOST_POSITION_TEX_COLOR -> DefaultVertexFormat.POSITION_TEX_COLOR;
             default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
         };
     }

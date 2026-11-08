@@ -50,10 +50,6 @@ public final class PackCoverageState {
         writePending = false;
     }
 
-    public static boolean seedPreservesCoverage(float coverage, float emptySentinel) {
-        return coverage != emptySentinel;
-    }
-
     public static boolean[] copy(boolean[] values) {
         return values == null ? new boolean[0] : Arrays.copyOf(values, values.length);
     }

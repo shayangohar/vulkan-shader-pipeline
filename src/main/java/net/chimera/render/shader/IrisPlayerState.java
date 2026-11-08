@@ -1,8 +1,10 @@
 package net.chimera.render.shader;
 
+import net.chimera.mixin.ChimeraLocalPlayerAccessor;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.client.resources.sounds.AmbientSoundHandler;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.level.GameType;
@@ -21,16 +23,16 @@ import java.util.Set;
  * Iris reports for player stats outside survival. Distant Horizons is not supported, so the
  * {@code dh*} values are the ones Iris serves when DH is absent.
  */
-final class IrisPlayerState {
+final class IrisPlayerState implements FrameValueSource {
     /** Every scalar or vector name this snapshot answers; matrices stay with the frame state. */
     static final Set<String> NAMES = Set.of(
             "hideGUI", "isRightHanded", "firstPersonCamera", "isSpectator",
             "currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger", "maxPlayerHunger",
             "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir", "maxPlayerAir",
-            "playerMood", "pi", "lastFrameTime", "currentColorSpace",
+            "playerMood", "constantMood", "pi", "lastFrameTime", "currentColorSpace",
             "playerBodyVector",
             "currentDate", "currentTime", "currentYearTime",
-            "dhNearPlane", "dhFarPlane", "dhRenderDistance",
+            "dhNearPlane", "dhFarPlane", "dhRenderDistance", "blockEntityId", "currentRenderedItemId", "entityId",
             "is_burning", "is_hurt", "is_invisible", "is_on_ground", "is_sneaking", "is_sprinting", "is_alive");
 
 
@@ -48,6 +50,7 @@ final class IrisPlayerState {
     private float air = -1.0f;
     private float maxAir = -1.0f;
     private float mood;
+    private float constantMood;
     private float lastFrameTime;
     private int renderDistance;
     private final float[] bodyVector = new float[3];
@@ -64,7 +67,18 @@ final class IrisPlayerState {
         set(this.bodyVector, cameraEntity == null ? null : cameraEntity.getForward());
         this.mood = cameraEntity instanceof LocalPlayer local
                 ? Math.clamp(local.getCurrentMood(), 0.0f, 1.0f) : 0.0f;
+        this.constantMood = cameraEntity instanceof LocalPlayer local ? constantMood(local) : 0.0f;
         captureClock();
+    }
+
+    /** Iris's constantMood: the biome ambience handler's, 0 for a player without one. */
+    private static float constantMood(LocalPlayer player) {
+        for (AmbientSoundHandler handler : ((ChimeraLocalPlayerAccessor) player).chimera$ambientSoundHandlers()) {
+            if (handler instanceof AmbientMoodAccess ambience) {
+                return Math.clamp(ambience.chimera$constantMood(), 0.0f, 1.0f);
+            }
+        }
+        return 0.0f;
     }
 
     /** The HUD, hand, camera and spectator state from the options and game mode. */
@@ -124,27 +138,23 @@ final class IrisPlayerState {
     void clear() {
         this.spectator = false;
         this.health = this.maxHealth = this.hunger = this.armor = this.air = this.maxAir = -1.0f;
-        this.mood = 0.0f;
+        this.mood = this.constantMood = 0.0f;
         set(this.bodyVector, null);
     }
 
+    @Override
+    public Set<String> names() {
+        return NAMES;
+    }
+
     /** The scalar, or one component of the vector, Iris serves under a name. */
-    double value(String name, int component) {
+    public double value(String name, int component) {
         int c = Math.max(component, 0);
         return switch (name) {
             case "hideGUI" -> flag(this.hideGui);
             case "isRightHanded" -> flag(this.rightHanded);
             case "firstPersonCamera" -> flag(this.firstPerson);
             case "isSpectator" -> flag(this.spectator);
-            case "currentPlayerHealth" -> this.health;
-            case "maxPlayerHealth" -> this.maxHealth;
-            case "currentPlayerHunger" -> this.hunger;
-            case "maxPlayerHunger" -> 20.0;
-            case "currentPlayerArmor" -> this.armor;
-            case "maxPlayerArmor" -> 50.0;
-            case "currentPlayerAir" -> this.air;
-            case "maxPlayerAir" -> this.maxAir;
-            case "playerMood" -> this.mood;
             case "pi" -> (float) Math.PI;
             case "lastFrameTime" -> this.lastFrameTime;
             // IrisVideoSettings.colorSpace defaults to SRGB, ordinal 0; Chimera has no colour-space setting.
@@ -155,6 +165,29 @@ final class IrisPlayerState {
             case "currentYearTime" -> c < 2 ? this.yearTime[c] : Double.NaN;
             case "dhNearPlane", "dhFarPlane" -> DH_ABSENT_PLANE;
             case "dhRenderDistance" -> this.renderDistance;
+            // CommonUniforms serves blockEntityId and currentRenderedItemId as the constant -1, and
+            // entityId as the entity being drawn (CapturedRenderingState), which Iris sets back to 0
+            // after each entity (MixinEntityRenderDispatcher). Entity-layout programs read all three
+            // per vertex instead (EntityDeclarations), as Iris's EntityPatcher does.
+            case "blockEntityId", "currentRenderedItemId" -> -1;
+            case "entityId" -> 0;
+            default -> playerStat(name);
+        };
+    }
+
+    /** CommonUniforms' survival stats (-1 outside survival) and moods; a player flag for other names. */
+    private double playerStat(String name) {
+        return switch (name) {
+            case "currentPlayerHealth" -> this.health;
+            case "maxPlayerHealth" -> this.maxHealth;
+            case "currentPlayerHunger" -> this.hunger;
+            case "maxPlayerHunger" -> 20.0;
+            case "currentPlayerArmor" -> this.armor;
+            case "maxPlayerArmor" -> 50.0;
+            case "currentPlayerAir" -> this.air;
+            case "maxPlayerAir" -> this.maxAir;
+            case "playerMood" -> this.mood;
+            case "constantMood" -> this.constantMood;
             default -> playerFlag(name);
         };
     }
@@ -165,7 +198,8 @@ final class IrisPlayerState {
     }
 
     /** Writes a name in its declared type: integer types as ints, the rest as floats. */
-    void write(String name, String type, MappedBuffer target) {
+    @Override
+    public void write(String name, String type, MappedBuffer target) {
         int count = componentCount(type);
         boolean integral = type.startsWith("i") || type.equals("bool");
         for (int component = 0; component < count; component++) {

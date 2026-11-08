@@ -15,7 +15,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -34,13 +36,19 @@ import java.util.zip.ZipFile;
 public final class PackSource {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final List<String> DIMENSION_FOLDERS = List.of("world0", "world-1", "world1");
+    // As in shaders.properties, a directive's name follows its '#' directly (PropertiesPreprocessor).
     private static final Pattern PROPERTY_DIRECTIVE = Pattern.compile(
-            "^\\s*#\\s*(if|ifdef|ifndef|elif|else|endif|define)\\b(.*)$");
+            "^\\s*#(if|ifdef|ifndef|elif|else|endif|define)\\b(.*)$");
     private static final Pattern PROPERTY_DEFINE = Pattern.compile(
             "^([A-Za-z_]\\w*)(?:\\s+(.*))?$");
 
+    /** A dimension's analysis, and the macros and locked names it left the sources prepared with. */
+    record AnalyzedDimension(PackProbe.Analysis analysis, Map<String, String> macros, Set<String> locked) {}
+
     /** The selected programs, shader root, archive owner, and load metadata. */
     public static final class LoadResult implements AutoCloseable {
+        /** The vanilla three, and one more for a mod's; the least recently selected goes first. */
+        private static final int ANALYZED_DIMENSIONS = 4;
         private final Path shadersDir;
         private final Path temporaryRoot;
         private final StagedOptions options;
@@ -57,6 +65,16 @@ public final class PackSource {
         private String selectedDimension = "minecraft:overworld";
         private String selectedVariantFolder = "";
         private boolean closed;
+        /**
+         * The analyses of the dimensions this load selected (PackProbe.analyze). Its options and
+         * sources never change, so a dimension's analysis holds for as long as the load does.
+         */
+        private final Map<String, AnalyzedDimension> analyzed = new LinkedHashMap<>(8, 0.75F, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<String, AnalyzedDimension> eldest) {
+                return size() > ANALYZED_DIMENSIONS;
+            }
+        };
 
         private LoadResult(
                 Path shadersDir,
@@ -80,7 +98,7 @@ public final class PackSource {
             this.programs = List.of();
             this.deviations = this.baseDeviations;
             this.preparedMacros = new TreeMap<>(PackEngineDefines.forPack(Map.of()));
-            this.preparedLocked = new TreeSet<>(PackEngineDefines.lockedNames(Set.of(), false, false));
+            this.preparedLocked = new TreeSet<>(PackEngineDefines.lockedNames(Set.of(), false));
             selectDimension(initialDimension);
         }
 
@@ -95,6 +113,23 @@ public final class PackSource {
                     .sorted(Comparator.comparing(PackProgram::name)
                             .thenComparing(value -> relativePath(shadersDir, value.fragmentPath())))
                     .toList();
+        }
+
+        /** The selected dimension's analysis, when this load made one; null otherwise. */
+        AnalyzedDimension analyzed() {
+            return analyzed.get(selectedDimension);
+        }
+
+        /** Keeps the selected dimension's analysis, with the preparation it leaves the sources in. */
+        void keep(PackProbe.Analysis analysis) {
+            analyzed.put(selectedDimension, new AnalyzedDimension(analysis,
+                    Collections.unmodifiableMap(new TreeMap<>(preparedMacros)),
+                    Collections.unmodifiableSet(new TreeSet<>(preparedLocked))));
+        }
+
+        /** Prepares the sources as a kept analysis left them, so the load reads the same programs. */
+        void restore(AnalyzedDimension known) {
+            prepare(known.macros(), known.locked());
         }
 
         /** Re-prepares every variant with the active load-time option defaults. */
@@ -116,28 +151,17 @@ public final class PackSource {
             selectDimension(this.selectedDimension);
         }
 
-        /** The prepared programs of one source folder; null for a folder the pack does not have. */
+        /**
+         * The prepared programs of one source folder; null for a folder the pack does not have. Every
+         * folder starts from the same macros: Iris predefines no dimension macro (StandardMacros), so a
+         * pack's world0 files define OVERWORLD themselves, and code that tests it first reads it undefined.
+         */
         private List<PackProgram> variant(String folder) {
             List<PackProgram> raw = rawVariants.get(folder);
             if (raw == null) return null;
+            Map<String, String> macros = preparedMacros == null ? Map.of() : preparedMacros;
             return variants.computeIfAbsent(folder, key -> preparePrograms(
-                    raw, shadersDir, key, variantMacros(key, preparedMacros), preparedLocked));
-        }
-
-        private static Map<String, String> variantMacros(
-                String folder, Map<String, String> initialMacros) {
-            Map<String, String> result = new TreeMap<>();
-            if (initialMacros != null) {
-                result.putAll(initialMacros);
-            }
-            if (folder.equals("world0")) {
-                result.put("OVERWORLD", "1");
-            } else if (folder.equals("world-1")) {
-                result.put("NETHER", "1");
-            } else if (folder.equals("world1")) {
-                result.put("END", "1");
-            }
-            return Map.copyOf(result);
+                    raw, shadersDir, key, macros, preparedLocked));
         }
 
         public Path shadersDir() {
@@ -626,36 +650,59 @@ public final class PackSource {
             Map<String, String> initialMacros,
             Set<String> lockedMacros
     ) {
-        List<PackProgram> result = new ArrayList<>();
-        for (PackProgram candidate : candidates) {
-            ShaderSourcePreprocessor.Result fragment = normalizePreparedSource(
-                    ShaderSourcePreprocessor.prepare(
-                    shadersRoot, candidate.fragmentPath(), candidate.fragmentSource(), initialMacros,
-                    lockedMacros), false);
-            ShaderSourcePreprocessor.Result vertex = candidate.vertexSource() == null
-                    ? new ShaderSourcePreprocessor.Result(null, List.of())
-                    : normalizePreparedSource(ShaderSourcePreprocessor.prepare(
-                    shadersRoot, candidate.vertexPath(), candidate.vertexSource(), initialMacros,
-                    lockedMacros), true);
-            List<String> prepDeviations = new ArrayList<>();
-            prepDeviations.addAll(fragment.deviations());
-            prepDeviations.addAll(vertex.deviations());
-            Map<String, PreparedShaderSource> preparedSources = new TreeMap<>();
-            if (candidate.fragmentSource() != null) {
-                preparedSources.put("fragment", new PreparedShaderSource(
-                        "fragment", relativePath(shadersRoot, candidate.fragmentPath()),
-                        fragment.source(), fragment.dependencies(), fragment.deviations()));
-            }
-            if (candidate.vertexSource() != null) {
-                preparedSources.put("vertex", new PreparedShaderSource(
-                        "vertex", relativePath(shadersRoot, candidate.vertexPath()),
-                        vertex.source(), vertex.dependencies(), vertex.deviations()));
-            }
-            result.add(new PackProgram(candidate.name(), candidate.fragmentSource(), candidate.fragmentPath(),
-                    candidate.vertexSource(), candidate.vertexPath(), shadersRoot,
-                    fragment.source(), vertex.source(), prepDeviations, variantFolder, preparedSources));
+        // Each program preprocesses from its own files and the shared macros, so the workers share them.
+        return List.copyOf(PackWorkers.map(candidates, candidate ->
+                prepareProgram(candidate, shadersRoot, variantFolder, initialMacros, lockedMacros)));
+    }
+
+    private static PackProgram prepareProgram(PackProgram candidate, Path shadersRoot, String variantFolder,
+                                              Map<String, String> initialMacros, Set<String> lockedMacros) {
+        ShaderSourcePreprocessor.Result fragment = normalizePreparedSource(
+                ShaderSourcePreprocessor.prepare(
+                shadersRoot, candidate.fragmentPath(), candidate.fragmentSource(), initialMacros,
+                lockedMacros), false);
+        ShaderSourcePreprocessor.Result vertex = candidate.vertexSource() == null
+                ? new ShaderSourcePreprocessor.Result(null, List.of())
+                : normalizePreparedSource(ShaderSourcePreprocessor.prepare(
+                shadersRoot, candidate.vertexPath(), candidate.vertexSource(), initialMacros,
+                lockedMacros), true);
+        List<String> prepDeviations = new ArrayList<>();
+        prepDeviations.addAll(fragment.deviations());
+        prepDeviations.addAll(vertex.deviations());
+        Map<String, PreparedShaderSource> preparedSources = new TreeMap<>();
+        if (candidate.fragmentSource() != null) {
+            preparedSources.put("fragment", new PreparedShaderSource(
+                    "fragment", relativePath(shadersRoot, candidate.fragmentPath()),
+                    fragment.source(), fragment.dependencies(), fragment.deviations()));
         }
-        return List.copyOf(result);
+        if (candidate.vertexSource() != null) {
+            preparedSources.put("vertex", new PreparedShaderSource(
+                    "vertex", relativePath(shadersRoot, candidate.vertexPath()),
+                    vertex.source(), vertex.dependencies(), vertex.deviations()));
+        }
+        prepareGeometryStages(candidate, shadersRoot, initialMacros, lockedMacros, preparedSources);
+        return new PackProgram(candidate.name(), candidate.fragmentSource(), candidate.fragmentPath(),
+                candidate.vertexSource(), candidate.vertexPath(), shadersRoot,
+                fragment.source(), vertex.source(), prepDeviations, variantFolder, preparedSources);
+    }
+
+    /**
+     * Preprocesses each geometry and tessellation stage file beside the program's fragment stage,
+     * with the macros of its other stages. They need no legacy normalization: GL gives these
+     * stages no compatibility varyings. Whether one runs is the planner's to decide
+     * (PackProgram.runsBetweenStages), so its deviations stay with its own prepared source.
+     */
+    private static void prepareGeometryStages(PackProgram candidate, Path shadersRoot,
+                                              Map<String, String> initialMacros, Set<String> lockedMacros,
+                                              Map<String, PreparedShaderSource> preparedSources) {
+        candidate.geometryStageFiles().forEach((stage, path) -> {
+            String source = readOptionalSource(path);
+            if (source == null) return;
+            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
+                    shadersRoot, path, source, initialMacros, lockedMacros);
+            preparedSources.put(stage, new PreparedShaderSource(stage, relativePath(shadersRoot, path),
+                    prepared.source(), prepared.dependencies(), prepared.deviations()));
+        });
     }
 
     private static ShaderSourcePreprocessor.Result normalizePreparedSource(

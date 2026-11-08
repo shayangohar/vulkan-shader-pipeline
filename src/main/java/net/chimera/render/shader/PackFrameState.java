@@ -2,6 +2,8 @@ package net.chimera.render.shader;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.chimera.shaderpack.BiomeIds;
+import net.chimera.shaderpack.PackBlendPlan;
+import net.chimera.shaderpack.PackDirectives;
 import net.chimera.shaderpack.PackItemIdResolver;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.chimera.shaderpack.PackRuntimeSettings;
@@ -9,25 +11,25 @@ import net.chimera.shaderpack.UniformRegistry;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LightningBolt;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.Biome;
-import net.minecraft.world.level.material.FogType;
 import net.minecraft.world.phys.Vec3;
 import net.vulkanmod.vulkan.VRenderSystem;
+import net.vulkanmod.vulkan.shader.PipelineState;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
 
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.IntToDoubleFunction;
@@ -85,6 +87,12 @@ final class PackFrameState {
     private final Vector4f lightningBoltPosition = new Vector4f();
     private final IrisPlayerState irisPlayer = new IrisPlayerState();
     private final HeldItemState heldItems = new HeldItemState();
+    private final IrisWorldState irisWorld = new IrisWorldState();
+    private final SelectedBlockState selectedBlock = new SelectedBlockState();
+    private final IrisDrawState drawState = new IrisDrawState();
+    /** The value groups beside the table, each serving its own names. */
+    private final List<FrameValueSource> sources = List.of(irisPlayer, heldItems, irisWorld, selectedBlock,
+            drawState);
     /** The shadow caster rotation for the same light, as Iris builds it; its Z is sunLightVector. */
     private final Matrix4f shadowLightRotation = new Matrix4f().rotateX((float) Math.toRadians(90.0));
     private final float[] fogColor = new float[4];
@@ -102,6 +110,8 @@ final class PackFrameState {
     private final float[] previousCameraPositionFract = new float[3];
     private PackRuntimeSettings runtimeSettings = PackRuntimeSettings.empty();
     private PackRuntimeSettings.Session session = runtimeSettings.newSession();
+    // The pack's smoothing half-lives (Iris PackDirectives).
+    private PackDirectives directives = PackDirectives.DEFAULTS;
 
     private ClientLevel lastLevel;
     private boolean viewInitialized;
@@ -283,6 +293,10 @@ final class PackFrameState {
         this.session = this.runtimeSettings.newSession();
     }
 
+    void installDirectives(PackDirectives directives) {
+        this.directives = directives == null ? PackDirectives.DEFAULTS : directives;
+    }
+
     void installHeldItems(PackItemIdResolver items, boolean oldHandLight) {
         heldItems.install(items, oldHandLight);
     }
@@ -301,6 +315,8 @@ final class PackFrameState {
         if (camera == null || minecraft == null) {
             clearCameraState();
             irisPlayer.clear();
+            irisWorld.clear();
+            selectedBlock.clear();
             heldItems.clear();
             clearWorldState();
             evaluateCustomValues();
@@ -310,6 +326,8 @@ final class PackFrameState {
         var position = camera.getPosition();
         advanceCamera(position.x, position.y, position.z, viewportChanged);
         irisPlayer.capture(minecraft, frameTime);
+        irisWorld.capture(minecraft, partialTick);
+        selectedBlock.capture(minecraft);
         heldItems.capture(minecraft);
 
         Entity cameraEntity = minecraft.getCameraEntity();
@@ -327,8 +345,8 @@ final class PackFrameState {
                     ? living.getViewVector(partialTick) : cameraEntity.getForward();
             this.playerLookVector.set((float) look.x, (float) look.y, (float) look.z);
             if (cameraEntity instanceof LivingEntity living) {
-                this.blindness = blindness(living);
-                this.darknessFactor = darknessFactor(living, partialTick);
+                this.blindness = CameraEffects.blindness(living);
+                this.darknessFactor = CameraEffects.darknessFactor(living, partialTick);
             } else {
                 this.blindness = 0.0f;
                 this.darknessFactor = 0.0f;
@@ -338,10 +356,9 @@ final class PackFrameState {
         this.relativeEyePosition.set((float) position.x - this.eyePosition.x,
                 (float) position.y - this.eyePosition.y,
                 (float) position.z - this.eyePosition.z);
-        this.isEyeInWater = eyeInWater(camera.getFluidInCamera(),
-                minecraft.player != null && minecraft.player.isSpectator());
-        this.nightVision = nightVision(minecraft, cameraEntity, partialTick);
-        this.darknessLightFactor = darknessLightFactor(minecraft, partialTick);
+        this.isEyeInWater = CameraEffects.eyeInWater(camera.getFluidInCamera());
+        this.nightVision = CameraEffects.nightVision(minecraft, cameraEntity, partialTick);
+        this.darknessLightFactor = CameraEffects.darknessLightFactor(minecraft, partialTick);
         this.screenBrightness = minecraft.options.gamma().get().floatValue();
         this.glintAlpha = minecraft.options.glintStrength().get().floatValue();
 
@@ -390,12 +407,9 @@ final class PackFrameState {
             }
             return;
         }
-        if (IrisPlayerState.NAMES.contains(name)) {
-            irisPlayer.write(name, type, target);
-            return;
-        }
-        if (HeldItemState.NAMES.contains(name)) {
-            heldItems.write(name, type, target);
+        FrameValueSource source = sourceOf(name);
+        if (source != null) {
+            source.write(name, type, target);
             return;
         }
         FrameValue value = values.get(name);
@@ -415,11 +429,9 @@ final class PackFrameState {
      * canonical engine input -- which is exactly why a pack may not author one.
      */
     double value(String name, int component) {
-        if (IrisPlayerState.NAMES.contains(name)) {
-            return irisPlayer.value(name, component);
-        }
-        if (HeldItemState.NAMES.contains(name)) {
-            return heldItems.value(name, component);
+        FrameValueSource source = sourceOf(name);
+        if (source != null) {
+            return source.value(name, component);
         }
         FrameValue value = values.get(name);
         if (value == null) {
@@ -427,6 +439,13 @@ final class PackFrameState {
         }
         int index = Math.max(component, 0);
         return index < value.width() ? value.component().applyAsDouble(index) : Double.NaN;
+    }
+
+    private FrameValueSource sourceOf(String name) {
+        for (FrameValueSource source : sources) {
+            if (source.names().contains(name)) return source;
+        }
+        return null;
     }
 
     static int wrapFrameCounter(int value) {
@@ -440,14 +459,6 @@ final class PackFrameState {
         // Iris exposes the whole elapsed frame, including stalls, and resets at one hour.
         this.frameTime = Math.max(deltaSeconds, 0.0f);
         this.frameTimeCounter = wrapFrameTimeCounter(this.frameTimeCounter + this.frameTime);
-    }
-
-    static int irisWorldTimeForTest(long dayTime, boolean fixedTime, boolean netherOrEnd) {
-        return fixedTime && !netherOrEnd ? 0 : (int) Math.floorMod(dayTime, 24000L);
-    }
-
-    static int irisWorldDayForTest(long dayTime) {
-        return (int) Math.floorDiv(dayTime, 24000L);
     }
 
     static float quantizedFrameSecondsForTest(long elapsedNanos) {
@@ -617,8 +628,7 @@ final class PackFrameState {
             lightDirection1[i] = direction1.getFloat(i * 4);
         }
         alphaCutout = VRenderSystem.alphaCutout;
-        fogStart = RenderSystem.getShaderFogStart();
-        fogEnd = RenderSystem.getShaderFogEnd();
+        setFogRange(RenderSystem.getShaderFogStart(), RenderSystem.getShaderFogEnd());
     }
 
     private void captureWorld(ClientLevel level, Minecraft minecraft, Camera camera,
@@ -627,12 +637,8 @@ final class PackFrameState {
             clearWorldState();
             return;
         }
-        long dayTime = level.getDayTime();
-        boolean netherOrEnd = level.dimension() == Level.NETHER
-                || level.dimension() == Level.END;
-        boolean fixedTime = level.dimensionType().hasFixedTime();
-        worldTime = irisWorldTimeForTest(dayTime, fixedTime, netherOrEnd);
-        worldDay = irisWorldDayForTest(dayTime);
+        worldTime = WorldClock.worldTime(level);
+        worldDay = WorldClock.worldDay(level.getDayTime());
         moonPhase = Math.floorMod(worldDay, 8);
         rainStrength = clamp(level.getRainLevel(partialTick), 0.0f, 1.0f);
         thunderStrength = clamp(level.getThunderLevel(partialTick), 0.0f, 1.0f);
@@ -652,7 +658,8 @@ final class PackFrameState {
         var biome = biomeHolder.value();
         biomeCategory = BiomeIds.category(biomeHolder).ordinal();
         biomeTemperature = biome.getBaseTemperature();
-        rainfall = biome.hasPrecipitation() ? 1.0f : 0.0f;
+        // Iris BiomeUniforms: the biome's downfall, 0.4 in plains (Ebin's cloud coverage reads it).
+        rainfall = biome.getModifiedClimateSettings().downfall();
         eyeAltitude = cameraOrigin.y;
         biomeId = BiomeIds.id(biomeKey(level, biomePos));
         biomePrecipitation = precipitation(biome, biomePos);
@@ -664,17 +671,17 @@ final class PackFrameState {
             smoothingStarted = true;
         } else {
             wetnessValue = smooth(wetnessValue, rainStrength,
-                    runtimeSettings.wetnessRiseHalfLife(),
-                    runtimeSettings.wetnessFallHalfLife(), frameTime);
+                    directives.wetnessHalfLife(),
+                    directives.drynessHalfLife(), frameTime);
         }
         wetness = wetnessValue;
         if (frameTime > 0.0f) {
             eyeBrightnessBlockSmooth = smooth(eyeBrightnessBlockSmooth,
-                    eyeBrightness[0], runtimeSettings.eyeBrightnessHalfLife(),
-                    runtimeSettings.eyeBrightnessHalfLife(), frameTime);
+                    eyeBrightness[0], directives.eyeBrightnessHalfLife(),
+                    directives.eyeBrightnessHalfLife(), frameTime);
             eyeBrightnessSkySmooth = smooth(eyeBrightnessSkySmooth,
-                    eyeBrightness[1], runtimeSettings.eyeBrightnessHalfLife(),
-                    runtimeSettings.eyeBrightnessHalfLife(), frameTime);
+                    eyeBrightness[1], directives.eyeBrightnessHalfLife(),
+                    directives.eyeBrightnessHalfLife(), frameTime);
         }
         eyeBrightnessSmooth[0] = (int) eyeBrightnessBlockSmooth;
         eyeBrightnessSmooth[1] = (int) eyeBrightnessSkySmooth;
@@ -783,6 +790,11 @@ final class PackFrameState {
         return true;
     }
 
+    /** Returns true when the next draw's gtextureSize or blendFunc changed (IrisDrawState). */
+    boolean setDrawState(int width, int height, PackBlendPlan.Mode programBlend, PipelineState.BlendInfo host) {
+        return drawState.set(width, height, programBlend, host);
+    }
+
     /** Returns true when the per-draw entity alpha reference changed. */
     boolean setEntityAlphaReference(float reference) {
         if (Float.compare(this.entityAlphaReference, reference) == 0) return false;
@@ -793,6 +805,21 @@ final class PackFrameState {
     boolean setHostEntityId(int entityId) {
         if (this.hostEntityId == entityId) return false;
         this.hostEntityId = entityId;
+        return true;
+    }
+
+    /** Returns true when the fog colour (Iris fogColor) changed. */
+    boolean setFogColor(float[] color) {
+        if (Arrays.equals(this.fogColor, 0, 4, color, 0, 4)) return false;
+        System.arraycopy(color, 0, this.fogColor, 0, 4);
+        return true;
+    }
+
+    /** Returns true when the fog range (Iris fogStart and fogEnd) changed. */
+    boolean setFogRange(float start, float end) {
+        if (Float.compare(this.fogStart, start) == 0 && Float.compare(this.fogEnd, end) == 0) return false;
+        this.fogStart = start;
+        this.fogEnd = end;
         return true;
     }
 
@@ -820,55 +847,6 @@ final class PackFrameState {
             return 1;
         }
         return 2;
-    }
-
-    private float nightVision(Minecraft minecraft, Entity cameraEntity, float partialTick) {
-        if (cameraEntity instanceof LivingEntity living
-                && living.hasEffect(MobEffects.NIGHT_VISION)) {
-            return clamp(GameRenderer.getNightVisionScale(living, partialTick), 0.0f, 1.0f);
-        }
-        if (minecraft.player != null && minecraft.player.getWaterVision() > 0.0f
-                && minecraft.player.hasEffect(MobEffects.CONDUIT_POWER)) {
-            return clamp(minecraft.player.getWaterVision(), 0.0f, 1.0f);
-        }
-        return 0.0f;
-    }
-
-    private float darknessLightFactor(Minecraft minecraft, float partialTick) {
-        if (minecraft.player == null) {
-            return 0.0f;
-        }
-        float scale = minecraft.options.darknessEffectScale().get().floatValue();
-        float gamma = darknessFactor(minecraft.player, partialTick) * scale;
-        float darkness = Math.max(0.0f,
-                (float) Math.cos((minecraft.player.tickCount - partialTick)
-                        * (float) Math.PI * 0.025f) * 0.45f * gamma);
-        return darkness * scale;
-    }
-
-    /** The darkness effect's blend, as Iris CommonUniforms reads it: 0 without the effect. */
-    private static float darknessFactor(LivingEntity living, float partialTick) {
-        var effect = living.getEffect(MobEffects.DARKNESS);
-        return effect == null ? 0.0F : effect.getBlendFactor(living, partialTick);
-    }
-
-    private static float blindness(LivingEntity living) {
-        var effect = living.getEffect(MobEffects.BLINDNESS);
-        if (effect == null) {
-            return 0.0f;
-        }
-        return effect.isInfiniteDuration() ? 1.0f
-                : clamp(effect.getDuration() / 20.0f, 0.0f, 1.0f);
-    }
-
-    private static int eyeInWater(FogType type, boolean spectator) {
-        if (type == FogType.WATER) {
-            return 1;
-        }
-        if (!spectator && type == FogType.LAVA) {
-            return 2;
-        }
-        return type == FogType.POWDER_SNOW ? 3 : 0;
     }
 
     private void writeCameraPosition() {
@@ -982,13 +960,15 @@ final class PackFrameState {
         clearWorldState();
     }
 
+    /**
+     * The inverse Iris serves (MatrixUniforms.Inverted: a plain invert), or identity for a
+     * singular matrix, whose inverse is not finite. A small determinant is not singular: a shadow
+     * projection over 512 blocks has one near 3e-8, and its true inverse is what a pack's shadow
+     * vertex stage undoes ftransform() with.
+     */
     private static void invertOrIdentity(Matrix4f source, Matrix4f destination) {
-        float determinant = source.determinant();
-        if (!Float.isFinite(determinant) || Math.abs(determinant) < 1.0e-7f) {
-            destination.identity();
-            return;
-        }
         source.invert(destination);
+        if (!destination.isFinite()) destination.identity();
     }
 
     private static float clamp(float value, float min, float max) {

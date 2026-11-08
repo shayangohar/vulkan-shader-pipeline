@@ -32,27 +32,32 @@ public final class PackProbe {
             "gl_FragData\\s*\\[\\s*(\\d+)\\s*\\]");
     private static final Pattern PROPERTY = Pattern.compile(
             "^\\s*([A-Za-z0-9_.-]+)\\s*=\\s*([^\\s#]+)");
-    private static final Pattern COLORTEX_FORMAT = Pattern.compile(
-            "colortex\\d+Format");
-    private static final Pattern SHADOW_SETTING = Pattern.compile(
-            "shadowMapResolution|shadowDistance|shadowMapSize|shadowMapFov|shadowDistanceRenderMul");
 
     private PackProbe() {}
 
-    /** Static analysis result shared by reporting and runtime pipeline loading. */
+    /**
+     * Static analysis result shared by reporting and runtime pipeline loading, with the pass
+     * computes the report shows and the session runs.
+     */
     public record Analysis(
             ConformanceReport report,
             PackPlan plan,
             PackConfig.PackConfigData config,
             PackSettingsPlan settings,
-            PackResolutionPlan resolution
+            PackResolutionPlan resolution,
+            PassComputePlan passComputes
     ) {
         public Analysis(
                 ConformanceReport report,
                 PackPlan plan,
                 PackConfig.PackConfigData config
         ) {
-            this(report, plan, config, PackSettingsPlan.empty(), PackResolutionPlan.empty());
+            this(report, plan, config, PackSettingsPlan.empty(), PackResolutionPlan.empty(), PassComputePlan.empty());
+        }
+
+        /** The same analysis with a copy of its report, the one part the runtime changes. */
+        Analysis withOwnReport() {
+            return new Analysis(report.copy(), plan, config, settings, resolution, passComputes);
         }
     }
 
@@ -71,9 +76,22 @@ public final class PackProbe {
         return analyze(packPath, loaded).report();
     }
 
-    /** Builds the report and the immutable runtime plan from one loaded source tree. */
+    /**
+     * Builds the report and the immutable runtime plan from one loaded source tree. A dimension
+     * this load analysed before is not analysed again: the load's options and sources are fixed,
+     * so its analysis still holds (PackSource.LoadResult.analyzed), as Iris builds a dimension's
+     * pipeline from the shader pack it loaded once. Each caller gets its own report, which the
+     * runtime marks.
+     */
     public static Analysis analyze(Path packPath, PackSource.LoadResult loaded) {
-        return new Probe(packPath, loaded).analyze();
+        PackSource.AnalyzedDimension known = loaded.analyzed();
+        if (known != null) {
+            loaded.restore(known);
+            return known.analysis().withOwnReport();
+        }
+        Analysis analysis = new Probe(packPath, loaded).analyze();
+        loaded.keep(analysis.withOwnReport());
+        return analysis;
     }
 
     /** One probe of a loaded pack: the report inputs it reads and the plans it builds from them. */
@@ -85,8 +103,6 @@ public final class PackProbe {
         private final List<String> globalDeviations = new ArrayList<>();
         private final List<String> settings = new ArrayList<>();
         private final List<String> passInventory = new ArrayList<>();
-        private final Set<String> shadowPropertySettings = new TreeSet<>();
-        private final Set<String> alphaTestPropertySettings = new TreeSet<>();
         private final Map<String, Inventory> inventories = new TreeMap<>();
         private boolean passListPresent;
         private PackSettingsPlan settingsPlan;
@@ -108,15 +124,14 @@ public final class PackProbe {
         Analysis analyze() {
             loaded.prepare(
                     PackEngineDefines.forPack(settingsPlan.preprocessorDefines()),
-                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false, false));
-            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs(), shadersDir,
-                    loaded.selectedVariantFolder());
+                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false));
+            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
             readPackFiles();
             if (!Files.isDirectory(shadersDir)) {
                 globalDeviations.add("NO_SHADERS_DIRECTORY");
                 return new Analysis(conformanceReport(), new PackPlan(null, List.of()), null,
-                        settingsPlan, PackResolutionPlan.empty());
+                        settingsPlan, PackResolutionPlan.empty(), PassComputePlan.empty());
             }
             inventorySources();
             readBlockProperties();
@@ -124,14 +139,15 @@ public final class PackProbe {
             buildPlans();
             PackPlan packPlan = new PackPlan(packConfig, initialPlan.programs(), entityIds.resolver(),
                     settingsPlan, resolution, resourcePlan, advancedPlan);
-            addPackDeviations(packPlan);
+            addPackDeviations();
             ConformanceReport report = conformanceReport();
             inventoryAliases(packPlan);
-            for (Inventory inventory : inventories.values()) {
-                report.addProgram(ProgramReportRules.toProgram(inventory, packConfig,
-                        packPlan.program(inventory.name), resourcePlan, packPlan));
-            }
-            return new Analysis(report, packPlan, packConfig, settingsPlan, resolution);
+            PassComputePlan passComputes = PassComputePlan.build(packPlan, shadersDir);
+            PackPlan planned = packPlan;
+            PackWorkers.map(List.copyOf(inventories.values()), inventory -> ProgramReportRules.toProgram(inventory,
+                    packConfig, planned.program(inventory.name), resourcePlan, planned, passComputes))
+                    .forEach(report::addProgram);
+            return new Analysis(report, packPlan, packConfig, settingsPlan, resolution, passComputes);
         }
 
         private ConformanceReport conformanceReport() {
@@ -151,8 +167,7 @@ public final class PackProbe {
             Path properties = shadersDir.resolve("shaders.properties");
             if (Files.isRegularFile(properties)) {
                 readMetadata(properties, "shaders.properties", metadataHashes, globalDeviations);
-                readProperties(properties, settings, globalDeviations, shadowPropertySettings,
-                        alphaTestPropertySettings);
+                readProperties(properties, settings, globalDeviations);
             }
         }
 
@@ -207,14 +222,11 @@ public final class PackProbe {
 
         private void buildPlans() {
             planPreparedSources();
-            // Some real packs intentionally hide their writable-image producers
-            // behind the Iris custom-image capability. The first plan tells us
-            // whether the pack declares a supported image set and a compute stage;
-            // only then do we negotiate that capability and rebuild every plan
-            // from the same prepared source snapshot. Packs without that contract
-            // retain their original preparation and fallback behavior.
-            if (advancedPlan.hasSupportedImages()
-                    && advancedPlan.computeStages().containsKey("shadowcomp")) {
+            // Packs hide their image code behind Iris's custom-image capability. The first plan
+            // tells whether Chimera creates any image the pack declares; only then is the
+            // capability offered and every plan rebuilt from the same prepared sources, as Iris
+            // offers it whatever programs read or write the images.
+            if (advancedPlan.capabilityPossible()) {
                 prepareWithCustomImages();
                 planPreparedSources();
             }
@@ -248,9 +260,8 @@ public final class PackProbe {
         private void prepareWithCustomImages() {
             loaded.prepare(
                     PackEngineDefines.forCustomImages(settingsPlan.preprocessorDefines()),
-                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true, false));
-            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs(), shadersDir,
-                    loaded.selectedVariantFolder());
+                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true));
+            settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
             inventories.values().forEach(inventory -> {
                 inventory.preparedSources.clear();
@@ -259,20 +270,21 @@ public final class PackProbe {
             addInventories(loaded.programs(), inventories, shadersDir);
         }
 
-        /** The pack-wide deviations of the config and settings, and how the shadow and alpha settings apply. */
-        private void addPackDeviations(PackPlan packPlan) {
+        /**
+         * The pack-wide deviations of the config and settings, how the shadow settings apply, and
+         * each property Iris reads that Chimera does not apply (PackPropertyKeys).
+         */
+        private void addPackDeviations() {
             globalDeviations.addAll(packConfig.deviations());
             // Keep standard sampler aliases program-scoped. Adding every binding
             // deviation to the pack-wide list changes old fixture support status
             // even when the alias is already part of that family's contract.
             globalDeviations.addAll(settingsPlan.resourceDeviations());
             settingsPlan.deviations().stream()
-                    .filter(value -> value.startsWith("CUSTOM_IMAGE_UNSUPPORTED:")
-                            || value.startsWith("STORAGE_RESOURCE_UNSUPPORTED:"))
+                    .filter(value -> value.startsWith("SETTING_UNSUPPORTED:"))
+                    .map(value -> "SETTING_NOT_APPLIED:" + value.substring("SETTING_UNSUPPORTED:".length()))
                     .forEach(globalDeviations::add);
-            applyShadowPropertyReporting(inventories, shadowPropertySettings,
-                    packConfig.shadowSettings(), globalDeviations);
-            applyAlphaTestPropertyReporting(packPlan, alphaTestPropertySettings, globalDeviations);
+            applyShadowSettingReporting(inventories, packConfig.shadowSettings(), globalDeviations);
         }
 
         private void inventoryAliases(PackPlan packPlan) {
@@ -357,6 +369,9 @@ public final class PackProbe {
             addSource(inventory, "vertex", program.vertexPath(), program.vertexSource(),
                     program.preparedVertexSource(), shadersDir);
         }
+        program.preparedSources().forEach((stage, prepared) -> {
+            if (prepared.source() != null) inventory.preparedSources.putIfAbsent(stage, prepared.source());
+        });
         inventory.deviations.addAll(program.preparationDeviations());
     }
 
@@ -391,12 +406,11 @@ public final class PackProbe {
                 : name;
     }
 
-    private static PackSettingsPlan resolveLiveSamplerSlots(
-            PackSettingsPlan settings,
-            List<PackProgram> programs,
-            Path shadersDir,
-            String selectedFolder
-    ) {
+    /**
+     * The selector slots of the custom samplers the graphics programs read. Compute sources bind their
+     * own (PassComputePlan), so they reserve none here.
+     */
+    private static PackSettingsPlan resolveLiveSamplerSlots(PackSettingsPlan settings, List<PackProgram> programs) {
         if (settings == null) return PackSettingsPlan.empty();
         Set<String> live = new TreeSet<>();
         if (programs != null) {
@@ -414,12 +428,14 @@ public final class PackProbe {
                     live.addAll(usage.liveSamplers());
                     live.addAll(usage.liveImages());
                 }
+                // Iris binds every stage's samplers; Rethinking Voxels' shadow.gsh writes voxelCols.
+                for (String source : program.preparedGeometryStages(settings.readsTessellation()).values()) {
+                    GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source);
+                    live.addAll(usage.liveSamplers());
+                    live.addAll(usage.liveImages());
+                }
             }
         }
-        boolean customImages = settings.propertyValues().keySet().stream()
-                .anyMatch(name -> name.startsWith("image."));
-        live.addAll(PackAdvancedResourcePlan.liveComputeResourceNames(
-                shadersDir, selectedFolder, settings, customImages));
         return settings.withSamplerSlots(settings.customSamplerSlots(live));
     }
 
@@ -428,8 +444,7 @@ public final class PackProbe {
         if (index.matches()) {
             return Integer.parseInt(index.group(1));
         }
-        Matcher format = Pattern.compile("POST_TARGET_FORMAT_(?:UNSUPPORTED|APPROXIMATED):colortex(\\d+)")
-                .matcher(deviation);
+        Matcher format = Pattern.compile("POST_TARGET_[A-Z_]+:colortex(\\d+)").matcher(deviation);
         if (format.find()) {
             return Integer.parseInt(format.group(1));
         }
@@ -459,37 +474,16 @@ public final class PackProbe {
         }
     }
 
-    private static void readProperties(
-            Path properties,
-            List<String> settings,
-            List<String> deviations,
-            Set<String> shadowPropertySettings,
-            Set<String> alphaTestPropertySettings
-    ) {
+    /**
+     * Lists the keys shaders.properties names. Which keys Chimera does not apply is
+     * PackSettingsPlan's to say (PackPropertyKeys), read through the pack's conditionals.
+     */
+    private static void readProperties(Path properties, List<String> settings, List<String> deviations) {
         try {
             for (String line : Files.readAllLines(properties, StandardCharsets.UTF_8)) {
                 Matcher matcher = PROPERTY.matcher(line);
-                if (!matcher.find()) {
-                    continue;
-                }
-                String key = matcher.group(1);
-                settings.add(key);
-                boolean colortexFormat = COLORTEX_FORMAT.matcher(key).matches();
-                boolean shadowSetting = SHADOW_SETTING.matcher(key).matches();
-                boolean customValue = key.matches(
-                        "(?:uniform|variable)\\.(?:float|int|bool|vec2|vec3|vec4)\\.[A-Za-z_]\\w*");
-                boolean alphaTest = key.equals("alphaTest.gbuffers_terrain")
-                        || key.equals("alphaTest.gbuffers_water");
-                boolean featureFlags = key.startsWith("iris.features.");
-                if (featureFlags) {
-                    continue;
-                }
-                if (shadowSetting) {
-                    shadowPropertySettings.add(key);
-                } else if (alphaTest) {
-                    alphaTestPropertySettings.add(key);
-                } else if (!colortexFormat && !customValue && !alphaTest) {
-                    deviations.add("SETTING_NOT_APPLIED:" + key);
+                if (matcher.find()) {
+                    settings.add(matcher.group(1));
                 }
             }
         } catch (IOException e) {
@@ -497,32 +491,9 @@ public final class PackProbe {
         }
     }
 
-    private static void applyAlphaTestPropertyReporting(
-            PackPlan packPlan,
-            Set<String> alphaTestPropertySettings,
-            List<String> deviations
-    ) {
-        for (String key : alphaTestPropertySettings) {
-            String programName = key.substring("alphaTest.".length());
-            PackProgramPlan programPlan = packPlan == null ? null : packPlan.program(programName);
-            boolean consumed = programPlan != null
-                    && programPlan.executable()
-                    && programPlan.alphaTestPlan().valid()
-                    && programPlan.alphaTestPlan().configured()
-                    && (programName.equals("gbuffers_terrain")
-                    || FamilyAdapterRegistry.isEntityLike(programName)
-                    || FamilyAdapterRegistry.isCloudFamily(programName)
-                    ? programPlan.convertedVertex() != null
-                    : false);
-            if (!consumed) {
-                deviations.add("SETTING_NOT_APPLIED:" + key);
-            }
-        }
-    }
-
-    private static void applyShadowPropertyReporting(
+    /** Reports each shadow setting the sources' const directives declare. */
+    private static void applyShadowSettingReporting(
             Map<String, Inventory> inventories,
-            Set<String> shadowPropertySettings,
             PackConfig.ShadowSettings shadowSettings,
             List<String> deviations
     ) {
@@ -530,14 +501,13 @@ public final class PackProbe {
         boolean executablePair = shadow != null
                 && shadow.stages.contains("vertex") && shadow.stages.contains("fragment");
         if (!executablePair) {
-            for (String key : shadowPropertySettings) {
+            for (String key : shadowSettings.rawValues().keySet()) {
                 deviations.add("SHADOW_SETTING_LOGGED_ONLY:" + key);
             }
             return;
         }
         for (String key : shadowSettings.rawValues().keySet()) {
-            if (key.equals("shadowMapResolution") || key.equals("shadowDistance")
-                    || key.equals("entityShadowDistanceMul")) {
+            if (PackConfig.isSupportedShadowSetting(key)) {
                 if (shadowSettings.deviations().contains("SHADOW_SETTING_DEFAULTED:" + key)) {
                     deviations.add("SHADOW_SETTING_DEFAULTED:" + key);
                 } else {

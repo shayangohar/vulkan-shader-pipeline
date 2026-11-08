@@ -17,3 +17,7 @@ void main() {
     gl_FragData[0] = mix(lit, vec4(marker, lit.a), 0.35);
     gl_FragData[1] = vec4(marker, 1.0);
 }
+/*
+const int colortex6Format = RGBA8;
+const bool colortex6Clear = false;
+*/

@@ -1,9 +1,12 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackTargetGraphPlan;
+import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.TargetSpec;
 import net.chimera.shaderpack.TargetStep;
+import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,60 +20,87 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Which pack post targets a pass may sample, and which persist across frames. */
 final class PackPostTargetsTest {
+    /** The bounded post target bridge: target directives, device MRT limits and output formats. */
     @Test
-    void availability() {
-        boolean[] unwritten = new boolean[4];
-        assertTrue(PackPostTargets.isTargetAvailable(0, true, unwritten),
-                "target 0 must use HDR identity before a pack write");
-        assertTrue(!PackPostTargets.isTargetAvailable(1, true, unwritten),
-                "target 1 must be unavailable before a pack write");
-        assertTrue(!PackPostTargets.isTargetAvailable(2, true, unwritten),
-                "target 2 must be unavailable before a pack write");
-        assertTrue(!PackPostTargets.isTargetAvailable(3, true, unwritten),
-                "target 3 must be unavailable before a pack write");
-        boolean[] targetZeroWritten = unwritten.clone();
-        targetZeroWritten[0] = true;
-        assertTrue(PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
-                "target 0 must become pack-owned after a successful write");
-        PackPostTargets.invalidateWrittenTargets(targetZeroWritten, List.of(0));
-        assertTrue(PackPostTargets.isTargetAvailable(0, true, targetZeroWritten),
-                "target 0 invalidation must restore HDR identity");
-        assertTrue(!PackPostTargets.isTargetAvailable(0, false, targetZeroWritten),
-                "target 0 must not remain pack-owned after invalidation");
+    void targetBridge() {
+        PostTargetPlan.ParseResult route = PostTargetPlan.parse(
+                "composite", "#version 120\n/* RENDERTARGETS: 0,4,7 */\n"
+                        + "gl_FragData[0] = vec4(1.0);\n"
+                        + "gl_FragData[1] = vec4(0.5);\n"
+                        + "gl_FragData[2] = vec4(0.25);\n");
+        assert route.executable() : route.deviations();
+        assert route.plan().targetSlots().equals(List.of(0, 4, 7));
+        assert route.plan().targetForOutput(2) == 7;
 
-        boolean[] targetOneWritten = unwritten.clone();
-        targetOneWritten[1] = true;
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 1), true, targetOneWritten),
-                "written target 1 must remain available with HDR target 0");
-        assertTrue(!PackPostTargets.areTargetsAvailable(List.of(0, 2), true, targetOneWritten),
-                "target 2 must remain unavailable until written");
+        PostTargetPlan.ParseResult duplicate = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0,4,4 */");
+        assert duplicate.deviations().contains("POST_TARGET_DIRECTIVE_DUPLICATE:4");
 
-        boolean[] targetThreeWritten = targetOneWritten.clone();
-        targetThreeWritten[3] = true;
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 3), true, targetThreeWritten),
-                "a successful target 3 writer must make target 3 available");
-        PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(3));
-        assertTrue(!PackPostTargets.areTargetsAvailable(List.of(0, 3), true, targetThreeWritten),
-                "a skipped target 3 writer must invalidate target 3");
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, targetThreeWritten),
-                "an unrelated target 0 consumer must remain executable");
-        PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(1));
-        assertTrue(!PackPostTargets.isTargetAvailable(1, true, targetThreeWritten),
-                "invalidated auxiliary targets must remain unavailable until rewritten");
-        targetThreeWritten[3] = true;
-        assertTrue(PackPostTargets.isTargetAvailable(3, true, targetThreeWritten),
-                "a later successful write must restore target availability");
+        assert PackPostTargets.deviceSupportsMrt(4, 4);
+        assert !PackPostTargets.deviceSupportsMrt(5, 4);
 
-        // A failed destination bank does not change the committed source set.
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0, 1), true, targetOneWritten),
-                "failed destination bank must preserve committed targets");
-        assertTrue(PackPostTargets.bankAfterFinish(0, 1, false) == 0,
-                "runtime failure must not swap the destination bank");
-        assertTrue(PackPostTargets.bankAfterFinish(0, 1, true) == 1,
-                "successful finish must commit the destination bank");
-        PackPostTargets.invalidateWrittenTargets(targetThreeWritten, List.of(3));
-        assertTrue(PackPostTargets.areTargetsAvailable(List.of(0), true, targetThreeWritten),
-                "final fallback must resolve through target 0 when target 3 is unavailable");
+        Map<Integer, Integer> formats = Map.of(4, 37, 7, 109);
+        PostTargetPlan formatted = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0,4,7 */", formats).plan();
+        assert formatted.outputFormats().equals(List.of(37, 37, 109)); // colortex0 undeclared: RGBA8, as Iris
+    }
+
+    /**
+     * Rethinking Voxels' prepare passes do not run, so the chain drops colortex8, which its
+     * terrain reads. The terrain reads the image colortex8 holds, as under Iris; the resolver
+     * found no image and the game crashed (RESOURCE_BINDING_UNAVAILABLE:gbuffers_terrain:Sampler22).
+     */
+    @Test
+    void worldProgramsReadWhatADroppedTargetHolds() {
+        var held = MaterialMapFixtures.markerImage();
+        var source = MaterialMapFixtures.markerImage();
+        var hdr = MaterialMapFixtures.markerImage();
+        assertEquals(held, PackPostTargets.worldImage(8, null, true, held), "a dropped target reads its image");
+        assertEquals(source, PackPostTargets.worldImage(8, source, true, held), "a live source wins");
+        assertEquals(null, PackPostTargets.worldImage(9, null, false, null), "the session made no colortex9");
+        assertEquals(null, PackPostTargets.worldImage(0, null, true, held), "colortex0 is left to the resolver");
+        var colors = new VulkanImage[16];
+        colors[8] = PackPostTargets.worldImage(8, null, true, held);
+        assertEquals(held, PackPostChain.resolvePackColorInput(8, colors, hdr));
+        assertEquals(hdr, PackPostChain.resolvePackColorInput(0, colors, hdr));
+    }
+
+    /**
+     * Glimmer's prepare2 builds colortex7's mips (its sky), and its translucents and composite3
+     * read them with textureLod. Iris resets a target's filter only after final
+     * (FinalPassRenderer.resetRenderTarget), so the chain is still sampled through its mips in
+     * every later window and in final. Chimera reset it as each window opened.
+     */
+    @Test
+    void mipSamplingLastsUntilTheFrameEnds() {
+        PackPostTargets targets = new PackPostTargets();
+        VulkanImage sky = MaterialMapFixtures.markerImage();
+        targets.noteMipSampling(sky);
+        for (PackFrameSchedulePlan.PostWindow window : PackFrameSchedulePlan.PostWindow.values()) {
+            targets.openPostWindow(null, window);
+            assertTrue(targets.samplesMips(sky), "still mip-sampled as " + window + " opens");
+        }
+        targets.generateMipmaps(null, "final");
+        assertTrue(targets.samplesMips(sky), "still mip-sampled at final");
+    }
+
+    /**
+     * Glimmer's prepare2 names colortex0 and writes nothing. Iris's flip there lands on the side the
+     * world draws into, where its pre-prepare sky draw left zero; Chimera handed back last frame's
+     * final image, which Glimmer's deferred sky adds under the sky, so the horizon glowed red and
+     * green. Later windows flip onto the older side, and a prepare pass that wrote colortex0 first
+     * has moved it off the world image.
+     */
+    @Test
+    void anUnwrittenColortex0InPrepareKeepsTheWorldDraws() {
+        assertTrue(PackPostTargets.keepsWorldDraws(PackFrameSchedulePlan.PostWindow.PREPARE, true));
+        for (PackFrameSchedulePlan.PostWindow window : PackFrameSchedulePlan.PostWindow.values()) {
+            if (window == PackFrameSchedulePlan.PostWindow.PREPARE) continue;
+            assertTrue(!PackPostTargets.keepsWorldDraws(window, true), window + " flips onto the older side");
+        }
+        assertTrue(!PackPostTargets.keepsWorldDraws(PackFrameSchedulePlan.PostWindow.PREPARE, false),
+                "colortex0 a prepare pass wrote is off the world image");
+        assertTrue(!PackPostTargets.keepsWorldDraws(null, true), "no window has opened");
     }
 
     @Test
@@ -183,6 +213,197 @@ final class PackPostTargetsTest {
             PackPostTargets.swapSides(active, previous, 2);
             assertEquals(ambient, active[2], "the flip must make this frame's AO current");
             history = ambient;
+        }
+    }
+
+    /**
+     * Iris flips every draw buffer of a composite pass, written or not. Bloop's composite names
+     * colortex13 and writes it only with Distant Horizons, so the water's refraction offsets there
+     * never outlive their frame: the flip hands back what the frame started with.
+     */
+    @Test
+    void unwrittenTargetFlipsBackToFrameStart(@TempDir Path root) throws Exception {
+        writeUnwrittenFixture(root);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        TargetStep composite = graph.step("composite");
+        assertEquals(List.of(2), composite.unwrittenTargets(), "the unwritten draw buffer was not found");
+        assertTrue(composite.writes(2), "the unwritten draw buffer must still flip");
+        assertTrue(graph.target(2).doubled(), "the unwritten draw buffer needs another side");
+        assertTrue(graph.requiresInitialSeed(2), "the flip must not hand back undefined memory");
+
+        int sides = graph.target(2).requiresHistory() ? 3 : 2;
+        int[] active = new int[3];
+        int[] previous = new int[3];
+        int[] waterFrames = new int[sides];
+        for (int frame = 0; frame < 5; frame++) {
+            // Frame open (matchOtherSide), then the water draw, then composite.
+            int other = PackPostTargets.nextSide(active[2], sides);
+            waterFrames[other] = waterFrames[active[2]];
+            previous[2] = other;
+            waterFrames[active[2]]++;
+            int side = PackPostTargets.writeSide(true, true, active[2], previous[2], sides);
+            previous[2] = active[2];
+            active[2] = side;
+            assertEquals(0, waterFrames[active[2]], "frame " + frame + ": the water outlived its frame");
+        }
+    }
+
+    /**
+     * Kappa's composite2 samples its reflection capture colortex12, whose only writer composite1 is
+     * off by default. Iris creates the sampled target and clears it on its first frame
+     * (clearPassesFull), so composite2 runs on black. Unseeded, the target stayed unavailable and
+     * the whole pass, Kappa's reflections and fog, fell back to identity.
+     */
+    @Test
+    void aTargetNoPassWritesIsSeededForItsReader(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        String header = "#version 120\nconst bool colortex12Clear = false;\nuniform sampler2D colortex0;\n"
+                + "uniform sampler2D colortex12;\nvarying vec2 texcoord;\n";
+        Files.writeString(shaders.resolve("composite1.fsh"), header
+                + "/* RENDERTARGETS: 12 */\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("composite2.fsh"), header + "/* RENDERTARGETS: 0 */\nvoid main() {\n"
+                + "    gl_FragColor = texture2D(colortex0, texcoord) + texture2D(colortex12, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"), "program.composite1.enabled=false\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        TargetStep reader = graph.step("composite2");
+        assertTrue(reader != null && reader.executable() && reader.reads(12), graph.steps().toString());
+        assertTrue(graph.steps().stream().noneMatch(step -> step.executable() && step.writes(12)),
+                graph.steps().toString());
+        assertTrue(graph.target(12) != null && graph.target(12).persistent(), String.valueOf(graph.target(12)));
+        assertTrue(graph.requiresInitialSeed(12), "a sampled target no pass writes must hold its clear colour");
+    }
+
+    private static void writeUnwrittenFixture(Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\nconst bool colortex2Clear = false;\n"
+                + "uniform sampler2D colortex0;\nuniform sampler2D colortex2;\nvarying vec2 texcoord;\n"
+                + "/* RENDERTARGETS: 0,2 */\nvoid main() {\n"
+                + "    gl_FragData[0] = texture2D(colortex0, texcoord + texture2D(colortex2, texcoord).xy);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"composite\",\"fragment\":\"composite.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+    }
+
+    /**
+     * Iris flips a {@code flip.composite_pre} target once as the composite group opens, whatever its
+     * passes are called (CompositeRenderer's explicitPreFlips). Shrimple has no program named
+     * composite; its composite_pre flip of colortex2 hands the composite passes its deferred
+     * shadows. Iris has no renderer for composite1_pre or final_pre, so they flip nothing.
+     */
+    @Test
+    void aGroupPreFlipFlipsAsTheGroupOpens(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        String header = "#version 120\nuniform sampler2D colortex2;\nvarying vec2 texcoord;\n";
+        Files.writeString(shaders.resolve("deferred1.fsh"),
+                "#version 120\n/* RENDERTARGETS: 2 */\nvoid main() {\n    gl_FragColor = vec4(1.0);\n}\n");
+        Files.writeString(shaders.resolve("composite1.fsh"), header
+                + "/* RENDERTARGETS: 0 */\nvoid main() {\n    gl_FragColor = texture2D(colortex2, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"), "flip.composite_pre.colortex2 = true\n"
+                + "flip.composite1_pre.colortex2 = true\nflip.final_pre.colortex2 = true\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"deferred1\",\"fragment\":\"deferred1.fsh\"},"
+                        + "{\"name\":\"composite1\",\"fragment\":\"composite1.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        assertEquals(List.of(2), graph.preFlips(PackFrameSchedulePlan.PostWindow.LATE));
+        assertEquals(List.of(), graph.preFlips(PackFrameSchedulePlan.PostWindow.EARLY));
+        assertEquals(List.of(), graph.step("composite1").flipsAfter());
+        assertTrue(graph.target(2).doubled(), "a pre-flipped target needs its other side");
+    }
+
+    /**
+     * Shrimple's bloom: composite21 reads colortex0 and flips it, and composite38 adds the bloom
+     * onto colortex0 by blending, without reading it. In Iris that write lands on the side current
+     * before the flip, the scene. Chimera skipped flips of colortex0, so composite38 blended onto
+     * its other side, last frame's final image, and the VANILLA profile went white.
+     */
+    @Test
+    void aBlendAfterAFlipLandsOnTheSideCurrentBeforeIt(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        String header = "#version 120\nconst bool colortex0Clear = false;\nvarying vec2 texcoord;\n";
+        Files.writeString(shaders.resolve("composite21.fsh"), header + "uniform sampler2D colortex0;\n"
+                + "/* RENDERTARGETS: 15 */\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("composite38.fsh"), header + "uniform sampler2D colortex15;\n"
+                + "/* RENDERTARGETS: 0 */\nvoid main() {\n    gl_FragColor = texture2D(colortex15, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "flip.composite21.colortex0 = true\nblend.composite38 = ONE ONE ONE ZERO\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"composite21\",\"fragment\":\"composite21.fsh\"},"
+                        + "{\"name\":\"composite38\",\"fragment\":\"composite38.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        assertEquals(List.of(0), graph.step("composite21").flipsAfter());
+        assertTrue(graph.target(0).doubled() && !graph.target(0).requiresHistory(), String.valueOf(graph.target(0)));
+        assertTrue(PackPostTargets.flips(0, true), "a flip of colortex0 must flip it");
+
+        int[] active = new int[1];
+        int[] previous = new int[1];
+        for (int frame = 0; frame < 4; frame++) {
+            // The scene: the world's HDR image, adopted into colortex0's current side at the flip.
+            int scene = active[0];
+            PackPostTargets.flipSides(active, previous, 0, 2);
+            assertTrue(active[0] != scene, "frame " + frame + ": the flip must hand composite38 the other side");
+            int side = PackPostTargets.writeSide(false, true, active[0], previous[0], 2);
+            assertEquals(scene, side, "frame " + frame + ": the bloom must blend onto the scene");
+            previous[0] = active[0];
+            active[0] = side;
+        }
+    }
+
+    /**
+     * Shrimple keeps its opaque and translucent deferred data apart by flipping a target only
+     * geometry writes: flip.deferred12.colortex1 sends the translucent geometry to colortex1's other
+     * side, and flip.composite_pre hands the composite passes the opaque side again. Iris's flip
+     * toggles the side whether a pass wrote the target or not. Swapping with no side recorded left
+     * both on one image, so the translucent data overwrote the opaque, and the sun shadows went.
+     */
+    @Test
+    void aFlipOfATargetOnlyGeometryWritesMovesToItsOtherSide(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("deferred1.fsh"),
+                "#version 120\n/* RENDERTARGETS: 6 */\nvoid main() {\n    gl_FragColor = vec4(1.0);\n}\n");
+        Files.writeString(shaders.resolve("composite1.fsh"), "#version 120\nuniform sampler2D colortex1;\n"
+                + "varying vec2 texcoord;\n/* RENDERTARGETS: 0 */\nvoid main() {\n"
+                + "    gl_FragColor = texture2D(colortex1, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nuniform sampler2D colortex0;\n"
+                + "varying vec2 texcoord;\n\nvoid main() {\n    gl_FragColor = texture2D(colortex0, texcoord);\n}\n");
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "flip.deferred1.colortex1 = true\nflip.composite_pre.colortex1 = true\n");
+        Files.writeString(shaders.resolve("shaders.json"),
+                "{\"programs\":[{\"name\":\"deferred1\",\"fragment\":\"deferred1.fsh\"},"
+                        + "{\"name\":\"composite1\",\"fragment\":\"composite1.fsh\"},"
+                        + "{\"name\":\"final\",\"fragment\":\"final.fsh\"}]}\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(
+                analysis.plan().programs(), analysis.config(), 16, 16, 8, 16384);
+        assertEquals(List.of(1), graph.step("deferred1").flipsAfter());
+        assertEquals(List.of(1), graph.preFlips(PackFrameSchedulePlan.PostWindow.LATE));
+        assertTrue(graph.target(1).doubled() && !graph.target(1).requiresHistory(), String.valueOf(graph.target(1)));
+
+        int[] active = new int[2];
+        int[] previous = new int[2];
+        for (int frame = 0; frame < 3; frame++) {
+            int opaque = active[1];
+            PackPostTargets.flipSides(active, previous, 1, 2);
+            assertTrue(active[1] != opaque, "frame " + frame + ": the translucent geometry drew over the opaque data");
+            PackPostTargets.flipSides(active, previous, 1, 2);
+            assertEquals(opaque, active[1], "frame " + frame + ": the composite passes must read the opaque data");
         }
     }
 

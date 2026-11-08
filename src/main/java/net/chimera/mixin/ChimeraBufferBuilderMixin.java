@@ -42,7 +42,7 @@ public abstract class ChimeraBufferBuilderMixin {
     @Unique private int chimera$uv = -1;
     @Unique private int chimera$normal = -1;
     @Unique private boolean chimera$particleLayout;
-    @Unique private boolean chimera$computedNormal;
+    @Unique private boolean chimera$appendedNormal;
     @Unique private int chimera$extraMask;
     @Unique private int chimera$corners;
     @Unique private long[] chimera$cornerOffsets;
@@ -70,9 +70,9 @@ public abstract class ChimeraBufferBuilderMixin {
         chimera$extraMask = maskOf(format, "EntityIds")
                 | maskOf(format, "MidTexCoord")
                 | maskOf(format, "Tangent");
-        // Iris GLYPH: text writes no normal; Chimera computes it per quad.
-        chimera$computedNormal = ChimeraVertexFormats.computesNormal(format);
-        if (chimera$computedNormal) {
+        // Iris GLYPH: text writes no normal, and Iris writes (0, 1, 0) in its place.
+        chimera$appendedNormal = ChimeraVertexFormats.appendsNormal(format);
+        if (chimera$appendedNormal) {
             chimera$extraMask |= maskOf(format, "Normal");
         }
         chimera$corners = mode == VertexFormat.Mode.QUADS ? 4
@@ -104,8 +104,8 @@ public abstract class ChimeraBufferBuilderMixin {
         MemoryUtil.memPutFloat(pointer + chimera$mid, 0.0f);
         MemoryUtil.memPutFloat(pointer + chimera$mid + 4L, 0.0f);
         MemoryUtil.memPutInt(pointer + chimera$tangent, ChimeraEntityVertexData.FLAT_TANGENT);
-        if (chimera$computedNormal) {
-            MemoryUtil.memPutInt(pointer + chimera$normal, ChimeraEntityVertexData.pack(0.0f, 0.0f, 1.0f, 0.0f));
+        if (chimera$appendedNormal) {
+            MemoryUtil.memPutInt(pointer + chimera$normal, ChimeraEntityVertexData.pack(0.0f, 1.0f, 0.0f, 0.0f));
         }
         if (chimera$cornerOffsets != null && chimera$corners > 0) {
             chimera$cornerOffsets[chimera$written++] = pointer
@@ -167,11 +167,12 @@ public abstract class ChimeraBufferBuilderMixin {
                     chimera$values[3], chimera$values[4], chimera$values[5], chimera$values[6],
                     chimera$values[7], chimera$values[8], chimera$values[9], chimera$values[10],
                     chimera$values[11], chimera$values[12], chimera$values[13], chimera$values[14]);
-            int normal = chimera$computedNormal
+            boolean faceNormal = ChimeraVertexFormats.takesFaceNormal(format, ChimeraEntityBridge.renderingLevel());
+            int normal = faceNormal
                     ? ChimeraEntityVertexData.pack(chimera$face[0], chimera$face[1], chimera$face[2], 0.0f) : 0;
             for (int index = 0; index < 4; index++) {
                 chimera$write(base + chimera$cornerOffsets[index], midU, midV, tangent);
-                if (chimera$computedNormal) {
+                if (faceNormal) {
                     MemoryUtil.memPutInt(base + chimera$cornerOffsets[index] + chimera$normal, normal);
                 }
             }

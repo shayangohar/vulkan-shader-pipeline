@@ -6,13 +6,18 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferUploader;
 import com.mojang.blaze3d.vertex.MeshData;
 import net.chimera.render.shader.PackHostDraws;
+import net.chimera.render.shader.PatchDraws;
 import org.spongepowered.asm.mixin.Mixin;
 
-/** Immediate host draws run under the pack program that serves them (PackHostDraws). */
+/**
+ * Immediate host draws run under the pack program that serves them (PackHostDraws), a
+ * tessellated one as patches of 3 (PatchDraws).
+ */
 @Mixin(BufferUploader.class)
 public abstract class ChimeraBufferUploaderMixin {
     @WrapMethod(method = "drawWithShader")
     private static void chimera$packProgram(MeshData mesh, Operation<Void> original) {
-        PackHostDraws.draw(RenderSystem.getShader(), mesh.drawState().format(), () -> original.call(mesh), mesh::close);
+        PackHostDraws.draw(RenderSystem.getShader(), mesh.drawState().format(),
+                () -> PatchDraws.draw(mesh, () -> original.call(mesh)), mesh::close);
     }
 }

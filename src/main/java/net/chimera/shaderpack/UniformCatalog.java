@@ -87,9 +87,6 @@ final class UniformCatalog {
         addDefault(specs, "centerDepthSmooth", "float");
         addDefault(specs, "entityColor", "vec4");
         addLive(specs, "lightningBoltPosition", "vec4");
-        addDefault(specs, "blockEntityId", "int");
-        addDefault(specs, "currentRenderedItemId", "int");
-        addDefault(specs, "entityId", "int");
         // IdMapUniforms: each hand's item.properties id, its light and that light's colour.
         addLive(specs, "heldBlockLightValue", "int");
         addLive(specs, "heldBlockLightValue2", "int");
@@ -135,6 +132,23 @@ final class UniformCatalog {
         addLive(specs, "fogColor", List.of("vec3", "vec4"), "fogColor");
         addLive(specs, "fogStart", "float");
         addLive(specs, "fogEnd", "float");
+        // FogUniforms in a program with fog; a post program reads FogMode.OFF constants (PackPlanBuilder).
+        addLive(specs, "fogMode", "int");
+        addLive(specs, "fogShape", "int");
+        addLive(specs, "fogDensity", "float");
+        // IrisInternalUniforms, which a legacy program's gl_Fog reads (LegacyShaderNormalizer): the
+        // range is latched per program and frame, the colour and density are fogColor's and fogDensity's.
+        addLive(specs, "iris_FogStart", "float");
+        addLive(specs, "iris_FogEnd", "float");
+        addLive(specs, "iris_FogColor", "vec4", "fogColor");
+        addLive(specs, "iris_FogDensity", "float", "fogDensity");
+        addLive(specs, "cloudTime", "float");
+        // CommonUniforms' per-draw unit-0 texture size and blend; a post program reads its
+        // blendFunc as a constant (ServedUniforms.servePostValues). IrisExclusiveUniforms' selection.
+        addLive(specs, "gtextureSize", "ivec2");
+        addLive(specs, "blendFunc", "ivec4");
+        addLive(specs, "currentSelectedBlockId", "int");
+        addLive(specs, "currentSelectedBlockPos", "vec3");
         addLive(specs, "screenSize", "vec2");
     }
 
@@ -149,10 +163,11 @@ final class UniformCatalog {
         }
         for (String value : List.of("currentPlayerHealth", "maxPlayerHealth", "currentPlayerHunger",
                 "maxPlayerHunger", "currentPlayerArmor", "maxPlayerArmor", "currentPlayerAir",
-                "maxPlayerAir", "playerMood", "pi", "lastFrameTime", "dhNearPlane", "dhFarPlane")) {
+                "maxPlayerAir", "playerMood", "constantMood", "pi", "lastFrameTime", "dhNearPlane", "dhFarPlane")) {
             addLive(specs, value, "float");
         }
-        for (String value : List.of("currentColorSpace", "dhRenderDistance")) {
+        for (String value : List.of("currentColorSpace", "dhRenderDistance", "blockEntityId", "currentRenderedItemId",
+                "entityId")) {
             addLive(specs, value, "int");
         }
         addLive(specs, "playerBodyVector", "vec3");

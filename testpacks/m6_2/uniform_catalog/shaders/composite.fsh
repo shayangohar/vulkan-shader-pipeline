@@ -29,3 +29,6 @@ void main() {
                     + playerLookVector.x + gbufferModelView[0][0]);
     gl_FragColor = vec4(scene.rgb + marker, scene.a);
 }
+/*
+const int shadowMapResolution = 2048;
+*/

@@ -39,7 +39,7 @@
       }
     },
     "unsupported_water": {
-      "reportSha256": "5d8a8e2757cc825157a847fe12dc3e0b48cf6ebedbb109f249f57b3b3710078c",
+      "reportSha256": "62641136758bc51e9d0a84309feed9325da935ccb3470b55d9e1566ae5040d2a",
       "expectedPassInventory": [
         "composite",
         "final",
@@ -74,22 +74,27 @@
         "composite": [],
         "final": [],
         "gbuffers_entities": [
-          "ENTITY_VERTEX_BRIDGE_UNSUPPORTED"
+          "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
+          "IRIS_DEFAULT_VERTEX_UNSUPPORTED"
         ],
         "gbuffers_entities_translucent": [
           "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
+          "IRIS_DEFAULT_VERTEX_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities"
         ],
         "gbuffers_lightning": [
+          "IRIS_DEFAULT_VERTEX_UNSUPPORTED",
           "LIGHTNING_VERTEX_BRIDGE_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities"
         ],
         "gbuffers_water": [
-          "TRANSLUCENT_DEPTH_INPUT_UNSUPPORTED",
+          "LIVE_UNIFORM_BRIDGE",
+          "TRANSLUCENT_SAMPLER_UNSUPPORTED:volume",
           "TRANSLUCENT_STATE_FIXED_TO_HOST",
           "TRANSLUCENT_VERTEX_BRIDGE"
         ],
         "text_bg": [
+          "IRIS_DEFAULT_VERTEX_UNSUPPORTED",
           "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
           "TEXT_BG_VERTEX_BRIDGE_UNSUPPORTED"
         ]
@@ -98,7 +103,7 @@
         "composite.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "aa1df153dbb2176957f4cd97907b575213c65ab80173bc13a8be099dc426c1f8",
-        "gbuffers_water.fsh": "3544a49726127106b1e67bc8ce0ef04fb8b0103935d84767dd18e4e258447078",
+        "gbuffers_water.fsh": "7673fecf5c7a37da3db5a38e71443d0e6ee81941498f0c15620fa3d38217b008",
         "gbuffers_water.vsh": "a99bb9bf73f222e4725f1053fa2e96ad133ab404ad05c624665fe288731fa3b6",
         "shaders.json": "1c445693269d871699efd24c7dfd7c46c461ad997cceb486e53ddaab3184c1f7"
       }

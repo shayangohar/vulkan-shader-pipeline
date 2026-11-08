@@ -25,10 +25,15 @@ public final class PackResourcePlan {
     private static final Pattern COLOR_TARGET = Pattern.compile("colortex([0-9]+)");
     /** A generated noisetex binding's source: this prefix, then the image's side in texels. */
     public static final String GENERATED_NOISE = "generated-noise:";
-    private static final int DEFAULT_NOISE_RESOLUTION = 256;
-    private static final int MAX_NOISE_RESOLUTION = 4096;
-    private static final Pattern NOISE_RESOLUTION = Pattern.compile(
-            "(?m)^\\s*const\\s+int\\s+noiseTextureResolution\\s*=\\s*(\\d{1,5})\\s*;");
+    /**
+     * What an unbound texture reads, (0, 0, 0, 1). Without Distant Horizons, Iris binds texture 0 under
+     * every DH depth name (DHCompat.getDepthTex and getDepthTexNoTranslucent return 0).
+     */
+    public static final String GENERATED_UNBOUND = "generated-unbound";
+    /** The resource dhDepthTex and its alias dhDepthTex0 read; dhDepthTex1 is Iris's other registration. */
+    static final String DH_DEPTH = "dhDepthTex";
+    private static final Pattern DH_DEPTH_NAME = Pattern.compile("dhDepthTex[01]?");
+    private static final int DEFAULT_NOISE_RESOLUTION = PackDirectives.DEFAULTS.noiseTextureResolution();
 
     /** Chimera's name for the host entity overlay, which entityColor is made from. */
     public static final String OVERLAY_SAMPLER = "chimeraOverlay";
@@ -40,6 +45,14 @@ public final class PackResourcePlan {
      */
     public static final Map<String, Integer> HOST_TEXTURE_SLOTS =
             Map.of("texture", 0, OVERLAY_SAMPLER, 1, "lightmap", 2);
+
+    /**
+     * The host textures VulkanMod binds for a pack draw from the game's texture units: the atlas and
+     * the lightmap. Chimera reads the overlay unit itself, since a render type without an overlay
+     * leaves it empty.
+     */
+    public static final Set<Integer> HOST_BOUND_SLOTS =
+            Set.of(HOST_TEXTURE_SLOTS.get("texture"), HOST_TEXTURE_SLOTS.get("lightmap"));
 
     public static boolean isHostTexture(String resourceKey) {
         return resourceKey != null && HOST_TEXTURE_SLOTS.containsKey(resourceKey);
@@ -114,15 +127,14 @@ public final class PackResourcePlan {
                 String sourceProgram = resolved == null || resolved.selectedProgram().isBlank()
                         ? programPlan.name() : resolved.selectedProgram();
                 PackResourceBinding binding = resolve(sourceProgram, sampler, waterShadow, declarations,
-                        shadersDir, settings == null ? Map.of() : settings.propertyValues(), deactivatedOverrides);
+                        shadersDir, settings == null ? Map.of() : settings.propertyValues(), deactivatedOverrides,
+                        false);
                 if (!sourceProgram.equals(programPlan.name())) {
                     binding = new PackResourceBinding(programPlan.name(), binding.sampler(), binding.resourceKey(),
                             binding.kind(), binding.source(), binding.slot(), binding.filter(), binding.wrap(),
                             binding.status(), binding.deviations());
                 }
-                if (binding.status() == PackResourceStatus.GENERATED) {
-                    binding = withNoiseResolution(binding, noiseResolution);
-                }
+                binding = withNoiseResolution(binding, noiseResolution);
                 programBindings.add(binding);
                 deviations.addAll(binding.deviations());
             }
@@ -167,7 +179,7 @@ public final class PackResourcePlan {
         for (UniformRegistry.SamplerBinding sampler : iface.samplers()) {
             if (!sampler.glslType().equals("sampler2D")) continue;
             PackResourceBinding binding = resolve(program, sampler, declaresWaterShadow(iface.samplers()),
-                    resources.resourceDeclarations(), null, resources.propertyValues(), Set.of());
+                    resources.resourceDeclarations(), null, resources.propertyValues(), Set.of(), false);
             boolean albedo = sampler.slot() == 0
                     && binding.kind() == PackResourceKind.TARGET
                     && binding.status() == PackResourceStatus.HOST_ALIAS
@@ -184,17 +196,23 @@ public final class PackResourcePlan {
             Map<String, PackResourceDeclaration> declarations,
             Path shadersDir,
             Map<String, String> propertyValues,
-            Set<Integer> deactivatedOverrides
+            Set<Integer> deactivatedOverrides,
+            boolean compute
     ) {
         String name = sampler.name();
         int slot = sampler.slot();
         List<String> deviations = new ArrayList<>();
-        PackResourceDeclaration declaration =
-                declarationFor(program, sampler, declarations, deactivatedOverrides, deviations);
-        // Pack declarations take precedence over canonical aliases. This is
-        // important for a stage that deliberately replaces a logical target
-        // with a sampled pack texture.
-        if (declaration != null) return declaredBinding(program, name, slot, declaration, shadersDir, deviations);
+        Choice choice = choose(program, sampler, declarations, advancedImageName(propertyValues, name),
+                deactivatedOverrides, compute, deviations);
+        if (choice.declaration() != null) {
+            return declaredBinding(program, name, slot, choice.declaration(), shadersDir, deviations);
+        }
+        if (choice.image() != null) {
+            deviations.add("ADVANCED_RESOURCE_ALIAS:" + name + ":" + choice.image());
+            return new PackResourceBinding(program, name, choice.image(),
+                    PackResourceKind.ADVANCED_IMAGE, "", slot, "linear", "repeat",
+                    PackResourceStatus.HOST_ALIAS, deviations);
+        }
         if (name.equals("tex") || name.equals("gtexture") || isHostTexture(name)) {
             String hostResource = name.equals("tex") || name.equals("gtexture") ? "texture" : name;
             // The overlay is Chimera's own declaration, not a pack alias.
@@ -203,14 +221,6 @@ public final class PackResourcePlan {
             }
             return new PackResourceBinding(program, name, hostResource,
                     PackResourceKind.TARGET, "", slot, "linear", "repeat",
-                    PackResourceStatus.HOST_ALIAS, deviations);
-        }
-
-        String advancedImage = advancedImageName(propertyValues, name);
-        if (advancedImage != null) {
-            deviations.add("ADVANCED_RESOURCE_ALIAS:" + name + ":" + advancedImage);
-            return new PackResourceBinding(program, name, advancedImage,
-                    PackResourceKind.ADVANCED_IMAGE, "", slot, "linear", "repeat",
                     PackResourceStatus.HOST_ALIAS, deviations);
         }
         return standardBinding(program, name, programResource(name, waterShadow), slot, deviations);
@@ -223,50 +233,102 @@ public final class PackResourcePlan {
         return declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE;
     }
 
-    /** Whether any pack declaration replaces this sampler, of this GLSL type, in this program. */
-    static boolean declaresTexture(String program, String sampler, String samplerType,
-                                   Map<String, PackResourceDeclaration> declarations) {
-        return declaration(program, sampler, samplerType, declarations) != null;
-    }
-
     private static PackResourceDeclaration declaration(String program, String sampler, String samplerType,
                                                        Map<String, PackResourceDeclaration> declarations) {
         return declarationFor(program, new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations,
                 Set.of(), new ArrayList<>());
     }
 
-    /** The pack declaration that serves this sampler, if any; an override a pass deactivated is none. */
+    /** The pack declaration that serves this sampler in a program, images aside, if any. */
     private static PackResourceDeclaration declarationFor(String program, UniformRegistry.SamplerBinding sampler,
                                                           Map<String, PackResourceDeclaration> declarations,
                                                           Set<Integer> deactivatedOverrides, List<String> deviations) {
+        return choose(program, sampler, declarations, null, deactivatedOverrides, false, deviations).declaration();
+    }
+
+    /** The pack's binding of a sampler Iris binds: a declaration, an image, or neither (the built-in). */
+    private record Choice(PackResourceDeclaration declaration, String image) {}
+
+    /**
+     * Of the pack's own bindings of a sampler name and the built-in one, the one Iris registers last
+     * is what the name reads (IrisSamplerOrder). A stage texture replaces it when it is registered
+     * through the sampler interceptor, as when a stage deliberately reads a pack texture for a
+     * logical target; one a pass deactivated is none. The noise sampler reads texture.noise.
+     */
+    private static Choice choose(String program, UniformRegistry.SamplerBinding sampler,
+                                 Map<String, PackResourceDeclaration> declarations, String advancedImage,
+                                 Set<Integer> deactivatedOverrides, boolean compute, List<String> deviations) {
+        // A raw texture.<stage> entry is a uniform of its own: Iris renames the declaration of its
+        // type to customtexN (TextureTransformer), which every renderer registers (addCustomTextures).
+        PackResourceDeclaration raw = rawStageTexture(program, sampler, declarations);
+        if (raw != null) return new Choice(raw, null);
+        PackResourceDeclaration custom = packTexture(sampler, declarations);
+        IrisSamplerOrder.Order order = IrisSamplerOrder.of(program, compute);
+        IrisSamplerOrder.Source last = order.last(sampler.name(), advancedImage != null, custom != null);
+        // A PNG stage texture only replaces a registration made through the interceptor: on a name
+        // nothing registers it binds nowhere, and the sampler keeps unit 0 (KNOW-801).
+        PackResourceDeclaration stage = last != null && order.intercepted(last)
+                ? stageDeclaration(program, sampler, order.names(sampler.name()), declarations, deactivatedOverrides,
+                deviations) : null;
+        if (stage != null) return new Choice(stage, null);
+        if (last == IrisSamplerOrder.Source.CUSTOM_TEXTURE) return new Choice(custom, null);
+        if (last == IrisSamplerOrder.Source.IMAGE) return new Choice(null, advancedImage);
+        return new Choice(sampler.name().equals("noisetex") ? declarations.get("texture.noise") : null, null);
+    }
+
+    /**
+     * The {@code texture.<stage>} declaration of this sampler for the program's Iris texture stage,
+     * under any of the names Iris registers its texture with ({@code names}), which Iris applies
+     * through the sampler interceptor (choose); one a pass deactivated is none.
+     */
+    private static PackResourceDeclaration stageDeclaration(String program, UniformRegistry.SamplerBinding sampler,
+                                                            List<String> names,
+                                                            Map<String, PackResourceDeclaration> declarations,
+                                                            Set<Integer> deactivatedOverrides,
+                                                            List<String> deviations) {
         String name = sampler.name();
-        String samplerType = sampler.glslType();
-        PackResourceDeclaration declaration = textureDeclaration(declarations, program, name, samplerType);
         String textureStage = textureStage(program);
-        if (declaration == null && textureStage != null) {
-            declaration = textureDeclaration(declarations, textureStage, name, samplerType);
+        PackResourceDeclaration declaration = null;
+        for (String registered : names) {
+            if (declaration == null && textureStage != null) {
+                declaration = textureDeclaration(declarations, textureStage, registered);
+            }
         }
-        if (declaration == null) declaration = textureDeclaration(declarations, "*", name, samplerType);
-        // A 1D or 3D raw texture is its own uniform under Iris (TextureTransformer renames it by
-        // type), so a pass writing the same-named target never takes it back.
-        Integer overriddenTarget = declaration == null || !appliesTo(declaration, "sampler2D") ? null
-                : targetIndex(name);
+        // CustomTextureSamplerInterceptor drops the override of a target an earlier pass of this
+        // chain flipped (deactivatedOverrides).
+        Integer overriddenTarget = declaration == null ? null : targetIndex(name);
         if (overriddenTarget != null && deactivatedOverrides.contains(overriddenTarget)) {
             // An earlier pass of this chain wrote the target: it now samples the target.
             deviations.add("PACK_TEXTURE_OVERRIDE_DEACTIVATED:" + program + ":" + name);
             declaration = null;
         }
-        if (declaration == null && appliesTo(declarations.get("customTexture." + name), samplerType)) {
-            declaration = declarations.get("customTexture." + name);
-        }
-        if (declaration == null && name.equals("tex")
-                && FamilyAdapterRegistry.stageFor(program) == UniformRegistry.Stage.POST) {
-            declaration = declarations.get("customTexture.textureAtlas");
-        }
-        if (declaration == null && name.equals("noisetex")) {
-            declaration = declarations.get("texture.noise");
-        }
         return declaration;
+    }
+
+    /** {@code customTexture.<sampler>}, when it applies to the sampler's type. */
+    private static PackResourceDeclaration packTexture(UniformRegistry.SamplerBinding sampler,
+                                                       Map<String, PackResourceDeclaration> declarations) {
+        PackResourceDeclaration declaration = declarations.get("customTexture." + sampler.name());
+        return appliesTo(declaration, sampler.glslType()) ? declaration : null;
+    }
+
+    /**
+     * The program stage's raw {@code texture.<stage>.<sampler>} entry for exactly this name and type.
+     * Iris keeps only the sampler name of the key, so {@code texture.deferred.colortex6.1} is a
+     * volume for {@code sampler3D colortex6} beside the 2D target (Photon's cloud noise). The
+     * unsuffixed key sorts first.
+     */
+    private static PackResourceDeclaration rawStageTexture(String program, UniformRegistry.SamplerBinding sampler,
+                                                           Map<String, PackResourceDeclaration> declarations) {
+        String stage = textureStage(program);
+        if (stage == null) return null;
+        for (PackResourceDeclaration declaration : declarations.values()) {
+            if (declaration.kind() == PackResourceKind.RAW_TEXTURE && declaration.stage().equals(stage)
+                    && declaration.sampler().equals(sampler.name()) && appliesTo(declaration, sampler.glslType())) {
+                return declaration;
+            }
+        }
+        return null;
     }
 
     /** A sampler the pack declares a texture for. */
@@ -277,7 +339,10 @@ public final class PackResourcePlan {
             return rawBinding(program, name, slot, declaration, shadersDir, deviations);
         }
         boolean game = isNamespacedSource(declaration.source());
-        String key = name.equals("noisetex") ? "noisetex" : declaration.key();
+        // A declared noise is its own image: "noisetex" alone names the generated one, which the
+        // programs no declaration covers still read (Spring declares it for deferred and composite).
+        String key = name.equals("noisetex") ? "noisetex:" + declaration.source() : declaration.key();
+        String label = name.equals("noisetex") ? name : key;
         PackResourceKind kind = name.equals("noisetex")
                 ? PackResourceKind.NOISE : PackResourceKind.PACK_TEXTURE;
         String filter = name.equals("noisetex") ? "linear" : "nearest";
@@ -290,21 +355,21 @@ public final class PackResourcePlan {
                     "linear", "repeat", PackResourceStatus.HOST_ALIAS, deviations);
         }
         if (game) {
-            deviations.add("PACK_TEXTURE_DECLARED:" + key);
+            deviations.add("PACK_TEXTURE_DECLARED:" + label);
             return new PackResourceBinding(program, name, key, kind,
                     declaration.source(), resolvedSlot, filter, wrap,
                     PackResourceStatus.GAME_RESOURCE, deviations);
         }
         Path packFile = resolvePath(shadersDir, declaration.source());
         if (packFile != null) {
-            deviations.add("PACK_TEXTURE_APPLIED:" + key);
+            deviations.add("PACK_TEXTURE_APPLIED:" + label);
             return new PackResourceBinding(program, name, key, kind,
                     declaration.source(), resolvedSlot, mcmetaFilter(packFile, filter),
                     mcmetaWrap(packFile, wrap), PackResourceStatus.PACK_FILE, deviations);
         }
         deviations.add(isUnsafePath(declaration.source())
-                ? "PACK_TEXTURE_PATH_UNSAFE:" + key
-                : "PACK_TEXTURE_MISSING:" + key);
+                ? "PACK_TEXTURE_PATH_UNSAFE:" + label
+                : "PACK_TEXTURE_MISSING:" + label);
         return new PackResourceBinding(program, name, key, kind,
                 declaration.source(), resolvedSlot, filter, wrap,
                 PackResourceStatus.UNAVAILABLE, deviations);
@@ -312,9 +377,10 @@ public final class PackResourcePlan {
 
     /**
      * A raw texture (RawTextureSpec): the file's bytes uploaded as a 1D, 2D or 3D image and
-     * sampled as its .mcmeta says (Iris GlTexture: nearest and repeat without it). A format
-     * Chimera cannot upload unchanged stays unsupported, so the program never samples something
-     * else in its place.
+     * sampled as its .mcmeta says. Without it a raw texture is linear and clamped: Iris's
+     * ShaderPack starts blur and clamp at true for a raw definition, and false only for a PNG.
+     * A format Chimera cannot upload unchanged stays unsupported, so the program never samples
+     * something else in its place.
      */
     private static PackResourceBinding rawBinding(String program, String name, int slot,
                                                   PackResourceDeclaration declaration, Path shadersDir,
@@ -337,9 +403,9 @@ public final class PackResourcePlan {
         deviations.add(status + key);
         boolean applied = status.equals("PACK_RAW_TEXTURE_APPLIED:");
         // Vulkan filters an integer image with nearest only.
-        String filter = spec.storage().integer() ? "nearest" : mcmetaFilter(file, "nearest");
+        String filter = spec.storage().integer() ? "nearest" : mcmetaFilter(file, "linear");
         return new PackResourceBinding(program, name, key, PackResourceKind.RAW_TEXTURE, declaration.source(),
-                slot, filter, mcmetaWrap(file, "repeat"),
+                slot, filter, mcmetaWrap(file, "clamp"),
                 applied ? PackResourceStatus.PACK_FILE : PackResourceStatus.UNAVAILABLE, deviations);
     }
 
@@ -380,7 +446,7 @@ public final class PackResourcePlan {
                     PackResourceKind.SHADOW_DEPTH, "", slot, "linear", "clamp",
                     PackResourceStatus.UNAVAILABLE, deviations);
         }
-        if (canonical.equals("shadowcolor0") || canonical.equals("shadowcolor1")) {
+        if (shadowColorIndex(canonical) >= 0) {
             deviations.add("SHADOW_RESOURCE_ALIAS:" + name);
             return new PackResourceBinding(program, name, canonical,
                     PackResourceKind.SHADOW_COLOR, "", slot, "linear", "clamp",
@@ -388,6 +454,15 @@ public final class PackResourcePlan {
         }
         if (canonical.equals("noisetex")) {
             return noiseBinding(program, name, deviations);
+        }
+        if (canonical.equals(CenterDepthSmooth.SAMPLER)) {
+            return new PackResourceBinding(program, name, canonical, PackResourceKind.CENTER_DEPTH, "", slot,
+                    "nearest", "clamp", PackResourceStatus.HOST_ALIAS, deviations);
+        }
+        if (isDhDepth(canonical)) {
+            deviations.add("DH_DEPTH_UNBOUND:" + name);
+            return new PackResourceBinding(program, name, canonical, PackResourceKind.PACK_TEXTURE,
+                    GENERATED_UNBOUND, slot, "nearest", "clamp", PackResourceStatus.GENERATED, deviations);
         }
         if (materialMapAtSlot(name, slot)) {
             return new PackResourceBinding(program, name, name,
@@ -411,25 +486,23 @@ public final class PackResourcePlan {
                 PackResourceStatus.GENERATED, deviations);
     }
 
-    /** The generated noise's binding at the pack's noiseTextureResolution. */
+    /** The generated noise's binding at the pack's noiseTextureResolution; any other binding as it is. */
     private static PackResourceBinding withNoiseResolution(PackResourceBinding binding, int resolution) {
+        if (binding.kind() != PackResourceKind.NOISE || binding.status() != PackResourceStatus.GENERATED) {
+            return binding;
+        }
         return new PackResourceBinding(binding.program(), binding.sampler(), binding.resourceKey(), binding.kind(),
                 GENERATED_NOISE + resolution, binding.slot(), binding.filter(), binding.wrap(), binding.status(),
                 binding.deviations());
     }
 
-    /** The side of the generated noise: the pack's const int noiseTextureResolution, else Iris's 256. */
+    /**
+     * The side of the generated noise: the pack's noiseTextureResolution directive (PackDirectives),
+     * else Iris's 256. Iris clamps none; one that sizes no texture becomes 1.
+     */
     static int noiseResolution(PackPlan plan) {
-        int resolution = DEFAULT_NOISE_RESOLUTION;
-        for (PackProgramPlan program : plan.programs()) {
-            if (program == null) continue;
-            for (PreparedShaderSource stage : program.stages().values()) {
-                Matcher matcher = NOISE_RESOLUTION.matcher(stage == null || stage.source() == null
-                        ? "" : stage.source());
-                if (matcher.find()) resolution = Integer.parseInt(matcher.group(1));
-            }
-        }
-        return Math.max(1, Math.min(MAX_NOISE_RESOLUTION, resolution));
+        return Math.max(1, plan.config() == null ? DEFAULT_NOISE_RESOLUTION
+                : plan.config().directives().noiseTextureResolution());
     }
 
     /** The side a generated noise binding's source names. */
@@ -465,6 +538,22 @@ public final class PackResourcePlan {
                 .findFirst().orElse(null);
     }
 
+    /**
+     * What a program's sampler reads from the frame: its colour target, depth or shadow texture by
+     * canonical name (gaux3 is colortex6), or null when the pack serves the name with a texture,
+     * image or noise of its own, as Bloop's texture.prepare.depthtex1 replaces depthtex1 in
+     * prepare (Iris CustomTextureSamplerInterceptor). A sampler with no binding reads its
+     * canonical name.
+     */
+    public String frameResource(String program, String sampler) {
+        PackResourceBinding binding = binding(program, sampler);
+        if (binding == null) return canonicalResource(sampler);
+        return switch (binding.kind()) {
+            case TARGET, DEPTH, SHADOW_DEPTH, SHADOW_COLOR -> binding.resourceKey();
+            default -> null;
+        };
+    }
+
     public boolean programAllowed(String program) {
         return bindings(program).stream().allMatch(PackResourceBinding::available);
     }
@@ -488,6 +577,7 @@ public final class PackResourcePlan {
     public String snapshot() { return snapshot; }
     public String fingerprint() { return fingerprint; }
 
+    /** The resource a sampler name reads: the target of a legacy alias, a shared texture, or the name itself. */
     public static String canonicalResource(String sampler) {
         if (sampler == null) return "";
         if (sampler.equals("tex") || sampler.equals("gtexture")) return "texture";
@@ -498,11 +588,9 @@ public final class PackResourcePlan {
         if (sampler.matches("gaux[1-4]")) {
             return "colortex" + (3 + Integer.parseInt(sampler.substring(4)));
         }
-        if (COLOR_TARGET.matcher(sampler).matches()) return sampler;
-        if (sampler.matches("depthtex[0-2]")) return sampler;
-        if (sampler.matches("shadowtex[0-1]")) return sampler;
-        if (sampler.matches("shadowcolor[0-1]")) return sampler;
-        return sampler.equals("noisetex") ? "noisetex" : sampler;
+        // A hardware shadow sampler reads its depth through a comparison sampler (Iris addShadowSamplers).
+        if (sampler.matches("shadowtex[0-1]HW")) return sampler.substring(0, "shadowtex0".length());
+        return sampler.equals("dhDepthTex0") ? DH_DEPTH : sampler;
     }
 
     /**
@@ -521,6 +609,11 @@ public final class PackResourcePlan {
         };
     }
 
+    /** dhDepthTex, dhDepthTex0 or dhDepthTex1, the Distant Horizons depth textures. */
+    public static boolean isDhDepth(String sampler) {
+        return sampler != null && DH_DEPTH_NAME.matcher(sampler).matches();
+    }
+
     /** The legacy shadow sampler names whose meaning {@link #programResource} decides. */
     public static boolean isProgramShadowAlias(String sampler) {
         return "shadow".equals(sampler) || "watershadow".equals(sampler) || "shadowcolor".equals(sampler);
@@ -535,24 +628,53 @@ public final class PackResourcePlan {
      * composites and then blurs bloom tiles in colortex6.
      */
     private static Map<String, Set<Integer>> targetsWrittenEarlierInChain(PackPlan plan) {
-        Map<String, List<Integer>> flips = plan.config() == null ? Map.of() : plan.config().flips();
-        Map<String, Set<Integer>> writtenByChain = new TreeMap<>();
         Map<String, Set<Integer>> result = new TreeMap<>();
-        List<PackProgramPlan> programs = plan.activePrograms().stream()
-                .filter(program -> program != null && program.targetPlan() != null
-                        && postChain(program.name()) != null)
-                .sorted(Comparator.comparing(PackProgramPlan::name, PostTargetPlan.programComparator()))
-                .toList();
-        for (PackProgramPlan program : programs) {
-            Set<Integer> written = writtenByChain.computeIfAbsent(postChain(program.name()), key -> new TreeSet<>());
-            result.put(program.name(), Set.copyOf(written));
-            written.addAll(program.targetPlan().targetSlots());
-            written.addAll(flips.getOrDefault(program.name(), List.of()));
+        for (PackProgramPlan program : plan.activePrograms()) {
+            if (program != null && program.targetPlan() != null && postChain(program.name()) != null) {
+                result.put(program.name(), targetsWrittenBefore(plan, program.name()));
+            }
         }
         return result;
     }
 
-    private static String postChain(String program) {
+    /** The targets the programs of {@code pass}'s chain wrote before it: its flippedAtLeastOnce snapshot. */
+    private static Set<Integer> targetsWrittenBefore(PackPlan plan, String pass) {
+        String chain = postChain(pass);
+        if (chain == null) return Set.of();
+        Map<String, List<Integer>> flips = plan.config() == null ? Map.of() : plan.config().flips();
+        Comparator<String> order = PostTargetPlan.programComparator();
+        Set<Integer> written = new TreeSet<>();
+        for (PackProgramPlan program : plan.activePrograms()) {
+            if (program == null || program.targetPlan() == null || !chain.equals(postChain(program.name()))
+                    || order.compare(program.name(), pass) >= 0) {
+                continue;
+            }
+            written.addAll(program.targetPlan().targetSlots());
+            written.addAll(flips.getOrDefault(program.name(), List.of()));
+        }
+        return Set.copyOf(written);
+    }
+
+    /**
+     * What the sampler {@code name} of {@code samplerType} reads in a compute of {@code pass}:
+     * what the pass's program would read under that name. Iris CompositeRenderer.createComputes
+     * binds a pass's computes as its program, through the same stage textures, customTexture
+     * entries, noise and flippedAtLeastOnce snapshot; a compute-only pass has the snapshot its
+     * place in the chain gives it. The final pass's computes register in that order too, where its
+     * program takes customTexture entries after images (IrisSamplerOrder). {@code waterShadow}: the
+     * compute reads watershadow, so shadow is shadowtex1 (programResource).
+     */
+    public static PackResourceBinding passComputeBinding(PackPlan plan, String pass, String name, String samplerType,
+                                                         boolean waterShadow, Path shadersDir) {
+        PackSettingsPlan settings = plan.settings();
+        PackResourceBinding binding = resolve(pass, new UniformRegistry.SamplerBinding(name, 0, samplerType),
+                waterShadow, settings == null ? Map.of() : settings.resourceDeclarations(), shadersDir,
+                settings == null ? Map.of() : settings.propertyValues(), targetsWrittenBefore(plan, pass), true);
+        return withNoiseResolution(binding, noiseResolution(plan));
+    }
+
+    /** The post chain a program runs in (final in composite's), or null for a world program. */
+    static String postChain(String program) {
         if (program.equals("final") || program.matches("composite\\d*")) return "composite";
         if (program.matches("deferred\\d*")) return "deferred";
         if (program.matches("prepare\\d*")) return "prepare";
@@ -565,21 +687,25 @@ public final class PackResourcePlan {
         return matcher.matches() ? Integer.parseInt(matcher.group(1)) : null;
     }
 
+    /** The N of a shadowcolorN resource; -1 for any other name. */
+    public static int shadowColorIndex(String resource) {
+        return resource != null && resource.matches("shadowcolor[0-7]") ? resource.charAt(11) - '0' : -1;
+    }
+
     /**
-     * {@code texture.<scope>.<sampler>} for this sampler or any alias of the
-     * same target: Iris overrides colortex7 and gaux4 together.
+     * The PNG {@code texture.<scope>.<sampler>} entry for this sampler or any alias of the same
+     * target: Iris overrides colortex7 and gaux4 together. A raw entry renames its own uniform
+     * instead (rawStageTexture).
      */
     private static PackResourceDeclaration textureDeclaration(
-            Map<String, PackResourceDeclaration> declarations, String scope, String name,
-            String samplerType) {
+            Map<String, PackResourceDeclaration> declarations, String scope, String name) {
         String prefix = "texture." + scope + ".";
         PackResourceDeclaration exact = declarations.get(prefix + name);
-        if (exact != null && appliesTo(exact, samplerType)) return exact;
+        if (exact != null && exact.kind() != PackResourceKind.RAW_TEXTURE) return exact;
         String canonical = canonicalResource(name);
         for (PackResourceDeclaration declaration : declarations.values()) {
-            if (declaration.key().startsWith(prefix)
-                    && canonicalResource(declaration.sampler()).equals(canonical)
-                    && appliesTo(declaration, samplerType)) {
+            if (declaration.key().startsWith(prefix) && declaration.kind() != PackResourceKind.RAW_TEXTURE
+                    && canonicalResource(declaration.sampler()).equals(canonical)) {
                 return declaration;
             }
         }
@@ -588,8 +714,9 @@ public final class PackResourcePlan {
 
     /**
      * Whether a declaration replaces a sampler of this GLSL type. Iris patches a raw texture
-     * only into a sampler of its own dimensionality, so `sampler2D colortex0` stays the render
-     * target while `sampler3D colortex0` takes the declared volume; a PNG is always 2D.
+     * only into a sampler of its own type (TextureTransformer.isTypeValid), so `sampler2D colortex0`
+     * stays the render target while `sampler3D colortex0` takes the declared volume, and a
+     * rectangle texture takes only a sampler2DRect; a PNG is always 2D.
      */
     static boolean appliesTo(PackResourceDeclaration declaration, String samplerType) {
         if (declaration == null || declaration.kind() != PackResourceKind.RAW_TEXTURE) {
@@ -598,13 +725,13 @@ public final class PackResourcePlan {
         String[] parts = declaration.source().trim().split("\\s+");
         String dimension = switch (parts[1].toUpperCase(Locale.ROOT)) {
             case "TEXTURE_1D" -> "1D";
-            case "TEXTURE_2D", "TEXTURE_RECTANGLE" -> "2D";
+            case "TEXTURE_2D" -> "2D";
+            case "TEXTURE_RECTANGLE" -> "2DRect";
             case "TEXTURE_3D" -> "3D";
             default -> "";
         };
         String type = samplerType == null ? "" : samplerType.replaceFirst("^[iu]", "");
-        return !dimension.isEmpty() && (type.equals("sampler" + dimension)
-                || (dimension.equals("2D") && type.equals("sampler2DRect")));
+        return !dimension.isEmpty() && type.equals("sampler" + dimension);
     }
 
     /**
@@ -614,7 +741,7 @@ public final class PackResourcePlan {
      */
     static String textureStage(String program) {
         if (program == null) return null;
-        for (String stage : List.of("begin", "shadowcomp", "prepare", "deferred", "composite")) {
+        for (String stage : PackSettingsPlan.PASS_TEXTURE_STAGES) {
             if (program.startsWith(stage) && program.substring(stage.length()).matches("\\d*")) {
                 return stage;
             }
@@ -741,8 +868,7 @@ public final class PackResourcePlan {
         if (propertyValues == null || sampler == null || sampler.isBlank()) return null;
         for (Map.Entry<String, String> entry : new TreeMap<>(propertyValues).entrySet()) {
             if (!entry.getKey().startsWith("image.")) continue;
-            String[] values = entry.getValue() == null
-                    ? new String[0] : entry.getValue().trim().split("\\s+");
+            String[] values = AdvancedImageDeclarations.values(entry.getValue());
             if (values.length > 0 && sampler.equals(values[0])) {
                 return entry.getKey().substring("image.".length());
             }

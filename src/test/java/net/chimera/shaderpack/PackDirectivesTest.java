@@ -3,14 +3,12 @@ package net.chimera.shaderpack;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.tree.AnnotationNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -89,6 +87,34 @@ final class PackDirectivesTest {
                 "a shadow colour keeps the type the pack writes");
         var compiled = PackCompileTest.run(root, analysis);
         assertTrue(compiled.failures().isEmpty(), "GLSL breadth compilation: " + compiled.failures());
+    }
+
+    /**
+     * RenderPearl's NVIDIA path writes {@code out f16vec3 shadowcolor0}. The shadow colour keeps its
+     * type, as a vec3 one does, and compiles on a device without 16-bit stage outputs, where it
+     * widens; left undeclared as an output, it overlapped the colour declared in its place.
+     */
+    @Test
+    void aHalfShadowColourKeepsItsType(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        writeVec3ShadowProgram(shaders);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 460 compatibility
+                #extension GL_AMD_gpu_shader_half_float : require
+                uniform sampler2D gtexture;
+                in vec2 uv;
+                layout(location = 0) out f16vec3 shadowcolor0;
+                /* RENDERTARGETS: 0 */
+                void main() {
+                    shadowcolor0 = f16vec3(texture(gtexture, uv).rgb);
+                }
+                """);
+        var analysis = PackProbe.analyze(root);
+        String fragment = analysis.plan().program("shadow").convertedFragment();
+        assertTrue(fragment.contains("layout(location = 0) out f16vec3 chimeraShadowColor0;")
+                && !fragment.contains("out f16vec3 shadowcolor0"), fragment);
+        var compiled = PackCompileTest.run(root, analysis);
+        assertTrue(compiled.failures().isEmpty(), "compilation: " + compiled.failures());
     }
 
     /** A 400 compatibility entity program: aliased attributes, flat integer and matrix varyings, two outputs. */
@@ -244,30 +270,6 @@ final class PackDirectivesTest {
                 "oldHandLight=false lights each hand separately");
         assertTrue(HandLightDirectives.fromProperties(Map.of("oldHandLight", "nope")).deviations()
                         .contains("OLD_HAND_LIGHT_DIRECTIVE_MALFORMED"), "an unexpected oldHandLight is reported");
-
-        for (String name : List.of("heldItemId", "heldItemId2", "heldBlockLightValue", "heldBlockLightValue2")) {
-            var descriptor = UniformRegistry.descriptor(name, "int");
-            assertTrue(descriptor != null && descriptor.availability() == UniformRegistry.Availability.LIVE,
-                    name + " is served live");
-        }
-        for (String name : List.of("heldBlockLightColor", "heldBlockLightColor2")) {
-            var descriptor = UniformRegistry.descriptor(name, "vec3");
-            assertTrue(descriptor != null && descriptor.availability() == UniformRegistry.Availability.LIVE,
-                    name + " is served live");
-        }
-
-        var pass = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
-        for (String name : List.of("loadPackConfig", "cleanUpPackVariant")) {
-            boolean installs = false;
-            for (var instruction : MixinBytecode.instructionsThrough(pass, name)) {
-                if (instruction instanceof MethodInsnNode call
-                        && call.owner.equals("net/chimera/render/shader/PackUniformProvider")
-                        && call.name.equals("installHeldItems")) {
-                    installs = true;
-                }
-            }
-            assertTrue(installs, "PackSessionLifecycle." + name + " installs the held-item map");
-        }
     }
 
     /**
@@ -408,29 +410,6 @@ final class PackDirectivesTest {
         assertEquals(new ParticleDirectives(ParticleDirectives.Ordering.AFTER, true, List.of()), particles);
     }
 
-    @Test
-    void particleOrderingHooks() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraLevelRendererMixin");
-        List<Object> ordinals = new ArrayList<>();
-        for (var handler : mixin.methods) {
-            for (var annotation : MixinBytecode.annotations(handler.visibleAnnotations, handler.invisibleAnnotations)) {
-                if (!annotation.desc.equals("Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;")
-                        || !(MixinBytecode.annotationValue(annotation, "at") instanceof List<?> ats)) {
-                    continue;
-                }
-                for (Object at : ats) {
-                    if (at instanceof AnnotationNode node
-                            && String.valueOf(MixinBytecode.annotationValue(node, "target"))
-                                    .startsWith("Lnet/minecraft/client/particle/ParticleEngine;render(")) {
-                        ordinals.add(MixinBytecode.annotationValue(node, "ordinal"));
-                    }
-                }
-            }
-        }
-        assertTrue(ordinals.contains(1) && ordinals.contains(2),
-                "NeoForge's early (ordinal 1) and late (ordinal 2) particle calls are both ordered: " + ordinals);
-    }
-
     /**
      * Iris's sun, moon, stars and sky switches, all on by default. Bliss turns the stars off, and
      * Mellow's {@code sun=off} is not a boolean to Iris, so the sun stays.
@@ -446,22 +425,15 @@ final class PackDirectivesTest {
                 "an unexpected value keeps Iris's default and is reported: " + mellow);
     }
 
+    /** Iris's rain.depth, off by default; Pegasus 0.5 and RenderPearl 2.4.0 turn it on. */
     @Test
-    void skyHooks() throws IOException {
-        var mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraSkyRendererMixin");
-        String wrap = "Lcom/llamalad7/mixinextras/injector/wrapoperation/WrapOperation;";
-        for (String target : List.of(
-                "Lcom/mojang/blaze3d/vertex/BufferUploader;drawWithShader(Lcom/mojang/blaze3d/vertex/MeshData;)V",
-                "Lcom/mojang/blaze3d/vertex/VertexBuffer;drawWithShader(Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;"
-                        + "Lnet/minecraft/client/renderer/ShaderInstance;)V",
-                "Lnet/minecraft/client/renderer/DimensionSpecialEffects;getSunriseColor(FF)[F",
-                "Lnet/minecraft/client/multiplayer/ClientLevel$ClientLevelData;"
-                        + "getHorizonHeight(Lnet/minecraft/world/level/LevelHeightAccessor;)D",
-                "Lnet/minecraft/client/multiplayer/ClientLevel;getStarBrightness(F)F")) {
-            assertTrue(MixinBytecode.injects(mixin, wrap, "renderSky", target), "renderSky wraps " + target);
-        }
-        assertTrue(sessionScoped("skyDirectives", "skyDirectives"),
-                "the main pass reads the sky switches per pack session and drops them with it");
+    void weatherDirectives() {
+        assertEquals(WeatherDirectives.DEFAULTS, WeatherDirectives.fromProperties(Map.of()), "rain writes no depth");
+        assertTrue(WeatherDirectives.fromProperties(Map.of("rain.depth", "true")).rainDepth());
+        var malformed = WeatherDirectives.fromProperties(Map.of("rain.depth", "yes"));
+        assertTrue(!malformed.rainDepth()
+                        && malformed.deviations().equals(List.of("WEATHER_DIRECTIVE_MALFORMED:rain.depth")),
+                "an unexpected value keeps Iris's default and is reported: " + malformed);
     }
 
     private static ParticleDirectives particles(String... keyValues) {

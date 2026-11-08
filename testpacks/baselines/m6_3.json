@@ -3,7 +3,7 @@
   "fixture": "m6_3/entities",
   "fixtures": {
     "entities": {
-      "reportSha256": "6a54dc883ad167b41b55b1187c1324d89efe8415d680e8f27868444b910cc9d5",
+      "reportSha256": "c14e0e3de00803a930622b248c93790d9523cef051fac8b8ef9ddba75ddeb930",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "gbuffers_entities.fsh": "1d9fc1ec14a079ee287fabc03344c028032138b1383189c3cff26c06c0c458f5",
@@ -25,7 +25,6 @@
         "ENTITY_VERTEX_BRIDGE",
         "ENTITY_VERTEX_FORMAT_EXTENDED",
         "FAMILY_ADAPTER_INSTALLED",
-        "FIXED_VERTEX_SUBSTITUTION",
         "LIGHTNING_STATE_FIXED_TO_HOST",
         "LIGHTNING_VERTEX_BRIDGE",
         "LIVE_UNIFORM_BRIDGE",
@@ -37,10 +36,10 @@
       ]
     },
     "unsupported_entities": {
-      "reportSha256": "efae98e5aabe195470f519cefb26eaa0ffdcc5071b5a9ae5cd1865734cb1f925",
+      "reportSha256": "89392edb5f12f70ed63ac2d24b262d28c64f0b96686a02208e778275eca8a819",
       "sourceHashes": {
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
-        "gbuffers_entities.fsh": "f66ceb456c20495e724ea97e83a138a48fb5fd80668857f4b7d0c108179576a4",
+        "gbuffers_entities.fsh": "8611ead5965d76e680dff0dea817d88f0921add13bddc2898f435b5251c0eefa",
         "gbuffers_entities.vsh": "72b56f13b96cdf65069a1a4a61700fed837c73acb4cd1dc15122db44e741869f"
       },
       "expectedExecutablePrograms": [
@@ -55,14 +54,13 @@
       "expectedDeviations": [
         "ENTITY_ID_DEFAULTED",
         "ENTITY_SAMPLER_UNSUPPORTED:unknownEntityTexture",
-        "ENTITY_VERTEX_BRIDGE_UNSUPPORTED",
-        "FIXED_VERTEX_SUBSTITUTION",
-        "LIGHTNING_VERTEX_BRIDGE_UNSUPPORTED",
+        "ENTITY_VERTEX_BRIDGE_NOT_REACHED",
+        "LIGHTNING_VERTEX_BRIDGE_NOT_REACHED",
         "LIVE_UNIFORM_BRIDGE",
         "PROGRAM_ALIAS_RECORDED:gbuffers_entities_translucent->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:gbuffers_lightning->gbuffers_entities",
         "PROGRAM_ALIAS_RECORDED:text_bg->gbuffers_entities",
-        "TEXT_BG_VERTEX_BRIDGE_UNSUPPORTED"
+        "TEXT_BG_VERTEX_BRIDGE_NOT_REACHED"
       ]
     }
   }

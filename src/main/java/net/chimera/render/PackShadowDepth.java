@@ -52,10 +52,18 @@ public final class PackShadowDepth {
      * keeps the non-compare path its shader was written for.
      */
     public long samplerFor(VulkanImage boundImage, boolean compareRequired) {
+        return samplerFor(boundImage, compareRequired, true);
+    }
+
+    /**
+     * {@link #samplerFor(VulkanImage, boolean)} for a depth that filters linearly or, with the
+     * pack's shadowtexNNearest, nearest (Iris GlSampler.LINEAR_HW or NEAREST_HW).
+     */
+    public long samplerFor(VulkanImage boundImage, boolean compareRequired, boolean linear) {
         if (!compareRequired || this.compareSampler == 0L) {
             return boundImage.getSampler();
         }
-        return this.compareSampler;
+        return linear ? this.compareSampler : ChimeraSamplers.depthCompare(false);
     }
 
     public void cleanUp() {

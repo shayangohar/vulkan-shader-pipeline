@@ -1,17 +1,14 @@
 package net.chimera.shaderpack;
 
-import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import org.lwjgl.vulkan.VK10;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -24,19 +21,14 @@ import java.util.stream.Collectors;
  * Immutable load-time plan for the first advanced-resource contract.
  *
  * <p>This is deliberately separate from {@link PackResourcePlan}. That plan
- * owns sampled two-dimensional textures. This plan describes writable image
- * declarations and the exact compute stages that may use them.</p>
+ * owns sampled two-dimensional textures. This plan describes writable image and
+ * buffer declarations and the programs that use them; the pass computes that use
+ * them are {@link PassComputePlan}'s.</p>
  */
 public final class PackAdvancedResourcePlan {
-    public static final int MAX_DIMENSION = 512;
-    public static final long MAX_TOTAL_BYTES = 768L * 1024L * 1024L;
-    public static final int MAX_BUFFER_INDEX = 12;
-    public static final long MAX_STORAGE_BUFFER_BYTES = 64L * 1024L * 1024L;
+    /** ShaderProperties skips a bufferObject index above 8: "they're reserved". */
+    public static final int MAX_BUFFER_INDEX = 8;
 
-    static final Pattern LOCAL_SIZE = Pattern.compile(
-            "layout\\s*\\(\\s*local_size_x\\s*=\\s*(\\d+)\\s*,\\s*"
-                    + "local_size_y\\s*=\\s*(\\d+)\\s*,\\s*"
-                    + "local_size_z\\s*=\\s*(\\d+)\\s*\\)", Pattern.MULTILINE);
     static final Pattern VALUE_UNIFORM_DECLARATION = Pattern.compile(
             "(?m)^\\s*(?:layout\\s*\\([^)]*\\)\\s*)?uniform\\s+"
                     + "(bool|int|uint|float|double|vec[234]|ivec[234]|uvec[234]|bvec[234]"
@@ -82,35 +74,70 @@ public final class PackAdvancedResourcePlan {
             depthToken = depthToken == null ? Integer.toString(depth) : depthToken;
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
         }
-    }
 
-    public record ComputeSpec(
-            String program,
-            String relativeSource,
-            int localSizeX,
-            int localSizeY,
-            int localSizeZ,
-            List<String> imageNames,
-            List<String> samplerNames,
-            Status status,
-            List<String> deviations
-    ) implements Admission {
-        public ComputeSpec {
-            program = program == null ? "" : program;
-            relativeSource = relativeSource == null ? "" : relativeSource.replace('\\', '/');
-            imageNames = imageNames == null ? List.of() : imageNames.stream().distinct().sorted().toList();
-            samplerNames = samplerNames == null ? List.of() : samplerNames.stream().distinct().sorted().toList();
-            deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
+        /** The internal format as Iris names it (InternalTextureFormat); null for one Iris does not know. */
+        public IrisColorFormats.Format format() {
+            return IrisColorFormats.of(internalFormat);
+        }
+
+        /** The GLSL image format qualifier of the format the texels are stored in ({@code rgba8}, {@code r32ui}). */
+        public String layoutQualifier() {
+            return IrisColorFormats.stored(format().vkFormat()).token().toLowerCase(Locale.ROOT);
+        }
+
+        /** The prefix of the image's GLSL types: {@code u} or {@code i} for an integer format, none for a float one. */
+        public String typePrefix() {
+            IrisColorFormats.Kind kind = format().kind();
+            return kind == IrisColorFormats.Kind.UINT ? "u" : kind == IrisColorFormats.Kind.SINT ? "i" : "";
+        }
+
+        /**
+         * The image's dimensions, as Iris's ShaderProperties reads its declaration: a relative image
+         * is 2D, and a fixed one has as many as the sizes it gives.
+         */
+        public int dimensions() {
+            if (relative) return 2;
+            return depth > 0 ? 3 : height > 0 ? 2 : 1;
+        }
+
+        /** The GLSL type of the image's sampler: {@code usampler2D}, {@code sampler3D} and so on. */
+        public String samplerType() {
+            return typePrefix() + "sampler" + dimensionSuffix();
+        }
+
+        /** The name the image's selector slot is kept under (AdvancedImageDeclarations.slotKey). */
+        public String slotKey() {
+            return sampler.isEmpty() ? name : sampler;
+        }
+
+        /** The suffix of the image's GLSL types: {@code 1D}, {@code 2D} or {@code 3D}. */
+        public String dimensionSuffix() {
+            return dimensions() + "D";
+        }
+
+        /**
+         * The image's width, height and depth on a screen of this size: a relative image's share
+         * of it (GlImage.Relative truncates), else its declared size.
+         */
+        public int[] extent(int screenWidth, int screenHeight) {
+            if (!relative) return new int[] {width, Math.max(1, height), Math.max(1, depth)};
+            return new int[] {Math.max(1, (int) (screenWidth * Float.parseFloat(widthToken))),
+                    Math.max(1, (int) (screenHeight * Float.parseFloat(heightToken))), 1};
         }
     }
 
-    /** One storage image used by a graphics-stage imageStore declaration. */
+    /**
+     * One storage image used by a graphics-stage imageStore declaration. {@code viewFormat} is the
+     * format qualifier the stage reads the image through when that is not the image's own (Alpha
+     * Piscium's r32i over an R32F image), else empty.
+     */
     public record GraphicsImageBinding(
             String program,
             String symbol,
             String imageName,
             String sampler,
             String glslType,
+            String viewFormat,
             int selectorSlot,
             int stageMask
     ) {
@@ -120,16 +147,34 @@ public final class PackAdvancedResourcePlan {
             imageName = imageName == null ? "" : imageName;
             sampler = sampler == null ? "" : sampler;
             glslType = glslType == null ? "image3D" : glslType;
+            viewFormat = viewFormat == null ? "" : viewFormat;
             stageMask = stageMask == 0
                     ? VK10.VK_SHADER_STAGE_ALL_GRAPHICS : stageMask;
         }
+
+        /** The Vulkan format of the view this binding reads its image through; 0 for the image's own. */
+        public int viewVkFormat() {
+            return viewFormat.isEmpty() ? 0 : IrisColorFormats.of(viewFormat).vkFormat();
+        }
+
+        /** The colour target a post pass's colorimgN binding stores to (TargetImages); -1 for a pack image. */
+        public int target() {
+            int target = TargetImages.target(symbol);
+            return target >= 0 && imageName.equals(TargetImages.resource(target)) ? target : -1;
+        }
     }
 
-    /** One validated shaders.properties bufferObject.N declaration. */
+    /**
+     * One validated shaders.properties bufferObject.N declaration. A relative one (Iris's
+     * {@code size true scaleX scaleY}) holds {@code size} bytes per covered screen pixel.
+     */
     public record BufferSpec(
             int logicalIndex,
             long size,
             String requestedName,
+            boolean relative,
+            float scaleX,
+            float scaleY,
             Status status,
             List<String> deviations
     ) implements Admission {
@@ -137,6 +182,19 @@ public final class PackAdvancedResourcePlan {
             requestedName = requestedName == null ? "" : requestedName.trim();
             status = status == null ? Status.UNAVAILABLE : status;
             deviations = deviations == null ? List.of() : deviations.stream().distinct().sorted().toList();
+        }
+
+        public BufferSpec(int logicalIndex, long size, String requestedName, Status status, List<String> deviations) {
+            this(logicalIndex, size, requestedName, false, 0f, 0f, status, deviations);
+        }
+
+        /**
+         * The buffer's bytes on a screen of this size: a relative buffer's size for each pixel of
+         * its truncated share (ShaderStorageBuffer.resizeIfRelative), at least one per side.
+         */
+        public long bytes(int screenWidth, int screenHeight) {
+            if (!relative) return size;
+            return Math.max(1L, (long) (screenWidth * scaleX)) * Math.max(1L, (long) (screenHeight * scaleY)) * size;
         }
     }
 
@@ -236,7 +294,7 @@ public final class PackAdvancedResourcePlan {
                 } else {
                     merged.put(key, new GraphicsImageBinding(
                             previous.program(), previous.symbol(), previous.imageName(),
-                            previous.sampler(), previous.glslType(), previous.selectorSlot(),
+                            previous.sampler(), previous.glslType(), previous.viewFormat(), previous.selectorSlot(),
                             previous.stageMask() | value.stageMask()));
                 }
             }
@@ -290,8 +348,8 @@ public final class PackAdvancedResourcePlan {
     private static DescriptorBinding opaqueBinding(List<GlslLexer.Token> tokens, int i, int stage) {
         String word = tokens.get(i).text();
         int type = word.equals("buffer") ? 9
-                : word.matches("[ui]?image3D") ? 3
-                : word.matches("(?:[ui]?sampler3D|sampler2D(?:Shadow)?)") ? 1 : -1;
+                : word.matches("[ui]?image(?:1D|2D|3D)") ? 3
+                : word.matches("(?:[ui]?sampler(?:1D|2D|3D)|sampler2DShadow)") ? 1 : -1;
         if (type < 0 || i + 1 >= tokens.size()) return null;
         if (tokens.get(i + 1).kind() != GlslLexer.Kind.IDENTIFIER) return null;
         String symbol = tokens.get(i + 1).text();
@@ -330,8 +388,15 @@ public final class PackAdvancedResourcePlan {
 
     public static String layoutMismatch(ProgramBindingLayout layout, String vertex, String fragment,
             List<DescriptorBinding> descriptors) {
+        return layoutMismatch(layout, vertex, BetweenStages.NONE, fragment, descriptors);
+    }
+
+    /** The same check over every stage the program runs, the stages {@code between} its vertex and fragment too. */
+    public static String layoutMismatch(ProgramBindingLayout layout, String vertex, BetweenStages between,
+            String fragment, List<DescriptorBinding> descriptors) {
         if (layout == null) return "DESCRIPTOR_LAYOUT_MISMATCH:missing-plan";
         List<DescriptorBinding> declared = new ArrayList<>(shaderBindings(vertex, 1));
+        between.present().forEach(stage -> declared.addAll(shaderBindings(stage.source(), stage.stageBit())));
         declared.addAll(shaderBindings(fragment, 16));
         String duplicate = duplicateDescriptor(descriptors);
         if (duplicate != null) return duplicate;
@@ -398,7 +463,6 @@ public final class PackAdvancedResourcePlan {
     private final Map<String, ProgramBindingLayout> bindingLayouts;
 
     private final Map<String, ImageSpec> images;
-    private final Map<String, ComputeSpec> computeStages;
     private final Map<String, List<GraphicsImageBinding>> graphicsImages;
     private final Map<String, List<GraphicsImageBinding>> graphicsImageReaders;
     private final Map<Integer, BufferSpec> buffers;
@@ -414,7 +478,6 @@ public final class PackAdvancedResourcePlan {
 
     private PackAdvancedResourcePlan(
             Map<String, ImageSpec> images,
-            Map<String, ComputeSpec> computeStages,
             Map<String, List<GraphicsImageBinding>> graphicsImages,
             Map<String, List<GraphicsImageBinding>> graphicsImageReaders,
             Map<Integer, BufferSpec> buffers,
@@ -429,7 +492,6 @@ public final class PackAdvancedResourcePlan {
     ) {
         this.ordinaryContracts = Map.copyOf(ordinaryContracts);
         this.images = Map.copyOf(new TreeMap<>(images == null ? Map.of() : images));
-        this.computeStages = Map.copyOf(new TreeMap<>(computeStages == null ? Map.of() : computeStages));
         Map<String, List<GraphicsImageBinding>> graphicsCopy = new TreeMap<>();
         if (graphicsImages != null) {
             graphicsImages.forEach((program, bindings) -> graphicsCopy.put(program,
@@ -477,7 +539,7 @@ public final class PackAdvancedResourcePlan {
     }
 
     public static PackAdvancedResourcePlan empty() {
-        return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
+        return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), Map.of());
     }
 
@@ -488,48 +550,8 @@ public final class PackAdvancedResourcePlan {
      */
     public static PackAdvancedResourcePlan catalog(PackSettingsPlan settings) {
         Map<Integer, BufferSpec> buffers = StorageBufferDeclarations.parseBuffers(settings, new ArrayList<>());
-        return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), Map.of(), buffers, Map.of(),
+        return new PackAdvancedResourcePlan(Map.of(), Map.of(), Map.of(), buffers, Map.of(),
                 List.of(), List.of(), List.of(), List.of(), List.of(), Map.of(), Map.of());
-    }
-
-    /**
-     * Returns live sampler and image symbols from the selected compute wrapper.
-     * Compute sources are not ordinary PackProgram entries, so this inventory
-     * is performed before selector allocation and uses the same preprocessor
-     * boundary as the final compute plan.
-     */
-    static Set<String> liveComputeResourceNames(
-            Path shadersDir,
-            String selectedFolder,
-            PackSettingsPlan settings,
-            boolean customImages
-    ) {
-        if (shadersDir == null) return Set.of();
-        Path root = selectedFolder == null || selectedFolder.isBlank()
-                ? shadersDir : shadersDir.resolve(selectedFolder);
-        Path source = root.resolve("shadowcomp.csh").normalize();
-        if (!source.startsWith(shadersDir.normalize()) || !Files.isRegularFile(source)) {
-            return Set.of();
-        }
-        try {
-            String raw = Files.readString(source, StandardCharsets.UTF_8);
-            ShaderSourcePreprocessor.Result prepared = ShaderSourcePreprocessor.prepare(
-                    shadersDir, source, raw,
-                    PackEngineDefines.forCompute(
-                            settings == null ? Map.of() : settings.preprocessorDefines(), customImages),
-                    PackEngineDefines.lockedNames(
-                            settings == null ? Set.of() : settings.overriddenNames(),
-                            customImages, true));
-            if (!prepared.successful()) return Set.of();
-            GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(prepared.source());
-            if (!usage.successful()) return Set.of();
-            TreeSet<String> names = new TreeSet<>();
-            names.addAll(usage.liveSamplers());
-            names.addAll(usage.liveImages());
-            return Set.copyOf(names);
-        } catch (IOException | RuntimeException failure) {
-            return Set.of();
-        }
     }
 
     /** Builds only from the existing immutable pack plan and pack properties. */
@@ -538,22 +560,8 @@ public final class PackAdvancedResourcePlan {
         List<String> deviations = new ArrayList<>();
         Map<String, ImageSpec> images = AdvancedImageDeclarations.parseImages(plan.settings(), deviations);
         Map<Integer, BufferSpec> buffers = StorageBufferDeclarations.parseBuffers(plan.settings(), deviations);
-
-        boolean customImages = images.values().stream().anyMatch(ImageSpec::supported);
-        Map<String, String> computeMacros = PackEngineDefines.forCompute(
-                plan.settings().preprocessorDefines(), customImages);
-        // Iris exposes this macro when the runtime supports custom images.
-        // The bounded Chimera bridge supports the admitted image subset, so
-        // compute preparation must see the same feature or guarded sampler
-        // declarations will be removed while their uses remain active.
         GraphicsImageScan graphics = GraphicsImageScan.scan(plan, images, deviations);
-        Map<String, ComputeSpec> compute = AdvancedImageDeclarations.discoverCompute(
-                shadersDir, plan.resolution().selectedSourceFolder(), images, deviations,
-                computeMacros,
-                PackEngineDefines.lockedNames(plan.settings().overriddenNames(), customImages, true),
-                graphics.producedImages,
-                plan.settings().runtimeSettings().customDescriptors());
-        addCapabilityDeviations(compute, images, graphics.customImageFeaturePrograms, deviations);
+        addCapabilityDeviations(images, graphics.customImageFeaturePrograms, deviations);
         List<String> bufferDependent = new ArrayList<>();
         List<String> storageEligible = new ArrayList<>();
         Map<String, OrdinaryDescriptorContract> ordinaryContracts =
@@ -562,37 +570,23 @@ public final class PackAdvancedResourcePlan {
         ordinaryContracts.forEach((program, contract) -> bindingBases.put(program, contract.nextBinding()));
         Map<String, List<StorageBufferBinding>> storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
                 plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
-        Map<Integer, BufferSpec> budgetedBuffers = StorageBufferDeclarations.applyStorageBudget(
-                buffers, storageBuffers, storageEligible, images, deviations);
-        if (!budgetedBuffers.equals(buffers)) {
-            buffers = budgetedBuffers;
-            bufferDependent.clear();
-            storageEligible.clear();
-            storageBuffers = StorageBufferDeclarations.scanStorageBuffers(
-                    plan, buffers, bufferDependent, storageEligible, deviations, bindingBases);
-        }
         addUnplannedDeclarations(plan, graphics.dependent, bufferDependent, deviations);
-        return new PackAdvancedResourcePlan(images, compute, graphics.writers, graphics.readers, buffers,
+        return new PackAdvancedResourcePlan(images, graphics.writers, graphics.readers, buffers,
                 storageBuffers, graphics.dependent, bufferDependent, storageEligible,
                 graphics.customImageFeaturePrograms, deviations, ordinaryContracts, bindingBases);
     }
 
-    /** Whether shadowcomp can negotiate custom images, and the feature-guarded programs that fall back. */
-    private static void addCapabilityDeviations(Map<String, ComputeSpec> compute, Map<String, ImageSpec> images,
+    /** Whether the pack is offered custom images, and the feature-guarded programs that fall back without. */
+    private static void addCapabilityDeviations(Map<String, ImageSpec> images,
                                                 List<String> customImageFeaturePrograms, List<String> deviations) {
-        ComputeSpec shadowCompute = compute.get("shadowcomp");
-        boolean shadowComputeSupported = shadowCompute != null
-                && shadowCompute.supported()
-                && requiredImagesSupported(shadowCompute, images);
-        if (shadowComputeSupported) {
+        if (images.isEmpty()) return;
+        if (images.values().stream().anyMatch(ImageSpec::supported)) {
             deviations.add("CUSTOM_IMAGES_CAPABILITY_POSSIBLE");
-        } else if (!images.isEmpty() || !compute.isEmpty()) {
-            deviations.add("IRIS_FEATURE_CUSTOM_IMAGES_DISABLED");
+            return;
         }
-        if (!shadowComputeSupported) {
-            for (String program : customImageFeaturePrograms) {
-                deviations.add("CUSTOM_IMAGE_FEATURE_FALLBACK:" + program);
-            }
+        deviations.add("IRIS_FEATURE_CUSTOM_IMAGES_DISABLED");
+        for (String program : customImageFeaturePrograms) {
+            deviations.add("CUSTOM_IMAGE_FEATURE_FALLBACK:" + program);
         }
     }
 
@@ -635,10 +629,15 @@ public final class PackAdvancedResourcePlan {
         return imageBySymbol(images, symbol);
     }
 
-    public Map<String, ComputeSpec> computeStages() { return computeStages; }
     public Map<String, List<GraphicsImageBinding>> graphicsImages() { return graphicsImages; }
     public List<GraphicsImageBinding> graphicsImages(String program) {
         return graphicsImages.getOrDefault(program, List.of());
+    }
+    /** The names {@code program}'s {@code stage} ("vertex", ...) declares the images it may store to under. */
+    public Set<String> storedImages(String program, String stage) {
+        int mask = StorageBufferDeclarations.stageMask(stage);
+        return graphicsImages(program).stream().filter(binding -> (binding.stageMask() & mask) != 0)
+                .map(GraphicsImageBinding::symbol).collect(Collectors.toUnmodifiableSet());
     }
     public Map<String, List<GraphicsImageBinding>> graphicsImageReaders() {
         return graphicsImageReaders;
@@ -646,6 +645,26 @@ public final class PackAdvancedResourcePlan {
     public List<GraphicsImageBinding> graphicsImageReaders(String program) {
         return graphicsImageReaders.getOrDefault(program, List.of());
     }
+    /** The Vulkan formats programs read {@code image} through besides its own; any one needs a mutable image. */
+    public Set<Integer> viewFormats(String image) {
+        return graphicsImages.values().stream().flatMap(List::stream)
+                .filter(binding -> binding.imageName().equals(image) && !binding.viewFormat().isEmpty())
+                .map(GraphicsImageBinding::viewVkFormat)
+                .collect(Collectors.toCollection(TreeSet::new));
+    }
+
+    /**
+     * The Vulkan formats post passes store each colour target in as colorimgN, which make its
+     * images storage ones, with a view in any other format (PackPostTargets.configure).
+     */
+    public Map<Integer, Set<Integer>> targetImageFormats() {
+        Map<Integer, Set<Integer>> formats = new TreeMap<>();
+        graphicsImages.values().stream().flatMap(List::stream).filter(binding -> binding.target() >= 0)
+                .forEach(binding -> formats.computeIfAbsent(binding.target(), ignored -> new TreeSet<>())
+                        .add(binding.viewVkFormat()));
+        return formats;
+    }
+
     /** Returns the union of writer and reader bindings for pipeline setup. */
     public List<GraphicsImageBinding> imageBindings(String program) {
         Map<String, GraphicsImageBinding> result = new TreeMap<>();
@@ -657,23 +676,6 @@ public final class PackAdvancedResourcePlan {
         }
         return List.copyOf(result.values());
     }
-    /** Returns every logical image name that needs a successful graphics writer. */
-    public Set<String> requiredGraphicsImageNames() {
-        return graphicsImageNames(graphicsImages.keySet());
-    }
-    /** Returns logical image names covered by the selected producer programs. */
-    public Set<String> graphicsImageNames(Collection<String> programs) {
-        TreeSet<String> result = new TreeSet<>();
-        if (programs != null) {
-            for (String program : programs) {
-                for (GraphicsImageBinding binding : graphicsImages(program)) {
-                    result.add(binding.imageName());
-                }
-            }
-        }
-        return Set.copyOf(result);
-    }
-    public boolean requiresGraphicsProducer() { return !graphicsImages.isEmpty(); }
     public Map<Integer, BufferSpec> buffers() { return buffers; }
     public Map<String, List<StorageBufferBinding>> storageBuffers() { return storageBuffers; }
     public List<StorageBufferBinding> storageBuffers(String program) {
@@ -681,6 +683,12 @@ public final class PackAdvancedResourcePlan {
     }
     public List<String> bufferDependentPrograms() { return bufferDependentPrograms; }
     public List<String> storageEligiblePrograms() { return storageEligiblePrograms; }
+
+    /** The bufferObject indexes programs bind, which the session allocates. */
+    public Set<Integer> programBuffers() {
+        return StorageBufferDeclarations.programBuffers(storageBuffers, storageEligiblePrograms);
+    }
+
     public boolean storageBufferCapabilityPossible() {
         if (bufferDependentPrograms.isEmpty()) return true;
         boolean hasBinding = storageBuffers.values().stream().flatMap(List::stream)
@@ -700,11 +708,13 @@ public final class PackAdvancedResourcePlan {
     }
 
     private static final String UNPLANNED_DECLARATION = "ADVANCED_DECLARATION_UNPLANNED:";
+    /** A program reading or writing a pack image Chimera does not create or cannot bind. */
+    static final String UNSERVED_IMAGE = "ADVANCED_IMAGE_UNSERVED:";
 
     /**
      * Whether the program declares an image or storage block that no binding here serves, as the
-     * report reads it (ADVANCED_RESOURCE_UNSUPPORTED). Rethinking Voxels' prepare stores to
-     * {@code colorimg9}, which Chimera binds only for pass computes.
+     * report reads it (ADVANCED_RESOURCE_UNSUPPORTED): a final or gbuffers program storing to
+     * {@code colorimgN}, which Chimera binds only in the other post passes and pass computes.
      */
     public boolean declaresUnplannedResource(String program) {
         return deviations.contains(UNPLANNED_DECLARATION + program);
@@ -727,11 +737,26 @@ public final class PackAdvancedResourcePlan {
         return GlslStorageBufferParser.hasBlock(source);
     }
 
-    /** Inventory real opaque types and storage blocks, not image-prefixed identifiers. */
+    /**
+     * Inventory real storage blocks, and images of real opaque types that the stage references, not
+     * image-prefixed identifiers. An image the stage only declares is inactive, as GL leaves it,
+     * and stage preparation drops its declaration (ProgramStageSources.withoutInactiveImages).
+     */
     static boolean containsAdvancedDeclarations(String source) {
-        return containsStorageBlock(source) || GlslLexer.lex(source).stream().anyMatch(token ->
-                token.kind() == GlslLexer.Kind.IDENTIFIER
-                        && IMAGE_TYPE.matcher(token.text()).matches());
+        if (containsStorageBlock(source)) return true;
+        // A reference in a function main never reaches is none: GL compiles it away.
+        String reachable = source.contains("image") ? LegacyGlslConverter.pruneUnreachableFunctions(source) : source;
+        List<GlslLexer.Token> tokens = GlslLexer.lex(source);
+        for (int index = 0; index < tokens.size(); index++) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.kind() != GlslLexer.Kind.IDENTIFIER || !IMAGE_TYPE.matcher(token.text()).matches()) continue;
+            int name = GlslLexer.nextSignificant(tokens, index);
+            if (name < 0 || tokens.get(name).kind() != GlslLexer.Kind.IDENTIFIER
+                    || GlslTokenRewriter.identifierCount(reachable, tokens.get(name).text()) > 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public ProgramBindingLayout bindingLayout(String program) {
@@ -742,9 +767,21 @@ public final class PackAdvancedResourcePlan {
     OrdinaryDescriptorContract ordinaryContract(String program) {
         return ordinaryContracts.get(program);
     }
-    /** Rewrites admitted storage blocks without changing their std430 members. */
+    /**
+     * Rewrites admitted storage blocks without changing their std430 members; null when the
+     * program has a block this plan cannot bind, or a converted stage this cannot read, which
+     * refuses that program alone (STORAGE_BUFFER_REWRITE_FAILED), never its pack.
+     */
     public String rewriteStorageBuffers(String program, String source) {
         if (source == null) return null;
+        try {
+            return rewriteReadableStorageBuffers(program, source);
+        } catch (GlslParser.ParseFailure unreadable) {
+            return null;
+        }
+    }
+
+    private String rewriteReadableStorageBuffers(String program, String source) {
         List<StorageBufferBinding> bindings = storageBuffers(program);
         if (bindings.isEmpty()) {
             return GlslStorageBufferParser.hasBlock(source) ? null : source;
@@ -770,40 +807,45 @@ public final class PackAdvancedResourcePlan {
     public List<String> deviations() { return deviations; }
     public boolean hasSupportedImages() { return !images.isEmpty()
             && images.values().stream().allMatch(ImageSpec::supported); }
-    public boolean hasSupportedCompute() {
-        ComputeSpec shadowCompute = computeStages.get("shadowcomp");
-        return shadowCompute != null && shadowCompute.supported()
-                && requiredImagesSupported(shadowCompute, images);
-    }
     /**
-     * Whether a program that uses pack images can run. The runtime serves them only once shadowcomp
-     * installs (PackPipelineInstaller.advancedImagesAllowed); without one such a program falls back.
+     * Whether a program that uses pack images can run: every image it uses is one Chimera creates
+     * and binds. Iris creates the images whatever programs exist, shadowcomp or none, and runs each
+     * program on its own (GraphicsImageScan records an image it cannot bind).
      */
-    public boolean imageProgramsServable() { return hasSupportedCompute(); }
+    public boolean imagesServable(String program) {
+        return unservedImages(program).isEmpty();
+    }
+
+    /** The pack images the program reads that Chimera does not create or cannot bind. */
+    public List<String> unservedImages(String program) {
+        String prefix = UNSERVED_IMAGE + program + ":";
+        return deviations.stream().filter(value -> value.startsWith(prefix))
+                .map(value -> value.substring(prefix.length())).toList();
+    }
+
+    /**
+     * Whether Chimera offers the pack Iris's custom images (IRIS_FEATURE_CUSTOM_IMAGES): it creates
+     * at least one image the pack declares. A program using an image it does not create falls back
+     * on its own (imagesServable).
+     */
     public boolean capabilityPossible() {
-        ComputeSpec shadowCompute = computeStages.get("shadowcomp");
-        boolean imageCompute = images.isEmpty() && computeStages.isEmpty()
-                || shadowCompute != null && shadowCompute.supported()
-                && requiredImagesSupported(shadowCompute, images);
-        // Storage-buffer eligibility is deliberately per program. An invalid
-        // block in one family must not disable unrelated image or compute
-        // programs that have a complete advanced-image plan.
-        return imageCompute;
+        return images.values().stream().anyMatch(ImageSpec::supported);
     }
     public String snapshot() { return snapshot; }
     public String fingerprint() { return fingerprint; }
 
     private String snapshotJson() {
         JsonObject root = new JsonObject();
-        root.add("images", imagesJson(images));
-        root.add("computeStages", computeStagesJson(computeStages));
-        root.add("graphicsImages", programBindingsJson(graphicsImages, PackAdvancedResourcePlan::graphicsBindingJson));
+        root.add("images", AdvancedResourceJson.images(images));
+        root.add("graphicsImages",
+                AdvancedResourceJson.programBindings(graphicsImages, AdvancedResourceJson::graphicsBinding));
         if (!graphicsImageReaders.isEmpty()) {
             root.add("graphicsImageReaders",
-                    programBindingsJson(graphicsImageReaders, PackAdvancedResourcePlan::graphicsBindingJson));
+                    AdvancedResourceJson.programBindings(graphicsImageReaders, AdvancedResourceJson::graphicsBinding));
         }
-        root.add("buffers", buffersJson(buffers));
-        root.add("storageBuffers", programBindingsJson(storageBuffers, PackAdvancedResourcePlan::storageBindingJson));
+        root.add("buffers", AdvancedResourceJson.buffers(buffers));
+        root.add("storageBuffers",
+                AdvancedResourceJson.programBindings(storageBuffers, AdvancedResourceJson::storageBinding));
         root.add("dependentPrograms", PlanJson.strings(dependentPrograms));
         root.add("bufferDependentPrograms", PlanJson.strings(bufferDependentPrograms));
         root.add("storageEligiblePrograms", PlanJson.strings(storageEligiblePrograms));
@@ -811,118 +853,5 @@ public final class PackAdvancedResourcePlan {
         root.add("deviations", PlanJson.strings(deviations));
         root.addProperty("capabilityPossible", capabilityPossible());
         return root.toString();
-    }
-
-    private static JsonArray imagesJson(Map<String, ImageSpec> images) {
-        JsonArray imageArray = new JsonArray();
-        images.values().stream().sorted(Comparator.comparing(ImageSpec::name)).forEach(value -> {
-            JsonObject item = new JsonObject();
-            item.addProperty("name", value.name());
-            item.addProperty("sampler", value.sampler());
-            item.addProperty("pixelFormat", value.pixelFormat());
-            item.addProperty("internalFormat", value.internalFormat());
-            item.addProperty("pixelType", value.pixelType());
-            item.addProperty("clear", value.clear());
-            item.addProperty("relative", value.relative());
-            item.addProperty("width", value.width());
-            item.addProperty("height", value.height());
-            item.addProperty("depth", value.depth());
-            item.addProperty("widthToken", value.widthToken());
-            item.addProperty("heightToken", value.heightToken());
-            item.addProperty("depthToken", value.depthToken());
-            item.addProperty("estimatedBytes", value.estimatedBytes());
-            item.addProperty("status", value.status().name());
-            item.add("deviations", PlanJson.strings(value.deviations()));
-            imageArray.add(item);
-        });
-        return imageArray;
-    }
-
-    private static JsonArray computeStagesJson(Map<String, ComputeSpec> computeStages) {
-        JsonArray computeArray = new JsonArray();
-        computeStages.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .map(Map.Entry::getValue)
-                .forEach(value -> {
-            JsonObject item = new JsonObject();
-            item.addProperty("program", value.program());
-            item.addProperty("source", value.relativeSource());
-            item.addProperty("localSizeX", value.localSizeX());
-            item.addProperty("localSizeY", value.localSizeY());
-            item.addProperty("localSizeZ", value.localSizeZ());
-            item.add("images", PlanJson.strings(value.imageNames()));
-            item.add("samplers", PlanJson.strings(value.samplerNames()));
-            item.addProperty("status", value.status().name());
-            item.add("deviations", PlanJson.strings(value.deviations()));
-            computeArray.add(item);
-        });
-        return computeArray;
-    }
-
-    /** One entry per program, in name order, with its bindings as the writer renders each. */
-    private static <T> JsonArray programBindingsJson(Map<String, List<T>> bindings, Function<T, JsonObject> writer) {
-        JsonArray programArray = new JsonArray();
-        bindings.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .forEach(entry -> {
-            JsonObject item = new JsonObject();
-            item.addProperty("program", entry.getKey());
-            JsonArray entries = new JsonArray();
-            entry.getValue().forEach(binding -> entries.add(writer.apply(binding)));
-            item.add("bindings", entries);
-            programArray.add(item);
-        });
-        return programArray;
-    }
-
-    private static JsonObject graphicsBindingJson(GraphicsImageBinding binding) {
-        JsonObject value = new JsonObject();
-        value.addProperty("symbol", binding.symbol());
-        value.addProperty("image", binding.imageName());
-        value.addProperty("sampler", binding.sampler());
-        value.addProperty("type", binding.glslType());
-        value.addProperty("selectorSlot", binding.selectorSlot());
-        return value;
-    }
-
-    private static JsonArray buffersJson(Map<Integer, BufferSpec> buffers) {
-        JsonArray bufferArray = new JsonArray();
-        buffers.values().stream().sorted(Comparator.comparingInt(BufferSpec::logicalIndex)).forEach(value -> {
-            JsonObject item = new JsonObject();
-            item.addProperty("index", value.logicalIndex());
-            item.addProperty("size", value.size());
-            item.addProperty("name", value.requestedName());
-            item.addProperty("status", value.status().name());
-            item.add("deviations", PlanJson.strings(value.deviations()));
-            bufferArray.add(item);
-        });
-        return bufferArray;
-    }
-
-    private static JsonObject storageBindingJson(StorageBufferBinding binding) {
-        JsonObject value = new JsonObject();
-        value.addProperty("block", binding.blockName());
-        value.addProperty("instance", binding.instanceName());
-        value.addProperty("originalBinding", binding.originalBinding());
-        value.addProperty("index", binding.logicalIndex());
-        value.addProperty("binding", binding.rewrittenBinding());
-        value.addProperty("stages", binding.stageMask());
-        value.addProperty("size", binding.size());
-        value.addProperty("status", binding.status().name());
-        value.add("deviations", PlanJson.strings(binding.deviations()));
-        return value;
-    }
-
-    private static boolean requiredImagesSupported(ComputeSpec compute, Map<String, ImageSpec> images) {
-        if (compute == null || !compute.supported() || compute.imageNames().isEmpty()) return false;
-        for (String name : compute.imageNames()) {
-            ImageSpec image = imageBySymbol(images, name);
-            if (image == null || !image.supported()) return false;
-        }
-        for (String name : compute.samplerNames()) {
-            ImageSpec image = imageBySampler(images, name);
-            if (image == null || !image.supported()) return false;
-        }
-        return true;
     }
 }

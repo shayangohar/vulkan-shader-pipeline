@@ -2,9 +2,12 @@ package net.chimera.shaderpack;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Immutable load-time frame order for pack-visible stages.
@@ -15,6 +18,7 @@ import java.util.Objects;
  */
 public final class PackFrameSchedulePlan {
     public enum Phase {
+        BEGIN,
         SHADOW,
         PREPARE,
         OPAQUE,
@@ -32,6 +36,7 @@ public final class PackFrameSchedulePlan {
     }
 
     public enum PostWindow {
+        BEGIN,
         PREPARE,
         EARLY,
         LATE,
@@ -66,8 +71,11 @@ public final class PackFrameSchedulePlan {
                                   boolean handBeforeEarlyPost, boolean particlesBeforeLatePost,
                                   List<String> deviations) {
         this.postStages = postStages == null ? List.of() : List.copyOf(postStages);
-        this.phases = this.postStages.stream().anyMatch(stage -> stage.window() == PostWindow.PREPARE)
-                ? ORDER : ORDER.stream().filter(phase -> phase != Phase.PREPARE).toList();
+        // The begin and prepare phases exist only with a pass of their window.
+        this.phases = ORDER.stream()
+                .filter(phase -> phase != Phase.BEGIN || hasWindow(PostWindow.BEGIN))
+                .filter(phase -> phase != Phase.PREPARE || hasWindow(PostWindow.PREPARE))
+                .toList();
         this.depthtex0 = depthtex0;
         this.depthtex1 = depthtex1;
         this.depthtex2 = depthtex2;
@@ -85,6 +93,16 @@ public final class PackFrameSchedulePlan {
 
     public static PackFrameSchedulePlan build(List<PackProgramPlan> programs,
                                               PackTargetGraphPlan graph) {
+        return build(programs, graph, Map.of());
+    }
+
+    /**
+     * The schedule with a stage for each pass of {@code computeDepthReads} that has no program: Iris
+     * runs such a pass's computes at its place (CompositeRenderer.ComputeOnlyPass), drawing nothing.
+     * A deferred pass whose computes read depthtex0 needs it captured as a deferred program does.
+     */
+    public static PackFrameSchedulePlan build(List<PackProgramPlan> programs, PackTargetGraphPlan graph,
+                                              Map<String, Set<String>> computeDepthReads) {
         List<PostStage> stages = new ArrayList<>();
         List<String> deviations = new ArrayList<>();
         boolean earlyDepth0 = false;
@@ -105,13 +123,12 @@ public final class PackFrameSchedulePlan {
                 deviations.add("SCHEDULE_STAGE_UNAVAILABLE:" + program.name());
             }
         }
+        addComputeOnlyStages(stages, computeDepthReads.keySet(), deviations);
+        earlyDepth0 |= computesReadDepth0Early(stages, computeDepthReads, deviations);
 
         if (depth1) deviations.add("SCHEDULE_DEPTH_TEX1_BEFORE_TRANSLUCENT");
         if (depth2) deviations.add("SCHEDULE_DEPTH_TEX2_BEFORE_HAND");
         if (depth0) deviations.add("SCHEDULE_DEPTH_TEX0_BEFORE_COMPOSITE");
-        if (stages.stream().anyMatch(stage -> stage.window() == PostWindow.PREPARE)) {
-            deviations.add("SCHEDULE_PREPARE_BEFORE_WORLD");
-        }
         if (stages.stream().anyMatch(stage -> stage.window() == PostWindow.EARLY)) {
             deviations.add("SCHEDULE_EARLY_POST_BEFORE_TRANSLUCENT");
         }
@@ -145,24 +162,58 @@ public final class PackFrameSchedulePlan {
     /** The window a post pass runs in, recording a pass that must wait for the late depth. */
     private static PostWindow postWindow(PackProgramPlan program, List<String> samplers, List<String> deviations) {
         PostTargetPlan target = program.targetPlan();
-        boolean deferred = program.name().startsWith("deferred");
-        boolean prepare = program.name().startsWith("prepare");
         // Iris runs every deferred pass, in order, between opaque and
         // translucent geometry (beginTranslucents), after beginHand has
         // copied depthtex2; there depthtex0 is the opaque depth. A
         // deferred pass never moves late: Bliss's deferred computes the
-        // sky light its deferred1/2 and composites read.
-        boolean requiresLateDepth = !prepare && !deferred
+        // sky light its deferred1/2 and composites read. Nor does a
+        // begin or prepare pass, which runs before the world.
+        boolean requiresLateDepth = passWindow(program.name()) == PostWindow.LATE
                 && (samplers.contains("depthtex0") || samplers.contains("depthtex2"));
-        PostWindow window = target.isFinal()
-                ? PostWindow.FINAL
-                : prepare ? PostWindow.PREPARE
-                : deferred && !requiresLateDepth
-                ? PostWindow.EARLY : PostWindow.LATE;
         if (requiresLateDepth && !target.isFinal()) {
             deviations.add("SCHEDULE_POST_AFTER_DEPTH:" + program.name());
         }
-        return window;
+        return target.isFinal() ? PostWindow.FINAL : passWindow(program.name());
+    }
+
+    /**
+     * The window a begin, prepare, deferred or composite pass runs in, by its name. Iris runs the
+     * begin passes each frame at the level's start (IrisRenderingPipeline.beginLevelRendering),
+     * which Chimera's opening windows do, and the prepare passes after the shadow pass, just before
+     * the sky (IrisRenderingPipeline.renderShadows), which PreSkyPasses does.
+     */
+    private static PostWindow passWindow(String pass) {
+        if (pass.startsWith("begin")) return PostWindow.BEGIN;
+        return pass.startsWith("prepare") ? PostWindow.PREPARE
+                : pass.startsWith("deferred") ? PostWindow.EARLY : PostWindow.LATE;
+    }
+
+    /** Whether a pass of the deferred window has computes that read depthtex0, recording each one. */
+    private static boolean computesReadDepth0Early(List<PostStage> stages, Map<String, Set<String>> computeDepthReads,
+                                                   List<String> deviations) {
+        boolean early = false;
+        for (PostStage stage : stages) {
+            if (stage.window() == PostWindow.EARLY
+                    && computeDepthReads.getOrDefault(stage.name(), Set.of()).contains("depthtex0")) {
+                early = true;
+                deviations.add("SCHEDULE_DEPTH_TEX0_OPAQUE_AT_DEFERRED:" + stage.name());
+            }
+        }
+        return early;
+    }
+
+    /**
+     * A stage for each compute pass no program scheduled, in the window its name gives a program
+     * (deferred computes run where deferred passes do), then every stage in pass order.
+     */
+    private static void addComputeOnlyStages(List<PostStage> stages, Collection<String> computePasses,
+                                             List<String> deviations) {
+        for (String pass : computePasses) {
+            if (stages.stream().anyMatch(stage -> stage.name().equals(pass))) continue;
+            stages.add(new PostStage(pass, passWindow(pass), true, List.of(), List.of()));
+            deviations.add("SCHEDULE_COMPUTE_ONLY_PASS:" + pass);
+        }
+        stages.sort(Comparator.comparing(PostStage::name, PostTargetPlan.programComparator()));
     }
 
     /** A pass's stage in the schedule: the targets its graph step reads and writes, and whether it runs. */

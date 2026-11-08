@@ -27,8 +27,8 @@ public final class HostAlphaTest {
 
     /**
      * Iris 1.21.1's threshold for a draw of {@code family} with the host shader {@code shader}:
-     * an entity's ENTITIES_SOLID_DIFFUSE draws untested; ENTITIES_ALPHA tests the vertex alpha;
-     * ENTITIES_EYES and HAND_TEXT test NON_ZERO_ALPHA; every other entity, block-entity,
+     * an entity's ENTITIES_SOLID_DIFFUSE and BEACON draw untested; ENTITIES_ALPHA tests the vertex
+     * alpha; ENTITIES_EYES and HAND_TEXT test NON_ZERO_ALPHA; every other entity, block-entity,
      * moving-block, hand, text, particle, crumbling and shadow caster key tests ONE_TENTH_ALPHA.
      * Untested, a flat item or a glyph quad wrote depth and gbuffer data across its transparent
      * texels.
@@ -39,6 +39,7 @@ public final class HostAlphaTest {
             case SPIDER_EYES -> "rendertype_eyes".equals(shader) ? NON_ZERO_ALPHA : ONE_TENTH_ALPHA;
             case HAND, HAND_WATER -> isText(shader) ? NON_ZERO_ALPHA : ONE_TENTH_ALPHA;
             case ENTITY -> entityReference(shader);
+            case BEACON_BEAM -> 0.0F;
             default -> ONE_TENTH_ALPHA;
         };
     }

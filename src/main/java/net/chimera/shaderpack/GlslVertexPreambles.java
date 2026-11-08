@@ -6,8 +6,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * The GLSL Chimera prepends to converted vertex stages: each family's host inputs, transform
@@ -59,11 +57,39 @@ final class GlslVertexPreambles {
         return FragmentConverter.entityUniformBlock(fragmentUniforms);
     }
 
-    static final String TERRAIN_VERTEX_PREAMBLE = """
+    /** The terrain and water lanes' view block, which every stage that reads the host's matrices declares. */
+    static final String TERRAIN_VIEW_BLOCK = """
             layout(binding = 0) uniform ViewUBO {
                 mat4 MVP;
                 mat4 LightMVP;
+                vec4 ChimeraCameraFraction;
+                vec4 ChimeraTexCoordShrink;
             };
+            """;
+
+    /**
+     * The legacy matrix built-ins of a terrain or water stage in the host's clip range: the view
+     * from gbufferModelView, the projection from the view block's MVP.
+     */
+    static Map<String, String> terrainMatrixBuiltins() {
+        return Map.of("gl_ModelViewMatrix", "gbufferModelView",
+                "gl_NormalMatrix", normalMatrix("gbufferModelView"),
+                "gl_ProjectionMatrix", "(MVP * inverse(gbufferModelView))",
+                "gl_ModelViewProjectionMatrix", "MVP");
+    }
+
+    /**
+     * The legacy matrix built-ins of a hand stage after the vertex stage: the draw's own, as the hand's
+     * vertex stage reads them (EntityVertexBridge), the projection in GL's clip range.
+     */
+    static Map<String, String> handMatrixBuiltins() {
+        return Map.of("gl_ModelViewMatrix", "ModelViewMat",
+                "gl_NormalMatrix", normalMatrix("ModelViewMat"),
+                "gl_ProjectionMatrix", "chimeraHandProjection()",
+                "gl_ModelViewProjectionMatrix", "(chimeraHandProjection() * ModelViewMat)");
+    }
+
+    static final String TERRAIN_VERTEX_PREAMBLE = TERRAIN_VIEW_BLOCK + """
 
             layout(push_constant) uniform Push {
                 vec3 ChunkOffset;
@@ -83,9 +109,18 @@ final class GlslVertexPreambles {
                 return vec3(bitfieldExtract(ivec3(gl_InstanceIndex) >> ivec3(0, 16, 8), 0, 8));
             }
 
+            // The camera-relative position, watertight across sections and chunk areas. VulkanMod
+            // rounds each area's ChunkOffset (its origin minus the camera) to float on its own, so
+            // adding it first put a corner two areas share a float step apart in each. Here the
+            // position in the section, the section's place in its area and the area's whole-block
+            // offset from the camera's block all add exactly; the camera's fraction, one value for
+            // every area (TerrainVertexUniforms), is subtracted last, so a shared corner rounds once.
             vec3 chimeraWorldPosition() {
-                return fma(vec3(inPositionLight.xyz), CHIMERA_POSITION_SCALE,
-                        ChunkOffset + chimeraSectionOffset());
+                vec3 areaBlocks = round(ChunkOffset + ChimeraCameraFraction.xyz);
+                precise vec3 blocks = fma(vec3(inPositionLight.xyz), CHIMERA_POSITION_SCALE,
+                        chimeraSectionOffset()) + areaBlocks;
+                precise vec3 position = blocks - ChimeraCameraFraction.xyz;
+                return position;
             }
 
             vec4 chimeraVertexValue() {
@@ -96,8 +131,14 @@ final class GlslVertexPreambles {
                 return inColor;
             }
 
+            // Iris's terrain coordinate (XHFPTerrainVertex): the word holds the coordinate rounded to
+            // 1/32768 plus one step toward the quad's centre, and in bit 15 whether that step went up
+            // (ChimeraExtVertexBuilder.encodeTexture). Taking the step back less one sub-texel
+            // (ChimeraTexCoordShrink) leaves every coordinate just inside its sprite, never on its edge.
             vec4 chimeraTexCoord0Value() {
-                return vec4(vec2(inUV) * CHIMERA_UV_SCALE, 0.0, 1.0);
+                vec2 stepUp = vec2(greaterThan(inUV, uvec2(0x7FFFu))) * 2.0 - 1.0;
+                vec2 uv = vec2(inUV & 0x7FFFu) * CHIMERA_UV_SCALE - stepUp * ChimeraTexCoordShrink.xy;
+                return vec4(uv, 0.0, 1.0);
             }
 
             // Raw UV2 light coordinates, one byte each (block, sky), as Iris supplies
@@ -177,6 +218,13 @@ final class GlslVertexPreambles {
             .replace("mat4 LightMVP;\n", "");
 
     /**
+     * The mid-coordinate of a host format Iris does not widen. Iris binds mc_midTexCoord only in
+     * IrisVertexFormats TERRAIN, ENTITY and GLYPH; any other format reads GL's unbound generic
+     * attribute, (0, 0, 0, 1). Pegasus's weather rebuilds its sprite from it (POM on).
+     */
+    static final String UNBOUND_MID_TEX_COORD = "const vec2 MidTexCoord = vec2(0.0);";
+
+    /**
      * Host transform blocks and the append-only EXTENDED_ENTITY inputs. Every value is the host's
      * (RenderSystem state through VulkanMod's uniform suppliers); LineWidth serves the line lane.
      */
@@ -208,10 +256,6 @@ final class GlslVertexPreambles {
 
             vec4 chimeraEntityFtransform() {
                 return ProjMat * ModelViewMat * chimeraEntityVertexValue();
-            }
-
-            mat4 chimeraEntityInverseModelView() {
-                return inverse(ModelViewMat);
             }
 
             vec3 chimeraEntityNormalValue() {
@@ -299,26 +343,38 @@ final class GlslVertexPreambles {
 
             """;
 
-    static final String CRUMBLING_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("layout(location = 3) in ivec2 UV1;\n", "const ivec2 UV1 = ivec2(0);\n")
-            .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
-            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 4) in vec3 Normal;")
-            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
-            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+    /**
+     * The hand's projection in GL's clip range, from the host's Projection block: read by the hand's
+     * vertex stage, and by its tessellation stages when they project (Shrimple's DISPLACE_TESSELATION).
+     */
+    static final String HAND_PROJECTION = """
+            mat4 chimeraHandProjection() {
+                mat4 legacy = ProjMat;
+                legacy[0].z = 2.0 * ProjMat[0].z - ProjMat[0].w;
+                legacy[1].z = 2.0 * ProjMat[1].z - ProjMat[1].w;
+                legacy[2].z = 2.0 * ProjMat[2].z - ProjMat[2].w;
+                legacy[3].z = 2.0 * ProjMat[3].z - ProjMat[3].w;
+                return legacy;
+            }
+            """;
+
+    /** The host's transform blocks as the entity family's vertex stage declares them, for a stage after it. */
+    static final String DYNAMIC_TRANSFORMS_BLOCK = """
+            layout(binding = 0) uniform DynamicTransforms {
+                mat4 ModelViewMat;
+                vec4 ColorModulator;
+                float LineWidth;
+                mat4 TextureMat;
+            };
+            """;
+    static final String PROJECTION_BLOCK = """
+            layout(binding = 1) uniform Projection {
+                mat4 ProjMat;
+            };
+            """;
 
     static final String HAND_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("vec4 chimeraEntityVertexValue()", """
-                    mat4 chimeraHandProjection() {
-                        mat4 legacy = ProjMat;
-                        legacy[0].z = 2.0 * ProjMat[0].z - ProjMat[0].w;
-                        legacy[1].z = 2.0 * ProjMat[1].z - ProjMat[1].w;
-                        legacy[2].z = 2.0 * ProjMat[2].z - ProjMat[2].w;
-                        legacy[3].z = 2.0 * ProjMat[3].z - ProjMat[3].w;
-                        return legacy;
-                    }
-                    vec4 chimeraEntityVertexValue()""")
+            .replace("vec4 chimeraEntityVertexValue()", HAND_PROJECTION + "vec4 chimeraEntityVertexValue()")
             .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat");
 
     /** Iris VanillaTransformer supplies +Z for a host format without a normal. */
@@ -329,7 +385,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -347,7 +403,7 @@ final class GlslVertexPreambles {
                     + "#define chimeraLineDirection Normal\n"
                     + "#define chimeraLineVertexIndex gl_VertexIndex")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -404,22 +460,13 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
     /** The glint layout under the hand's legacy projection, as {@link #HAND_VERTEX_PREAMBLE}. */
     static final String GLINT_HAND_VERTEX_PREAMBLE = GLINT_VERTEX_PREAMBLE
-            .replace("vec4 chimeraEntityVertexValue()", """
-                    mat4 chimeraHandProjection() {
-                        mat4 legacy = ProjMat;
-                        legacy[0].z = 2.0 * ProjMat[0].z - ProjMat[0].w;
-                        legacy[1].z = 2.0 * ProjMat[1].z - ProjMat[1].w;
-                        legacy[2].z = 2.0 * ProjMat[2].z - ProjMat[2].w;
-                        legacy[3].z = 2.0 * ProjMat[3].z - ProjMat[3].w;
-                        return legacy;
-                    }
-                    vec4 chimeraEntityVertexValue()""")
+            .replace("vec4 chimeraEntityVertexValue()", HAND_PROJECTION + "vec4 chimeraEntityVertexValue()")
             .replace("return ProjMat * ModelViewMat", "return chimeraHandProjection() * ModelViewMat");
 
     /**
@@ -432,16 +479,25 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
     /**
-     * DefaultVertexFormat.BLOCK beacon beams: position, colour, texture, light and normal, at
-     * the crumbling layout's locations, with the host colour modulator as for any native layout.
+     * Beacon beams on DefaultVertexFormat.BLOCK widened to EXTENDED_BLOCK, as Iris widens it to
+     * TERRAIN: the face normal, mid-coordinate and tangent come per quad. Iris's BEACON key is
+     * fullbright (ShaderAttributeInputs), so the light reads (240, 240), and the host colour
+     * modulator applies as for any native layout. The entity ids are uniforms there.
      */
-    static final String BEACON_VERTEX_PREAMBLE = "// DefaultVertexFormat.BLOCK beacon beam\n"
-            + CRUMBLING_VERTEX_PREAMBLE;
+    static final String BEACON_VERTEX_PREAMBLE = "// DefaultVertexFormat.BLOCK beacon beam, widened\n"
+            + ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 3) in ivec2 UV1;\n", "const ivec2 UV1 = ivec2(0);\n")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
+            .replace("layout(location = 5) in vec3 Normal;", "layout(location = 4) in vec3 Normal;")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", "layout(location = 6) in vec2 MidTexCoord;")
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "layout(location = 7) in vec4 ChimeraPackedTangent;");
 
     /**
      * DefaultVertexFormat.POSITION_COLOR_LIGHTMAP leads. Iris supplies UV0 (0.5, 0.5) and +Z;
@@ -453,7 +509,26 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 2) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
+            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
+                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
+
+    /**
+     * DefaultVertexFormat.POSITION_TEX world draws (Iris TEXTURED and SHADOW_TEX) on the glint's
+     * layout. Iris's VanillaTransformer reads the colour as the host colour modulator, the light as
+     * 240 and the normal as +Z for a format without them.
+     */
+    static final String TEXTURED_VERTEX_PREAMBLE = "// DefaultVertexFormat.POSITION_TEX\n" + GLINT_VERTEX_PREAMBLE;
+
+    /** DefaultVertexFormat.POSITION_TEX_COLOR world draws (Iris TEXTURED_COLOR and SHADOW_TEX_COLOR). */
+    static final String TEXTURED_COLOR_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
+            .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")
+            .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
+            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
+            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
+            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
+            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -468,7 +543,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "layout(location = 3) in ivec2 UV2;")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "const vec2 MidTexCoord = vec2(0.0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -483,23 +558,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0, 0.0, 1.0);")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "const vec2 MidTexCoord = vec2(0.0);")
-            .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
-                    "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
-
-    /**
-     * The POSITION_TEX glint mesh under Iris's shadow program for it, SHADOW_ENTITIES_CUTOUT on
-     * the ENTITY layout: the mesh supplies position and texture coordinates, and every other
-     * ENTITY input reads GL's unbound-attribute default (0, 0, 0, 1).
-     */
-    static final String SHADOW_GLINT_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
-            .replace("layout(location = 1) in vec4 Color;", "const vec4 Color = vec4(0.0, 0.0, 0.0, 1.0);")
-            .replace("layout(location = 2) in vec2 UV0;", "layout(location = 1) in vec2 UV0;")
-            .replace("layout(location = 3) in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);")
-            .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(0);")
-            .replace("layout(location = 5) in vec3 Normal;", "const vec3 Normal = vec3(0.0);")
-            .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "const vec2 MidTexCoord = vec2(0.0);")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 
@@ -515,9 +574,10 @@ final class GlslVertexPreambles {
             case HOST_LINE -> LINE_VERTEX_PREAMBLE;
             case HOST_LIGHTNING -> LIGHTNING_VERTEX_PREAMBLE;
             case HOST_LEASH, HOST_TEXT_BACKGROUND -> LEASH_VERTEX_PREAMBLE;
-            case HOST_GLINT -> SHADOW_GLINT_VERTEX_PREAMBLE;
             case HOST_TEXT -> TEXT_VERTEX_PREAMBLE;
             case HOST_WATER_MASK -> WATER_MASK_VERTEX_PREAMBLE;
+            case HOST_POSITION_TEX -> TEXTURED_VERTEX_PREAMBLE;
+            case HOST_POSITION_TEX_COLOR -> TEXTURED_COLOR_VERTEX_PREAMBLE;
             default -> throw new IllegalArgumentException("no shadow lane on contract: " + contract);
         };
         String normal = contract == FamilyAdapterPlan.VertexContract.HOST_LINE ? "vec3(0.0, 0.0, 1.0)" : "Normal";
@@ -591,6 +651,7 @@ final class GlslVertexPreambles {
         return preamble == PARTICLE_VERTEX_PREAMBLE || preamble == LINE_VERTEX_PREAMBLE
                 || preamble == GLINT_VERTEX_PREAMBLE || preamble == LIGHTNING_VERTEX_PREAMBLE
                 || preamble == BEACON_VERTEX_PREAMBLE || preamble == LEASH_VERTEX_PREAMBLE
+                || preamble == TEXTURED_VERTEX_PREAMBLE || preamble == TEXTURED_COLOR_VERTEX_PREAMBLE
                 || preamble == CLOUD_VERTEX_PREAMBLE || isSkyPreamble(preamble);
     }
 
@@ -598,11 +659,6 @@ final class GlslVertexPreambles {
     private static final Set<String> ENTITY_HOST_NAMES = Set.of("Position", "Color", "UV0", "UV1", "UV2", "Normal",
             "EntityIds", "MidTexCoord", "ChimeraPackedTangent", "ModelViewMat", "ColorModulator", "LineWidth",
             "TextureMat", "ProjMat");
-    /** Names the entity bridge reads as host inputs, which a pack may also declare as outputs. */
-    private static final Set<String> ENTITY_INPUT_ALIASES = Set.of("Tangent");
-    private static final Pattern GLOBAL_OUTPUT = Pattern.compile("(?m)^[ \\t]*(?:layout\\s*\\([^)]*\\)\\s*)?"
-            + "(?:(?:flat|smooth|noperspective|centroid)\\s+)*out\\s+(?:(?:flat|smooth|noperspective|centroid)\\s+)*"
-            + "\\w+\\s+([A-Za-z_]\\w*)");
 
     /**
      * Renames the pack's own identifiers that share an entity preamble's names. Before the legacy
@@ -610,18 +666,17 @@ final class GlslVertexPreambles {
      * declares {@code out vec3 Normal}, which the preamble's {@code Normal} would redefine.
      */
     static String renameHostNameCollisions(String packSource) {
+        Map<String, String> renames = hostNameCollisions(packSource);
+        return renames.isEmpty() ? packSource : GlslTokenRewriter.replaceIdentifiers(packSource, renames);
+    }
+
+    /** The pack's identifiers that share an entity preamble's names, each with its new name. */
+    static Map<String, String> hostNameCollisions(String packSource) {
         Map<String, String> renames = new HashMap<>();
         for (String name : ENTITY_HOST_NAMES) {
             if (GlslTokenRewriter.containsIdentifier(packSource, name)) renames.put(name, "chimera_pack_" + name);
         }
-        // The bridge reads Tangent as the host tangent, unless the pack writes its own (Mellow's out vec4 Tangent).
-        Matcher output = GLOBAL_OUTPUT.matcher(packSource);
-        while (output.find()) {
-            if (ENTITY_INPUT_ALIASES.contains(output.group(1))) {
-                renames.put(output.group(1), "chimera_pack_" + output.group(1));
-            }
-        }
-        return renames.isEmpty() ? packSource : GlslTokenRewriter.replaceIdentifiers(packSource, renames);
+        return renames;
     }
 
     static boolean isSkyPreamble(String preamble) {
@@ -654,10 +709,11 @@ final class GlslVertexPreambles {
     }
 
     /**
-     * What Iris's VanillaTransformer gives a cloud program: vanilla's cloud mesh
-     * (DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL), gl_Vertex in the mesh's own space (the
-     * draw's model view carries the cloud offset), the clouds texture coordinate, the face colour
-     * (the cloud colour times the face shade), the face's axis normal and full light (240, 240).
+     * What Iris's VanillaTransformer gives a cloud program, on vanilla's cloud layout
+     * (DefaultVertexFormat.POSITION_TEX_COLOR_NORMAL), which Chimera's Sodium-shaped cloud mesh keeps:
+     * gl_Vertex in the mesh's own space (the draw's model view carries the cloud offset), the cell's
+     * texel coordinate, the face colour (the face shade, times the cloud colour in ColorModulator),
+     * the face's axis normal and full light (240, 240).
      */
     static final String CLOUD_VERTEX_PREAMBLE = ENTITY_VERTEX_PREAMBLE
             .replace("layout(location = 1) in vec4 Color;", "layout(location = 2) in vec4 Color;")
@@ -666,7 +722,7 @@ final class GlslVertexPreambles {
             .replace("layout(location = 4) in ivec2 UV2;", "const ivec2 UV2 = ivec2(240);")
             .replace("layout(location = 5) in vec3 Normal;", "layout(location = 3) in vec3 Normal;")
             .replace("layout(location = 6) in uvec4 EntityIds;", "const uvec4 EntityIds = uvec4(0);")
-            .replace("layout(location = 7) in vec2 MidTexCoord;", "#define MidTexCoord UV0")
+            .replace("layout(location = 7) in vec2 MidTexCoord;", UNBOUND_MID_TEX_COORD)
             .replace("layout(location = 8) in vec4 ChimeraPackedTangent;",
                     "const vec4 ChimeraPackedTangent = vec4(0.0, 0.0, 0.0, 1.0);");
 }

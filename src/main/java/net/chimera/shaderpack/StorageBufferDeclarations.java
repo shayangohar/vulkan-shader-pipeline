@@ -4,22 +4,20 @@ import org.lwjgl.vulkan.VK10;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
- * Reads a pack's storage buffers: the bufferObject.N declarations, the std430 blocks each program
+ * Reads a pack's storage buffers: the bufferObject.N declarations, the storage blocks each program
  * declares, which declaration each block binds, and the budget the declarations must fit.
  */
 final class StorageBufferDeclarations {
     /** Deviations that keep a block from binding even when its bufferObject declaration is supported. */
     private static final List<String> UNBINDABLE_PREFIXES = List.of(
             "STORAGE_BUFFER_LAYOUT_UNSUPPORTED:", "STORAGE_BUFFER_BLOCK_UNMAPPED:",
-            "STORAGE_BUFFER_BLOCK_AMBIGUOUS:", "STORAGE_BUFFER_BLOCK_DUPLICATE:", "STORAGE_BUFFER_SIZE_",
-            "STORAGE_BUFFER_ALIGNMENT_", "STORAGE_BUFFER_RELATIVE_");
+            "STORAGE_BUFFER_BLOCK_AMBIGUOUS:", "STORAGE_BUFFER_BLOCK_DUPLICATE:", "STORAGE_BUFFER_SIZE_");
 
     private StorageBufferDeclarations() {}
 
@@ -52,44 +50,94 @@ final class StorageBufferDeclarations {
                         return;
                     }
                     PackAdvancedResourcePlan.BufferSpec spec = parseBuffer(index, entry.getValue());
-                    result.put(index, spec);
+                    // A size below 1, an index above 8 or a value it cannot parse: Iris creates no buffer.
+                    if (!skipped(spec)) result.put(index, spec);
                     deviations.addAll(spec.deviations());
                 });
         return result;
     }
 
+    /** ShaderProperties skips a buffer whose size is below 1: "the shader dev intended to disable the buffer". */
+    static final String DISABLED = "STORAGE_BUFFER_DISABLED:";
+    /** ShaderProperties skips a buffer numbered above 8: "they're reserved". */
+    static final String RESERVED = "STORAGE_BUFFER_INDEX_RESERVED:";
+    /** ShaderProperties skips a value it cannot parse: a size or scale that is no number, or three values. */
+    static final String MALFORMED = "STORAGE_BUFFER_PROPERTY_MALFORMED:";
+
+    /** Whether Iris skips the declaration, so that no buffer exists under its index. */
+    private static boolean skipped(PackAdvancedResourcePlan.BufferSpec spec) {
+        int index = spec.logicalIndex();
+        return spec.deviations().contains(DISABLED + index) || spec.deviations().contains(RESERVED + index)
+                || spec.deviations().contains(MALFORMED + index);
+    }
+
     static PackAdvancedResourcePlan.BufferSpec parseBuffer(int index, String raw) {
         List<String> deviations = new ArrayList<>();
         if (index < 0 || index > PackAdvancedResourcePlan.MAX_BUFFER_INDEX) {
-            deviations.add("STORAGE_BUFFER_INDEX_UNSUPPORTED:" + index);
+            deviations.add((index < 0 ? "STORAGE_BUFFER_INDEX_UNSUPPORTED:" : RESERVED) + index);
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
                     deviations);
         }
-        String[] values = raw == null ? new String[0] : raw.trim().split("\\s+");
-        if (values.length == 0 || values.length > 2) {
-            deviations.add("STORAGE_BUFFER_PROPERTY_MALFORMED:" + index);
+        // ShaderProperties splits the value on single spaces: "size [name]", or "size relative scaleX
+        // scaleY" read from its first four values.
+        String[] values = raw == null ? new String[0] : raw.stripLeading().split(" ");
+        if (values.length == 0 || values[0].isEmpty() || values.length == 3) {
+            deviations.add(MALFORMED + index);
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
                     deviations);
         }
+        if (values.length > 3) return relativeBuffer(index, values, deviations);
         long size;
         try {
             size = Long.parseLong(values[0]);
         } catch (RuntimeException failure) {
-            deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
+            deviations.add(MALFORMED + index);
             return new PackAdvancedResourcePlan.BufferSpec(index, 0L, values.length == 2 ? values[1] : "",
                     PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
         }
-        if (size <= 0L || size > PackAdvancedResourcePlan.MAX_STORAGE_BUFFER_BYTES) {
-            deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
-        } else if ((size & 3L) != 0L) {
-            deviations.add("STORAGE_BUFFER_ALIGNMENT_UNSUPPORTED:" + index);
-        }
-        if (raw != null && raw.toLowerCase(Locale.ROOT).contains("relative")) {
-            deviations.add("STORAGE_BUFFER_RELATIVE_UNSUPPORTED:" + index);
-        }
+        checkSize(index, size, deviations);
         return new PackAdvancedResourcePlan.BufferSpec(index, size, values.length == 2 ? values[1] : "",
-                deviations.isEmpty() ? PackAdvancedResourcePlan.Status.SUPPORTED
-                        : PackAdvancedResourcePlan.Status.UNSUPPORTED, deviations);
+                status(deviations), deviations);
+    }
+
+    /** The long form, which has no name; with relative false it is a fixed buffer of {@code size}. */
+    private static PackAdvancedResourcePlan.BufferSpec relativeBuffer(int index, String[] values,
+                                                                      List<String> deviations) {
+        long size;
+        float scaleX;
+        float scaleY;
+        try {
+            size = Long.parseLong(values[0]);
+            scaleX = Float.parseFloat(values[2]);
+            scaleY = Float.parseFloat(values[3]);
+        } catch (NumberFormatException failure) {
+            deviations.add(MALFORMED + index);
+            return new PackAdvancedResourcePlan.BufferSpec(index, 0L, "", PackAdvancedResourcePlan.Status.UNSUPPORTED,
+                    deviations);
+        }
+        checkSize(index, size, deviations);
+        boolean relative = Boolean.parseBoolean(values[1]);
+        boolean emptyShare = !(scaleX > 0F && scaleY > 0F && Float.isFinite(scaleX) && Float.isFinite(scaleY));
+        if (size >= 1L && relative && emptyShare) {
+            // Iris sizes such a buffer at zero bytes or fewer, which GL refuses to create.
+            deviations.add("STORAGE_BUFFER_SIZE_UNSUPPORTED:" + index);
+        }
+        return new PackAdvancedResourcePlan.BufferSpec(index, size, "", relative,
+                relative ? scaleX : 0f, relative ? scaleY : 0f, status(deviations), deviations);
+    }
+
+    /**
+     * A size below 1 switches the buffer off, as in Iris (DISABLED). Any larger byte count binds, as
+     * Iris's buffers take any size the driver does: the device's storage range and the allocation
+     * bound it (PackStorageBufferOwner), and the buffer is filled whole (VK_WHOLE_SIZE).
+     */
+    private static void checkSize(int index, long size, List<String> deviations) {
+        if (size < 1L) deviations.add(DISABLED + index);
+    }
+
+    private static PackAdvancedResourcePlan.Status status(List<String> deviations) {
+        return deviations.isEmpty() ? PackAdvancedResourcePlan.Status.SUPPORTED
+                : PackAdvancedResourcePlan.Status.UNSUPPORTED;
     }
 
     static Map<String, List<PackAdvancedResourcePlan.StorageBufferBinding>> scanStorageBuffers(
@@ -121,13 +169,14 @@ final class StorageBufferDeclarations {
                     .filter(value -> eligiblePrograms.contains(value.program()))
                     .anyMatch(value -> value.logicalIndex() == spec.logicalIndex());
             if (!used) {
+                // No program binds it; the session allocates it only for a pass compute that does.
                 deviations.add("STORAGE_BUFFER_DEFERRED:bufferObject." + spec.logicalIndex());
             }
         }
         return result;
     }
 
-    /** The blocks a program's vertex and fragment stages declare; a stage that fails to parse adds a marker. */
+    /** The blocks each stage of a program declares; a stage that fails to parse adds a marker. */
     private static List<StorageBlock> programBlocks(PackProgramPlan program, List<String> deviations) {
         List<StorageBlock> blocks = new ArrayList<>();
         for (Map.Entry<String, PreparedShaderSource> stage : program.stages().entrySet()) {
@@ -137,7 +186,7 @@ final class StorageBufferDeclarations {
             try {
                 for (StorageBlock block : scanStorageBlocks(stage.getValue().source())) {
                     blocks.add(new StorageBlock(block.blockName(), block.instanceName(),
-                            block.originalBinding(), block.std430(), stageMask));
+                            block.originalBinding(), block.laidOut(), stageMask));
                 }
             } catch (RuntimeException failure) {
                 // Keep malformed storage declarations local to this
@@ -167,7 +216,7 @@ final class StorageBufferDeclarations {
                         duplicateBlocks.add(key);
                     }
                     merged.put(key, new StorageBlock(previous.blockName(), previous.instanceName(),
-                            previous.originalBinding(), previous.std430() && block.std430(),
+                            previous.originalBinding(), previous.laidOut() && block.laidOut(),
                             previous.stageMask() | block.stageMask()));
                 }
             }
@@ -189,11 +238,10 @@ final class StorageBufferDeclarations {
         Map<Integer, Integer> logicalBindings = new TreeMap<>();
         List<PackAdvancedResourcePlan.StorageBufferBinding> bindings = new ArrayList<>();
         for (StorageBlock block : merged.blocks().values()) {
-            List<PackAdvancedResourcePlan.BufferSpec> matches = matchingBufferSpecs(block, specs);
-            PackAdvancedResourcePlan.BufferSpec spec = matches.size() == 1 ? matches.get(0) : null;
-            List<String> local = blockDeviations(program, block, merged.duplicates(), matches);
-            PackAdvancedResourcePlan.Status status = spec != null && spec.supported() && local.stream().noneMatch(
-                    value -> UNBINDABLE_PREFIXES.stream().anyMatch(value::startsWith))
+            BlockMatch match = match(program, block, merged.duplicates(), specs);
+            PackAdvancedResourcePlan.BufferSpec spec = match.spec();
+            List<String> local = match.deviations();
+            PackAdvancedResourcePlan.Status status = match.bindable()
                     ? PackAdvancedResourcePlan.Status.SUPPORTED : PackAdvancedResourcePlan.Status.UNSUPPORTED;
             int logicalIndex = spec == null ? -1 : spec.logicalIndex();
             long size = spec == null ? 0L : spec.size();
@@ -214,11 +262,29 @@ final class StorageBufferDeclarations {
         return bindings;
     }
 
+    /** The declaration a block names (null unless exactly one), whether it binds, and the block's deviations. */
+    record BlockMatch(PackAdvancedResourcePlan.BufferSpec spec, boolean bindable, List<String> deviations) {}
+
+    /**
+     * How a program's or pass compute's block meets the pack's bufferObject declarations: it binds
+     * when it names exactly one supported declaration and nothing in its own deviations
+     * (UNBINDABLE_PREFIXES) stops it.
+     */
+    static BlockMatch match(String program, StorageBlock block, Set<String> duplicateBlocks,
+                            Map<Integer, PackAdvancedResourcePlan.BufferSpec> specs) {
+        List<PackAdvancedResourcePlan.BufferSpec> matches = matchingBufferSpecs(block, specs);
+        PackAdvancedResourcePlan.BufferSpec spec = matches.size() == 1 ? matches.get(0) : null;
+        List<String> local = blockDeviations(program, block, duplicateBlocks, matches);
+        boolean bindable = spec != null && spec.supported()
+                && local.stream().noneMatch(value -> UNBINDABLE_PREFIXES.stream().anyMatch(value::startsWith));
+        return new BlockMatch(spec, bindable, local);
+    }
+
     /** A block's own deviations: its layout, a duplicate declaration, and how it matched a declaration. */
     private static List<String> blockDeviations(String program, StorageBlock block, Set<String> duplicateBlocks,
                                                 List<PackAdvancedResourcePlan.BufferSpec> matches) {
         List<String> local = new ArrayList<>();
-        if (!block.std430()) {
+        if (!block.laidOut()) {
             local.add("STORAGE_BUFFER_LAYOUT_UNSUPPORTED:" + block.blockName());
         }
         if (duplicateBlocks.contains(blockKey(block))) {
@@ -253,19 +319,9 @@ final class StorageBufferDeclarations {
         return matches;
     }
 
-    static Map<Integer, PackAdvancedResourcePlan.BufferSpec> applyStorageBudget(
-            Map<Integer, PackAdvancedResourcePlan.BufferSpec> buffers,
-            Map<String, List<PackAdvancedResourcePlan.StorageBufferBinding>> storageBuffers,
-            List<String> eligiblePrograms,
-            Map<String, PackAdvancedResourcePlan.ImageSpec> images,
-            List<String> deviations
-    ) {
-        Map<Integer, PackAdvancedResourcePlan.BufferSpec> result = new TreeMap<>(buffers);
-        long imageBytes = images.values().stream()
-                .filter(PackAdvancedResourcePlan.ImageSpec::supported)
-                .mapToLong(PackAdvancedResourcePlan.ImageSpec::estimatedBytes)
-                .sum();
-        long remaining = Math.max(0L, PackAdvancedResourcePlan.MAX_TOTAL_BYTES - imageBytes);
+    /** The bufferObject indexes storage-eligible programs bind through a supported block. */
+    static Set<Integer> programBuffers(Map<String, List<PackAdvancedResourcePlan.StorageBufferBinding>> storageBuffers,
+                                       List<String> eligiblePrograms) {
         TreeSet<Integer> used = new TreeSet<>();
         storageBuffers.entrySet().stream()
                 .filter(entry -> eligiblePrograms.contains(entry.getKey()))
@@ -273,36 +329,24 @@ final class StorageBufferDeclarations {
                 .filter(PackAdvancedResourcePlan.StorageBufferBinding::supported)
                 .map(PackAdvancedResourcePlan.StorageBufferBinding::logicalIndex)
                 .forEach(used::add);
-        boolean rejected = false;
-        for (Integer index : used) {
-            PackAdvancedResourcePlan.BufferSpec spec = result.get(index);
-            if (spec == null || !spec.supported()) continue;
-            if (spec.size() > remaining) {
-                List<String> next = new ArrayList<>(spec.deviations());
-                next.add("STORAGE_BUFFER_BUDGET_EXCEEDED:" + index);
-                result.put(index, new PackAdvancedResourcePlan.BufferSpec(spec.logicalIndex(), spec.size(),
-                        spec.requestedName(), PackAdvancedResourcePlan.Status.UNSUPPORTED, next));
-                deviations.add("STORAGE_BUFFER_BUDGET_EXCEEDED:" + index);
-                rejected = true;
-            } else {
-                remaining -= spec.size();
-            }
-        }
-        if (rejected) deviations.add("STORAGE_BUFFER_BUDGET_EXCEEDED");
-        return result;
+        return used;
     }
 
     record StorageBlock(
             String blockName,
             String instanceName,
             int originalBinding,
-            boolean std430,
+            boolean laidOut,
             int stageMask
     ) {}
 
+    /** The Vulkan stage bit of a program stage, by the stage names PackProbe gives them; 0 for another. */
     static int stageMask(String stage) {
         return switch (stage == null ? "" : stage) {
             case "vertex" -> VK10.VK_SHADER_STAGE_VERTEX_BIT;
+            case "tess_control" -> VK10.VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+            case "tess_evaluation" -> VK10.VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT;
+            case "geometry" -> VK10.VK_SHADER_STAGE_GEOMETRY_BIT;
             case "fragment" -> VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
             default -> 0;
         };
@@ -312,7 +356,7 @@ final class StorageBufferDeclarations {
         List<StorageBlock> result = new ArrayList<>();
         for (GlslStorageBufferParser.Block block : GlslStorageBufferParser.scan(source)) {
             result.add(new StorageBlock(block.blockName(), block.instanceName(),
-                    block.originalBinding(), block.std430(), 0));
+                    block.originalBinding(), block.laidOut(), 0));
         }
         return result;
     }

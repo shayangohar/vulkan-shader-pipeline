@@ -46,7 +46,7 @@ final class SweepParityFixesTest {
     @Test
     void anUnknownSampler2DInAFullscreenPassReadsColortex0() {
         List<String> deviations = new ArrayList<>();
-        String renamed = FullscreenDefaultSampler.apply("""
+        String renamed = UnitZeroSampler.apply("""
                 uniform sampler2D tex;
                 uniform sampler2D colortex1;
                 uniform sampler3D volume;
@@ -54,7 +54,7 @@ final class SweepParityFixesTest {
                 vec3 blur(sampler2D tex, vec2 uv) { return texture2D(tex, uv).rgb; }
                 void main() { gl_FragColor = texture2D(tex, uv)
                         + vec4(blur(colortex1, uv), texture3D(volume, vec3(0.0)).r); }
-                """, PackSettingsPlan.empty(), deviations);
+                """, null, deviations, "composite");
         assertTrue(renamed.contains("uniform sampler2D colortex0;") && !renamed.contains("uniform sampler2D tex;"),
                 renamed);
         assertTrue(renamed.contains("void main() { gl_FragColor = texture2D(colortex0, uv)"), renamed);
@@ -65,13 +65,13 @@ final class SweepParityFixesTest {
         assertEquals(List.of("SAMPLER_UNIT0_COLORTEX0:tex"), deviations);
 
         List<String> second = new ArrayList<>();
-        String declared = FullscreenDefaultSampler.apply("""
+        String declared = UnitZeroSampler.apply("""
                 uniform sampler2D colortex0;
                 uniform sampler2D texture;
                 uniform sampler2D depthtex0;
                 void main() { gl_FragColor = texture2D(texture, uv) * texture(colortex0, uv)
                         + texture2D(depthtex0, uv); }
-                """, PackSettingsPlan.empty(), second);
+                """, null, second, "composite");
         assertFalse(declared.contains("uniform sampler2D texture;"), declared);
         assertTrue(declared.contains("texture2D(colortex0, uv) * texture(colortex0, uv)"),
                 "a call keeps its function name: " + declared);
@@ -93,6 +93,236 @@ final class SweepParityFixesTest {
         assertTrue(deviations.contains("SAMPLER_UNIT0_COLORTEX0:tex"), deviations.toString());
     }
 
+    /**
+     * A gbuffers or shadow program registers colortex4 and up only (IrisSamplers.addRenderTargetSamplers,
+     * startIndex 4), and depthtex0-2 without gdepthtex. Kappa's gbuffers_particles reads gcolor, which
+     * therefore reads unit 0: the particle's albedo texture.
+     */
+    @Test
+    void anUnregisteredSampler2DInAWorldProgramReadsTheAlbedo(@TempDir Path root) throws IOException {
+        List<String> deviations = new ArrayList<>();
+        String renamed = UnitZeroSampler.apply("""
+                uniform sampler2D gcolor;
+                uniform sampler2D gaux1;
+                uniform sampler2D depthtex1;
+                uniform sampler2D gdepthtex;
+                uniform sampler2D noisetex;
+                uniform sampler2D dhDepthTex1;
+                uniform sampler2D shadowtex0;
+                void main() { gl_FragColor = texture2D(gcolor, uv) + texture2D(gaux1, uv)
+                        + texture2D(depthtex1, uv) + texture2D(gdepthtex, uv) + texture2D(noisetex, uv)
+                        + texture2D(dhDepthTex1, uv) + texture2D(shadowtex0, uv); }
+                """, null, deviations, "gbuffers_particles");
+        assertTrue(renamed.contains("uniform sampler2D gtexture;") && !renamed.contains("gcolor")
+                && !renamed.contains("gdepthtex"), renamed);
+        assertTrue(renamed.contains("texture2D(gaux1, uv)") && renamed.contains("texture2D(depthtex1, uv)"), renamed);
+        assertEquals(List.of("SAMPLER_UNIT0_ALBEDO:gcolor", "SAMPLER_UNIT0_ALBEDO:gdepthtex"), deviations);
+        // The renderer picks the unit (IrisSamplerOrder.of): begin is a fullscreen pass, dh_* a world one.
+        assertEquals(UnitZeroSampler.Unit.FULLSCREEN, UnitZeroSampler.Unit.of("begin1"));
+        assertEquals(UnitZeroSampler.Unit.WORLD, UnitZeroSampler.Unit.of("dh_terrain"));
+        // A parameter named gtexture would capture the rename, so the source stays as written.
+        List<String> captured = new ArrayList<>();
+        String kept = UnitZeroSampler.apply("""
+                uniform sampler2D gcolor;
+                vec4 shade(sampler2D gtexture, vec2 uv) { return texture2D(gcolor, uv); }
+                void main() { gl_FragColor = shade(gcolor, uv); }
+                """, null, captured, "gbuffers_particles");
+        assertTrue(kept.contains("uniform sampler2D gcolor;") && captured.isEmpty(), kept);
+
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_particles.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.xy; }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_particles.fsh"), """
+                #version 120
+                uniform sampler2D gcolor;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = texture2D(gcolor, uv); }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        List<String> particles = analysis.report().program("gbuffers_particles").deviations();
+        assertTrue(analysis.plan().shouldAttempt("gbuffers_particles"), particles.toString());
+        assertTrue(particles.contains("SAMPLER_UNIT0_ALBEDO:gcolor"), particles.toString());
+    }
+
+    /**
+     * Reverie's composite2 reads dhDepthTex1 without a DISTANT_HORIZONS guard. Iris registers the DH depth
+     * names with the render targets and, without DH, binds texture 0 under all three (DHCompat.getDepthTex).
+     */
+    @Test
+    void theDistantHorizonsDepthTexturesReadTheUnboundTexture(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.xy; }
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform sampler2D dhDepthTex0;
+                uniform sampler2D dhDepthTex1;
+                varying vec2 uv;
+                void main() { gl_FragColor = texture2D(dhDepthTex0, uv) + texture2D(dhDepthTex1, uv); }
+                """);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        List<PackResourceBinding> bindings = plan.resources().bindings("composite");
+        assertEquals(2, bindings.size(), bindings.toString());
+        for (PackResourceBinding binding : bindings) {
+            // Two registrations: dhDepthTex with its alias dhDepthTex0, and dhDepthTex1 (IrisSamplers).
+            boolean first = binding.sampler().equals("dhDepthTex0");
+            assertEquals(first ? SelectorNamespace.DH_DEPTH_SLOT : SelectorNamespace.DH_DEPTH1_SLOT, binding.slot(),
+                    binding.toString());
+            assertEquals(first ? "dhDepthTex" : "dhDepthTex1", binding.resourceKey());
+            assertEquals(PackResourcePlan.GENERATED_UNBOUND, binding.source());
+            assertEquals(PackResourceStatus.GENERATED, binding.status());
+        }
+        assertTrue(plan.shouldAttempt("composite"), plan.program("composite").deviations().toString());
+        EntityRealPackTest.compileStage(plan.program("composite").convertedFragment(), false, "dh composite");
+        assertFalse(SelectorNamespace.PACK_SELECTOR_SLOTS.contains(SelectorNamespace.DH_DEPTH_SLOT));
+        assertEquals(SelectorNamespace.DH_DEPTH_SLOT, InterfacePlanner.samplerSlot("dhDepthTex", "dhDepthTex",
+                UniformRegistry.Stage.SHADOW, Map.of()), "shadow programs have the render targets too");
+    }
+
+    /**
+     * GLSL forms Iris passes through: a default-qualifier statement (Alpha Piscium's
+     * layout(early_fragment_tests) in;) declares no variable, and an array size may sit on the type
+     * (Noble's flat in vec3[9] skyIlluminanceCoefficients).
+     */
+    @Test
+    void interfaceScanningReadsDefaultQualifiersAndTypeArrays(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.vsh"), """
+                #version 330 compatibility
+                out vec2 uv;
+                flat out vec3[2] light;
+                void main() {
+                    gl_Position = ftransform();
+                    uv = gl_MultiTexCoord0.xy;
+                    light[0] = vec3(1);
+                    light[1] = vec3(0);
+                }
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 330 compatibility
+                layout(early_fragment_tests) in;
+                in vec2 uv;
+                flat in vec3[2] light;
+                void main() { gl_FragData[0] = vec4(light[0] + light[1], uv.x); }
+                """);
+        GlslInterfaceScanner.StageInterface fragment = GlslInterfaceScanner.scan(
+                Files.readString(shaders.resolve("composite.fsh")), false);
+        assertTrue(fragment.deviations().isEmpty(), fragment.deviations().toString());
+        PackPlan plan = PackProbe.analyze(root).plan();
+        PackProgramPlan composite = plan.program("composite");
+        assertTrue(plan.shouldAttempt("composite"), composite.deviations().toString());
+        assertTrue(composite.convertedFragment().contains("layout(early_fragment_tests) in;"),
+                composite.convertedFragment());
+        EntityRealPackTest.compileStage(composite.convertedVertex(), true, "type-array vertex");
+        EntityRealPackTest.compileStage(composite.convertedFragment(), false, "type-array fragment");
+    }
+
+    /**
+     * Mellow's and superDuperVanilla's core-profile gbuffers_clouds draw nothing at their defaults.
+     * Iris runs them and no cloud shows; Chimera skips the host cloud draw. Nothing is left to
+     * convert, so the report must not call the program unconverted modern GLSL and a fallback.
+     */
+    @Test
+    void aCloudProgramThatDrawsNothingRuns(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_clouds.vsh"), """
+                #version 330 compatibility
+                out vec2 uv;
+                void main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.xy; }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_clouds.fsh"), """
+                #version 330 compatibility
+                in vec2 uv;
+                void main() { discard; }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        assertTrue(analysis.plan().program("gbuffers_clouds").cloudDrawsNothing());
+        ConformanceReport.ProgramReport clouds = analysis.report().program("gbuffers_clouds");
+        assertEquals(ConformanceReport.SupportStatus.SUPPORTED_WITH_DEVIATION, clouds.support(),
+                clouds.deviations().toString());
+        assertFalse(clouds.deviations().contains("MODERN_GLSL_UNSUPPORTED"), clouds.deviations().toString());
+    }
+
+    /**
+     * RenderPearl's gbuffers_line declares two core inputs at once: in vec3 vaNormal, vaPosition;.
+     * The core names become compatibility built-ins, so their declarators go, and a name beside them
+     * stays declared.
+     */
+    @Test
+    void coreInputsDeclaredTogetherLeaveTheirDeclaration() {
+        String vertex = """
+                #version 150
+                in vec3 vaNormal, vaPosition;
+                in vec4 vaColor, packColor;
+                uniform mat4 modelViewMatrix, projectionMatrix;
+                out vec4 color;
+                void main() {
+                    color = vaColor * packColor * vec4(vaNormal, 1.0);
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(vaPosition, 1.0);
+                }
+                """;
+        String line = IrisCoreProfile.prepareLineVertex(vertex, null, true);
+        GlslTree.parse(line);
+        assertTrue(line.contains("in vec4 packColor;") && !line.contains("vaPosition") && !line.contains("vaNormal")
+                && !line.contains("uniform mat4"), line);
+        String core = IrisCoreProfile.prepareIrisCoreProfile(vertex, null, true, "UV1", true,
+                IrisCoreProfile.Patch.VANILLA);
+        GlslTree.parse(core);
+        assertTrue(core.contains("in vec4 packColor;") && core.contains("gl_Vertex.xyz"), core);
+    }
+
+    /**
+     * RedHat's composite and Spring's composite6, composite7 and final read centerDepthSmooth. Iris
+     * rewrites a fullscreen pass's uniform declaration into its smoothed texture and each reference
+     * into the texture's centre (CompositeDepthTransformer); a world program keeps an unset uniform.
+     * The pass samples the texture in GENERAL, where its compute kernel keeps it: a shader-read
+     * descriptor made VulkanMod transition it, which threw and dropped Insanity's depth of field to vanilla.
+     */
+    @Test
+    void fullscreenPassesReadTheSmoothedCentreDepth(@TempDir Path root) throws IOException {
+        String composite = """
+                #version 120
+                uniform float viewWidth, centerDepthSmooth;
+                varying vec2 uv;
+                void main() { gl_FragData[0] = vec4(centerDepthSmooth, viewWidth, uv); }
+                """;
+        String rewritten = CenterDepthSmooth.apply(composite, "composite");
+        assertTrue(rewritten.contains("uniform sampler2D iris_centerDepthSmooth; uniform float viewWidth;")
+                && rewritten.contains("vec4(texture(iris_centerDepthSmooth, vec2(0.5)).r, viewWidth, uv)"), rewritten);
+        assertEquals(composite, CenterDepthSmooth.apply(composite, "gbuffers_terrain"), "a world program");
+        assertEquals("void main() { float centerDepthSmooth = 1.0; }",
+                CenterDepthSmooth.apply("void main() { float centerDepthSmooth = 1.0; }", "final"),
+                "Iris makes the texture available only where the uniform is declared");
+
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { gl_Position = ftransform(); uv = gl_MultiTexCoord0.xy; }
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), composite);
+        PackPlan plan = PackProbe.analyze(root).plan();
+        assertTrue(plan.shouldAttempt("composite"), plan.program("composite").deviations().toString());
+        PackResourceBinding centre = plan.resources().bindings("composite").stream()
+                .filter(binding -> binding.sampler().equals(CenterDepthSmooth.SAMPLER)).findFirst().orElseThrow();
+        assertEquals(SelectorNamespace.CENTER_DEPTH_SLOT, centre.slot());
+        assertEquals(PackResourceKind.CENTER_DEPTH, centre.kind());
+        var images = PackDescriptorContracts.ordinaryDescriptorContract(plan.program("composite"), Set.of())
+                .layout().images();
+        assertEquals(List.of(PackDescriptorLayout.ImageAccess.SAMPLED_GENERAL), images.stream()
+                .filter(image -> image.textureSlot() == SelectorNamespace.CENTER_DEPTH_SLOT)
+                .map(PackDescriptorLayout.ImageSlot::access).toList(), images.toString());
+        assertTrue(images.stream().filter(image -> image.textureSlot() != SelectorNamespace.CENTER_DEPTH_SLOT)
+                .allMatch(image -> image.access() == PackDescriptorLayout.ImageAccess.SAMPLED), images.toString());
+        EntityRealPackTest.compileStage(plan.program("composite").convertedFragment(), false, "centre depth");
+    }
+
     /** Shrimple sizes its light bins with #if arithmetic; JCPP evaluates conditions in C long arithmetic. */
     @Test
     void conditionsEvaluateAsJcppDoes() {
@@ -109,7 +339,16 @@ final class SweepParityFixesTest {
         assertTrue(PackConditionals.evaluate("0x10 == 16 && 010 == 8 && -SIZE < ~0", macros));
         assertTrue(PackConditionals.evaluate("SELF", macros), "a macro does not expand inside itself");
         assertThrows(IllegalArgumentException.class, () -> PackConditionals.evaluate("F(1)", macros));
-        assertThrows(IllegalArgumentException.class, () -> PackConditionals.evaluate("SIZE >", macros));
+        // JCPP reads a missing operand as 0 at the expr() call that wanted it, and at the top the
+        // directive is false: a macro defined with no body expands to nothing.
+        Map<String, String> empty = Map.of("EMPTY", "", "SIZE", "64");
+        assertTrue(PackConditionals.evaluate("SIZE >", empty), "SIZE > 0");
+        assertFalse(PackConditionals.evaluate("EMPTY", empty));
+        assertFalse(PackConditionals.evaluate("EMPTY != 1", empty), "the top-level operand is missing");
+        assertTrue(PackConditionals.evaluate("!EMPTY", empty));
+        assertTrue(PackConditionals.evaluate("1 || EMPTY", empty));
+        assertFalse(PackConditionals.evaluate("(EMPTY)", empty));
+        assertTrue(PackConditionals.evaluate("defined EMPTY", empty));
 
         PackConditionals.State state = new PackConditionals.State(macros);
         assertTrue(state.apply("if", "(SIZE*SIZE*BINS) < (8192*8192)"));
@@ -153,5 +392,26 @@ final class SweepParityFixesTest {
         assertTrue(InterfacePlanner.planInternal("uniform mat3 worldTime;\nvoid main() { mat3 m = worldTime; }",
                 UniformRegistry.Stage.POST, true, true).deviations().contains("UNIFORM_TYPE_UNSUPPORTED:worldTime"),
                 "a type Chimera cannot place stays unsupported");
+    }
+
+    /**
+     * Mellow with COLORED_LIGHTS declares its voxel images in every stage, and most programs never use
+     * them. Each stage compiles alone, so a declaration the vertex and fragment stages share is still
+     * no use: the report runs the program, as the plan and Iris do.
+     */
+    @Test
+    void anImageBothStagesOnlyDeclareIsNoUse(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.voxelImg = voxelImgSampler RGBA RGBA16 UNSIGNED_SHORT false false 16 16 16\n");
+        String declaration = "#version 430 compatibility\nlayout(rgba16) uniform restrict image3D voxelImg;\n";
+        Files.writeString(shaders.resolve("composite.vsh"), declaration
+                + "out vec2 uv;\nvoid main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }\n");
+        Files.writeString(shaders.resolve("composite.fsh"), declaration
+                + "in vec2 uv;\nvoid main() { gl_FragData[0] = vec4(uv, 0.0, 1.0); }\n");
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        ConformanceReport.ProgramReport report = analysis.report().program("composite");
+        assertTrue(analysis.plan().shouldAttempt("composite") && analysis.report().shouldAttempt("composite")
+                && !report.deviations().contains("ADVANCED_RESOURCE_UNSUPPORTED"), report.deviations().toString());
     }
 }

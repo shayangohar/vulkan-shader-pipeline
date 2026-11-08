@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "fixtures": {
     "post_chain": {
-      "reportSha256": "6b60555b0a80cd5adc875cdcabe67ed3bfd7b6aeffa488c30301f9d1adb5347a",
+      "reportSha256": "2f0cd77832e741baa7de4517c471436a85f2957c3337e3ce45683067fbebced9",
       "expectedPassInventory": ["composite", "final"],
       "expectedStages": {
         "composite": ["fragment"],
@@ -18,12 +18,12 @@
         "final": []
       },
       "sourceHashes": {
-        "composite.fsh": "c6b124e855337a8fa85d9515a127d215dc054c95f8bb9ef6aed73f346e0b9ff8",
+        "composite.fsh": "54c312b8b6aa96310e407ece8ee9b93d9e0b766d6931b1a93a4241868d51463f",
         "composite1.fsh": "f721245e37a5382e35a1d89e800beed6fcf697e66caf623dbc243475a2af500b",
         "deferred.fsh": "c59ee8266514c65cba46c59a105fa98a24a56195d6db2ffec4f5575f3055d1b3",
         "final.fsh": "abe493a7258f3cb0bbe576f1667a7a91b9beca024f76c9729c546a5779f83de4",
         "shaders.json": "30ea764ae8907596cde1f72d5385eafa8ddaf1747636a07780bf44a3ef821c32",
-        "shaders.properties": "b37560c10d9a2b13e978bff06b31b725880640a51e4b73104f25a37e19ccfd08"
+        "shaders.properties": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     },
     "unsupported_targets": {

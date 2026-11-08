@@ -2,15 +2,28 @@ package net.chimera.shaderpack;
 
 import org.junit.jupiter.api.Test;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Map;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** The bounded token translation boundary. */
 final class TokenTranslationTest {
+    /**
+     * The shadow bridge serves the legacy matrix built-ins from the shadow matrices, so a shadow
+     * source that reads them has those declared. RenderPearl's shadow vertex reads
+     * modelViewMatrix, which Iris's core profile makes gl_ModelViewMatrix.
+     */
+    @Test
+    void legacyMatricesInTheShadowPassDeclareTheShadowMatrices() {
+        String vertex = "#version 460 compatibility\n"
+                + "void main() { gl_Position = gl_ProjectionMatrix * gl_ModelViewMatrix * gl_Vertex; }\n";
+        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram("#version 460\nvoid main() {}\n",
+                vertex, UniformRegistry.Stage.SHADOW, null, false);
+        assertEquals(List.of("shadowModelView", "shadowProjection"), plan.executableUniforms().stream()
+                .map(UniformRegistry.UniformDeclaration::name).sorted().toList());
+    }
+
     @Test
     void localCatalogNameDoesNotBecomeUniform() {
         String source = "#version 120\n"
@@ -26,7 +39,7 @@ final class TokenTranslationTest {
                         .anyMatch(value -> value.name().equals("gbufferProjectionInverse")),
                 "declared catalog matrix was not retained");
         String converted = FragmentConverter.convertPostFragment(
-                source, null, plan, target, Map.of());
+                source, null, plan, target);
         assertTrue(converted != null, "local catalog-name source did not convert");
         assertTrue(!converted.contains("float timeAngle;"),
                 "local timeAngle leaked into the generated uniform block");
@@ -50,7 +63,7 @@ final class TokenTranslationTest {
         PostTargetPlan target = PostTargetPlan.parse("composite", source).plan();
         UniformRegistry.ProgramInterface plan = UniformRegistry.planPreparedPost(source, target);
         String converted = FragmentConverter.convertPostFragment(
-                source, null, plan, target, Map.of());
+                source, null, plan, target);
         assertTrue(converted != null, "legacy post source did not convert: " + plan.deviations());
         assertEquals(1, count(converted, "#version 460"), "version was not normalized");
         assertTrue(!converted.contains("#version 130"), "legacy version remained");
@@ -72,7 +85,7 @@ final class TokenTranslationTest {
         UniformRegistry.ProgramInterface nestedPlan =
                 UniformRegistry.planPreparedPost(nestedShadowSource, nestedTarget);
         String nested = FragmentConverter.convertPostFragment(
-                nestedShadowSource, null, nestedPlan, nestedTarget, Map.of());
+                nestedShadowSource, null, nestedPlan, nestedTarget);
         assertTrue(nested != null && !nested.contains("shadow2D"),
                 "nested shadow lookup was not fully inlined");
 
@@ -86,7 +99,7 @@ final class TokenTranslationTest {
                         .anyMatch(value -> value.name().equals("gbufferProjectionInverse")),
                 "implicit catalog matrix was incorrectly marked unused");
         String implicit = FragmentConverter.convertPostFragment(
-                implicitUniformSource, null, implicitPlan, implicitTarget, Map.of());
+                implicitUniformSource, null, implicitPlan, implicitTarget);
         assertTrue(implicit != null && implicit.contains("gbufferProjectionInverse"),
                 "catalog matrix was not synthesized from a prepared reference");
         assertTrue(implicit.contains("mat4 gbufferProjectionInverse;"),
@@ -99,7 +112,7 @@ final class TokenTranslationTest {
         UniformRegistry.ProgramInterface comparisonPlan =
                 UniformRegistry.planPreparedPost(comparisonSource, comparisonTarget);
         String comparison = FragmentConverter.convertPostFragment(
-                comparisonSource, null, comparisonPlan, comparisonTarget, Map.of());
+                comparisonSource, null, comparisonPlan, comparisonTarget);
         assertTrue(comparison != null && comparison.contains("vec4(texture(shadowtex0"),
                 "sampler2DShadow lookup was not inlined");
     }
@@ -111,7 +124,7 @@ final class TokenTranslationTest {
                 + "void main() { gl_FragColor = shadow2DProj(shadowtex0, vec4(0.0)); }\n";
         PostTargetPlan target = PostTargetPlan.parse("composite", source).plan();
         UniformRegistry.ProgramInterface plan = UniformRegistry.planPreparedPost(source, target);
-        assertTrue(FragmentConverter.convertPostFragment(source, null, plan, target, Map.of()) == null,
+        assertTrue(FragmentConverter.convertPostFragment(source, null, plan, target) == null,
                 "projected shadow lookup did not fail closed");
     }
 
@@ -124,18 +137,11 @@ final class TokenTranslationTest {
                 + "void main() { gl_FragData[0] = texture2D(colortex0, texCoord); }\n";
         PostTargetPlan target = PostTargetPlan.parse("composite", source).plan();
         UniformRegistry.ProgramInterface plan = UniformRegistry.planPreparedPost(source, target);
-        String converted = FragmentConverter.convertPostFragment(source, null, plan, target, Map.of());
+        String converted = FragmentConverter.convertPostFragment(source, null, plan, target);
         assertTrue(converted != null, "multi-declaration post source did not convert: " + plan.deviations());
         assertTrue(converted.indexOf("layout(location = 0) out") < converted.indexOf("void main"),
                 "generated output declaration follows its first use");
         assertTrue(!converted.contains("unusedUv"), "unused varying was retained");
-    }
-
-    @Test
-    void fixtureSources() throws Exception {
-        Path root = Path.of("testpacks/m7_2/translation");
-        assertTrue(Files.isRegularFile(root.resolve("composite.fsh")), "fixture is missing");
-        assertTrue(Files.isRegularFile(root.resolve("unsupported.fsh")), "fallback fixture is missing");
     }
 
     private static int count(String value, String needle) {

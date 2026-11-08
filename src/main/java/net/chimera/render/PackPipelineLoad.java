@@ -2,6 +2,7 @@ package net.chimera.render;
 
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
+import net.chimera.render.shader.CompiledStages;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackFeatureFlags;
@@ -65,6 +66,7 @@ final class PackPipelineLoad {
         }
         new PackPipelineInstaller(pass).installPrograms();
         installFamilyBridge();
+        LOGGER.info("[chimera] pack stages: {}", CompiledStages.endLoad());
         if (!enforceMaskCriticalFamilyContract()) {
             return;
         }
@@ -107,6 +109,7 @@ final class PackPipelineLoad {
                 pass.packPlan == null ? null : pass.packPlan.entityIds());
         ChimeraEntityBridge.installLayoutVariants(pass.pipelines.translucentEntityText,
                 pass.pipelines.blockTranslucent, pass.pipelines.blockTranslucentText, pass.pipelines.movingBlock);
+        ChimeraEntityBridge.installBeaconBeam(pass.pipelines.beaconBeam);
         ChimeraEntityBridge.installHostLayout(pass.pipelines.hostLayout);
         ChimeraEntityBridge.installShadowCasters(pass.pipelines.shadowEntities, pass.pipelines.shadowMovingBlock,
                 pass.pipelines.shadowBlock);
@@ -132,6 +135,19 @@ final class PackPipelineLoad {
                 pass.conformanceReport.addDeviation("SHADOW_CONSUMER_UNAVAILABLE");
             }
             LOGGER.warn("[chimera] pack shadow: fixed host fallback (terrain consumer unavailable)");
+        }
+        // shadow_cutout and shadow_water draw only inside the pack shadow pass, so without it they never run.
+        if (!pass.shadowPass.usePackShadowRuntime() && pass.conformanceReport != null) {
+            String reason = pass.pipelines.shadowPipeline == null
+                    ? "SHADOW_PROGRAM_UNAVAILABLE" : "SHADOW_CONSUMER_UNAVAILABLE";
+            if (pass.pipelines.shadowCutoutPipeline != null) {
+                pass.conformanceReport.markRuntime("shadow_cutout",
+                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, reason);
+            }
+            if (pass.pipelines.shadowWaterPipeline != null) {
+                pass.conformanceReport.markRuntime("shadow_water",
+                        ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, reason);
+            }
         }
         if (pass.pipelines.shadowPipeline == null
                 && pass.packPrograms.stream().noneMatch(program -> program.name().equals("shadow"))) {

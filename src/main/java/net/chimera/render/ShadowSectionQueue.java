@@ -6,7 +6,7 @@ import net.vulkanmod.render.chunk.SectionGrid;
 import net.vulkanmod.render.chunk.util.AreaSetQueue;
 import net.vulkanmod.render.chunk.util.StaticQueue;
 import org.joml.FrustumIntersection;
-import org.joml.Matrix4f;
+import org.joml.Matrix4fc;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -22,17 +22,16 @@ import java.util.List;
  * active, {@code renderSectionLayer} reads it instead and
  * {@code DrawBuffers} draws every facing, as Iris's shadow pass does.</p>
  *
- * <p>Within the light volume, Iris's shadow culling ({@link ShadowCullingFrustum})
- * then drops the sections that cannot shadow anything the camera sees. Its
- * safe zone is kept whole, light volume or not, as Iris keeps it for
- * voxelizing vertex stages.</p>
+ * <p>Iris's shadow culling ({@link ShadowCullingFrustum}) drops the sections
+ * that cannot shadow anything the camera sees; its safe zone is kept whole,
+ * as Iris keeps it for voxelizing vertex stages. Only the host's own shadow
+ * is also bounded by the light volume.</p>
  */
 public final class ShadowSectionQueue {
     private static final int SECTIONS_PER_AREA = 512;
     private static final ShadowSectionQueue INSTANCE = new ShadowSectionQueue();
 
     private final FrustumIntersection frustum = new FrustumIntersection();
-    private final Matrix4f lightMatrix = new Matrix4f();
     private AreaSetQueue areas;
     private StaticQueue<RenderSection>[] sections;
     /** Kept sections holding block entities, which the caster pass draws. */
@@ -62,14 +61,17 @@ public final class ShadowSectionQueue {
     }
 
     /**
-     * Fills the queues with every non-empty section inside the light volume
-     * that the culling frustum keeps, and activates them. The matrices are
-     * camera-relative, like terrain vertices. Returns false, leaving the
-     * camera queues in use, when no section grid exists yet.
+     * Fills the queues with every non-empty section the culling frustum keeps, and activates them.
+     * {@code lightVolume}, the light's projection times its view, also bounds the host's own
+     * shadow; a pack's shadow pass passes null. Iris tests no projection volume
+     * (ShadowRenderer.createShadowFrustum), and most packs scale shadow clip depth (BSL by 0.2), so
+     * casters past the ortho's near and far planes still land in their map. The matrices are
+     * camera-relative, like terrain vertices. Returns false, leaving the camera queues in use, when
+     * no section grid exists yet.
      */
-    static boolean begin(SectionGrid grid, int areaCount, Matrix4f lightProjection, Matrix4f lightView,
+    static boolean begin(SectionGrid grid, int areaCount, Matrix4fc lightVolume,
                          ShadowCullingFrustum culling, double cameraX, double cameraY, double cameraZ) {
-        return INSTANCE.fill(grid, areaCount, lightProjection, lightView, culling, cameraX, cameraY, cameraZ);
+        return INSTANCE.fill(grid, areaCount, lightVolume, culling, cameraX, cameraY, cameraZ);
     }
 
     static void end() {
@@ -77,20 +79,32 @@ public final class ShadowSectionQueue {
         INSTANCE.blockEntitySections.clear();
     }
 
-    private boolean fill(SectionGrid grid, int areaCount, Matrix4f lightProjection, Matrix4f lightView,
+    /**
+     * Drops the queues when a level goes away. VulkanMod's StaticQueue.clear resets its indices
+     * but keeps its slots, so the queues would otherwise hold the last world's sections, and through
+     * them its block entities and level, until the shadow pass next filled as many slots.
+     */
+    static void release() {
+        end();
+        INSTANCE.areas = null;
+        INSTANCE.sections = null;
+    }
+
+    private boolean fill(SectionGrid grid, int areaCount, Matrix4fc lightVolume,
                          ShadowCullingFrustum culling, double cameraX, double cameraY, double cameraZ) {
         this.active = false;
         this.blockEntitySections.clear();
         if (grid == null || grid.sections == null || areaCount <= 0) return false;
         resetQueues(areaCount);
 
-        this.frustum.set(this.lightMatrix.set(lightProjection).mul(lightView));
+        FrustumIntersection volume = lightVolume == null ? null : this.frustum.set(lightVolume);
         for (RenderSection section : grid.sections) {
             // A chest alone bakes no geometry: its section is empty but still casts.
             if (section == null || (section.isCompletelyEmpty() && !section.containsBlockEntities())) continue;
             ChunkArea area = section.getChunkArea();
             if (area == null || area.index < 0 || area.index >= areaCount) continue;
-            if (!keptByShadowCulling(section, culling, cameraX, cameraY, cameraZ)) continue;
+            if (!kept(volume, culling, (float) (section.xOffset - cameraX), (float) (section.yOffset - cameraY),
+                    (float) (section.zOffset - cameraZ))) continue;
             if (section.containsBlockEntities()) this.blockEntitySections.add(section);
             if (section.isCompletelyEmpty()) continue;
             enqueue(area, section);
@@ -114,20 +128,16 @@ public final class ShadowSectionQueue {
     }
 
     /**
-     * True when the section lies in Iris's safe zone, or inside both the light volume and the
-     * culling frustum. Section coordinates are made camera-relative, like the matrices.
+     * True when the section at camera-relative ({@code x}, {@code y}, {@code z}) lies in Iris's
+     * safe zone, or the culling frustum keeps it and, when one is given, the light volume holds it.
      */
-    private boolean keptByShadowCulling(RenderSection section, ShadowCullingFrustum culling,
-                                        double cameraX, double cameraY, double cameraZ) {
-        float x = (float) (section.xOffset - cameraX);
-        float y = (float) (section.yOffset - cameraY);
-        float z = (float) (section.zOffset - cameraZ);
+    static boolean kept(FrustumIntersection lightVolume, ShadowCullingFrustum culling, float x, float y, float z) {
         // Iris tests sections with the reach of their block models.
         float m = ShadowCullingFrustum.SECTION_MARGIN;
         float minX = x - m, minY = y - m, minZ = z - m;
         float maxX = x + 16.0f + m, maxY = y + 16.0f + m, maxZ = z + 16.0f + m;
         return culling.forced(minX, minY, minZ, maxX, maxY, maxZ)
-                || (this.frustum.testAab(x, y, z, x + 16.0f, y + 16.0f, z + 16.0f)
+                || ((lightVolume == null || lightVolume.testAab(x, y, z, x + 16.0f, y + 16.0f, z + 16.0f))
                 && culling.visible(minX, minY, minZ, maxX, maxY, maxZ));
     }
 
