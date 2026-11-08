@@ -302,7 +302,7 @@ final class IrisCoreProfile {
      * -1. entityId is Iris's fallback "for when entityId via attributes cannot be used
      * (lightning)", read from CapturedRenderingState when the batch draws: here the per-draw
      * {@link UniformRegistry#HOST_ENTITY_ID}, which is 0 except while a lightning bolt draws.
-     * Applied to both stages of a host-layout program before planning.
+     * Applied to every stage of a host-layout program before planning.
      */
     public static String prepareHostLayoutIdentity(String source) {
         if (source == null) return null;

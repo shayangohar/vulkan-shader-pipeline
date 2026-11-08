@@ -318,9 +318,7 @@ public final class PackPlanBuilder {
                         : IrisCoreProfile.prepareHostLayoutSource(vertex, vertexFile());
                 fragment = IrisCoreProfile.prepareHostLayoutSource(fragment, fragmentFile());
                 if (!FamilyAdapterRegistry.readsEntityIdsPerVertex(name)) {
-                    vertex = IrisCoreProfile.prepareHostLayoutIdentity(vertex);
-                    geometry = IrisCoreProfile.prepareHostLayoutIdentity(geometry);
-                    fragment = IrisCoreProfile.prepareHostLayoutIdentity(fragment);
+                    eachStage((programStage, source) -> IrisCoreProfile.prepareHostLayoutIdentity(source));
                 }
             } catch (RuntimeException failure) {
                 hostLayoutFailure = VertexBridgeDeviations.safeReason(failure);
@@ -330,16 +328,15 @@ public final class PackPlanBuilder {
         /**
          * The entity-style vertex preambles declare the host's inputs under vanilla's core names
          * (GlslVertexPreambles.hostNameCollisions). A pack identifier of such a name is renamed in
-         * both stages before their interfaces are matched, so a varying keeps its pair: Mellow's
-         * entities and Reverie's shadow lanes write their own Normal.
+         * every stage before their interfaces are matched, so a varying keeps its pair: Mellow's
+         * entities and Reverie's shadow lanes write their own Normal, and a tessellated hand's
+         * control stage reads it.
          */
         private void renameHostNameCollisions() {
             if (vertex == null || !usesEntityPreamble()) return;
             Map<String, String> renames = GlslVertexPreambles.hostNameCollisions(vertex);
             if (renames.isEmpty()) return;
-            vertex = GlslTokenRewriter.replaceIdentifiers(vertex, renames);
-            if (geometry != null) geometry = GlslTokenRewriter.replaceIdentifiers(geometry, renames);
-            if (fragment != null) fragment = GlslTokenRewriter.replaceIdentifiers(fragment, renames);
+            eachStage((programStage, source) -> GlslTokenRewriter.replaceIdentifiers(source, renames));
         }
 
         /** The lanes whose vertex preamble declares the host's inputs under vanilla's core names. */
