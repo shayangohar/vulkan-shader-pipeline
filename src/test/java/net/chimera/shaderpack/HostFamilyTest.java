@@ -76,6 +76,23 @@ final class HostFamilyTest {
     }
 
     /**
+     * A commented main ahead of the real one took the overlay fetch and varying: the inserted text
+     * landed in the line comment, its line break ended the comment, and the rest became code.
+     */
+    @Test
+    void theOverlayIsServedInTheLiveMain() {
+        String fragment = EntityOverlayColor.inject("#version 120\nuniform vec4 entityColor;\n"
+                + "// void main() { old(); }\nvoid main() { gl_FragColor = entityColor; }\n");
+        assertTrue(fragment.contains("// void main() { old(); }\nvoid main() {\n    vec4 chimeraOverlayTexel"),
+                fragment);
+        String vertex = EntityOverlayColor.forwardOverlayUv("#version 330\nin ivec2 UV1;\n"
+                + "/* void main() { old(); } */\nvoid main() { gl_Position = vec4(0.0); }\n", fragment);
+        assertTrue(vertex.contains("/* void main() { old(); } */\nflat out ivec2 " + EntityOverlayColor.UV_VARYING
+                + ";\nvoid main() {\n    " + EntityOverlayColor.UV_VARYING + " = UV1;"), vertex);
+        assertTrue(GlslDeclarations.parseOrNull(vertex) != null, vertex);
+    }
+
+    /**
      * Iris serves gl_NormalMatrix as the model view's inverse transpose on every lane. Nausea and
      * the portal warp stretch the model view, and mat3 of it then tilts the normals packs read.
      */

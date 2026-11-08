@@ -30,6 +30,7 @@ final class EntityOverlayColor {
     private static final Pattern DECLARATION =
             Pattern.compile("(?m)^[ \\t]*uniform\\s+vec4\\s+entityColor\\s*;");
     private static final Pattern READ = Pattern.compile("\\bentityColor\\b");
+    /** A main's head, matched outside comments: a commented one must never take the inserted text. */
     private static final Pattern MAIN =
             Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)\\s*\\{");
 
@@ -48,7 +49,7 @@ final class EntityOverlayColor {
         String declared = source.substring(0, declaration.start())
                 + "uniform sampler2D " + PackResourcePlan.OVERLAY_SAMPLER + ";\nvec4 entityColor;"
                 + DECLARATION.matcher(source.substring(declaration.end())).replaceAll("");
-        Matcher main = MAIN.matcher(declared);
+        Matcher main = MAIN.matcher(GlslLexer.maskComments(declared));
         if (!main.find()) return source;
         // Iris's three lines: the texture stores how much of the mob shows
         // through, so the alpha turns around, and a pack reading only rgb
@@ -98,7 +99,7 @@ final class EntityOverlayColor {
                 || UV_READ.matcher(GlslLexer.stripComments(vertex)).find()) {
             return vertex;
         }
-        Matcher main = MAIN.matcher(vertex);
+        Matcher main = MAIN.matcher(GlslLexer.maskComments(vertex));
         if (!main.find()) return vertex;
         return vertex.substring(0, main.start()) + "flat out ivec2 " + UV_VARYING + ";\n"
                 + vertex.substring(main.start(), main.end()) + "\n    " + UV_VARYING + " = UV1;"
