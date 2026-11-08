@@ -59,10 +59,17 @@ public final class MrtPipelineContext {
         begin(new int[] {targetFormat, coverageFormat}, deviceMaxColorAttachments);
     }
 
+    /**
+     * Ends the contract, and any pipeline-creation scope a throwing createGraphicsPipeline left open:
+     * the mixin's RETURN half (endPipeline) never ran, and the next pipeline VulkanMod or Chimera
+     * created took that pack pipeline's write mask and host-pass blend modes.
+     */
     public static void end() {
         CURRENT.remove();
         PREVIOUS.remove();
         PIPELINE_SCOPE.remove();
+        CURRENT_WRITES.remove();
+        CURRENT_HOST_PASS_BLENDS.remove();
     }
 
     /**
