@@ -18,11 +18,9 @@ import java.util.regex.Pattern;
 final class EntityOverlayColor {
     static final String UV_VARYING = "chimeraOverlayUV";
 
-    private static final String OVERLAY_FETCH = "vec4 chimeraOverlayTexel = texelFetch("
-            + PackResourcePlan.OVERLAY_SAMPLER + ", " + UV_VARYING + ", 0);";
+    private static final String OVERLAY_FETCH = fetch(UV_VARYING);
     /** A geometry stage's fetch: the primitive's first vertex, as Iris reads entityColor[0]. */
-    private static final String GEOMETRY_FETCH = "vec4 chimeraOverlayTexel = texelFetch("
-            + PackResourcePlan.OVERLAY_SAMPLER + ", " + UV_VARYING + "[0], 0);";
+    private static final String GEOMETRY_FETCH = fetch(UV_VARYING + "[0]");
     private static final Pattern UV_READ = Pattern.compile("\\b" + UV_VARYING + "\\b");
     /** An opaque empty texel: entityColor comes out (0, 0, 0, 0). */
     private static final String NO_OVERLAY_TEXEL = "vec4 chimeraOverlayTexel = vec4(0.0, 0.0, 0.0, 1.0);";
@@ -35,6 +33,20 @@ final class EntityOverlayColor {
             Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)\\s*\\{");
 
     private EntityOverlayColor() {}
+
+    /**
+     * The overlay texel at {@code uv}, or GL's empty texel (0, 0, 0, 1) where {@code uv} falls outside
+     * the bound image. A render type that sets no overlay (eyes, energy swirl) leaves VulkanMod's 1x1
+     * white image on the unit, while its UV1 is vanilla's NO_OVERLAY (0, 10). Vulkan leaves a fetch
+     * outside the image undefined, and NVIDIA reads zero: entityColor came out opaque black, and
+     * Shrimple's spider and enderman eyes drew black. Iris's GL reads unbound texture 0 there as
+     * (0, 0, 0, 1), which leaves entityColor (0, 0, 0, 0).
+     */
+    private static String fetch(String uv) {
+        String sampler = PackResourcePlan.OVERLAY_SAMPLER;
+        return "vec4 chimeraOverlayTexel = all(lessThan(uvec2(" + uv + "), uvec2(textureSize(" + sampler
+                + ", 0)))) ? texelFetch(" + sampler + ", " + uv + ", 0) : vec4(0.0, 0.0, 0.0, 1.0);";
+    }
 
     /** Rewrites a fragment that declares {@code uniform vec4 entityColor}; others are unchanged. */
     static String inject(String fragment) {
