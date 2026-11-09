@@ -86,30 +86,48 @@ final class PostTargetSides {
      * (Iris's full clear). Later ones copy each target the last frame left flipped and that is not
      * cleared from alt back into main (FinalPassRenderer's swap passes), then clear both sides of
      * each cleared target (ClearPassCreator). The HDR image then stands in for main: the caller
-     * clears it with colortex0's colour when colortex0 is cleared, and this loads it from main when
-     * not. The world draws into it from here on, so it counts as newer.
+     * clears it with colortex0's colour when colortex0 is cleared, and keeps it when not
+     * ({@link #carriesColortex0}). The world draws into it from here on, so it counts as newer.
      */
     void beginFrame(Ops ops) {
         boolean full = fullClearDue;
         fullClearDue = false;
         if (!full) {
-            if (!clearedEachFrame(0) && hdrSide >= 0) writeBackHdr(ops, hdrSide);
-            for (int target = 0; target < TARGET_COUNT; target++) {
+            for (int target = 1; target < TARGET_COUNT; target++) {
                 if (sided(target) && !clearedEachFrame(target) && PackFlipPlan.flipped(state, target)) {
                     ops.copy(new Image(target, 1), new Image(target, 0));
                 }
             }
+            if (carriesColortex0()) carryColortex0(ops);
         }
         for (int target = 0; target < TARGET_COUNT; target++) {
             if (!allocated(target) || !full && !clearedEachFrame(target)) continue;
             ops.clear(new Image(target, 0));
             if (sided(target)) ops.clear(new Image(target, 1));
         }
+        if (full && carriesColortex0()) ops.copy(new Image(0, 0), new Image(0, HDR));
         state = 0;
         cursor = 0;
-        if (allocated(0) && !clearedEachFrame(0)) ops.copy(new Image(0, 0), new Image(0, HDR));
         hdrSide = 0;
         hdrNewer = true;
+    }
+
+    /** Whether colortex0 is not cleared every frame: the HDR image carries it into the next frame. */
+    boolean carriesColortex0() {
+        return allocated(0) && !clearedEachFrame(0);
+    }
+
+    /**
+     * colortex0 carried over: main starts the frame with what the last frame's final side held, as
+     * Iris's copy-back leaves it, and the HDR image holds that, standing in for main. Alt keeps its
+     * own content, so the HDR image's, when it stood in for alt, goes back to it first. Main's graph
+     * image is not refreshed: the HDR image is newer, and is written back when a pass needs main as
+     * a graph image. At most one copy each way, often none.
+     */
+    private void carryColortex0(Ops ops) {
+        int last = readSide(0);
+        if (hdrSide == 1) writeBackHdr(ops, 1);
+        if (hdrSide != last) ops.copy(new Image(0, last), new Image(0, HDR));
     }
 
     int state() {

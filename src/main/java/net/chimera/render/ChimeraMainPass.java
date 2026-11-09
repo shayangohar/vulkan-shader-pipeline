@@ -328,7 +328,7 @@ public final class ChimeraMainPass implements MainPass {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = this.targets.hdrFramebuffer.getColorAttachment();
             trace("openHdr", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            Renderer.getInstance().beginRendering(this.targets.hdrRenderPass, this.targets.hdrFramebuffer);
+            Renderer.getInstance().beginRendering(this.targets.worldOpenPass(), this.targets.hdrFramebuffer);
             Renderer.setViewport(0, 0, this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight(),
                     stack);
             VK10.vkCmdSetScissor(commandBuffer, 0, this.targets.hdrFramebuffer.scissor(stack));
