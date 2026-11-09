@@ -22,6 +22,8 @@ final class HeldLaneRenderType extends RenderType {
     private final PackRenderingPhase phase;
     /** The host type's transparency, as Iris batches it. */
     private final IrisTransparency transparency;
+    /** The FamilyBufferSource flush that last drew this type. */
+    private long lastDrawn;
 
     HeldLaneRenderType(RenderType host, PackRenderingPhase phase) {
         super("chimera_" + phase.name().toLowerCase(Locale.ROOT) + ":" + host.name, host.format(), host.mode(),
@@ -35,6 +37,14 @@ final class HeldLaneRenderType extends RenderType {
     /** The host type's transparency, which orders the batch's draw as Iris orders its batches. */
     IrisTransparency transparency() {
         return transparency;
+    }
+
+    long lastDrawn() {
+        return lastDrawn;
+    }
+
+    void drawnAt(long flush) {
+        lastDrawn = flush;
     }
 
     @Override

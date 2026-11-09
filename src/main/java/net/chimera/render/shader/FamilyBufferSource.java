@@ -298,6 +298,7 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
         flushes++;
         for (RenderType type : drawn) {
             if (type instanceof FamilyRenderType family) family.drawnAt(flushes);
+            if (type instanceof HeldLaneRenderType held) held.drawnAt(flushes);
         }
     }
 
@@ -325,14 +326,24 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
     }
 
     /**
-     * Frees every idle family type with its buffer. A held host-lane type stays: a host-layout lane
-     * draws vanilla's memoized types, a bounded set, in at most four phases.
+     * Frees every idle held type with its buffer, a family lane's or a host-layout lane's. Vanilla
+     * memoizes its render types, but a mod may build a lines or leash type anew each frame, and
+     * each such type held for a host-layout lane kept its buffer until the lanes changed.
      */
     private void freeIdleTypes() {
         familyBuffers.entrySet().removeIf(entry -> {
-            if (!(entry.getKey() instanceof FamilyRenderType type)) return false;
-            if (!idle(holds(type), flushes, type.lastDrawn())) return false;
-            familyTypes.remove(new TypeKey(type.family(), type.phase(), type.host()));
+            RenderType type = entry.getKey();
+            long lastDrawn;
+            if (type instanceof FamilyRenderType family) {
+                lastDrawn = family.lastDrawn();
+            } else if (type instanceof HeldLaneRenderType held) {
+                lastDrawn = held.lastDrawn();
+            } else {
+                return false;
+            }
+            if (!idle(holds(type), flushes, lastDrawn)) return false;
+            familyTypes.values().remove(type);
+            laneTypes.values().remove(type);
             entry.getValue().close();
             return true;
         });
