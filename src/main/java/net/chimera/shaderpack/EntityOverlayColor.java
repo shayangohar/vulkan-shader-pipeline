@@ -44,11 +44,17 @@ final class EntityOverlayColor {
     /** {@code source} reading entityColor through {@code fetch}, with {@code input} declared just before main. */
     private static String inject(String source, String fetch, String input) {
         if (source == null) return null;
-        Matcher declaration = DECLARATION.matcher(source);
+        // The declaration and its repeats are found outside comments, at the offsets of the source as written.
+        Matcher declaration = DECLARATION.matcher(GlslLexer.maskComments(source));
         if (!declaration.find()) return source;
-        String declared = source.substring(0, declaration.start())
-                + "uniform sampler2D " + PackResourcePlan.OVERLAY_SAMPLER + ";\nvec4 entityColor;"
-                + DECLARATION.matcher(source.substring(declaration.end())).replaceAll("");
+        StringBuilder rewritten = new StringBuilder(source.substring(0, declaration.start()))
+                .append("uniform sampler2D ").append(PackResourcePlan.OVERLAY_SAMPLER).append(";\nvec4 entityColor;");
+        int kept = declaration.end();
+        while (declaration.find()) {
+            rewritten.append(source, kept, declaration.start());
+            kept = declaration.end();
+        }
+        String declared = rewritten.append(source.substring(kept)).toString();
         Matcher main = MAIN.matcher(GlslLexer.maskComments(declared));
         if (!main.find()) return source;
         // Iris's three lines: the texture stores how much of the mob shows
@@ -107,7 +113,7 @@ final class EntityOverlayColor {
     }
 
     private static boolean declares(String source) {
-        return source != null && DECLARATION.matcher(source).find();
+        return source != null && DECLARATION.matcher(GlslLexer.maskComments(source)).find();
     }
 
     /**

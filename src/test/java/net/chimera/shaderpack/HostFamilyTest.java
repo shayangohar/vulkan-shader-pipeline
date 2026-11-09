@@ -113,6 +113,11 @@ final class HostFamilyTest {
         assertTrue(vertex.contains("/* void main() { old(); } */\nflat out ivec2 " + EntityOverlayColor.UV_VARYING
                 + ";\nvoid main() {\n    " + EntityOverlayColor.UV_VARYING + " = UV1;"), vertex);
         assertTrue(GlslDeclarations.parseOrNull(vertex) != null, vertex);
+        String commentedDeclaration = EntityOverlayColor.inject("#version 120\n/*\nuniform vec4 entityColor;\n*/\n"
+                + "uniform vec4 entityColor;\nvoid main() { gl_FragColor = entityColor; }\n");
+        assertTrue(commentedDeclaration.startsWith("#version 120\n/*\nuniform vec4 entityColor;\n*/\n"
+                + "uniform sampler2D " + PackResourcePlan.OVERLAY_SAMPLER + ";\nvec4 entityColor;\n"),
+                "the live declaration is the one replaced: " + commentedDeclaration);
     }
 
     /**
