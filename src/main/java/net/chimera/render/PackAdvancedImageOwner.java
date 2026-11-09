@@ -82,6 +82,8 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         for (PackAdvancedResourcePlan.ImageSpec spec : plan.images().values()) {
             if (!spec.supported() || !spec.relative() || failures.containsKey(spec.name())) continue;
             int[] extent = spec.extent(width, height);
+            String failed = keptFailure(failedRefits.get(spec.name()), extent[0] + "x" + extent[1]);
+            if (failed == null) failedRefits.remove(spec.name());
             PackStorageImage current = images.get(spec.name());
             if (current != null && current.width == extent[0] && current.height == extent[1]) continue;
             String limit = PackStorageImage.extentLimitFailure(spec, extent);
@@ -90,19 +92,19 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
                 if (reportedLimits.add(limit)) ChimeraMod.LOGGER.warn("[chimera] {}", limit);
                 continue;
             }
-            if (refit(spec, extent, current)) generation++;
+            if (failed == null && refit(spec, extent, current)) generation++;
         }
     }
 
     /**
      * Replaces a relative image with one at {@code extent}, made first: a failed allocation keeps
-     * the old image bound at its old size, as a size past the device's limit does, logged once per
-     * size and tried again when the size changes. Retired first, the failure dropped the image
-     * and recorded a load failure, so every program binding it fell back for the session.
+     * the old image bound at its old size, as a size past the device's limit does, logged once,
+     * and not tried again while the screen keeps that size ({@link #keptFailure}). Retired first,
+     * the failure dropped the image and recorded a load failure, so every program binding it fell
+     * back for the session.
      */
     private boolean refit(PackAdvancedResourcePlan.ImageSpec spec, int[] extent, PackStorageImage current) {
         String size = extent[0] + "x" + extent[1];
-        if (!refitDue(failedRefits.get(spec.name()), size)) return false;
         PackStorageImage replacement;
         try {
             replacement = PackStorageImage.create(spec, extent, viewFormats(spec));
@@ -119,9 +121,14 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         return true;
     }
 
-    /** Whether to allocate a refit at {@code size}: not again at the size whose allocation last failed. */
-    public static boolean refitDue(String failedSize, String size) {
-        return !size.equals(failedSize);
+    /**
+     * The size whose refit failed, kept while the screen still asks for it, so the allocation is not
+     * tried every frame; null once the screen asks for any other size, its own included, so a later
+     * return to the failed size tries again. Kept until a refit succeeded, a resize back to the
+     * image's own size and out again never retried.
+     */
+    public static String keptFailure(String failedSize, String requestedSize) {
+        return requestedSize.equals(failedSize) ? failedSize : null;
     }
 
     /** Counts the images replaced since load, so a compute's descriptors can follow them. */

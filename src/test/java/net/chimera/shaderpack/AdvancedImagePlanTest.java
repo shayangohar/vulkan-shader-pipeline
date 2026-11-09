@@ -88,15 +88,19 @@ final class AdvancedImagePlanTest {
     }
 
     /**
-     * A relative image whose refit allocation fails keeps its old image and is tried again only at
-     * another size. Retired before allocating, the failure dropped the image for the session and
-     * every program binding it hit RESOURCE_BINDING_UNAVAILABLE.
+     * A relative image whose refit allocation fails keeps its old image, and is not tried again
+     * while the screen keeps the failed size. Any other size drops the failure, the image's own
+     * included: 1080p, a failed 4K, back to 1080p and to 4K again retries the 4K image, where the
+     * failure kept until a success never did.
      */
     @Test
-    void aFailedRefitIsRetriedOnlyAtAnotherSize() {
-        assertTrue(PackAdvancedImageOwner.refitDue(null, "1920x1080"), "no refit has failed");
-        assertTrue(!PackAdvancedImageOwner.refitDue("3840x2160", "3840x2160"), "not every frame at the failed size");
-        assertTrue(PackAdvancedImageOwner.refitDue("3840x2160", "1920x1080"), "a new size tries again");
+    void aFailedRefitIsRetriedOnceTheScreenLeavesTheFailedSize() {
+        assertEquals(null, PackAdvancedImageOwner.keptFailure(null, "1920x1080"), "no refit has failed");
+        assertEquals("3840x2160", PackAdvancedImageOwner.keptFailure("3840x2160", "3840x2160"),
+                "not every frame at the failed size");
+        String back = PackAdvancedImageOwner.keptFailure("3840x2160", "1920x1080");
+        assertEquals(null, back, "back at the image's own size, the failure is dropped");
+        assertEquals(null, PackAdvancedImageOwner.keptFailure(back, "3840x2160"), "so the failed size is tried again");
     }
 
     /**
