@@ -799,7 +799,7 @@ final class WorldStateUniformTest {
                 "a non-finite derived value was not reported");
         assertTrue(session.failures().get("m73NonFinite").contains("sqrt(0.0 - 1.0)"),
                 "the non-finite report must name the expression that produced it");
-        assertTrue(session.failures().get("m73NonFinite").contains("frame=1"),
+        assertTrue(session.failures().get("m73NonFinite").contains("is NaN at frame 1"),
                 "the non-finite report must carry the frame context");
         assertTrue(Float.isNaN(session.values()[nonFinite]),
                 "a non-finite derived value is served as computed, as Iris serves it");

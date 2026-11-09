@@ -511,8 +511,9 @@ final class PackFrontEndTest {
         settings.evaluate((name, component) -> 0.0, session, 0.05f);
         assertEquals(Float.POSITIVE_INFINITY, session.values()[settings.indexOf("inverse")], "not the last 0.5");
         assertEquals(1.5f, session.values()[settings.indexOf("reader")], "a reader sees the infinity");
-        assertTrue(session.failures().containsKey("inverse") && session.failures().get("inverse").contains("frame=2"),
-                "a zero divisor is reported once, with its frame: " + session.failures());
+        String report = session.failures().get("inverse");
+        assertTrue(report != null && report.startsWith("inverse is Infinity at frame 2: 1.0 / frameTime"),
+                "a zero divisor is reported once, with its value, frame and expression: " + session.failures());
     }
 
     private static double value(String expression) {

@@ -340,11 +340,9 @@ public final class PackRuntimeSettings {
                     // RenderPearl's fog density divides by its Fog setting, and at 0 Iris's
                     // infinity means no fog. Named once, with its expression and inputs.
                     session.failures.putIfAbsent(value.name(),
-                            "expression=" + value.program().source()
-                                    + " lane=" + lane
-                                    + " frame=" + session.frames
-                                    + " frameDelta=" + frameDelta
-                                    + " inputs=" + context(value, inputs));
+                            value.name() + (value.width() > 1 ? "." + "xyzw".charAt(lane) : "")
+                                    + " is " + result + " at frame " + session.frames + ": "
+                                    + value.program().source() + ", inputs " + context(value, inputs));
                 }
                 session.scratch[slot] = result;
                 session.output[slot] = value.type().equals("int") || value.type().equals("bool")

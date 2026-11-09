@@ -409,8 +409,7 @@ public final class PackUniformProvider {
             if (!loggedValueFailures.add(failure.getKey())) {
                 continue;
             }
-            ChimeraMod.LOGGER.warn("[chimera] pack value {} produced a non-finite result; "
-                    + "serving it as Iris does. {}", failure.getKey(), failure.getValue());
+            ChimeraMod.LOGGER.warn("[chimera] pack value {}", failure.getValue());
         }
     }
 
