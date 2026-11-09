@@ -39,7 +39,8 @@ import java.util.function.Predicate;
  * every family batch, vanilla's own flushes included, until Iris's translucent boundary, before the
  * hand ({@link #endLevelBatchesAtBoundary}). They hold a batch that a world host-layout lane draws
  * too (a lead, a name tag's background, the block outline), which its lane still takes when it
- * draws. With the pack's separateEntityDraws only the opaque, opaque-decal and water-mask kinds
+ * draws, in the phase of the Iris wrapper it was written in ({@link HeldLaneRenderType}). With the
+ * pack's separateEntityDraws only the opaque, opaque-decal and water-mask kinds
  * draw there, and the rest right after the deferred passes ({@link #endHeldLevelBatches}), as
  * Iris's batchedentityrendering MixinLevelRenderer does. They draw in Iris's order
  * ({@link IrisBatchOrder}): a lead writes only gbuffers_basic's targets, so drawn ahead of the chest
@@ -68,12 +69,17 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
     private final boolean level;
     private final SequencedMap<RenderType, ByteBufferBuilder> familyBuffers;
     private final Map<TypeKey, FamilyRenderType> familyTypes = new HashMap<>();
+    /** The types a level source holds world host-lane batches under, one per host type and phase. */
+    private final Map<LaneKey, HeldLaneRenderType> laneTypes = new HashMap<>();
     /** Each held type's earlier batches of connected primitives, closed and waiting to draw. */
     private final Map<RenderType, List<MeshData>> closedBatches = new HashMap<>();
     private long flushes;
 
     /** A family type's identity: its lane, the phase it draws in, and the host type it wraps. */
     private record TypeKey(Family family, PackRenderingPhase phase, RenderType host) {}
+
+    /** A held host-lane type's identity: the host type and the phase its batch draws in. */
+    private record LaneKey(RenderType host, PackRenderingPhase phase) {}
 
     /** A source for one renderer's own batches, such as the hand's or the shadow casters'. */
     public FamilyBufferSource(MultiBufferSource.BufferSource host) {
@@ -121,11 +127,16 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
 
     /**
      * The type this source holds a batch of {@code type} under: its family lane's, or in a level
-     * source the type itself when a world host-layout lane draws it; null for the host to draw.
+     * source, when a world host-layout lane draws it, the type in the phase it is written in; null
+     * for the host to draw.
      */
     private RenderType heldType(RenderType type) {
         Family family = ChimeraEntityBridge.familyFor(type);
-        if (family == null) return level && ChimeraEntityBridge.worldLaneDraws(type) ? type : null;
+        if (family == null) {
+            if (!level || !ChimeraEntityBridge.worldLaneDraws(type)) return null;
+            PackRenderingPhase phase = ChimeraEntityBridge.hostLaneWritePhase();
+            return laneTypes.computeIfAbsent(new LaneKey(type, phase), key -> new HeldLaneRenderType(type, phase));
+        }
         PackRenderingPhase phase = ChimeraEntityBridge.writePhase(family);
         return familyTypes.computeIfAbsent(new TypeKey(family, phase, type),
                 key -> new FamilyRenderType(family, phase, type));
@@ -133,7 +144,8 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
 
     /** A held batch's kind, as Iris batches it. */
     private static IrisTransparency kind(RenderType type) {
-        return type instanceof FamilyRenderType family ? family.transparency() : IrisTransparency.of(type);
+        if (type instanceof FamilyRenderType family) return family.transparency();
+        return type instanceof HeldLaneRenderType held ? held.transparency() : IrisTransparency.of(type);
     }
 
     @Override
@@ -286,6 +298,7 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
         flushes++;
         for (RenderType type : drawn) {
             if (type instanceof FamilyRenderType family) family.drawnAt(flushes);
+            if (type instanceof HeldLaneRenderType held) held.drawnAt(flushes);
         }
     }
 
@@ -313,14 +326,24 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
     }
 
     /**
-     * Frees every idle family type with its buffer. A held host type stays: a host-layout lane draws
-     * vanilla's memoized types, a bounded set.
+     * Frees every idle held type with its buffer, a family lane's or a host-layout lane's. Vanilla
+     * memoizes its render types, but a mod may build a lines or leash type anew each frame, and
+     * each such type held for a host-layout lane kept its buffer until the lanes changed.
      */
     private void freeIdleTypes() {
         familyBuffers.entrySet().removeIf(entry -> {
-            if (!(entry.getKey() instanceof FamilyRenderType type)) return false;
-            if (!idle(holds(type), flushes, type.lastDrawn())) return false;
-            familyTypes.remove(new TypeKey(type.family(), type.phase(), type.host()));
+            RenderType type = entry.getKey();
+            long lastDrawn;
+            if (type instanceof FamilyRenderType family) {
+                lastDrawn = family.lastDrawn();
+            } else if (type instanceof HeldLaneRenderType held) {
+                lastDrawn = held.lastDrawn();
+            } else {
+                return false;
+            }
+            if (!idle(holds(type), flushes, lastDrawn)) return false;
+            familyTypes.values().remove(type);
+            laneTypes.values().remove(type);
             entry.getValue().close();
             return true;
         });
@@ -349,6 +372,7 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
         familyBuffers.values().forEach(ByteBufferBuilder::close);
         familyBuffers.clear();
         familyTypes.clear();
+        laneTypes.clear();
     }
 
     /** Frees every live source's family buffers, before the installed lanes change. */

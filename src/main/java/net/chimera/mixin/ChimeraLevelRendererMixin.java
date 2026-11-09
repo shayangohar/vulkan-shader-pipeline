@@ -219,7 +219,7 @@ public abstract class ChimeraLevelRendererMixin {
         if (ordering == null) {
             original.call(particles, lightTexture, camera, partialTick, frustum, types);
         } else if (ordering.drawsIn(early)) {
-            Predicate<ParticleRenderType> ordered = type -> ordering.early(type.isTranslucent()) == early;
+            Predicate<ParticleRenderType> ordered = type -> ordering.drawsSheet(early, type.isTranslucent());
             original.call(particles, lightTexture, camera, partialTick, frustum, ordered);
         }
     }

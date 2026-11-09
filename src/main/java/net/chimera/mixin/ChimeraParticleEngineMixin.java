@@ -1,28 +1,31 @@
 package net.chimera.mixin;
 
-import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
-import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
-import com.mojang.blaze3d.vertex.BufferBuilder;
-import com.mojang.blaze3d.vertex.Tesselator;
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.minecraft.client.Camera;
 import net.minecraft.client.particle.ParticleEngine;
 import net.minecraft.client.particle.ParticleRenderType;
-import net.minecraft.client.renderer.texture.TextureManager;
+import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.client.renderer.culling.Frustum;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Tells the particle lanes which render type ParticleEngine draws next: Iris splits particles by translucency. */
+import java.util.function.Predicate;
+
+/**
+ * Tells the particle lanes which program a ParticleEngine.render call draws its sheets with. Iris's
+ * NeoForge MixinParticleEngine sets one shader per call, from the sheets the call's filter accepts
+ * (ChimeraEntityBridge.beginParticleCall); the filter is read here, as the call receives it, so
+ * the Fabulous call and other mods' calls follow the same rule.
+ */
 @Mixin(ParticleEngine.class)
 public abstract class ChimeraParticleEngineMixin {
-    @WrapOperation(method = "render(Lnet/minecraft/client/renderer/LightTexture;Lnet/minecraft/client/Camera;F"
+    @Inject(method = "render(Lnet/minecraft/client/renderer/LightTexture;Lnet/minecraft/client/Camera;F"
             + "Lnet/minecraft/client/renderer/culling/Frustum;Ljava/util/function/Predicate;)V",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/particle/ParticleRenderType;"
-                    + "begin(Lcom/mojang/blaze3d/vertex/Tesselator;"
-                    + "Lnet/minecraft/client/renderer/texture/TextureManager;)"
-                    + "Lcom/mojang/blaze3d/vertex/BufferBuilder;"), require = 1)
-    private BufferBuilder chimera$particleType(ParticleRenderType type, Tesselator tesselator, TextureManager textures,
-                                               Operation<BufferBuilder> original) {
-        ChimeraEntityBridge.setParticleTranslucent(type.isTranslucent());
-        return original.call(type, tesselator, textures);
+            at = @At("HEAD"), require = 1)
+    private void chimera$particleCall(LightTexture lightTexture, Camera camera, float partialTick, Frustum frustum,
+                                      Predicate<ParticleRenderType> sheets, CallbackInfo callback) {
+        ChimeraEntityBridge.beginParticleCall(sheets);
     }
 }

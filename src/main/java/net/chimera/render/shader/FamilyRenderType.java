@@ -51,14 +51,6 @@ public final class FamilyRenderType extends RenderType {
         return family;
     }
 
-    PackRenderingPhase phase() {
-        return phase;
-    }
-
-    RenderType host() {
-        return host;
-    }
-
     long lastDrawn() {
         return lastDrawn;
     }

@@ -12,6 +12,7 @@ import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.shaderpack.PackEntityIdResolver;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackRenderingPhase;
+import net.minecraft.client.particle.ParticleRenderType;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.ShaderInstance;
@@ -23,6 +24,7 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -193,6 +195,8 @@ public final class ChimeraEntityBridge {
     private static boolean particleWindow;
     private static boolean particleTranslucent;
     private static boolean weatherWindow;
+    /** The Iris rendering phase of the held lane batch drawing now (HeldLaneRenderType), or null. */
+    private static PackRenderingPhase heldBatchPhase;
 
     /** The entity or block entity being rendered, innermost last; ENTITY or BLOCK. */
     private static final Family[] contexts = new Family[8];
@@ -421,9 +425,55 @@ public final class ChimeraEntityBridge {
         particleWindow = false;
     }
 
-    /** The particle render type ParticleEngine is about to draw: Iris splits particles by translucency. */
-    public static void setParticleTranslucent(boolean translucent) {
-        particleTranslucent = translucent;
+    /**
+     * Picks the particle program for a ParticleEngine.render call that draws the sheets
+     * {@code sheets} accepts, as Iris's NeoForge MixinParticleEngine sets one shader per call.
+     */
+    public static void beginParticleCall(Predicate<ParticleRenderType> sheets) {
+        particleTranslucent = translucentParticleCall(sheets);
+    }
+
+    /**
+     * Whether a particle call draws every sheet with gbuffers_particles_translucent: only when it
+     * leaves the opaque sheet out, as NeoForge's late call does under MIXED. Under BEFORE and AFTER
+     * every sheet draws with gbuffers_particles, each with its own blend. A sheet's own
+     * isTranslucent() does not decide it: NeoForge makes that true for the terrain and custom sheets.
+     */
+    static boolean translucentParticleCall(Predicate<ParticleRenderType> sheets) {
+        return !sheets.test(ParticleRenderType.PARTICLE_SHEET_OPAQUE);
+    }
+
+    /**
+     * The Iris rendering phase a world host-layout lane's batch written now draws in. Iris answers
+     * renderStage for such a draw from the wrapper around the render type it was asked for in
+     * (OuterWrappedRenderType): BLOCK_ENTITIES inside a block entity's render, ENTITIES inside an
+     * entity's, so a hitbox or a fishing line reports ENTITIES and a structure block's box
+     * BLOCK_ENTITIES. Outside every wrapper the batch draws in NONE, the phase Iris holds between
+     * its phase windows.
+     *
+     * <p>The block outline reports NONE too. Iris's source wraps it in its outline state
+     * (MixinLevelRenderer.iris$beginBlockOutline), but the Iris the owner compares against
+     * (1.8.14-beta.1 on Fabric with Sodium) reads renderStage 0 at the outline's draw in Glimmer's
+     * and Mellow's captures. Reporting OUTLINE made Glimmer's line transparent and Mellow's opaque
+     * black, where Iris shows vanilla's translucent outline.</p>
+     */
+    public static PackRenderingPhase hostLaneWritePhase() {
+        return wrapperPhase(context());
+    }
+
+    /** The phase of the wrapper Iris asks for a render type in, by the context rendering. */
+    static PackRenderingPhase wrapperPhase(Family context) {
+        if (context == Family.BLOCK) return PackRenderingPhase.BLOCK_ENTITIES;
+        return context == Family.ENTITY ? PackRenderingPhase.ENTITIES : PackRenderingPhase.NONE;
+    }
+
+    /** While a held lane batch draws, its lane draws in the phase it was written in. */
+    static void beginHeldBatch(PackRenderingPhase phase) {
+        heldBatchPhase = phase;
+    }
+
+    static void endHeldBatch() {
+        heldBatchPhase = null;
     }
 
     /** Opens the weather window around LevelRenderer.renderSnowAndRain. */
@@ -682,8 +732,7 @@ public final class ChimeraEntityBridge {
      */
     private static Family worldHostLane(String shader, VertexFormat format) {
         if (!particleWindow || !shader.equals("particle") || format != DefaultVertexFormat.PARTICLE) return null;
-        // An opaque pack shader never draws translucent particles, nor the other way round:
-        // the host state and ordering are part of each lane's contract.
+        // The call's program draws every sheet in it (beginParticleCall), each with its host blend.
         if (particleTranslucent) return translucentParticlePipeline != null ? Family.PARTICLE_TRANSLUCENT : null;
         return particlePipeline != null ? Family.PARTICLE : null;
     }
@@ -705,11 +754,17 @@ public final class ChimeraEntityBridge {
 
     /**
      * Opens a draw of {@code family} on {@code format} with the host shader {@code shader}; false
-     * when the lane has no pipeline for that format.
+     * when the lane has no pipeline for that format. A host-layout lane draws a held batch in the
+     * phase it was written in, and any other draw in its own.
      */
     public static boolean beginDraw(Family family, VertexFormat format, String shader) {
         HostLayoutLane lane = HostLayoutLane.of(family);
-        return beginDraw(family, format, shader, lane != null ? lane.phase() : phase(family));
+        return beginDraw(family, format, shader, lane == null ? phase(family) : lanePhase(lane));
+    }
+
+    /** The phase a host-layout lane draws in now: the held batch's while one draws, else the lane's own. */
+    static PackRenderingPhase lanePhase(HostLayoutLane lane) {
+        return heldBatchPhase != null ? heldBatchPhase : lane.phase();
     }
 
     /** Opens a draw as {@link #beginDraw(Family, VertexFormat, String)} does, in {@code phase}. */
