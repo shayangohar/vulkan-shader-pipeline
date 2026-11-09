@@ -14,20 +14,22 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 final class HostLanePhaseTest {
     @Test
     void aHeldBatchDrawsInItsWritersWrapperPhase() {
-        assertEquals(PackRenderingPhase.OUTLINE, ChimeraEntityBridge.wrapperPhase(true, null));
-        assertEquals(PackRenderingPhase.OUTLINE, ChimeraEntityBridge.wrapperPhase(true, Family.ENTITY),
-                "the block outline is asked for outside any entity, and its wrapper is the outline's");
-        assertEquals(PackRenderingPhase.ENTITIES, ChimeraEntityBridge.wrapperPhase(false, Family.ENTITY));
-        assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.wrapperPhase(false, Family.BLOCK));
-        assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.wrapperPhase(false, null));
+        assertEquals(PackRenderingPhase.ENTITIES, ChimeraEntityBridge.wrapperPhase(Family.ENTITY));
+        assertEquals(PackRenderingPhase.BLOCK_ENTITIES, ChimeraEntityBridge.wrapperPhase(Family.BLOCK));
+        assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.wrapperPhase(null));
     }
 
-    /** The wrapper is the one open when vanilla asks for the batch: a hitbox inside an entity, the outline alone. */
+    /**
+     * The wrapper is the one open when vanilla asks for the batch: a hitbox inside an entity. The
+     * block outline is asked for outside both and reports NONE, as the outline's draw reads
+     * renderStage 0 in the owner's Iris captures of Glimmer and Mellow: OUTLINE made Glimmer's line
+     * transparent and Mellow's opaque black.
+     */
     @Test
     void theWriterIsWhatIsRenderingWhenTheBatchIsAskedFor() {
         try {
             ChimeraEntityBridge.beginWorldWindow();
-            assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.hostLaneWritePhase());
+            assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.hostLaneWritePhase(), "the block outline");
             ChimeraEntityBridge.beginEntity("minecraft:fishing_bobber");
             assertEquals(PackRenderingPhase.ENTITIES, ChimeraEntityBridge.hostLaneWritePhase());
             ChimeraEntityBridge.endContext();
@@ -37,12 +39,8 @@ final class HostLanePhaseTest {
                     "a spawner's mob is written in the block entity's wrapper");
             ChimeraEntityBridge.endContext();
             ChimeraEntityBridge.endContext();
-            ChimeraEntityBridge.beginBlockOutline();
-            assertEquals(PackRenderingPhase.OUTLINE, ChimeraEntityBridge.hostLaneWritePhase());
-            ChimeraEntityBridge.endBlockOutline();
             assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.hostLaneWritePhase());
         } finally {
-            ChimeraEntityBridge.endBlockOutline();
             ChimeraEntityBridge.endWorldWindow();
         }
     }

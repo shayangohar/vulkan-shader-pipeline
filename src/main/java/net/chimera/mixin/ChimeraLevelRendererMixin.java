@@ -5,7 +5,6 @@ import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
-import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
@@ -28,7 +27,6 @@ import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.player.Player;
@@ -40,7 +38,6 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
-import org.spongepowered.asm.mixin.injection.Slice;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.function.Predicate;
@@ -56,8 +53,6 @@ import java.util.function.Predicate;
  * - The level's family batches are held to Iris's translucent boundary, where they draw before the
  *   centre-depth sample and the solid hand; with separateEntityDraws the late kinds wait for the
  *   deferred passes at the translucent terrain layer (WorldRendererMixin).
- * - The block outline's batch is marked as written in Iris's outline wrapper, so it alone reports
- *   renderStage OUTLINE.
  * - Particles and weather draw in their lanes' windows; particles move between NeoForge's early
  *   and late calls as the pack's particle ordering asks.
  * - RETURN draws the translucent hand and resolves the finished HDR world into the stable
@@ -73,12 +68,6 @@ public abstract class ChimeraLevelRendererMixin {
             + "Lnet/minecraft/client/renderer/MultiBufferSource;)V";
     private static final String RENDER_SKY = "Lnet/minecraft/client/renderer/LevelRenderer;renderSky("
             + "Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;FLnet/minecraft/client/Camera;ZLjava/lang/Runnable;)V";
-    private static final String GET_BUFFER = "Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;"
-            + "getBuffer(Lnet/minecraft/client/renderer/RenderType;)Lcom/mojang/blaze3d/vertex/VertexConsumer;";
-    private static final String RENDER_HIT_OUTLINE = "Lnet/minecraft/client/renderer/LevelRenderer;renderHitOutline("
-            + "Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;"
-            + "Lnet/minecraft/world/entity/Entity;DDDLnet/minecraft/core/BlockPos;"
-            + "Lnet/minecraft/world/level/block/state/BlockState;)V";
 
     @Inject(method = "renderLevel", at = @At("HEAD"))
     private void chimera$beginFrame(DeltaTracker deltaTracker, boolean renderBlockOutline, Camera camera,
@@ -169,25 +158,6 @@ public abstract class ChimeraLevelRendererMixin {
             original.call(renderer, entity, cameraX, cameraY, cameraZ, partialTick, poses, buffers);
         } finally {
             if (opened) FamilyBufferSource.endLevelGroup();
-        }
-    }
-
-    /**
-     * Vanilla's block outline asks for its RenderType.lines() batch here, the one batch Iris wraps
-     * in its outline state (MixinLevelRenderer.iris$beginBlockOutline, the same slice): it reports
-     * renderStage OUTLINE, where a hitbox or a fishing line asks inside an entity's render and
-     * reports ENTITIES.
-     */
-    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = GET_BUFFER),
-            slice = @Slice(from = @At(value = "CONSTANT", args = "stringValue=outline"),
-                    to = @At(value = "INVOKE", target = RENDER_HIT_OUTLINE)), require = 1, allow = 1)
-    private VertexConsumer chimera$blockOutline(MultiBufferSource.BufferSource buffers, RenderType type,
-                                                Operation<VertexConsumer> original) {
-        ChimeraEntityBridge.beginBlockOutline();
-        try {
-            return original.call(buffers, type);
-        } finally {
-            ChimeraEntityBridge.endBlockOutline();
         }
     }
 

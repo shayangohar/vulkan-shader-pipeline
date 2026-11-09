@@ -195,8 +195,6 @@ public final class ChimeraEntityBridge {
     private static boolean particleWindow;
     private static boolean particleTranslucent;
     private static boolean weatherWindow;
-    /** True while vanilla asks the level's buffer source for the block outline's batch. */
-    private static boolean blockOutline;
     /** The Iris rendering phase of the held lane batch drawing now (HeldLaneRenderType), or null. */
     private static PackRenderingPhase heldBatchPhase;
 
@@ -446,32 +444,25 @@ public final class ChimeraEntityBridge {
     }
 
     /**
-     * Marks vanilla's request for the block outline's RenderType.lines() batch, the one render type
-     * Iris wraps in its outline state (MixinLevelRenderer.iris$beginBlockOutline).
-     */
-    public static void beginBlockOutline() {
-        blockOutline = true;
-    }
-
-    public static void endBlockOutline() {
-        blockOutline = false;
-    }
-
-    /**
      * The Iris rendering phase a world host-layout lane's batch written now draws in. Iris answers
      * renderStage for such a draw from the wrapper around the render type it was asked for in
-     * (OuterWrappedRenderType): OUTLINE for vanilla's block outline, BLOCK_ENTITIES inside a block
-     * entity's render, ENTITIES inside an entity's, so a hitbox or a fishing line reports ENTITIES
-     * and a structure block's box BLOCK_ENTITIES. Outside every wrapper the batch draws in NONE, the
-     * phase Iris holds between its phase windows.
+     * (OuterWrappedRenderType): BLOCK_ENTITIES inside a block entity's render, ENTITIES inside an
+     * entity's, so a hitbox or a fishing line reports ENTITIES and a structure block's box
+     * BLOCK_ENTITIES. Outside every wrapper the batch draws in NONE, the phase Iris holds between
+     * its phase windows.
+     *
+     * <p>The block outline reports NONE too. Iris's source wraps it in its outline state
+     * (MixinLevelRenderer.iris$beginBlockOutline), but the Iris the owner compares against
+     * (1.8.14-beta.1 on Fabric with Sodium) reads renderStage 0 at the outline's draw in Glimmer's
+     * and Mellow's captures. Reporting OUTLINE made Glimmer's line transparent and Mellow's opaque
+     * black, where Iris shows vanilla's translucent outline.</p>
      */
     public static PackRenderingPhase hostLaneWritePhase() {
-        return wrapperPhase(blockOutline, context());
+        return wrapperPhase(context());
     }
 
-    /** The phase of the wrapper Iris asks for a render type in, by the outline window and context. */
-    static PackRenderingPhase wrapperPhase(boolean blockOutline, Family context) {
-        if (blockOutline) return PackRenderingPhase.OUTLINE;
+    /** The phase of the wrapper Iris asks for a render type in, by the context rendering. */
+    static PackRenderingPhase wrapperPhase(Family context) {
         if (context == Family.BLOCK) return PackRenderingPhase.BLOCK_ENTITIES;
         return context == Family.ENTITY ? PackRenderingPhase.ENTITIES : PackRenderingPhase.NONE;
     }
