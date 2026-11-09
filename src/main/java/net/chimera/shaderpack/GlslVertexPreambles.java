@@ -225,7 +225,11 @@ final class GlslVertexPreambles {
         return new Derived(base);
     }
 
-    /** {@code source} with its one occurrence of {@code target} replaced; it throws unless there is exactly one. */
+    /**
+     * {@code source} with its one occurrence of {@code target} replaced; it throws unless there is
+     * exactly one. The derived constants call it as the class loads; the sky preamble's per-format
+     * loop calls it as a pack loads, where a missing target fails that load.
+     */
     static String replaceOnce(String source, String target, String replacement) {
         int at = source.indexOf(target);
         if (at < 0 || source.indexOf(target, at + 1) >= 0) {

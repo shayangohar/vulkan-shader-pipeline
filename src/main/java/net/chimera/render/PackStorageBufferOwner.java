@@ -155,7 +155,9 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     /**
      * Recreates one relative buffer at {@code bytes} through {@code recreate}, and says whether it
      * did. A size past the device's range, or one the device cannot allocate, keeps the old buffer
-     * and is logged: the pack reads within the old size, never a freed buffer.
+     * and is logged: the pack never reads a freed buffer. After a failed grow it indexes at the new
+     * size, past the old buffer's end; with no robustBufferAccess those accesses are undefined, as
+     * for a size past the range. The alternative was a crash; a graceful fallback is TASK-922's.
      */
     static boolean refit(int index, long bytes, long maxRange, String size, IntConsumer recreate) {
         if (bytes > maxRange) {
