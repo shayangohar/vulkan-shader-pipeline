@@ -517,7 +517,8 @@ final class PackFrontEndTest {
     /**
      * Iris defines the same symbols as macros in every shader and properties file it preprocesses
      * (IrisDefines.createIrisReplacements). Chimera served them to expressions only, so a pack's
-     * {@code #if} on one read 0, and Ebin's {@code #ifndef PPT_NONE} fallback was taken.
+     * {@code #if} on one read 0, and Noble's and Photon's {@code #ifndef PPT_NONE} fallbacks in
+     * shaders.properties were taken.
      */
     @Test
     void irisBiomeSymbolsAreMacrosToo(@TempDir Path root) throws IOException {
@@ -534,7 +535,13 @@ final class PackFrontEndTest {
                 #version 120
                 uniform float ppt;
                 uniform float desert;
-                void main() { gl_FragColor = vec4(ppt, desert, 0.0, 1.0); }
+                void main() {
+                #if BIOME_DESERT == 5 && CAT_DESERT == 12 && PPT_SNOW == 2
+                    gl_FragColor = vec4(ppt, desert, 0.25, 1.0);
+                #else
+                    gl_FragColor = vec4(ppt, desert, 0.75, 1.0);
+                #endif
+                }
                 """);
         Files.writeString(shaders.resolve("shaders.properties"), """
                 #ifndef PPT_SNOW
@@ -545,12 +552,15 @@ final class PackFrontEndTest {
                 uniform.float.desert = 1.0
                 #endif
                 """);
-        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackRuntimeSettings settings = analysis.plan().runtimeSettings();
         assertTrue(settings.rejected().isEmpty(), settings.deviations().toString());
         PackRuntimeSettings.Session session = settings.newSession();
         settings.evaluate((name, component) -> 0.0, session, 0.05f);
         assertEquals(2.0f, session.values()[settings.indexOf("ppt")], "the engine's PPT_SNOW, not the fallback");
         assertTrue(settings.indexOf("desert") >= 0, "#if BIOME_DESERT == 5 holds in shaders.properties");
+        String fragment = analysis.plan().program("composite").convertedFragment();
+        assertTrue(fragment.contains("0.25") && !fragment.contains("0.75"), "the GLSL #if holds: " + fragment);
     }
 
     private static void rejected(String source, PackExpression.Widths widths, String code) {
