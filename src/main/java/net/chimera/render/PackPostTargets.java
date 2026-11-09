@@ -196,10 +196,14 @@ public final class PackPostTargets {
                 hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
             }
         }
+        // Every target opens the frame readable, as under Iris, which samples whatever a target holds:
+        // a cleared one its clear colour, an uncleared one what it carried. A target a skipped pass
+        // invalidated last frame must be readable again, or a pass that reads its own history, as a
+        // TAA pass does, would fall back on every later frame after one missing input.
         for (int target = 0; target < TARGET_COUNT; target++) {
             if (!this.used[target]) continue;
-            if (full || target == 0 || this.sides.clearedEachFrame(target)) this.valid[target] = true;
-            if (this.valid[target]) this.temporal.seedCurrent(target);
+            this.valid[target] = true;
+            this.temporal.seedCurrent(target);
         }
         refreshSources();
         trace("beginFrame full=" + full + " target0=" + imageId(this.sourceImages[0]));
@@ -360,8 +364,8 @@ public final class PackPostTargets {
     }
 
     /**
-     * Invalidates a skipped stage's outputs while retaining physical images. An auxiliary target
-     * loses its producer, so its readers fall back too: its last image holds another pass's
+     * Invalidates a skipped stage's outputs for the rest of the frame, retaining physical images. An
+     * auxiliary target loses its producer, so its later readers fall back too: its image holds another pass's
      * meaning (BSL's bloom atlas in colortex1). colortex0 keeps its last committed write, the
      * scene as the passes that ran left it: the skipped step passes it through (PostTargetSides),
      * where resetting it to the pre-post scene would also drop every earlier pass's output
