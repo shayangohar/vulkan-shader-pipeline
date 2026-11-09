@@ -6,6 +6,8 @@ import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.shaderc.Shaderc;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -41,6 +43,44 @@ final class SpirvDeviceRequirementsTest {
         assertNull(SpirvDeviceRequirements.instructionSet("GLSL.std.450"));
         assertEquals("VK_KHR_shader_non_semantic_info",
                 SpirvDeviceRequirements.instructionSet("NonSemantic.DebugPrintf"));
+    }
+
+    /**
+     * Audit GD6: these KHR extensions gained a shader_ prefix in Vulkan. Named by the plain rule, a
+     * device created with the extension would still refuse the program, and a refusal named an
+     * extension that does not exist.
+     */
+    @Test
+    void theShaderPrefixedKhrExtensionsMapToTheirVulkanNames() {
+        for (String name : new String[] {"subgroup_uniform_control_flow", "integer_dot_product", "expect_assume",
+                "quad_control", "maximal_reconvergence", "float_controls2", "subgroup_rotate",
+                "relaxed_extended_instruction"}) {
+            assertEquals("VK_KHR_shader_" + name, SpirvDeviceRequirements.extension("SPV_KHR_" + name));
+        }
+        // The bundled shaderc knows none of their GLSL extensions yet, so the module is written by hand.
+        SpirvDeviceRequirements.Requirements module =
+                SpirvDeviceRequirements.of(moduleDeclaring("SPV_KHR_subgroup_uniform_control_flow"));
+        assertEquals(Set.of("VK_KHR_shader_subgroup_uniform_control_flow"), module.extensions());
+        PackDevice device = PackDevice.offline("nvidia");
+        assertEquals(List.of("device extension VK_KHR_shader_subgroup_uniform_control_flow"),
+                device.missing(module, PackDevice.STAGE_COMPUTE));
+        assertEquals(List.of(), device.withExtensions(List.of("VK_KHR_shader_subgroup_uniform_control_flow"))
+                .missing(module, PackDevice.STAGE_COMPUTE));
+    }
+
+    /** A SPIR-V header and one OpExtension, the words the scan reads before the memory model. */
+    private static int[] moduleDeclaring(String extension) {
+        byte[] name = (extension + "\0").getBytes(StandardCharsets.UTF_8);
+        int nameWords = (name.length + 3) / 4;
+        int[] words = new int[5 + 1 + nameWords];
+        words[0] = 0x07230203;
+        words[1] = 0x00010500;
+        words[3] = 1;
+        words[5] = (1 + nameWords) << 16 | 10;
+        for (int index = 0; index < name.length; index++) {
+            words[6 + index / 4] |= (name[index] & 0xFF) << (8 * (index % 4));
+        }
+        return words;
     }
 
     private static Set<String> required(String source) {
