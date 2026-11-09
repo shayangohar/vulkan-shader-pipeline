@@ -161,7 +161,27 @@ final class FlipSidesTest {
             if (late) return;
             irisState = plan.close(window);
             if (runs) sides.enterWorld(window, ops);
-            if (window != PackFrameSchedulePlan.PostWindow.BEGIN) world(window, what.world());
+            if (window == PackFrameSchedulePlan.PostWindow.BEGIN) {
+                horizon(what.world());
+            } else {
+                world(window, what.world());
+            }
+        }
+
+        /**
+         * Iris draws its horizon after the begin group, ahead of the shadow and prepare passes,
+         * through the gbuffer framebuffers, which write flippedAfterPrepare's sides from the frame's
+         * start. Chimera draws it into the HDR image, which must stand in for that colortex0 side.
+         */
+        private void horizon(Set<Integer> targets) {
+            if (!targets.contains(0) || !allocated(0)) return;
+            String draw = ">horizon@" + frame;
+            int side = side(plan.opaqueWorld(), 0);
+            PostTargetSides.Image hdr = new PostTargetSides.Image(0, PostTargetSides.HDR);
+            check(iris[side][0].equals(chimera.get(hdr)), "the horizon draws on colortex0's opaque-world side: iris "
+                    + iris[side][0] + ", chimera " + chimera.get(hdr));
+            iris[side][0] += draw;
+            chimera.put(hdr, chimera.get(hdr) + draw);
         }
 
         /** Iris runs the pass; one Chimera does not run passes its input through. */
@@ -237,9 +257,20 @@ final class FlipSidesTest {
             }
         }
 
-        /** A screen change between frames: the world attachments are made anew, the HDR image undefined. */
+        /**
+         * A screen change between frames: the world attachments are made anew, the HDR image undefined.
+         * What the retired image alone held is lost, the trade-off Chimera accepts there: the Iris
+         * model's side it stood in for falls back to that side's graph image, so the frames after
+         * still compare exactly.
+         */
         void replaceHdr() {
-            chimera.put(new PostTargetSides.Image(0, PostTargetSides.HDR), "undefined");
+            PostTargetSides.Image hdr = new PostTargetSides.Image(0, PostTargetSides.HDR);
+            String held = chimera.get(hdr);
+            for (int side = 0; side < 2; side++) {
+                String graph = chimera.get(new PostTargetSides.Image(0, side));
+                if (held != null && held.equals(iris[side][0]) && !held.equals(graph)) iris[side][0] = graph;
+            }
+            chimera.put(hdr, "undefined");
             sides.hdrReplaced();
         }
 
@@ -255,8 +286,9 @@ final class FlipSidesTest {
     // ---------------------------------------------------------------- regression scenarios
 
     /**
-     * Glimmer's prepare2 names colortex0 and writes nothing. Iris's flip there lands on alt, which its
-     * frame-start clear left at the clear colour, and the world draws into it. Chimera once handed
+     * Glimmer's prepare2 names colortex0 and writes nothing. With colortex0 cleared, Iris's flip there
+     * lands on alt, which its frame-start clear left at the clear colour and its horizon drew on, and
+     * the world draws into it. Chimera once handed
      * back last frame's final image, which Glimmer's deferred sky adds under the sky, so the horizon
      * summed to a glow (KNOW-1112).
      */
@@ -267,8 +299,65 @@ final class FlipSidesTest {
                 "deferred", "uniform sampler2D colortex0;\n/* RENDERTARGETS: 0 */\n" + copies("colortex0")), "");
         for (int frame = 0; frame < 3; frame++) harness.run(Frame.plain(Set.of(0)));
         assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
-        assertEquals("clear0>prepare2@2>world-PREPARE@2", harness.reads.get("deferred").get(0),
+        assertEquals("clear0>horizon@2>prepare2@2>world-PREPARE@2", harness.reads.get("deferred").get(0),
                 "the world must draw over the cleared side prepare2 left, not an older frame");
+    }
+
+    /**
+     * Glimmer as it ships, with colortex0Clear=false. Iris draws its horizon before prepare2, onto
+     * the alt side the world draws on after prepare2's flip, so every frame's horizon covers the
+     * last one's there. Chimera drew it into the HDR image while that stood in for main, and the
+     * world then took alt without it: the horizon summed frame on frame to a glow again.
+     */
+    @Test
+    void theHorizonLandsOnTheSideAPrepareFlipHandsACarriedWorld(@TempDir Path root) throws Exception {
+        Harness harness = harness(root, Map.of(
+                "prepare2", "/* RENDERTARGETS: 0 */\nvoid main() { discard; }\n",
+                "deferred", "const bool colortex0Clear = false;\nuniform sampler2D colortex0;\n"
+                        + "/* RENDERTARGETS: 0 */\n" + copies("colortex0")), "");
+        for (int frame = 0; frame < 3; frame++) harness.run(Frame.plain(Set.of(0)));
+        assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
+        assertTrue(harness.reads.get("deferred").get(0).endsWith(">horizon@2>prepare2@2>world-PREPARE@2"),
+                "this frame's horizon must lie under prepare2 and the world: " + harness.reads.get("deferred").get(0));
+    }
+
+    /**
+     * Every way a carried colortex0 can end a frame when a prepare flip puts the world on alt: final
+     * on alt with the HDR image standing in for it, final on main, final on alt with the HDR image on
+     * main, and then a new HDR image from a screen change. Each next frame must open as Iris's does.
+     */
+    @Test
+    void aCarriedColortex0OpensOnAltWhereverTheLastFrameEnded(@TempDir Path root) throws Exception {
+        String prepare = "/* RENDERTARGETS: 0 */\nvoid main() { discard; }\n";
+        String keeps = "const bool colortex0Clear = false;\nuniform sampler2D colortex0;\n";
+        List<Map<String, String>> packs = List.of(
+                Map.of("prepare2", prepare, "deferred1", keeps + "/* RENDERTARGETS: 3 */\n" + copies("colortex0")),
+                Map.of("prepare2", prepare, "deferred", keeps + "/* RENDERTARGETS: 0 */\n" + copies("colortex0")),
+                Map.of("prepare2", prepare, "deferred", keeps + "/* RENDERTARGETS: 0 */\n" + copies("colortex0"),
+                        "composite", keeps + "/* RENDERTARGETS: 0 */\n" + copies("colortex0")));
+        for (int index = 0; index < packs.size(); index++) {
+            Harness harness = harness(root.resolve("pack" + index), packs.get(index), "");
+            for (int frame = 0; frame < 3; frame++) harness.run(Frame.plain(Set.of(0)));
+            harness.replaceHdr();
+            for (int frame = 3; frame < 5; frame++) harness.run(Frame.plain(Set.of(0)));
+            assertTrue(harness.mismatches.isEmpty(), "pack " + index + "\n" + String.join("\n", harness.mismatches));
+            assertTrue(!harness.anyImageHolds("undefined"), "pack " + index + ": a new HDR image's content leaked");
+        }
+    }
+
+    /**
+     * A begin pre-flip of colortex0 that prepare's pre-flip undoes: the shadow pass reads alt, but
+     * the horizon and the opaque world draw on main, where Iris's gbuffers write.
+     */
+    @Test
+    void theHorizonFollowsTheOpaqueWorldPastABeginFlip(@TempDir Path root) throws Exception {
+        Harness harness = harness(root, Map.of(
+                "deferred1", "uniform sampler2D colortex0;\n/* RENDERTARGETS: 3 */\n" + copies("colortex0")),
+                "flip.begin_pre.colortex0=true\nflip.prepare_pre.colortex0=true\n");
+        assertTrue(PackPostChain.windowDue(false, harness.plan, PackFrameSchedulePlan.PostWindow.BEGIN));
+        for (int frame = 0; frame < 3; frame++) harness.run(Frame.plain(Set.of(0)));
+        assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
+        assertEquals("clear0>horizon@2>world-PREPARE@2", harness.reads.get("deferred1").get(0));
     }
 
     /**
@@ -327,7 +416,8 @@ final class FlipSidesTest {
                         + "blend.composite38=ONE ONE ONE ZERO\nblend.deferred14=ZERO SRC_ALPHA ONE ZERO\n");
         for (int frame = 0; frame < 3; frame++) harness.run(Frame.plain(Set.of(0)));
         assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
-        assertEquals("clear0>world-PREPARE@2>deferred14@2>world-EARLY@2>composite38@2", harness.finalReads.get(0),
+        assertEquals("clear0>horizon@2>world-PREPARE@2>deferred14@2>world-EARLY@2>composite38@2",
+                harness.finalReads.get(0),
                 "the AO and the bloom must both land on this frame's scene");
     }
 
@@ -395,7 +485,7 @@ final class FlipSidesTest {
                 "composite1", "uniform sampler2D colortex0;\n/* RENDERTARGETS: 0 */\n" + copies("colortex0")), "");
         for (int frame = 0; frame < 3; frame++) harness.run(Frame.plain(Set.of(0)));
         assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
-        assertTrue(harness.reads.get("deferred1").get(0).contains(">composite1@1>world-PREPARE@2"),
+        assertTrue(harness.reads.get("deferred1").get(0).contains(">composite1@1>horizon@2>world-PREPARE@2"),
                 "the world must draw over last frame's final image: " + harness.reads.get("deferred1").get(0));
         assertTrue(harness.frameStartCopies <= 2, "alt back from the HDR image, main into it: "
                 + harness.frameStartCopies);
@@ -415,6 +505,7 @@ final class FlipSidesTest {
         for (int frame = 0; frame < 2; frame++) harness.run(Frame.plain(Set.of(0)));
         harness.replaceHdr();
         for (int frame = 2; frame < 4; frame++) harness.run(Frame.plain(Set.of(0)));
+        assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
         assertTrue(!harness.anyImageHolds("undefined"), "a new HDR image's content reached a target");
     }
 
@@ -430,7 +521,7 @@ final class FlipSidesTest {
         for (int frame = 0; frame < 3; frame++) harness.run(Frame.plain(Set.of(0)));
         assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
         assertEquals(0, harness.frameStartCopies);
-        assertTrue(harness.reads.get("deferred1").get(0).startsWith("clear0>world-PREPARE@0>world-EARLY@0"),
+        assertTrue(harness.reads.get("deferred1").get(0).startsWith("clear0>horizon@0>world-PREPARE@0>world-EARLY@0"),
                 harness.reads.get("deferred1").get(0));
     }
 
@@ -469,7 +560,7 @@ final class FlipSidesTest {
         for (int frame = 0; frame < 3; frame++) harness.run(Frame.plain(Set.of(0, 3)));
         assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
         assertEquals("clear3>world-PREPARE@2", harness.reads.get("deferred1").get(3));
-        assertEquals("clear0>world-PREPARE@2", harness.reads.get("deferred1").get(0));
+        assertEquals("clear0>horizon@2>world-PREPARE@2", harness.reads.get("deferred1").get(0));
     }
 
     /** A held draw buffer (flip=false) is written on its other side and stays unread until a later flip. */

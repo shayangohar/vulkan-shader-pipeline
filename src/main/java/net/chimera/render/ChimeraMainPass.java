@@ -341,8 +341,8 @@ public final class ChimeraMainPass implements MainPass {
     /**
      * Clears the opening world target. While a pack owns colortex0 (the HDR image) this is Iris's
      * ClearPass: colortex0ClearColor, else the fog colour with alpha 1. Under colortex0Clear=false
-     * it clears depth only: PackPostTargets.beginFrame has loaded the HDR image with colortex0's
-     * main side, cleared by its own full clear on a new pack, and a new HDR image from a screen
+     * it clears depth only: PackPostTargets.beginFrame has loaded the HDR image with the colortex0
+     * side the world draws first, cleared by its own full clear on a new pack; a new HDR image from a screen
      * change keeps it too, where Iris's one image never changes.
      */
     private void clearWorldTarget(float[] fogColor) {
