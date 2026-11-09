@@ -170,7 +170,7 @@ public final class PackUniformProvider {
      * serves it to the draws that follow, as Iris's dynamic fog uniforms read it at each bind.
      */
     public static void captureFogDensity(Camera camera) {
-        IrisWorldState.captureFogDensity(camera);
+        INSTANCE.frameState.captureFogDensity(camera);
         INSTANCE.rewrite(FOG_DENSITY_KEYS);
     }
 
@@ -179,7 +179,7 @@ public final class PackUniformProvider {
      * it was at its first draw in the frame (latchProgramFog).
      */
     public static void captureFogShape() {
-        IrisWorldState.captureFogShape();
+        INSTANCE.frameState.captureFogShape();
     }
 
     /**
@@ -216,7 +216,7 @@ public final class PackUniformProvider {
      * a null program, a compute dispatch, reads the current ones.
      */
     private void latchProgramFog(Pipeline program) {
-        if (IrisWorldState.latchProgramFog(program, frameState)) rewrite(PROGRAM_FOG_KEYS);
+        if (frameState.latchProgramFog(program)) rewrite(PROGRAM_FOG_KEYS);
     }
 
     /** Rewrites the bindings of the given names from the frame state. */
@@ -393,7 +393,7 @@ public final class PackUniformProvider {
                 ? 0.0f
                 : PackFrameState.quantizedFrameSecondsForTest(now - lastFrameNanos);
         lastFrameNanos = now;
-        IrisWorldState.beginFrame();
+        frameState.beginFogFrame();
         frameState.begin(minecraft, camera, partialTick, modelView, projection, deltaSeconds);
         logDerivedValueFailures();
         refreshBindings();

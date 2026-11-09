@@ -24,7 +24,6 @@ final class IrisFogUniformsTest {
     /** Before any fog setup Iris's captured density is 0 (CapturedRenderingState): GL_EXP2, density 0. */
     @Test
     void aWorldProgramReadsTheCapturedFog() {
-        IrisWorldState.resetFog();
         PackFrameState state = new PackFrameState();
         MappedBuffer buffer = new MappedBuffer(4);
         state.write(UniformRegistry.descriptor("fogMode"), "int", buffer);
@@ -58,26 +57,43 @@ final class IrisFogUniformsTest {
      */
     @Test
     void eachProgramLatchesItsFirstFog() {
-        IrisWorldState.resetFog();
         PackFrameState state = new PackFrameState();
         Object skyBasic = new Object();
         Object skyTextured = new Object();
-        IrisWorldState.beginFrame();
+        state.beginFogFrame();
         state.setFogRange(Float.MAX_VALUE, 192.0F);
-        assertTrue(IrisWorldState.latchProgramFog(skyBasic, state));
+        assertTrue(state.latchProgramFog(skyBasic));
         state.setFogRange(0.0F, 192.0F);
-        assertTrue(IrisWorldState.latchProgramFog(skyTextured, state));
+        assertTrue(state.latchProgramFog(skyTextured));
         assertEquals(0.0F, read(state, "iris_FogStart"));
-        assertTrue(IrisWorldState.latchProgramFog(skyBasic, state));
+        assertTrue(state.latchProgramFog(skyBasic));
         assertEquals(Float.MAX_VALUE, read(state, "iris_FogStart"), "the sky disc keeps the horizon's range");
         assertEquals(192.0F, read(state, "iris_FogEnd"));
-        assertFalse(IrisWorldState.latchProgramFog(skyBasic, state), "an unchanged latch rewrites nothing");
-        IrisWorldState.beginFrame();
-        IrisWorldState.latchProgramFog(skyBasic, state);
+        assertFalse(state.latchProgramFog(skyBasic), "an unchanged latch rewrites nothing");
+        state.beginFogFrame();
+        state.latchProgramFog(skyBasic);
         assertEquals(0.0F, read(state, "iris_FogStart"), "the next frame latches afresh");
         state.setFogRange(12.8F, 96.0F);
-        IrisWorldState.latchProgramFog(null, state);
+        state.latchProgramFog(null);
         assertEquals(12.8F, read(state, "iris_FogStart"), "a compute reads the current range");
+    }
+
+    /**
+     * The latches are the programs', which Iris rebuilds with a pack: a program drawn again after the
+     * session ends latches afresh within the frame. They were static, so they outlived the session,
+     * and one test's latches reached the next.
+     */
+    @Test
+    void aNewSessionLatchesAfresh() {
+        PackFrameState state = new PackFrameState();
+        Object program = new Object();
+        state.beginFogFrame();
+        state.setFogRange(Float.MAX_VALUE, 192.0F);
+        state.latchProgramFog(program);
+        state.resetSession();
+        state.setFogRange(0.0F, 192.0F);
+        state.latchProgramFog(program);
+        assertEquals(0.0F, read(state, "iris_FogStart"), "the old session's latch is gone");
     }
 
     private static float read(PackFrameState state, String name) {

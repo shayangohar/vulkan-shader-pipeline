@@ -42,20 +42,20 @@ final class IrisWorldState implements FrameValueSource {
     private static final int GL_LINEAR = 0x2601;
     private static final int GL_EXP2 = 0x0801;
 
-    private static volatile float fogDensity;
-    private static volatile int fogShape;
+    private volatile float fogDensity;
+    private volatile int fogShape;
     /** Each pack pipeline's per-frame fog values, latched at its first draw in the frame. */
-    private static final Map<Object, FrameFog> PROGRAM_FOG = new WeakHashMap<>();
-    /** The per-frame fog values the next draw reads: its program's. */
-    private static final FrameFog DRAW_FOG = new FrameFog();
-    private static long frame;
+    private final Map<Object, FrameFog> programFog = new WeakHashMap<>();
+    /** The per-frame fog values the next draw reads: its program's, as the bindings were last written. */
+    private final FrameFog drawFog = new FrameFog();
+    private long frame;
     private float cloudTime;
 
     /**
      * Records the density of the fog FogRenderer is setting up. Water fog starts at 0.05, thins
      * with the player's water vision, and thickens by 0.005 in a biome with closer water fog.
      */
-    static void captureFogDensity(Camera camera) {
+    void captureFogDensity(Camera camera) {
         if (camera.getFluidInCamera() != FogType.WATER) {
             fogDensity = -1.0F;
             return;
@@ -72,20 +72,22 @@ final class IrisWorldState implements FrameValueSource {
     }
 
     /** Records the shape of the fog FogRenderer has set up, which each program latches at its first draw. */
-    static void captureFogShape() {
+    void captureFogShape() {
         fogShape = RenderSystem.getShaderFogShape() == FogShape.CYLINDER ? 1 : 0;
     }
 
-    /** Iris's state before any fog setup and before any program's first draw. */
-    static void resetFog() {
-        fogDensity = 0.0F;
-        fogShape = 0;
-        PROGRAM_FOG.clear();
-        DRAW_FOG.set(-1L, 0.0F, 0.0F, 0);
+    /**
+     * Drops every program's latched fog when the pack session ends: Iris builds its programs afresh
+     * with a pack, and each latches at its first draw. The captured fog stays, as Iris's
+     * CapturedRenderingState keeps it across a reload: it is the game's, and the next setup replaces
+     * it. The draw's values stay too, since they are what the bindings hold.
+     */
+    void resetProgramFog() {
+        programFog.clear();
     }
 
     /** Starts a frame: each program latches its per-frame fog values afresh at its next draw. */
-    static void beginFrame() {
+    void beginFrame() {
         frame++;
     }
 
@@ -95,13 +97,13 @@ final class IrisWorldState implements FrameValueSource {
      * program, a compute dispatch, reads the current ones: Iris runs each compute once a frame.
      * Returns true when the served values changed.
      */
-    static boolean latchProgramFog(Object program, PackFrameState live) {
+    boolean latchProgramFog(Object program, PackFrameState live) {
         FrameFog latched = program == null ? new FrameFog()
-                : PROGRAM_FOG.computeIfAbsent(program, key -> new FrameFog());
+                : programFog.computeIfAbsent(program, key -> new FrameFog());
         if (latched.frame != frame) {
             latched.set(frame, (float) live.value("fogStart", -1), (float) live.value("fogEnd", -1), fogShape);
         }
-        return DRAW_FOG.set(latched.frame, latched.start, latched.end, latched.shape);
+        return drawFog.set(latched.frame, latched.start, latched.end, latched.shape);
     }
 
     void capture(Minecraft minecraft, float partialTick) {
@@ -124,10 +126,10 @@ final class IrisWorldState implements FrameValueSource {
         if (component > 0) return Double.NaN;
         return switch (name) {
             case "fogMode" -> fogDensity < 0.0F ? GL_LINEAR : GL_EXP2;
-            case "fogShape" -> DRAW_FOG.shape;
+            case "fogShape" -> drawFog.shape;
             case "fogDensity" -> Math.max(0.0F, fogDensity);
-            case "iris_FogStart" -> DRAW_FOG.start;
-            case "iris_FogEnd" -> DRAW_FOG.end;
+            case "iris_FogStart" -> drawFog.start;
+            case "iris_FogEnd" -> drawFog.end;
             case "cloudTime" -> this.cloudTime;
             default -> Double.NaN;
         };
