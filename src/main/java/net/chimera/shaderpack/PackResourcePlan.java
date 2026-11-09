@@ -629,30 +629,22 @@ public final class PackResourcePlan {
      */
     private static Map<String, Set<Integer>> targetsWrittenEarlierInChain(PackPlan plan) {
         Map<String, Set<Integer>> result = new TreeMap<>();
+        PackFlipPlan flips = PackFlipPlan.of(plan.activePrograms(), plan.config());
         for (PackProgramPlan program : plan.activePrograms()) {
             if (program != null && program.targetPlan() != null && postChain(program.name()) != null) {
-                result.put(program.name(), targetsWrittenBefore(plan, program.name()));
+                result.put(program.name(), flips.writtenBefore(program.name()));
             }
         }
         return result;
     }
 
-    /** The targets the programs of {@code pass}'s chain wrote before it: its flippedAtLeastOnce snapshot. */
+    /**
+     * The targets the programs of {@code pass}'s chain flipped before it: its flippedAtLeastOnce
+     * snapshot (PackFlipPlan.writtenBefore). A pass without a draw-buffer directive writes colortex0.
+     */
     private static Set<Integer> targetsWrittenBefore(PackPlan plan, String pass) {
-        String chain = postChain(pass);
-        if (chain == null) return Set.of();
-        Map<String, List<Integer>> flips = plan.config() == null ? Map.of() : plan.config().flips();
-        Comparator<String> order = PostTargetPlan.programComparator();
-        Set<Integer> written = new TreeSet<>();
-        for (PackProgramPlan program : plan.activePrograms()) {
-            if (program == null || program.targetPlan() == null || !chain.equals(postChain(program.name()))
-                    || order.compare(program.name(), pass) >= 0) {
-                continue;
-            }
-            written.addAll(program.targetPlan().targetSlots());
-            written.addAll(flips.getOrDefault(program.name(), List.of()));
-        }
-        return Set.copyOf(written);
+        if (postChain(pass) == null) return Set.of();
+        return PackFlipPlan.of(plan.activePrograms(), plan.config()).writtenBefore(pass);
     }
 
     /**
