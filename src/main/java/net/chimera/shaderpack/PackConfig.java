@@ -294,6 +294,12 @@ public final class PackConfig {
         }
     }
 
+    /** A target's settings in {@code config}: its declared ones, else the defaults. */
+    public static TargetSettings targetSettings(PackConfigData config, int target) {
+        return config == null ? TargetSettings.defaults()
+                : config.targetSettings().getOrDefault(target, TargetSettings.defaults());
+    }
+
     public static PackConfigData parse(List<PackProgram> programs, Path shadersDir) {
         return parse(programs, shadersDir, PackSettingsPlan.parse(programs, shadersDir));
     }

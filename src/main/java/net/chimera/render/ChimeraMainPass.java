@@ -319,7 +319,8 @@ public final class ChimeraMainPass implements MainPass {
         }
         if (this.packCenterDepth != null) this.packCenterDepth.beginFrame(Renderer.getCommandBuffer());
         if (this.packPostTargets.isConfigured()) {
-            postChain.beginPostFrame(Renderer.getCommandBuffer());
+            postChain.beginPostFrame(Renderer.getCommandBuffer(),
+                    PackConfig.targetSettings(this.packConfig, 0).irisClearColor(0, fogColor));
         }
         shadowPass.beginShadowFrame(cameraX, cameraY, cameraZ);
 
@@ -350,8 +351,7 @@ public final class ChimeraMainPass implements MainPass {
             Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             return;
         }
-        PackConfig.TargetSettings colortex0 = this.packConfig == null ? PackConfig.TargetSettings.defaults()
-                : this.packConfig.targetSettings().getOrDefault(0, PackConfig.TargetSettings.defaults());
+        PackConfig.TargetSettings colortex0 = PackConfig.targetSettings(this.packConfig, 0);
         boolean fullClear = hdrColor != this.clearedHdrImage || this.packConfig != this.clearedPackConfig;
         this.clearedHdrImage = hdrColor;
         this.clearedPackConfig = this.packConfig;

@@ -29,10 +29,8 @@ public final class PackTargetGraphPlan {
     private final int maxAttachments;
     /** Targets a world (gbuffers) program samples; the world draws before any post step. */
     private final Set<Integer> geometryReads;
-    /** Targets read outside the post steps' order: the world's reads and every target a pass compute binds. */
-    private final Set<Integer> unorderedReads;
-    /** The allocated targets each pass group's {@code flip.<group>_pre} directives flip as the group opens. */
-    private final Map<PackFrameSchedulePlan.PostWindow, List<Integer>> preFlips;
+    /** Which side every pass, the world and final read and write each target from (PackFlipPlan). */
+    private final PackFlipPlan flips;
     private final String snapshot;
     private final String fingerprint;
 
@@ -43,16 +41,12 @@ public final class PackTargetGraphPlan {
             List<String> deviations,
             int maxAttachments,
             Set<Integer> geometryReads,
-            Set<Integer> computeTargets,
-            Map<PackFrameSchedulePlan.PostWindow, List<Integer>> preFlips
+            PackFlipPlan flips
     ) {
         this.targets = targets.stream().sorted(Comparator.comparingInt(TargetSpec::index)).toList();
         this.steps = steps.stream().toList();
-        this.preFlips = Map.copyOf(preFlips);
+        this.flips = flips == null ? PackFlipPlan.empty() : flips;
         this.geometryReads = Set.copyOf(geometryReads);
-        Set<Integer> unordered = new TreeSet<>(geometryReads);
-        unordered.addAll(computeTargets);
-        this.unorderedReads = Set.copyOf(unordered);
         this.depth = depth == null ? DepthGraphPlan.empty() : depth;
         this.deviations = deviations == null ? List.of()
                 : deviations.stream().filter(value -> value != null && !value.isBlank())
@@ -125,57 +119,40 @@ public final class PackTargetGraphPlan {
                 .filter(value -> value.targetPlan() != null)
                 .sorted(Comparator.comparing(PackProgramPlan::name, PostTargetPlan.programComparator()))
                 .toList();
-        Map<Integer, Boolean> doubleTargets = new TreeMap<>();
-        Map<PackFrameSchedulePlan.PostWindow, List<Integer>> preFlips = groupPreFlips(config, preliminary,
-                doubleTargets, deviations);
+        PackFlipPlan flips = PackFlipPlan.of(inputs.programs(), config);
+        recordPreFlips(config, preliminary, deviations);
         Set<Integer> mipmappedTargets = new TreeSet<>();
         List<TargetStep> steps = new ArrayList<>();
         for (PackProgramPlan program : postPrograms) {
-            TargetStep step = step(inputs, program, preliminary, doubleTargets, mipmappedTargets);
+            TargetStep step = step(inputs, program, preliminary, mipmappedTargets);
             steps.add(step);
             deviations.addAll(step.deviations());
         }
         DepthGraphPlan depth = depthGraph(inputs, postPrograms);
         deviations.addAll(depth.deviations());
-        return new PackTargetGraphPlan(finalTargets(preliminary, doubleTargets, mipmappedTargets), steps, depth,
-                deviations, Math.max(1, deviceMaxColorAttachments), geometryReads, inputs.computes().targets(),
-                preFlips);
+        return new PackTargetGraphPlan(finalTargets(preliminary, flips, mipmappedTargets), steps, depth,
+                deviations, Math.max(1, deviceMaxColorAttachments), geometryReads, flips);
     }
 
-    /** The pass groups Iris builds a CompositeRenderer for, each with its {@code flip.<group>_pre} key. */
-    private static final Map<PackFrameSchedulePlan.PostWindow, String> PRE_FLIP_GROUPS = Map.of(
-            PackFrameSchedulePlan.PostWindow.BEGIN, "begin_pre",
-            PackFrameSchedulePlan.PostWindow.PREPARE, "prepare_pre",
-            PackFrameSchedulePlan.PostWindow.EARLY, "deferred_pre",
-            PackFrameSchedulePlan.PostWindow.LATE, "composite_pre");
+    /** The pass groups' {@code flip.<group>_pre} keys. A flip.final_pre has no renderer in Iris and flips nothing. */
+    private static final List<String> PRE_FLIP_KEYS = List.of("begin_pre", "prepare_pre", "deferred_pre",
+            "composite_pre");
 
-    /**
-     * Each pass group's pre-flips, double-buffered: Iris flips them once as the group's renderer
-     * opens, before any of its passes (CompositeRenderer's explicitPreFlips), whatever the passes
-     * are called. Shrimple's flip.composite_pre.colortex2 hands its composite passes the deferred
-     * shadows. A flip.final_pre has no renderer in Iris and flips nothing.
-     */
-    private static Map<PackFrameSchedulePlan.PostWindow, List<Integer>> groupPreFlips(
-            PackConfig.PackConfigData config, Map<Integer, TargetSpec> preliminary,
-            Map<Integer, Boolean> doubleTargets, List<String> deviations) {
-        Map<PackFrameSchedulePlan.PostWindow, List<Integer>> result = new TreeMap<>();
-        if (config == null) return result;
-        PRE_FLIP_GROUPS.forEach((window, key) -> {
-            List<Integer> targets = config.preFlips().getOrDefault(key, List.of()).stream()
-                    .filter(preliminary::containsKey).toList();
-            if (targets.isEmpty()) return;
-            result.put(window, targets);
-            for (int target : targets) {
-                doubleTargets.put(target, true);
+    /** Records each allocated target a pass group's {@code flip.<group>_pre} flips as the group opens. */
+    private static void recordPreFlips(PackConfig.PackConfigData config, Map<Integer, TargetSpec> preliminary,
+                                       List<String> deviations) {
+        if (config == null) return;
+        for (String key : PRE_FLIP_KEYS) {
+            for (int target : config.preFlips().getOrDefault(key, List.of())) {
+                if (!preliminary.containsKey(target)) continue;
                 deviations.add("POST_TARGET_FLIP_PRE_APPLIED:" + key + ":" + target);
             }
-        });
-        return result;
+        }
     }
 
-    /** The targets a {@code flip.<group>_pre} directive flips as {@code window}'s pass group opens. */
-    public List<Integer> preFlips(PackFrameSchedulePlan.PostWindow window) {
-        return preFlips.getOrDefault(window, List.of());
+    /** Which side every pass, the world and final read and write each target from. */
+    public PackFlipPlan flips() {
+        return flips;
     }
 
     /** What every phase of the graph build reads. */
@@ -289,15 +266,13 @@ public final class PackTargetGraphPlan {
     }
 
     /**
-     * One post program's step: what it reads and writes, at which extent, and on which side of
-     * each double-buffered target. Targets it both reads and writes, or that a flip names, become
-     * double-buffered in {@code doubleTargets}.
+     * One post program's step: what it reads and writes, and at which extent. Which side of each
+     * target it reads and writes is the flip plan's.
      */
     private static TargetStep step(
             GraphInputs inputs,
             PackProgramPlan program,
             Map<Integer, TargetSpec> preliminary,
-            Map<Integer, Boolean> doubleTargets,
             Set<Integer> mipmappedTargets
     ) {
         PostTargetPlan post = program.targetPlan();
@@ -330,37 +305,26 @@ public final class PackTargetGraphPlan {
             stepDeviations.add("POST_TARGET_SIZE_CONFLICT:" + program.name());
             executable = false;
         }
-        for (int target : reads) {
-            if (writes.contains(target)) {
-                doubleTargets.put(target, true);
-            }
-        }
-        List<Integer> unwritten = unwrittenTargets(post, writes, doubleTargets, stepDeviations);
+        List<Integer> unwritten = unwrittenTargets(post, writes, stepDeviations);
         List<Integer> stepWrites = new ArrayList<>(writes);
         stepWrites.addAll(unwritten);
-        List<Integer> flipsAfter = applyFlips(inputs.config(), post, preliminary, doubleTargets, stepDeviations);
-        Map<Integer, Integer> readSides = new TreeMap<>();
-        Map<Integer, Integer> writeSides = new TreeMap<>();
-        for (int target : reads) readSides.put(target, 0);
-        for (int target : stepWrites) writeSides.put(target, doubleTargets.getOrDefault(target, false) ? 1 : 0);
-        return new TargetStep(post.programName(), reads, stepWrites, post.outputFormats(), readSides, writeSides,
-                mipmapTargets, extent.width(), extent.height(), post.isFinal(), executable, stepDeviations,
-                flipsAfter, unwritten);
+        recordFlips(inputs.config(), post, preliminary, stepDeviations);
+        return new TargetStep(post.programName(), reads, stepWrites, post.outputFormats(), mipmapTargets,
+                extent.width(), extent.height(), post.isFinal(), executable, stepDeviations, unwritten);
     }
 
     /**
-     * The targets a post program's directive names but its shader never writes, each double-buffered.
-     * Iris flips every draw buffer of a composite pass (CompositeRenderer), written or not, so the
-     * pass leaves such a target with its other side's content. Bloop's composite names colortex13
-     * and writes it only with Distant Horizons; the flip is what drops the frame's water refraction.
+     * The targets a post program's directive names but its shader never writes. Iris flips every
+     * draw buffer of a composite pass (CompositeRenderer), written or not, so the pass leaves such a
+     * target with its other side's content. Bloop's composite names colortex13 and writes it only
+     * with Distant Horizons; the flip is what drops the frame's water refraction.
      */
     private static List<Integer> unwrittenTargets(PostTargetPlan post, List<Integer> writes,
-                                                  Map<Integer, Boolean> doubleTargets, List<String> stepDeviations) {
+                                                  List<String> stepDeviations) {
         if (post.isFinal()) return List.of();
         List<Integer> unwritten = post.targetSlots().stream().distinct()
                 .filter(target -> !writes.contains(target)).toList();
         for (int target : unwritten) {
-            doubleTargets.put(target, true);
             stepDeviations.add("POST_TARGET_UNWRITTEN_FLIPPED:" + post.programName() + ":" + target);
         }
         return unwritten;
@@ -426,33 +390,26 @@ public final class PackTargetGraphPlan {
         }
     }
 
-    /**
-     * The allocated targets a {@code flip.<program>} directive flips after this pass, each
-     * double-buffered and recorded. A group's pre-flips are the graph's (groupPreFlips).
-     */
-    private static List<Integer> applyFlips(PackConfig.PackConfigData config, PostTargetPlan post,
-                                            Map<Integer, TargetSpec> preliminary, Map<Integer, Boolean> doubleTargets,
-                                            List<String> stepDeviations) {
+    /** Records each allocated target a {@code flip.<program>} directive flips after this pass. */
+    private static void recordFlips(PackConfig.PackConfigData config, PostTargetPlan post,
+                                    Map<Integer, TargetSpec> preliminary, List<String> stepDeviations) {
         Map<String, List<Integer>> flips = config == null ? Map.of() : config.flips();
-        List<Integer> after = flips.getOrDefault(post.programName(), List.of()).stream()
-                .filter(preliminary::containsKey).toList();
-        for (int target : after) {
-            doubleTargets.put(target, true);
-            stepDeviations.add("POST_TARGET_FLIP_APPLIED:" + post.programName() + ":" + target);
+        for (int target : flips.getOrDefault(post.programName(), List.of())) {
+            if (preliminary.containsKey(target)) {
+                stepDeviations.add("POST_TARGET_FLIP_APPLIED:" + post.programName() + ":" + target);
+            }
         }
-        return after;
     }
 
     /**
      * The allocated targets with their schedule-derived flags. Persistence is declaration-driven:
      * a target persists across frames only when the pack says it is not cleared every frame
-     * (colortexNClear=false). A read-before-write shape alone never implies persistence; declared
-     * persistent feedback targets still receive their one-time initial seed through
-     * requiresInitialSeed.
+     * (colortexNClear=false); every target is cleared on the first frame (PostTargetSides). A target
+     * has an alt side when the flip plan flips or writes it.
      */
     private static List<TargetSpec> finalTargets(
             Map<Integer, TargetSpec> preliminary,
-            Map<Integer, Boolean> doubleTargets,
+            PackFlipPlan flips,
             Set<Integer> mipmappedTargets
     ) {
         List<TargetSpec> targets = new ArrayList<>();
@@ -462,7 +419,7 @@ public final class PackTargetGraphPlan {
             boolean persistent = source.index() != 0 && source.persistent();
             targets.add(new TargetSpec(source.index(), source.format(), source.width(), source.height(),
                     source.clear(), source.clearColorCopy(), persistent,
-                    doubleTargets.getOrDefault(source.index(), false),
+                    flips.sided(source.index()),
                     mipmappedTargets.contains(source.index()), source.paddedAlpha(), source.deviations()));
         }
         return targets;
@@ -633,86 +590,11 @@ public final class PackTargetGraphPlan {
     }
 
     /**
-     * Returns true when a persistent target must be seeded before the first
-     * successful producer can run. This covers feedback passes that read a
-     * clear=false target before they write it, while leaving unrelated
-     * uninitialized targets unavailable. A target a pass compute binds is
-     * seeded too: its images are read and written in no order the steps show,
-     * and Iris clears every target on its first frame (ClearPassCreator: fullClear).
-     */
-    public boolean requiresInitialSeed(int target) {
-        return requiresInitialSeed(target(target), steps, unorderedReads);
-    }
-
-    /**
      * Targets a world program reads: those it samples, and those a hand program stores to as
      * colorimgN, which bind the image world programs read (TargetImages). Iris reads both unordered.
      */
     public Set<Integer> geometryReads() {
         return geometryReads;
-    }
-
-    /** Pure form used by the target-owner tests. */
-    public static boolean requiresInitialSeed(TargetSpec spec, List<TargetStep> steps) {
-        return requiresInitialSeed(spec, steps, Set.of());
-    }
-
-    /**
-     * A persistent target needs a defined first frame when a post program reads
-     * it before any writes it, or when one of {@code unorderedReads} names it: the
-     * world draws before every post step (MakeUp's terrain reads last frame's
-     * fog from gaux4). A target a step leaves unwritten needs one too, since the
-     * step hands back its other side's content.
-     */
-    public static boolean requiresInitialSeed(TargetSpec spec, List<TargetStep> steps, Set<Integer> unorderedReads) {
-        if (spec == null || !spec.persistent()) {
-            return false;
-        }
-        return unorderedReads.contains(spec.index()) || hasReadBeforeWrite(spec.index(), steps, Set.of())
-                || unwrittenFlips(steps).contains(spec.index());
-    }
-
-    /** The targets an executable step's directive names and its shader leaves unwritten. */
-    public Set<Integer> unwrittenFlips() {
-        return unwrittenFlips(steps);
-    }
-
-    private static Set<Integer> unwrittenFlips(List<TargetStep> steps) {
-        Set<Integer> result = new TreeSet<>();
-        for (TargetStep step : steps == null ? List.<TargetStep>of() : steps) {
-            if (step != null && step.executable()) result.addAll(step.unwrittenTargets());
-        }
-        return result;
-    }
-
-    /**
-     * True when a program reads the target before any program writes it in
-     * frame order. Such targets carry cross-frame state by construction:
-     * clearing them every frame destroys what their first reader expects.
-     * A target no program writes counts too: Iris creates every target a
-     * program samples and clears it on its first frame (clearPassesFull), so
-     * the reader runs on the clear colour. Kappa's composite2 reads its
-     * reflection capture colortex12, whose writer composite1 is off by default.
-     *
-     * @param preProduced targets already produced before the steps run,
-     *                    such as geometry outputs that always precede post
-     */
-    static boolean hasReadBeforeWrite(int index, List<TargetStep> steps, Set<Integer> preProduced) {
-        if (preProduced != null && preProduced.contains(index)) {
-            return false;
-        }
-        for (TargetStep step : steps == null ? List.<TargetStep>of() : steps) {
-            if (step == null || !step.executable()) {
-                continue;
-            }
-            if (step.reads(index)) {
-                return true;
-            }
-            if (step.writes(index)) {
-                return false;
-            }
-        }
-        return false;
     }
 
     public TargetStep step(String name) {
@@ -747,7 +629,7 @@ public final class PackTargetGraphPlan {
             result.append(';');
         }
         if (!geometryReads.isEmpty()) result.append("geometryReads=").append(new TreeSet<>(geometryReads)).append(';');
-        if (!preFlips.isEmpty()) result.append("preFlips=").append(new TreeMap<>(preFlips)).append(';');
+        result.append("flips=").append(flips.snapshot());
         result.append("depth=").append(depth.names()).append(':').append(depth.format())
                 .append(";deviations=").append(deviations);
         return result.toString();

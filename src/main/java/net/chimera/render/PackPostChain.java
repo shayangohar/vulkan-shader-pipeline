@@ -108,10 +108,13 @@ final class PackPostChain {
         }
     }
 
-    /** Opens the frame's target executor and NaN tripwire, and scene coverage when it runs. */
-    void beginPostFrame(VkCommandBuffer commandBuffer) {
+    /**
+     * Opens the frame's target executor, with colortex0's clear colour this frame, and the NaN
+     * tripwire, and scene coverage when it runs.
+     */
+    void beginPostFrame(VkCommandBuffer commandBuffer, float[] colortex0Clear) {
         VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
-        pass.packPostTargets.beginFrame(commandBuffer, hdrColor);
+        pass.packPostTargets.beginFrame(commandBuffer, hdrColor, colortex0Clear);
         pass.packPostFrameStarted = true;
         this.nanTripwire.beginFrame(commandBuffer,
                 pass.sessions.packPath == null ? "?" : String.valueOf(pass.sessions.packPath.getFileName()));
@@ -165,7 +168,7 @@ final class PackPostChain {
             }
             if (pass.packFrameSchedule.hasWindow(window)) runPackPostWindow(commandBuffer, hdrColor, window);
             if (pass.packPostChainActive) {
-                pass.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
+                pass.packPostTargets.enterWorld(commandBuffer, window, hdrColor);
             }
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
@@ -183,6 +186,7 @@ final class PackPostChain {
             pass.packEarlyPostCompleted = true;
         }
         runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.LATE);
+        if (pass.packPostChainActive) pass.packPostTargets.enterFinal(commandBuffer);
         commitPostFrame();
     }
 
@@ -268,6 +272,7 @@ final class PackPostChain {
      * now, then the barrier Iris's renderAll records after them, and nothing drawn or flipped.
      */
     private void runComputeOnlyStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
+        pass.packPostTargets.beginStep(commandBuffer, stage.name());
         pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(commandBuffer),
                 hdrColor.width, hdrColor.height);
         if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
@@ -279,6 +284,8 @@ final class PackPostChain {
         ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
         boolean attempted = false;
         try {
+            // The sides the pass reads and writes, the plan's for it (earlier steps that did not run pass through).
+            pass.packPostTargets.beginStep(commandBuffer, post.name());
             // Iris runs a pass's computes first, over the images the pass then reads.
             if (pass.packPassComputes != null) {
                 pass.packPassComputes.dispatchBefore(post.name(), commandBuffer, computeSources(commandBuffer),

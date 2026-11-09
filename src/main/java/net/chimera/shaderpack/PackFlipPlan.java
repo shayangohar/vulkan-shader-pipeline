@@ -1,6 +1,7 @@
 package net.chimera.shaderpack;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
@@ -191,6 +192,17 @@ public final class PackFlipPlan {
         return window == PackFrameSchedulePlan.PostWindow.FINAL ? finalState() : close.getOrDefault(window, 0);
     }
 
+    /**
+     * Whether {@code window}'s group changes the state as it opens: its pre-flips, net. Iris builds
+     * the group whether or not it has passes, so such a group opens even with none (audit FD4).
+     */
+    public boolean preFlips(PackFrameSchedulePlan.PostWindow window) {
+        int index = GROUPS.indexOf(window);
+        if (index < 0) return false;
+        int before = index == 0 ? 0 : close(GROUPS.get(index - 1));
+        return open(window) != before;
+    }
+
     /** What opaque gbuffers, the sky and the solid hand read and write: Iris's flippedAfterPrepare. */
     public int opaqueWorld() {
         return close(PackFrameSchedulePlan.PostWindow.PREPARE);
@@ -241,12 +253,13 @@ public final class PackFlipPlan {
         return targets(mask);
     }
 
+    /** The targets in {@code mask}, ascending: snapshots and fingerprints must not depend on hash order. */
     private static Set<Integer> targets(int mask) {
-        Set<Integer> result = new TreeSet<>();
+        TreeSet<Integer> result = new TreeSet<>();
         for (int target = 0; target <= PostTargetPlan.MAX_TARGET; target++) {
             if (flipped(mask, target)) result.add(target);
         }
-        return Set.copyOf(result);
+        return Collections.unmodifiableSortedSet(result);
     }
 
     /** One line per group and step, for tests and the graph snapshot. */
