@@ -237,6 +237,16 @@ final class FlipSidesTest {
             }
         }
 
+        /** A screen change between frames: the world attachments are made anew, the HDR image undefined. */
+        void replaceHdr() {
+            chimera.put(new PostTargetSides.Image(0, PostTargetSides.HDR), "undefined");
+            sides.hdrReplaced();
+        }
+
+        boolean anyImageHolds(String token) {
+            return chimera.values().stream().anyMatch(value -> value != null && value.contains(token));
+        }
+
         private void check(boolean condition, String message) {
             if (!condition) mismatches.add("frame " + frame + ": " + message);
         }
@@ -389,6 +399,23 @@ final class FlipSidesTest {
                 "the world must draw over last frame's final image: " + harness.reads.get("deferred1").get(0));
         assertTrue(harness.frameStartCopies <= 2, "alt back from the HDR image, main into it: "
                 + harness.frameStartCopies);
+    }
+
+    /**
+     * Every screen opened or closed makes a new HDR image between frames, without touching the pack
+     * targets. The frame that follows must take colortex0 from the graph sides; written back as the
+     * side the old image stood in for, the new image's undefined content would land on colortex0's alt.
+     */
+    @Test
+    void aNewHdrImageFromAScreenChangeIsNeverWrittenBack(@TempDir Path root) throws Exception {
+        Harness harness = harness(root, Map.of(
+                "deferred1", "const bool colortex0Clear = false;\nuniform sampler2D colortex0;\n"
+                        + "/* RENDERTARGETS: 0 */\n" + copies("colortex0"),
+                "composite1", "uniform sampler2D colortex0;\n/* RENDERTARGETS: 0 */\n" + copies("colortex0")), "");
+        for (int frame = 0; frame < 2; frame++) harness.run(Frame.plain(Set.of(0)));
+        harness.replaceHdr();
+        for (int frame = 2; frame < 4; frame++) harness.run(Frame.plain(Set.of(0)));
+        assertTrue(!harness.anyImageHolds("undefined"), "a new HDR image's content reached a target");
     }
 
     /**

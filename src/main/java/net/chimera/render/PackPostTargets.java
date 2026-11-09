@@ -182,6 +182,8 @@ public final class PackPostTargets {
         if (!this.configured || this.graph == null) {
             throw new IllegalStateException("pack target graph is not configured");
         }
+        // A screen change makes a new HDR image between frames: it holds nothing to write back.
+        if (hdrColor != this.hdrIdentitySource) this.sides.hdrReplaced();
         this.hdrIdentitySource = hdrColor;
         this.colortex0Clear = colortex0Clear;
         this.temporal.beginFrame(hdrColor != null);

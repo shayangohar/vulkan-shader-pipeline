@@ -112,6 +112,16 @@ final class PostTargetSides {
         hdrNewer = true;
     }
 
+    /**
+     * The HDR image was made anew between frames (a screen change recreates the world attachments)
+     * and holds nothing: it stands in for no side, so nothing is written back from it. What it held
+     * newer than its graph side went with the old image; the next frame starts from the graph sides.
+     */
+    void hdrReplaced() {
+        hdrSide = -1;
+        hdrNewer = false;
+    }
+
     /** Whether colortex0 is not cleared every frame: the HDR image carries it into the next frame. */
     boolean carriesColortex0() {
         return allocated(0) && !clearedEachFrame(0);
