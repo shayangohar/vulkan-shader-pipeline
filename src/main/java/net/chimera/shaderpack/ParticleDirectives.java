@@ -39,6 +39,11 @@ public record ParticleDirectives(Ordering ordering, boolean separateEntityDraws,
             return this == BEFORE || this == MIXED && !translucent;
         }
 
+        /** Whether NeoForge's early or late particle call draws a sheet of this translucency. */
+        public boolean drawsSheet(boolean earlyCall, boolean translucentSheet) {
+            return early(translucentSheet) == earlyCall;
+        }
+
         /** Whether NeoForge's early or late particle call draws anything; Iris skips the call that doesn't. */
         public boolean drawsIn(boolean earlyCall) {
             return this == MIXED || (this == BEFORE) == earlyCall;

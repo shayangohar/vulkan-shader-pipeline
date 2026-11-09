@@ -12,6 +12,7 @@ import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.shaderpack.PackEntityIdResolver;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackRenderingPhase;
+import net.minecraft.client.particle.ParticleRenderType;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.ShaderInstance;
@@ -23,6 +24,7 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -425,9 +427,22 @@ public final class ChimeraEntityBridge {
         particleWindow = false;
     }
 
-    /** The particle render type ParticleEngine is about to draw: Iris splits particles by translucency. */
-    public static void setParticleTranslucent(boolean translucent) {
-        particleTranslucent = translucent;
+    /**
+     * Picks the particle program for a ParticleEngine.render call that draws the sheets
+     * {@code sheets} accepts, as Iris's NeoForge MixinParticleEngine sets one shader per call.
+     */
+    public static void beginParticleCall(Predicate<ParticleRenderType> sheets) {
+        particleTranslucent = translucentParticleCall(sheets);
+    }
+
+    /**
+     * Whether a particle call draws every sheet with gbuffers_particles_translucent: only when it
+     * leaves the opaque sheet out, as NeoForge's late call does under MIXED. Under BEFORE and AFTER
+     * every sheet draws with gbuffers_particles, each with its own blend. A sheet's own
+     * isTranslucent() does not decide it: NeoForge makes that true for the terrain and custom sheets.
+     */
+    static boolean translucentParticleCall(Predicate<ParticleRenderType> sheets) {
+        return !sheets.test(ParticleRenderType.PARTICLE_SHEET_OPAQUE);
     }
 
     /**
@@ -726,8 +741,7 @@ public final class ChimeraEntityBridge {
      */
     private static Family worldHostLane(String shader, VertexFormat format) {
         if (!particleWindow || !shader.equals("particle") || format != DefaultVertexFormat.PARTICLE) return null;
-        // An opaque pack shader never draws translucent particles, nor the other way round:
-        // the host state and ordering are part of each lane's contract.
+        // The call's program draws every sheet in it (beginParticleCall), each with its host blend.
         if (particleTranslucent) return translucentParticlePipeline != null ? Family.PARTICLE_TRANSLUCENT : null;
         return particlePipeline != null ? Family.PARTICLE : null;
     }
