@@ -255,10 +255,11 @@ public final class PackAdvancedResourcePlan {
                     a.rewrittenBinding(), a.stageMask() | b.stageMask(), a.size(), a.status(), a.deviations()));
         }
         List<DescriptorBinding> slots = new ArrayList<>(ordinaryDescriptors);
-        for (StorageBufferBinding buffer : buffers) {
-            if (buffer.supported()) slots.add(new DescriptorBinding(buffer.blockName(), 0,
-                    buffer.rewrittenBinding(), 9, buffer.stageMask(),
-                    "storage:" + buffer.logicalIndex()));
+        // One descriptor per buffer: blocks of one bufferObject share its binding, whatever their
+        // names, as GL lets a vertex and a fragment stage name it differently (audit FD5).
+        for (StorageBufferBinding buffer : uniqueBuffers.values()) {
+            slots.add(new DescriptorBinding(buffer.blockName(), 0, buffer.rewrittenBinding(), 9,
+                    buffer.stageMask(), storageIdentity(buffer.logicalIndex())));
         }
         List<GraphicsImageBinding> uniqueImages = mergeGraphicsBindings(images,
                 GraphicsImageBinding::symbol);
@@ -277,6 +278,11 @@ public final class PackAdvancedResourcePlan {
         return new ProgramBindingLayout(base, imageBase, samplerBase,
                 List.copyOf(uniqueBuffers.values()), uniqueImages, uniqueSamplers,
                 ordinaryDescriptors, slots);
+    }
+
+    /** A storage buffer descriptor's identity: the bufferObject it binds. */
+    private static String storageIdentity(int logicalIndex) {
+        return "storage:" + logicalIndex;
     }
 
     private static List<GraphicsImageBinding> mergeGraphicsBindings(
@@ -792,8 +798,9 @@ public final class PackAdvancedResourcePlan {
             for (GlslStorageBufferParser.Block block : GlslStorageBufferParser.scan(source)) {
                 if (block.blockName().equals(binding.blockName())
                         && block.instanceName().equals(binding.instanceName())) {
+                    String identity = storageIdentity(binding.logicalIndex());
                     DescriptorBinding descriptor = bindingLayout(program).descriptors().stream()
-                            .filter(value -> value.type() == 9 && value.symbol().equals(binding.blockName()))
+                            .filter(value -> value.type() == 9 && value.identity().equals(identity))
                             .findFirst().orElse(null);
                     if (descriptor == null) return null;
                     replacements.put(GlslStorageBufferParser.key(block), descriptor.binding());

@@ -248,6 +248,47 @@ final class StorageBufferPlanTest {
     }
 
     /**
+     * Audit FD5: GL lets each stage name a bufferObject's block its own way. Both blocks share the
+     * buffer's one binding, and the planned layout must hold one descriptor there, not one per name,
+     * or the layout check refuses the program.
+     */
+    @Test
+    void aBufferObjectNamedPerStageIsOneDescriptor(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), "bufferObject.0=64\n");
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 430 compatibility
+                layout(std430, binding = 0) buffer VertexData { float lift[]; } vertexData;
+                void main() { gl_Position = ftransform(); gl_Position.y += vertexData.lift[0]; }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 430 compatibility
+                layout(std430, binding = 0) buffer FragmentData { float shade[]; } fragmentData;
+                void main() { gl_FragData[0] = vec4(fragmentData.shade[0]); }
+                """);
+        PackPlan pack = PackProbe.analyze(root).plan();
+        PackProgramPlan shadow = pack.program("shadow");
+        PackAdvancedResourcePlan resources = pack.advancedResources();
+        assertTrue(shadow != null && shadow.executable() && pack.shouldAttempt("shadow"),
+                "shadow did not plan: " + (shadow == null ? "missing" : shadow.deviations()));
+        List<PackAdvancedResourcePlan.StorageBufferBinding> blocks = resources.storageBuffers("shadow");
+        assertEquals(2, blocks.size(), "one binding per named block");
+        assertEquals(blocks.get(0).rewrittenBinding(), blocks.get(1).rewrittenBinding(), "one buffer, one binding");
+        var layout = resources.bindingLayout("shadow");
+        assertEquals(1, layout.descriptors().stream().filter(value -> value.type() == 9).count(),
+                "one storage descriptor for the buffer: " + layout.descriptors());
+        int binding = blocks.get(0).rewrittenBinding();
+        for (String stage : List.of("vertex", "fragment")) {
+            String rewritten = resources.rewriteStorageBuffers("shadow", shadow.stageSource(stage));
+            assertTrue(rewritten != null && rewritten.contains("layout(std430, binding = " + binding + ")"),
+                    stage + " block not rebound: " + rewritten);
+        }
+        assertEquals(null, PackAdvancedResourcePlan.layoutMismatch(layout, shadow.convertedVertex(),
+                shadow.convertedFragment(), baselineShadowBuilderDescriptors(shadow, resources)),
+                "the layout must accept both stages' blocks at the buffer's binding");
+    }
+
+    /**
      * The shadow program's descriptor set as the runtime hands it to the host's pipeline builder,
      * which creates one descriptor per entry at the same binding (HostPipelineLayout).
      */
