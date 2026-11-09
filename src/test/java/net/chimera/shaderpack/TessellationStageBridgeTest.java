@@ -333,6 +333,9 @@ final class TessellationStageBridgeTest {
                 TessellationStageBridge.swappedWinding("/* layout(triangles) in; */\nlayout(triangles) in;"));
         assertEquals("layout(triangles, equal_spacing) in;\nlayout(cw) in;",
                 TessellationStageBridge.swappedWinding("layout(triangles, equal_spacing) in;\nlayout(ccw) in;"));
+        assertEquals("layout(triangles /* ccw */, cw) in;",
+                TessellationStageBridge.swappedWinding("layout(triangles /* ccw */) in;"),
+                "an order in a comment within the layout is not the layout's");
     }
 
     /** GL's ccw is Vulkan's cw under the upper-left domain origin, and GL's default is ccw. */

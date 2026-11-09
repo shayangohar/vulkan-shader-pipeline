@@ -231,29 +231,23 @@ final class TessellationStageBridge {
      * took the swap, and an order in a second layout statement (layout(ccw) in;) kept GL's.
      */
     static String swappedWinding(String evaluation) {
-        // Matched outside comments, at the offsets of the source as written.
-        Matcher layout = INPUT_LAYOUT.matcher(GlslLexer.maskComments(evaluation));
+        // Layouts and their orders are read outside comments, at the offsets of the source as written.
+        String masked = GlslLexer.maskComments(evaluation);
+        Matcher layout = INPUT_LAYOUT.matcher(masked);
         List<int[]> layouts = new ArrayList<>();
-        while (layout.find()) layouts.add(new int[] {layout.start(1), layout.end(1)});
+        List<int[]> orders = new ArrayList<>();
+        while (layout.find()) {
+            layouts.add(new int[] {layout.start(1), layout.end(1)});
+            Matcher order = VERTEX_ORDER.matcher(masked).region(layout.start(1), layout.end(1));
+            while (order.find()) orders.add(new int[] {order.start(), order.end()});
+        }
         if (layouts.isEmpty()) return evaluation;
-        boolean ordered = layouts.stream().anyMatch(range -> VERTEX_ORDER.matcher(
-                evaluation.substring(range[0], range[1])).find());
         StringBuilder result = new StringBuilder(evaluation);
-        for (int index = layouts.size() - 1; index >= 0; index--) {
-            int[] range = layouts.get(index);
-            String qualifiers = evaluation.substring(range[0], range[1]);
-            String swapped = ordered ? swappedOrder(qualifiers) : index == 0 ? qualifiers + ", cw" : qualifiers;
-            result.replace(range[0], range[1], swapped);
+        if (orders.isEmpty()) return result.insert(layouts.get(0)[1], ", cw").toString();
+        for (int index = orders.size() - 1; index >= 0; index--) {
+            int[] range = orders.get(index);
+            result.replace(range[0], range[1], masked.substring(range[0], range[1]).equals("ccw") ? "cw" : "ccw");
         }
         return result.toString();
-    }
-
-    /** {@code cw} as {@code ccw} and {@code ccw} as {@code cw}, in one layout's qualifiers. */
-    private static String swappedOrder(String qualifiers) {
-        Matcher order = VERTEX_ORDER.matcher(qualifiers);
-        StringBuilder swapped = new StringBuilder();
-        while (order.find()) order.appendReplacement(swapped, order.group().equals("ccw") ? "cw" : "ccw");
-        order.appendTail(swapped);
-        return swapped.toString();
     }
 }
