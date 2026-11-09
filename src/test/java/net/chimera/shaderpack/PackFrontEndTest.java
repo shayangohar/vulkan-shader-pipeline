@@ -479,6 +479,43 @@ final class PackFrontEndTest {
                 "a value reading a refused declaration was not refused: " + settings.deviations());
     }
 
+    /**
+     * Iris's parser binds {@code a / b} to {@code divide(a, b)} (IrisOptions), so a zero divisor
+     * gives one answer either way. Chimera's operators served a silent zero where divide gave
+     * infinity; both now give infinity, served as Iris serves it and reported once.
+     */
+    @Test
+    void anOperatorDividesAsItsFunctionDoes() {
+        assertEquals(Double.POSITIVE_INFINITY, value("1.0 / 0.0"));
+        assertEquals(value("divide(1.0, 0.0)"), value("1.0 / 0.0"));
+        assertTrue(Double.isNaN(value("1.0 % 0.0")) && Double.isNaN(value("remainder(1.0, 0.0)")), "x % 0");
+        assertTrue(Double.isNaN(value("fmod(1.0, 0.0)")) && Double.isNaN(value("fmod(0.0, 0.0)")), "fmod(x, 0)");
+        assertEquals(1.0, value("clamp(1.0 / 0.0, 0.0, 1.0)"), "the infinity reaches the clamp, not a zero");
+    }
+
+    /**
+     * A non-finite value is served as computed, to the uniform and to the values that read it, as
+     * Iris serves it. RenderPearl's fog density divides by its Fog setting: at 0, Iris's infinity
+     * means no fog, while holding the last finite value made the fog depend on whether it had rained.
+     */
+    @Test
+    void aNonFiniteValueIsServedAsIrisServesIt() {
+        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(true, "float", "inverse", "1.0 / frameTime"),
+                PackRuntimeSettings.declaration(true, "float", "reader", "clamp(inverse, 0.0, 1.5)")), List.of());
+        assertTrue(settings.rejected().isEmpty(), settings.deviations().toString());
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> 2.0, session, 0.05f);
+        assertEquals(0.5f, session.values()[settings.indexOf("inverse")]);
+        assertTrue(session.failures().isEmpty(), session.failures().toString());
+        settings.evaluate((name, component) -> 0.0, session, 0.05f);
+        assertEquals(Float.POSITIVE_INFINITY, session.values()[settings.indexOf("inverse")], "not the last 0.5");
+        assertEquals(1.5f, session.values()[settings.indexOf("reader")], "a reader sees the infinity");
+        String report = session.failures().get("inverse");
+        assertTrue(report != null && report.startsWith("inverse is Infinity at frame 2: 1.0 / frameTime"),
+                "a zero divisor is reported once, with its value, frame and expression: " + session.failures());
+    }
+
     private static double value(String expression) {
         PackExpression.Program program = PackExpression.parse(expression, BiomeIds.constants());
         return program.evaluate((name, component) -> 0.0, program.newState(), 0.0f);
@@ -493,6 +530,55 @@ final class PackFrontEndTest {
         assertTrue(constants.value("PPT_NONE") == 0.0 && constants.value("PPT_RAIN") == 1.0
                 && constants.value("PPT_SNOW") == 2.0, "PPT_* codes");
         assertTrue(UniformRegistry.expressionWidth("biome_category") == 1, "biome_category is an int input");
+    }
+
+    /**
+     * Iris defines the same symbols as macros in every shader and properties file it preprocesses
+     * (IrisDefines.createIrisReplacements). Chimera served them to expressions only, so a pack's
+     * {@code #if} on one read 0, and Noble's and Photon's {@code #ifndef PPT_NONE} fallbacks in
+     * shaders.properties were taken.
+     */
+    @Test
+    void irisBiomeSymbolsAreMacrosToo(@TempDir Path root) throws IOException {
+        Map<String, String> macros = PackEngineDefines.standard();
+        assertTrue("5".equals(macros.get("BIOME_DESERT")) && "12".equals(macros.get("CAT_DESERT"))
+                && "2".equals(macros.get("PPT_SNOW")), "BIOME_*, CAT_* and PPT_* macros");
+        assertTrue(!macros.containsKey("BIOME_PALE_GARDEN"), "Iris 1.21.1 defines no BIOME_PALE_GARDEN");
+        assertEquals(64 + 19 + 3, BiomeIds.macros().size(), "64 biomes, 19 categories, 3 precipitation codes");
+        BiomeIds.macros().forEach((name, value) ->
+                assertEquals(Double.parseDouble(value), BiomeIds.constants().value(name), name));
+
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform float ppt;
+                uniform float desert;
+                void main() {
+                #if BIOME_DESERT == 5 && CAT_DESERT == 12 && PPT_SNOW == 2
+                    gl_FragColor = vec4(ppt, desert, 0.25, 1.0);
+                #else
+                    gl_FragColor = vec4(ppt, desert, 0.75, 1.0);
+                #endif
+                }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #ifndef PPT_SNOW
+                #define PPT_SNOW 7
+                #endif
+                uniform.float.ppt = PPT_SNOW
+                #if BIOME_DESERT == 5 && CAT_DESERT == 12
+                uniform.float.desert = 1.0
+                #endif
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackRuntimeSettings settings = analysis.plan().runtimeSettings();
+        assertTrue(settings.rejected().isEmpty(), settings.deviations().toString());
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> 0.0, session, 0.05f);
+        assertEquals(2.0f, session.values()[settings.indexOf("ppt")], "the engine's PPT_SNOW, not the fallback");
+        assertTrue(settings.indexOf("desert") >= 0, "#if BIOME_DESERT == 5 holds in shaders.properties");
+        String fragment = analysis.plan().program("composite").convertedFragment();
+        assertTrue(fragment.contains("0.25") && !fragment.contains("0.75"), "the GLSL #if holds: " + fragment);
     }
 
     private static void rejected(String source, PackExpression.Widths widths, String code) {

@@ -106,6 +106,30 @@ public final class ChimeraRenderer {
         }
     }
 
+    /**
+     * VulkanMod's final teardown (Renderer.cleanUpResources, from Vulkan.cleanUp after the device
+     * went idle) cleans only the installed main pass. Chimera hands the frame to the host pass when
+     * the level closes, so on quit its own pass was never cleaned: its Vulkan objects outlived the
+     * device and an unpacked ZIP's temporary folder waited for the next start's sweep. Cleans it
+     * here unless it is the installed pass, which VulkanMod cleans itself. Any failure, an Error
+     * included, is logged: one escaping would skip the rest of VulkanMod's teardown, from the host
+     * pass to the device. Chimera is not ready afterwards, so nothing installs or drives the torn
+     * down pass if the host ever reached this outside quitting.
+     */
+    public static void beforeHostCleanup() {
+        ChimeraMainPass pass = chimeraPass;
+        boolean installedPass = pass != null && Renderer.getInstance().getMainPass() == pass;
+        ready = false;
+        if (pass == null || installedPass) {
+            return;
+        }
+        try {
+            pass.cleanUp();
+        } catch (Throwable failure) {
+            ChimeraMod.LOGGER.error("[chimera] final cleanup of the idle Chimera pass failed", failure);
+        }
+    }
+
     public static boolean isReady() {
         return ready;
     }

@@ -286,6 +286,7 @@ final class PackFrameState {
         this.lastLevel = null;
         this.session.reset();
         resetTemporalState();
+        irisWorld.resetProgramFog();
     }
 
     void installRuntimeSettings(PackRuntimeSettings settings) {
@@ -823,6 +824,29 @@ final class PackFrameState {
         return true;
     }
 
+    /** Records the density of the fog FogRenderer is setting up (Iris fogMode and fogDensity). */
+    void captureFogDensity(Camera camera) {
+        irisWorld.captureFogDensity(camera);
+    }
+
+    /** Records the shape of the fog FogRenderer has set up (Iris fogShape). */
+    void captureFogShape() {
+        irisWorld.captureFogShape();
+    }
+
+    /** Starts a frame's fog latches: each program reads its per-frame fog afresh at its next draw. */
+    void beginFogFrame() {
+        irisWorld.beginFrame();
+    }
+
+    /**
+     * Serves the next draw of {@code program} its per-frame fog values (IrisWorldState); a null
+     * program, a compute dispatch, reads the current ones. True when the served values changed.
+     */
+    boolean latchProgramFog(Object program) {
+        return irisWorld.latchProgramFog(program, this);
+    }
+
     PackRenderingPhase setRenderingPhase(PackRenderingPhase phase) {
         var previous = renderingPhase;
         renderingPhase = Objects.requireNonNull(phase);
@@ -893,6 +917,7 @@ final class PackFrameState {
         eyeBrightness[0] = 0;
         eyeBrightness[1] = 0;
         eyeBrightnessSmooth[0] = 0;
+        eyeBrightnessSmooth[1] = 0;
         isEyeInWater = 0;
     }
 

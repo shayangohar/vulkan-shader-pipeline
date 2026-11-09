@@ -9,9 +9,10 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Fires once VulkanMod's Renderer singleton is fully constructed (swapchain,
- * default main pass, sync objects all exist), which is the earliest safe
- * moment for chimera to take over the main pass.
+ * VulkanMod Renderer's lifecycle: Chimera takes over the main pass once the
+ * Renderer singleton is fully constructed (swapchain, default main pass, sync
+ * objects all exist), replaces pack resources before a frame records, and
+ * cleans its own pass at final teardown when the host pass is the installed one.
  */
 @Mixin(value = Renderer.class, remap = false)
 public abstract class RendererInitMixin {
@@ -19,6 +20,15 @@ public abstract class RendererInitMixin {
     @Inject(method = "initRenderer", at = @At("TAIL"))
     private static void chimera$onRendererInit(CallbackInfo ci) {
         ChimeraRenderer.onHostRendererReady();
+    }
+
+    /**
+     * cleanUpResources cleans only the installed main pass. This runs first, while the device
+     * and the host pass are alive, so Chimera's pass is cleaned before the host's.
+     */
+    @Inject(method = "cleanUpResources", at = @At("HEAD"))
+    private void chimera$beforeCleanUpResources(CallbackInfo ci) {
+        ChimeraRenderer.beforeHostCleanup();
     }
 
     /**
