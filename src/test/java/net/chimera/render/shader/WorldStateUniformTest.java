@@ -801,8 +801,8 @@ final class WorldStateUniformTest {
                 "the non-finite report must name the expression that produced it");
         assertTrue(session.failures().get("m73NonFinite").contains("frame=1"),
                 "the non-finite report must carry the frame context");
-        assertTrue(Float.isFinite(session.values()[nonFinite]),
-                "a non-finite derived value must hold a finite result rather than a NaN");
+        assertTrue(Float.isNaN(session.values()[nonFinite]),
+                "a non-finite derived value is served as computed, as Iris serves it");
     }
 
     /** Declarations the language refuses are reported and never served. */

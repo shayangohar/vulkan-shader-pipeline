@@ -332,7 +332,7 @@ public final class PackExpression {
     /**
      * An operator, evaluated by the function Iris's parser binds it to (IrisOptions): {@code a / b}
      * is {@code divide(a, b)}, so a zero divisor gives the same infinity or NaN either way, which
-     * the session reports and holds (KNOW-402) rather than serving a silent zero.
+     * the session reports once and serves as Iris does rather than a silent zero.
      */
     private record Binary(PackFunction function, Node left, Node right, int width) implements Node {
         /** The function an operator is evaluated by. */

@@ -482,7 +482,7 @@ final class PackFrontEndTest {
     /**
      * Iris's parser binds {@code a / b} to {@code divide(a, b)} (IrisOptions), so a zero divisor
      * gives one answer either way. Chimera's operators served a silent zero where divide gave
-     * infinity; both now give infinity, and a value that ends non-finite is reported and holds.
+     * infinity; both now give infinity, served as Iris serves it and reported once.
      */
     @Test
     void anOperatorDividesAsItsFunctionDoes() {
@@ -490,12 +490,28 @@ final class PackFrontEndTest {
         assertEquals(value("divide(1.0, 0.0)"), value("1.0 / 0.0"));
         assertTrue(Double.isNaN(value("1.0 % 0.0")) && Double.isNaN(value("remainder(1.0, 0.0)")), "x % 0");
         assertEquals(1.0, value("clamp(1.0 / 0.0, 0.0, 1.0)"), "the infinity reaches the clamp, not a zero");
+    }
+
+    /**
+     * A non-finite value is served as computed, to the uniform and to the values that read it, as
+     * Iris serves it. RenderPearl's fog density divides by its Fog setting: at 0, Iris's infinity
+     * means no fog, while holding the last finite value made the fog depend on whether it had rained.
+     */
+    @Test
+    void aNonFiniteValueIsServedAsIrisServesIt() {
         PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
-                PackRuntimeSettings.declaration(true, "float", "inverse", "1.0 / 0.0")), List.of());
+                PackRuntimeSettings.declaration(true, "float", "inverse", "1.0 / frameTime"),
+                PackRuntimeSettings.declaration(true, "float", "reader", "clamp(inverse, 0.0, 1.5)")), List.of());
+        assertTrue(settings.rejected().isEmpty(), settings.deviations().toString());
         PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> 2.0, session, 0.05f);
+        assertEquals(0.5f, session.values()[settings.indexOf("inverse")]);
+        assertTrue(session.failures().isEmpty(), session.failures().toString());
         settings.evaluate((name, component) -> 0.0, session, 0.05f);
-        assertTrue(session.failures().containsKey("inverse"), "a zero divisor is reported: " + session.failures());
-        assertEquals(0.0f, session.values()[settings.indexOf("inverse")], "the value holds its last finite result");
+        assertEquals(Float.POSITIVE_INFINITY, session.values()[settings.indexOf("inverse")], "not the last 0.5");
+        assertEquals(1.5f, session.values()[settings.indexOf("reader")], "a reader sees the infinity");
+        assertTrue(session.failures().containsKey("inverse") && session.failures().get("inverse").contains("frame=2"),
+                "a zero divisor is reported once, with its frame: " + session.failures());
     }
 
     private static double value(String expression) {

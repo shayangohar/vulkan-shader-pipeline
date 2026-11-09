@@ -401,8 +401,8 @@ public final class PackUniformProvider {
 
     /**
      * Reports each declaration whose expression produced a non-finite result, once per session,
-     * with the expression and the inputs that produced it. The value itself holds its last finite
-     * result, so the frame is diagnosable rather than silently substituted.
+     * with the expression and the inputs that produced it. The value itself is served as computed,
+     * as Iris serves it, so the report is what keeps it from being silent.
      */
     private void logDerivedValueFailures() {
         for (Map.Entry<String, String> failure : frameState.valueFailures().entrySet()) {
@@ -410,7 +410,7 @@ public final class PackUniformProvider {
                 continue;
             }
             ChimeraMod.LOGGER.warn("[chimera] pack value {} produced a non-finite result; "
-                    + "holding its last finite value. {}", failure.getKey(), failure.getValue());
+                    + "serving it as Iris does. {}", failure.getKey(), failure.getValue());
         }
     }
 

@@ -273,8 +273,7 @@ public final class PackRuntimeSettings {
         private final PackExpression.State[] states;
         private final double[] scratch;
         private final float[] output;
-        private final double[] lastFinite;
-        /** One value's components for the frame, before the finite check stores them. */
+        /** One value's components for the frame, before they are stored. */
         private final double[] lanes = new double[4];
         private final Map<String, String> failures = new TreeMap<>();
         private int frames;
@@ -286,7 +285,6 @@ public final class PackRuntimeSettings {
             }
             this.scratch = new double[slots];
             this.output = new float[slots];
-            this.lastFinite = new double[slots];
         }
 
         /** The frame's evaluated values, one slot per component, in dependency order. */
@@ -296,8 +294,8 @@ public final class PackRuntimeSettings {
 
         /**
          * Declarations whose expression produced a non-finite result, with the context of the
-         * first frame that happened on. A failure here is never silent: it is reported once and
-         * the value holds its last finite result rather than an invented one.
+         * first frame that happened on. A failure here is never silent: it is reported once, and
+         * the value is served as computed, as Iris serves it.
          */
         public Map<String, String> failures() {
             return Map.copyOf(this.failures);
@@ -310,7 +308,6 @@ public final class PackRuntimeSettings {
             }
             Arrays.fill(this.scratch, 0.0);
             Arrays.fill(this.output, 0.0F);
-            Arrays.fill(this.lastFinite, 0.0);
             this.failures.clear();
             this.frames = 0;
         }
@@ -339,18 +336,15 @@ public final class PackRuntimeSettings {
                 double result = session.lanes[lane];
                 int slot = base + lane;
                 if (!Double.isFinite(result)) {
-                    // Diagnosis over substitution: name the declaration, its expression and the
-                    // inputs that produced it, and hold the last finite result rather than
-                    // inventing a number. A silent zero would hide the failure.
+                    // Served as Iris serves it, to the uniform and to the values that read it:
+                    // RenderPearl's fog density divides by its Fog setting, and at 0 Iris's
+                    // infinity means no fog. Named once, with its expression and inputs.
                     session.failures.putIfAbsent(value.name(),
                             "expression=" + value.program().source()
                                     + " lane=" + lane
                                     + " frame=" + session.frames
                                     + " frameDelta=" + frameDelta
                                     + " inputs=" + context(value, inputs));
-                    result = session.lastFinite[slot];
-                } else {
-                    session.lastFinite[slot] = result;
                 }
                 session.scratch[slot] = result;
                 session.output[slot] = value.type().equals("int") || value.type().equals("bool")
