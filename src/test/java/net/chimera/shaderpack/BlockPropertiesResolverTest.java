@@ -37,6 +37,16 @@ final class BlockPropertiesResolverTest {
             + "block.17 = poppy:age=1 birch_leaves:distance=1,2 spruce_leaves:persistent=true:bad\n"
             + "block.18 = %WALLS:north=low %minecraft:logs\n";
 
+    /**
+     * ChimeraTerrainPipelines tells material maps apart by identity. A new empty map on each reset
+     * counted as a change, so each reset to vanilla rebuilt the live level in extended mode.
+     */
+    @Test
+    void theEmptyMapIsOneMap() {
+        assertTrue(PackMaterialResolver.empty() == PackMaterialResolver.empty(), "one empty map");
+        assertTrue(PackMaterialResolver.empty().mappings().isEmpty());
+    }
+
     @Test
     void namesAndPredicates(@TempDir Path root) throws IOException {
         PackMaterialResolver.ParseResult result = parse(root);
