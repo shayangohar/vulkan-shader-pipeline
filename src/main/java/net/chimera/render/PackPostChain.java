@@ -8,6 +8,7 @@ import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackCoveragePlan;
+import net.chimera.shaderpack.PackFlipPlan;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackProgram;
@@ -108,10 +109,13 @@ final class PackPostChain {
         }
     }
 
-    /** Opens the frame's target executor and NaN tripwire, and scene coverage when it runs. */
-    void beginPostFrame(VkCommandBuffer commandBuffer) {
+    /**
+     * Opens the frame's target executor, with colortex0's clear colour this frame, and the NaN
+     * tripwire, and scene coverage when it runs.
+     */
+    void beginPostFrame(VkCommandBuffer commandBuffer, float[] colortex0Clear) {
         VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
-        pass.packPostTargets.beginFrame(commandBuffer, hdrColor);
+        pass.packPostTargets.beginFrame(commandBuffer, hdrColor, colortex0Clear);
         pass.packPostFrameStarted = true;
         this.nanTripwire.beginFrame(commandBuffer,
                 pass.sessions.packPath == null ? "?" : String.valueOf(pass.sessions.packPath.getFileName()));
@@ -122,15 +126,30 @@ final class PackPostChain {
         }
     }
 
-    /** Whether a frame opens with pack work: setup computes due, or a begin pass. */
+    /** Whether a frame opens with pack work: setup computes due, or a begin group to open. */
     boolean hasOpeningWork() {
         return pass.packPassComputes != null && pass.packPassComputes.setupDue()
-                || pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.BEGIN);
+                || windowDue(PackFrameSchedulePlan.PostWindow.BEGIN);
     }
 
-    /** Whether the pack has prepare passes, which run before the sky (PreSkyPasses). */
+    /** Whether the prepare group opens, before the sky (PreSkyPasses). */
     boolean hasPrepareWork() {
-        return pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE);
+        return windowDue(PackFrameSchedulePlan.PostWindow.PREPARE);
+    }
+
+    /** Whether {@code window}'s pass group opens this frame. */
+    boolean windowDue(PackFrameSchedulePlan.PostWindow window) {
+        PackTargetGraphPlan graph = pass.packPostTargets.graph();
+        return windowDue(pass.packFrameSchedule.hasWindow(window), graph == null ? null : graph.flips(), window);
+    }
+
+    /**
+     * A pass group opens when it has passes, or when its {@code flip.<group>_pre} entries change the
+     * state: Iris builds every group, passes or none, so such a pre-flip still applies, and the world
+     * after the group reads and writes through it (audit FD4).
+     */
+    static boolean windowDue(boolean hasPasses, PackFlipPlan flips, PackFrameSchedulePlan.PostWindow window) {
+        return hasPasses || flips != null && flips.preFlips(window);
     }
 
     /**
@@ -163,9 +182,9 @@ final class PackPostChain {
                 pass.packPassComputes.dispatchSetup(commandBuffer, computeSources(commandBuffer));
                 if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
             }
-            if (pass.packFrameSchedule.hasWindow(window)) runPackPostWindow(commandBuffer, hdrColor, window);
+            if (windowDue(window)) runPackPostWindow(commandBuffer, hdrColor, window);
             if (pass.packPostChainActive) {
-                pass.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
+                pass.packPostTargets.enterWorld(commandBuffer, window, hdrColor);
             }
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
         }
@@ -177,12 +196,12 @@ final class PackPostChain {
      * ran it and then LATE, and commits the frame's target state.
      */
     void runWorldPostWindows(VkCommandBuffer commandBuffer, VulkanImage hdrColor) {
-        if (!pass.packEarlyPostCompleted
-                && pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.EARLY)) {
+        if (!pass.packEarlyPostCompleted && windowDue(PackFrameSchedulePlan.PostWindow.EARLY)) {
             runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.EARLY);
             pass.packEarlyPostCompleted = true;
         }
         runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.LATE);
+        if (pass.packPostChainActive) pass.packPostTargets.enterFinal(commandBuffer);
         commitPostFrame();
     }
 
@@ -268,6 +287,7 @@ final class PackPostChain {
      * now, then the barrier Iris's renderAll records after them, and nothing drawn or flipped.
      */
     private void runComputeOnlyStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
+        pass.packPostTargets.beginStep(commandBuffer, stage.name());
         pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(commandBuffer),
                 hdrColor.width, hdrColor.height);
         if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
@@ -279,6 +299,8 @@ final class PackPostChain {
         ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
         boolean attempted = false;
         try {
+            // The sides the pass reads and writes, the plan's for it (earlier steps that did not run pass through).
+            pass.packPostTargets.beginStep(commandBuffer, post.name());
             // Iris runs a pass's computes first, over the images the pass then reads.
             if (pass.packPassComputes != null) {
                 pass.packPassComputes.dispatchBefore(post.name(), commandBuffer, computeSources(commandBuffer),

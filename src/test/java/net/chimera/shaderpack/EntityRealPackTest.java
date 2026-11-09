@@ -389,13 +389,10 @@ final class EntityRealPackTest {
                         && producer.reads(2) && producer.writes(2),
                 "BSL colortex2 first access must be composite3 feedback: " + producer);
         assertTrue(graph.target(2) != null && graph.target(2).persistent()
-                        && graph.target(2).requiresHistory(),
+                        && graph.target(2).doubled(),
                 "BSL colortex2 must retain persistent ping-pong history");
-        assertTrue(graph.requiresInitialSeed(2),
-                "BSL colortex2 must be initialized before composite3's first feedback read");
         System.out.println("[chimera] BSL temporal graph: firstAccess=" + producer.programName()
                 + ", reads=" + producer.readTargets() + ", writes=" + producer.outputTargets()
-                + ", initialSeed=" + graph.requiresInitialSeed(2)
                 + ", fingerprint=" + graph.fingerprint());
     }
 

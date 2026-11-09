@@ -205,9 +205,6 @@ public final class ChimeraMainPass implements MainPass {
     boolean levelPhase;
     /** Set when vanilla requests a depth clear while no pass is recording. */
     boolean pendingDepthClear;
-    /** The HDR image and pack config colortex0 last cleared for; a change forces Iris's full clear. */
-    private VulkanImage clearedHdrImage;
-    private PackConfig.PackConfigData clearedPackConfig;
     private final ChimeraHorizonRenderer horizonRenderer = new ChimeraHorizonRenderer();
 
     /** Opens the stable output target before a screen frame starts. */
@@ -319,7 +316,8 @@ public final class ChimeraMainPass implements MainPass {
         }
         if (this.packCenterDepth != null) this.packCenterDepth.beginFrame(Renderer.getCommandBuffer());
         if (this.packPostTargets.isConfigured()) {
-            postChain.beginPostFrame(Renderer.getCommandBuffer());
+            postChain.beginPostFrame(Renderer.getCommandBuffer(),
+                    PackConfig.targetSettings(this.packConfig, 0).irisClearColor(0, fogColor));
         }
         shadowPass.beginShadowFrame(cameraX, cameraY, cameraZ);
 
@@ -327,11 +325,11 @@ public final class ChimeraMainPass implements MainPass {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage hdrColor = this.targets.hdrFramebuffer.getColorAttachment();
             trace("openHdr", "hdrColor", hdrColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-            Renderer.getInstance().beginRendering(this.targets.hdrRenderPass, this.targets.hdrFramebuffer);
+            Renderer.getInstance().beginRendering(this.targets.worldOpenPass(), this.targets.hdrFramebuffer);
             Renderer.setViewport(0, 0, this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight(),
                     stack);
             VK10.vkCmdSetScissor(commandBuffer, 0, this.targets.hdrFramebuffer.scissor(stack));
-            clearWorldTarget(hdrColor, fogColor);
+            clearWorldTarget(fogColor);
             this.levelPhase = true;
             this.pendingDepthClear = false;
         }
@@ -342,20 +340,18 @@ public final class ChimeraMainPass implements MainPass {
 
     /**
      * Clears the opening world target. While a pack owns colortex0 (the HDR image) this is Iris's
-     * ClearPass: colortex0ClearColor, else the fog colour with alpha 1, and no clear under
-     * colortex0Clear=false except Iris's full clear of a new image or pack. Depth always clears.
+     * ClearPass: colortex0ClearColor, else the fog colour with alpha 1. Under colortex0Clear=false
+     * it clears depth only: PackPostTargets.beginFrame has loaded the HDR image with the colortex0
+     * side the world draws first, cleared by its own full clear on a new pack; a new HDR image from a screen
+     * change keeps it too, where Iris's one image never changes.
      */
-    private void clearWorldTarget(VulkanImage hdrColor, float[] fogColor) {
+    private void clearWorldTarget(float[] fogColor) {
         if (!this.packPostChainActive || !this.packPostTargets.isConfigured()) {
             Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             return;
         }
-        PackConfig.TargetSettings colortex0 = this.packConfig == null ? PackConfig.TargetSettings.defaults()
-                : this.packConfig.targetSettings().getOrDefault(0, PackConfig.TargetSettings.defaults());
-        boolean fullClear = hdrColor != this.clearedHdrImage || this.packConfig != this.clearedPackConfig;
-        this.clearedHdrImage = hdrColor;
-        this.clearedPackConfig = this.packConfig;
-        if (!colortex0.clear() && !fullClear) {
+        PackConfig.TargetSettings colortex0 = PackConfig.targetSettings(this.packConfig, 0);
+        if (!colortex0.clear()) {
             Renderer.clearAttachments(GL11.GL_DEPTH_BUFFER_BIT);
             return;
         }

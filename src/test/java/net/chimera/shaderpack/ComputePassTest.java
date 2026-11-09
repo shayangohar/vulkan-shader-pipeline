@@ -607,7 +607,7 @@ final class ComputePassTest {
         PackTargetGraphPlan graph = PackTargetGraphPlan.build(plan.activePrograms(), plan.config(), plan.resources(),
                 limits, new PackTargetGraphPlan.ComputeUse(Set.of(3), Set.of()));
         assertTrue(graph.target(3) != null && graph.target(3).persistent(), graph.targets().toString());
-        assertTrue(graph.requiresInitialSeed(3), "a compute's clear=false target is seeded");
+        // Allocated, so the first frame clears it, as Iris clears every target then (PostTargetSides).
         assertTrue(!graph.geometryReads().contains(3), "no world program reads colortex3");
     }
 

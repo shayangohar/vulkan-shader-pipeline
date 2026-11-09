@@ -81,7 +81,7 @@ final class OpaqueDepthCapture {
         boolean capturePreHand = capturesPreHandBeforeTranslucent();
         boolean runEarlyPost = pass.packPostChainActive
                 && pass.packPostTargets.isConfigured()
-                && pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.EARLY);
+                && pass.postChain.windowDue(PackFrameSchedulePlan.PostWindow.EARLY);
         if (!captureOpaque && !capturePreHand && !runEarlyPost) {
             return;
         }
@@ -153,7 +153,7 @@ final class OpaqueDepthCapture {
             // Translucents, particles and the rest of the world compose
             // over the deferred result, as they do over Iris' colortex0.
             if (pass.packPostChainActive) {
-                pass.packPostTargets.adoptTarget0(commandBuffer, hdrColor);
+                pass.packPostTargets.enterWorld(commandBuffer, PackFrameSchedulePlan.PostWindow.EARLY, hdrColor);
             }
             hdrColor.transitionImageLayout(stack, commandBuffer,
                     VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);

@@ -42,9 +42,4 @@ public record TargetSpec(
     public int mipLevels() {
         return mipmapped ? 32 - Integer.numberOfLeadingZeros(Math.max(1, Math.max(width, height))) : 1;
     }
-
-    /** Persistent doubled targets need one extra side for previous-frame reads. */
-    public boolean requiresHistory() {
-        return persistent && doubled;
-    }
 }

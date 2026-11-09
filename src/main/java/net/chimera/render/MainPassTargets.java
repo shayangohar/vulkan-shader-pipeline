@@ -53,6 +53,15 @@ final class MainPassTargets {
         }
     }
 
+    /**
+     * The pass the world target opens with each frame: clearing colour and depth, or, when the HDR
+     * image carries colortex0 from the last frame (colortex0Clear=false, PackPostTargets.carriesColortex0),
+     * loading colour and clearing depth. clearWorldTarget then clears colour where Iris would.
+     */
+    RenderPass worldOpenPass() {
+        return pass.packPostTargets.carriesColortex0() ? hdrAuxClearDepthRenderPass : hdrRenderPass;
+    }
+
     void createOutputFramebuffer(int width, int height) {
         // Beryl's stable MainPass output uses VK_FORMAT_R8G8B8A8_UNORM (37).
         this.compositeFramebuffer = framebuffer(width, height, 37);

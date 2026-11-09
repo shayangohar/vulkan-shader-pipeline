@@ -890,15 +890,6 @@ final class PackFrontEndTest {
         assertArrayEquals(new float[] {0.0F, 0.0F, 0.0F, 0.0F}, declared.irisClearColor(1, null));
     }
 
-    @Test
-    void persistentWorldTargetSeed() {
-        // A persistent target a world program reads needs a defined first frame even with no post reader.
-        TargetSpec fog = new TargetSpec(7, 97, 16, 16, false, null, true, false, false, false, List.of());
-        assertTrue(PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), Set.of(7))
-                        && !PackTargetGraphPlan.requiresInitialSeed(fog, List.of(), Set.of()),
-                "persistent world-read target seeding");
-    }
-
     /** A function the program defines under a legacy lookup's name is the program's own (Solas). */
     @Test
     void userDefinedShadowLookup() {

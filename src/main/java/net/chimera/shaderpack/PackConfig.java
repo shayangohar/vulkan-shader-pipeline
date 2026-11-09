@@ -53,8 +53,9 @@ public final class PackConfig {
     private static final Pattern PROPERTY_KEY = Pattern.compile("[A-Za-z0-9_.-]+");
     private static final Pattern TARGET_SIZE_PROPERTY_KEY =
             Pattern.compile("^size\\.buffer\\." + TARGET_NAME + "$");
+    /** {@code flip.<pass>.<buffer>}: a colortexN or legacy name, as Iris's PackDirectives.getExplicitFlips reads it. */
     private static final Pattern TARGET_FLIP_PROPERTY_KEY =
-            Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\.colortex(\\d+)$");
+            Pattern.compile("^flip\\.([A-Za-z0-9_]+)\\." + TARGET_NAME + "$");
 
     /**
      * Iris format token -> the VkFormat that stores it exactly (IrisColorFormats). Normalized,
@@ -248,7 +249,9 @@ public final class PackConfig {
             List<String> deviations,
             PackSettingsPlan settings,
             Map<Integer, TargetSettings> targetSettings,
+            // flip.<program>.<buffer>=true entries, and the =false ones, which cancel a draw buffer's flip.
             Map<String, List<Integer>> flips,
+            Map<String, List<Integer>> cancelledFlips,
             Map<String, List<Integer>> preFlips,
             // Targets declared in a format without alpha and stored with it (IrisColorFormats).
             Set<Integer> paddedAlphaTargets,
@@ -261,7 +264,7 @@ public final class PackConfig {
                 List<String> deviations
         ) {
             this(colortexFormats, drawBufferCount, shadowSettings,
-                    deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of(), Set.of(),
+                    deviations, PackSettingsPlan.empty(), Map.of(), Map.of(), Map.of(), Map.of(), Set.of(),
                     PackDirectives.DEFAULTS);
         }
 
@@ -274,6 +277,7 @@ public final class PackConfig {
             targetSettings = Collections.unmodifiableMap(new TreeMap<>(targetSettings == null
                     ? Map.of() : targetSettings));
             flips = immutableTargetLists(flips);
+            cancelledFlips = immutableTargetLists(cancelledFlips);
             preFlips = immutableTargetLists(preFlips);
             directives = directives == null ? PackDirectives.DEFAULTS : directives;
         }
@@ -288,6 +292,12 @@ public final class PackConfig {
             }
             return Collections.unmodifiableMap(result);
         }
+    }
+
+    /** A target's settings in {@code config}: its declared ones, else the defaults. */
+    public static TargetSettings targetSettings(PackConfigData config, int target) {
+        return config == null ? TargetSettings.defaults()
+                : config.targetSettings().getOrDefault(target, TargetSettings.defaults());
     }
 
     public static PackConfigData parse(List<PackProgram> programs, Path shadersDir) {
@@ -344,7 +354,8 @@ public final class PackConfig {
                 shadowPass);
         return new PackConfigData(collected.colortexFormats, drawBufferCount,
                 shadowSettings, collected.deviations, settings, collected.targetSettings, collected.flips,
-                collected.preFlips, collected.paddedAlphaTargets, PackDirectives.read(directives));
+                collected.cancelledFlips, collected.preFlips, collected.paddedAlphaTargets,
+                PackDirectives.read(directives));
     }
 
     /**
@@ -394,6 +405,7 @@ public final class PackConfig {
         final Map<String, String> shadowValues = new TreeMap<>();
         final Map<Integer, TargetSettings> targetSettings = new TreeMap<>();
         final Map<String, List<Integer>> flips = new TreeMap<>();
+        final Map<String, List<Integer>> cancelledFlips = new TreeMap<>();
         final Map<String, List<Integer>> preFlips = new TreeMap<>();
         final List<String> deviations = new ArrayList<>();
     }
@@ -486,13 +498,22 @@ public final class PackConfig {
         }
     }
 
-    /** A {@code flip.<program>.colortexN} switch; a {@code <program>_pre} key's flips are kept apart. */
+    /**
+     * A {@code flip.<program>.<buffer>} switch, the last value for a key winning. A {@code false}
+     * keeps the pass's draw buffer from flipping after it (Iris CompositeRenderer), so it is kept
+     * apart; a {@code <group>_pre} key's flips are kept apart too, and a false one there does nothing.
+     */
     private static void applyTargetFlip(String key, Matcher flipKey, String value, Collected collected) {
         int slot = parseTargetIndex(flipKey.group(2), collected.deviations);
         Boolean flip = parseBoolean(value);
         if (slot >= 0 && slot <= PostTargetPlan.MAX_TARGET && flip != null) {
-            updateFlip(flipKey.group(1).endsWith("_pre") ? collected.preFlips : collected.flips,
-                    flipKey.group(1), slot, flip);
+            String program = flipKey.group(1);
+            if (program.endsWith("_pre")) {
+                updateFlip(collected.preFlips, program, slot, flip);
+            } else {
+                updateFlip(collected.flips, program, slot, flip);
+                updateFlip(collected.cancelledFlips, program, slot, !flip);
+            }
         } else {
             collected.deviations.add("POST_TARGET_FLIP_UNSUPPORTED:" + key);
         }
