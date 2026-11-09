@@ -4,6 +4,7 @@ import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkImageViewUsageCreateInfo;
 
@@ -12,7 +13,9 @@ import java.nio.LongBuffer;
 import static org.lwjgl.system.MemoryStack.stackPush;
 import static org.lwjgl.vulkan.VK10.VK_COMPONENT_SWIZZLE_IDENTITY;
 import static org.lwjgl.vulkan.VK10.VK_COMPONENT_SWIZZLE_ONE;
+import static org.lwjgl.vulkan.VK10.VK_COMPONENT_SWIZZLE_R;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT;
+import static org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_DEPTH_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_USAGE_STORAGE_BIT;
 import static org.lwjgl.vulkan.VK10.VK_IMAGE_VIEW_TYPE_2D;
 import static org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -50,9 +53,34 @@ final class ImageViews {
         ((ChimeraVulkanImageAccessor) image).chimera$setMainImageView(view);
     }
 
-    /** {@code usage} 0 leaves the view the image's usage; otherwise the view takes only it. */
+    /** The component mapping of Iris's shadow depth swizzle, GL's {RED, RED, RED, ONE}. */
+    static final int[] SHADOW_DEPTH_COMPONENTS = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R,
+            VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE};
+
+    /**
+     * A depth-only view of a shadow depth image that samples as R, R, R, 1, as Iris swizzles its
+     * shadowtex textures (ShadowRenderer.configureDepthSampler, for packs that read the depth from z):
+     * a read without depth compare finds the depth in every colour channel (audit T-S3). A depth
+     * compare happens before the swizzle, so its result still comes back in R.
+     */
+    static long shadowDepth(VulkanImage image) {
+        return create(Vulkan.getVkDevice(), image.getId(), VK_IMAGE_VIEW_TYPE_2D, image.format,
+                VK_IMAGE_ASPECT_DEPTH_BIT, image.mipLevels, SHADOW_DEPTH_COMPONENTS, 0);
+    }
+
     private static long create(long image, int viewType, int format, int aspect, int levelCount, int alpha,
                                int usage) {
+        return create(Vulkan.getVkDevice(), image, viewType, format, aspect, levelCount, new int[] {
+                VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, VK_COMPONENT_SWIZZLE_IDENTITY, alpha},
+                usage);
+    }
+
+    /**
+     * A view on {@code device}, with {@code components} as its r, g, b and a mapping. {@code usage}
+     * 0 leaves the view the image's usage; otherwise the view takes only it.
+     */
+    static long create(VkDevice device, long image, int viewType, int format, int aspect, int levelCount,
+                       int[] components, int usage) {
         try (MemoryStack stack = stackPush()) {
             VkImageViewCreateInfo info = VkImageViewCreateInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO)
@@ -62,11 +90,11 @@ final class ImageViews {
             if (usage != 0) {
                 info.pNext(VkImageViewUsageCreateInfo.calloc(stack).sType$Default().usage(usage).address());
             }
-            info.components().a(alpha);
+            info.components().set(components[0], components[1], components[2], components[3]);
             info.subresourceRange().aspectMask(aspect).baseMipLevel(0).levelCount(levelCount)
                     .baseArrayLayer(0).layerCount(1);
             LongBuffer view = stack.mallocLong(1);
-            if (vkCreateImageView(Vulkan.getVkDevice(), info, null, view) != VK_SUCCESS) {
+            if (vkCreateImageView(device, info, null, view) != VK_SUCCESS) {
                 throw new IllegalStateException("image view creation failed");
             }
             return view.get(0);

@@ -72,13 +72,13 @@ public class ChimeraShadowMap {
     private final Map<Integer, VulkanImage> passReadCopies = new TreeMap<>();
     private boolean passReadsOpen;
     private GraphicsPipeline shadowPipeline;
-    private final DepthSampleView depthSampleView = new DepthSampleView();
+    private final DepthSampleView depthSampleView = DepthSampleView.shadow();
     /**
      * Iris shadowtex1: the caster depth before translucent terrain draws.
      * The main depth attachment is shadowtex0 and holds every caster.
      */
     private VulkanImage opaqueDepth;
-    private final DepthSampleView opaqueDepthSampleView = new DepthSampleView();
+    private final DepthSampleView opaqueDepthSampleView = DepthSampleView.shadow();
     /** True when opaqueDepth holds the current map's opaque casters. */
     private boolean opaqueDepthCurrent;
     private long shadowSampler;
