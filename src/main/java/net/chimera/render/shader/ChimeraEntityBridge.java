@@ -193,6 +193,10 @@ public final class ChimeraEntityBridge {
     private static boolean particleWindow;
     private static boolean particleTranslucent;
     private static boolean weatherWindow;
+    /** True while vanilla asks the level's buffer source for the block outline's batch. */
+    private static boolean blockOutline;
+    /** The Iris rendering phase of the held lane batch drawing now (HeldLaneRenderType), or null. */
+    private static PackRenderingPhase heldBatchPhase;
 
     /** The entity or block entity being rendered, innermost last; ENTITY or BLOCK. */
     private static final Family[] contexts = new Family[8];
@@ -424,6 +428,46 @@ public final class ChimeraEntityBridge {
     /** The particle render type ParticleEngine is about to draw: Iris splits particles by translucency. */
     public static void setParticleTranslucent(boolean translucent) {
         particleTranslucent = translucent;
+    }
+
+    /**
+     * Marks vanilla's request for the block outline's RenderType.lines() batch, the one render type
+     * Iris wraps in its outline state (MixinLevelRenderer.iris$beginBlockOutline).
+     */
+    public static void beginBlockOutline() {
+        blockOutline = true;
+    }
+
+    public static void endBlockOutline() {
+        blockOutline = false;
+    }
+
+    /**
+     * The Iris rendering phase a world host-layout lane's batch written now draws in. Iris answers
+     * renderStage for such a draw from the wrapper around the render type it was asked for in
+     * (OuterWrappedRenderType): OUTLINE for vanilla's block outline, BLOCK_ENTITIES inside a block
+     * entity's render, ENTITIES inside an entity's, so a hitbox or a fishing line reports ENTITIES
+     * and a structure block's box BLOCK_ENTITIES. Outside every wrapper the batch draws in NONE, the
+     * phase Iris holds between its phase windows.
+     */
+    public static PackRenderingPhase hostLaneWritePhase() {
+        return wrapperPhase(blockOutline, context());
+    }
+
+    /** The phase of the wrapper Iris asks for a render type in, by the outline window and context. */
+    static PackRenderingPhase wrapperPhase(boolean blockOutline, Family context) {
+        if (blockOutline) return PackRenderingPhase.OUTLINE;
+        if (context == Family.BLOCK) return PackRenderingPhase.BLOCK_ENTITIES;
+        return context == Family.ENTITY ? PackRenderingPhase.ENTITIES : PackRenderingPhase.NONE;
+    }
+
+    /** While a held lane batch draws, its lane draws in the phase it was written in. */
+    static void beginHeldBatch(PackRenderingPhase phase) {
+        heldBatchPhase = phase;
+    }
+
+    static void endHeldBatch() {
+        heldBatchPhase = null;
     }
 
     /** Opens the weather window around LevelRenderer.renderSnowAndRain. */
@@ -705,11 +749,14 @@ public final class ChimeraEntityBridge {
 
     /**
      * Opens a draw of {@code family} on {@code format} with the host shader {@code shader}; false
-     * when the lane has no pipeline for that format.
+     * when the lane has no pipeline for that format. A host-layout lane draws a held batch in the
+     * phase it was written in, and any other draw in its own.
      */
     public static boolean beginDraw(Family family, VertexFormat format, String shader) {
         HostLayoutLane lane = HostLayoutLane.of(family);
-        return beginDraw(family, format, shader, lane != null ? lane.phase() : phase(family));
+        PackRenderingPhase phase = lane == null ? phase(family)
+                : heldBatchPhase != null ? heldBatchPhase : lane.phase();
+        return beginDraw(family, format, shader, phase);
     }
 
     /** Opens a draw as {@link #beginDraw(Family, VertexFormat, String)} does, in {@code phase}. */

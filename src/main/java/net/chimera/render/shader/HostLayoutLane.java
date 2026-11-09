@@ -27,9 +27,12 @@ public enum HostLayoutLane {
     /** Iris WEATHER: rain and snow, drawn with the particle shader inside renderSnowAndRain. */
     WEATHER(ChimeraEntityBridge.Family.WEATHER, "gbuffers_weather", DefaultVertexFormat.PARTICLE,
             PackRenderingPhase.RAIN_SNOW, Pass.WEATHER, AlphaTest.ONE_TENTH, "particle"),
-    /** Iris LINES: block outlines, fishing lines and other line draws. */
+    /**
+     * Iris LINES: block outlines, fishing lines, hitboxes and other line draws. Each reports the
+     * phase of the Iris wrapper it was written in: OUTLINE only for vanilla's block outline.
+     */
     LINE(ChimeraEntityBridge.Family.LINE, "gbuffers_line", DefaultVertexFormat.POSITION_COLOR_NORMAL,
-            PackRenderingPhase.OUTLINE, Pass.WORLD, AlphaTest.OFF, "rendertype_lines"),
+            PackRenderingPhase.NONE, Pass.WORLD, AlphaTest.OFF, "rendertype_lines"),
     /** Iris GLINT in the world; Iris draws world glint inside the entity phase. */
     GLINT(ChimeraEntityBridge.Family.GLINT, "gbuffers_armor_glint", DefaultVertexFormat.POSITION_TEX,
             PackRenderingPhase.ENTITIES, Pass.WORLD, AlphaTest.NON_ZERO, Shaders.GLINT),
@@ -163,7 +166,12 @@ public enum HostLayoutLane {
         return pass;
     }
 
-    /** The Iris rendering phase (renderStage) of this lane's draws. */
+    /**
+     * The Iris rendering phase (renderStage) of this lane's draws. A world lane's batch held by the
+     * level's buffer source draws in the phase of the Iris wrapper it was written in instead
+     * (ChimeraEntityBridge.hostLaneWritePhase): ENTITIES in an entity's render, BLOCK_ENTITIES in a
+     * block entity's, OUTLINE for the block outline, NONE elsewhere.
+     */
     public PackRenderingPhase phase() {
         if (pass == Pass.HAND) {
             return ChimeraHandRenderer.translucentPhase()
