@@ -36,8 +36,8 @@ final class EntityOverlayColor {
 
     /**
      * The overlay texel at {@code uv}, or GL's empty texel (0, 0, 0, 1) where {@code uv} falls outside
-     * the bound image. A render type that sets no overlay (eyes, energy swirl) leaves VulkanMod's 1x1
-     * white image on the unit, while its UV1 is vanilla's NO_OVERLAY (0, 10). Vulkan leaves a fetch
+     * the bound image. A render type that sets no overlay (eyes, energy swirl) leaves a 1x1 white
+     * stand-in on the unit, while its UV1 is vanilla's NO_OVERLAY (0, 10). Vulkan leaves a fetch
      * outside the image undefined, and NVIDIA reads zero: entityColor came out opaque black, and
      * Shrimple's spider and enderman eyes drew black. Iris's GL reads unbound texture 0 there as
      * (0, 0, 0, 1), which leaves entityColor (0, 0, 0, 0).

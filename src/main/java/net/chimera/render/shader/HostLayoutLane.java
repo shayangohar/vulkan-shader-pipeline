@@ -29,8 +29,8 @@ public enum HostLayoutLane {
             PackRenderingPhase.RAIN_SNOW, Pass.WEATHER, AlphaTest.ONE_TENTH, "particle"),
     /**
      * Iris LINES: block outlines, fishing lines, hitboxes and other line draws. Each reports the
-     * phase of the Iris wrapper it was written in; the block outline, written in none, reports NONE
-     * (ChimeraEntityBridge.hostLaneWritePhase).
+     * phase of the Iris wrapper it was written in; the block outline, written outside every wrapper,
+     * reports NONE (ChimeraEntityBridge.hostLaneWritePhase).
      */
     LINE(ChimeraEntityBridge.Family.LINE, "gbuffers_line", DefaultVertexFormat.POSITION_COLOR_NORMAL,
             PackRenderingPhase.NONE, Pass.WORLD, AlphaTest.OFF, "rendertype_lines"),

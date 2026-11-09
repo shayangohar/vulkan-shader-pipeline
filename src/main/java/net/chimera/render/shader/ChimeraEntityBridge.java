@@ -759,9 +759,12 @@ public final class ChimeraEntityBridge {
      */
     public static boolean beginDraw(Family family, VertexFormat format, String shader) {
         HostLayoutLane lane = HostLayoutLane.of(family);
-        PackRenderingPhase phase = lane == null ? phase(family)
-                : heldBatchPhase != null ? heldBatchPhase : lane.phase();
-        return beginDraw(family, format, shader, phase);
+        return beginDraw(family, format, shader, lane == null ? phase(family) : lanePhase(lane));
+    }
+
+    /** The phase a host-layout lane draws in now: the held batch's while one draws, else the lane's own. */
+    static PackRenderingPhase lanePhase(HostLayoutLane lane) {
+        return heldBatchPhase != null ? heldBatchPhase : lane.phase();
     }
 
     /** Opens a draw as {@link #beginDraw(Family, VertexFormat, String)} does, in {@code phase}. */

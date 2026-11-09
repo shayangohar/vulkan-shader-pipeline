@@ -50,4 +50,22 @@ final class HostLanePhaseTest {
     void aLineOutsideEveryWrapperDrawsInNone() {
         assertEquals(PackRenderingPhase.NONE, HostLayoutLane.LINE.phase());
     }
+
+    /**
+     * While a held batch draws (HeldLaneRenderType.draw), its lane draws in the batch's phase, not
+     * its own; checked the other way round, a hitbox would report the lane's NONE again.
+     */
+    @Test
+    void aHeldBatchsPhaseWinsWhileItDraws() {
+        assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.lanePhase(HostLayoutLane.LINE));
+        try {
+            ChimeraEntityBridge.beginHeldBatch(PackRenderingPhase.ENTITIES);
+            assertEquals(PackRenderingPhase.ENTITIES, ChimeraEntityBridge.lanePhase(HostLayoutLane.LINE));
+            assertEquals(PackRenderingPhase.ENTITIES, ChimeraEntityBridge.lanePhase(HostLayoutLane.LEASH));
+        } finally {
+            ChimeraEntityBridge.endHeldBatch();
+        }
+        assertEquals(PackRenderingPhase.NONE, ChimeraEntityBridge.lanePhase(HostLayoutLane.LINE),
+                "the batch's phase ends with its draw");
+    }
 }
