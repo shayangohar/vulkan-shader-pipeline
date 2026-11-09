@@ -34,8 +34,9 @@ final class ClipDepthTest {
     /**
      * Every corpus program's stages before the rasterizer, as converted: at most one conversion, in
      * the last of them, and exactly one where they work in GL's range: a shadow program, the hand
-     * and sky draws, and any stage that takes the host's clip position into GL's range
-     * (chimeraGlClip). A glint drawn in the hand converts once too.
+     * and sky draws (their preamble's chimeraHandProjection or chimeraSkyProjection), and any stage
+     * that takes the host's clip position into GL's range (chimeraGlClip). A glint drawn in the
+     * hand converts once too.
      */
     @Test
     @Tag("packs")
@@ -68,8 +69,9 @@ final class ClipDepthTest {
         int total = conversions(chain);
         if (total > 1) return total + " conversions";
         if (total == 1 && ClipDepth.count(chain.get(chain.size() - 1)) != 1) return "converted before the last stage";
+        // Recognised by the projection the stages carry, never by the wrapper that converts.
         boolean glRange = stage.shadowPass() || chain.stream().anyMatch(source -> source.contains("chimeraGlClip(")
-                || source.contains("chimeraHandMain();") || source.contains("chimeraSkyMain();"));
+                || source.contains("chimeraHandProjection(") || source.contains("chimeraSkyProjection("));
         if (glRange && total != 1) return "works in GL's range and converts " + total + " times";
         if (FamilyAdapterRegistry.isGlintFamily(plan.name())
                 && plan.convertedVertex().contains(GlslVertexPreambles.GLINT_VERTEX_PREAMBLE)) {
