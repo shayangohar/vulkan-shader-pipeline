@@ -8,6 +8,7 @@ import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.PackCoveragePlan;
+import net.chimera.shaderpack.PackFlipPlan;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackProgram;
@@ -125,15 +126,30 @@ final class PackPostChain {
         }
     }
 
-    /** Whether a frame opens with pack work: setup computes due, or a begin pass. */
+    /** Whether a frame opens with pack work: setup computes due, or a begin group to open. */
     boolean hasOpeningWork() {
         return pass.packPassComputes != null && pass.packPassComputes.setupDue()
-                || pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.BEGIN);
+                || windowDue(PackFrameSchedulePlan.PostWindow.BEGIN);
     }
 
-    /** Whether the pack has prepare passes, which run before the sky (PreSkyPasses). */
+    /** Whether the prepare group opens, before the sky (PreSkyPasses). */
     boolean hasPrepareWork() {
-        return pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.PREPARE);
+        return windowDue(PackFrameSchedulePlan.PostWindow.PREPARE);
+    }
+
+    /** Whether {@code window}'s pass group opens this frame. */
+    boolean windowDue(PackFrameSchedulePlan.PostWindow window) {
+        PackTargetGraphPlan graph = pass.packPostTargets.graph();
+        return windowDue(pass.packFrameSchedule.hasWindow(window), graph == null ? null : graph.flips(), window);
+    }
+
+    /**
+     * A pass group opens when it has passes, or when its {@code flip.<group>_pre} entries change the
+     * state: Iris builds every group, passes or none, so such a pre-flip still applies, and the world
+     * after the group reads and writes through it (audit FD4).
+     */
+    static boolean windowDue(boolean hasPasses, PackFlipPlan flips, PackFrameSchedulePlan.PostWindow window) {
+        return hasPasses || flips != null && flips.preFlips(window);
     }
 
     /**
@@ -166,7 +182,7 @@ final class PackPostChain {
                 pass.packPassComputes.dispatchSetup(commandBuffer, computeSources(commandBuffer));
                 if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
             }
-            if (pass.packFrameSchedule.hasWindow(window)) runPackPostWindow(commandBuffer, hdrColor, window);
+            if (windowDue(window)) runPackPostWindow(commandBuffer, hdrColor, window);
             if (pass.packPostChainActive) {
                 pass.packPostTargets.enterWorld(commandBuffer, window, hdrColor);
             }
@@ -180,8 +196,7 @@ final class PackPostChain {
      * ran it and then LATE, and commits the frame's target state.
      */
     void runWorldPostWindows(VkCommandBuffer commandBuffer, VulkanImage hdrColor) {
-        if (!pass.packEarlyPostCompleted
-                && pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.EARLY)) {
+        if (!pass.packEarlyPostCompleted && windowDue(PackFrameSchedulePlan.PostWindow.EARLY)) {
             runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.EARLY);
             pass.packEarlyPostCompleted = true;
         }

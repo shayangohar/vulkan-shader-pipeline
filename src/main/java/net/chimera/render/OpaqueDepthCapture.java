@@ -81,7 +81,7 @@ final class OpaqueDepthCapture {
         boolean capturePreHand = capturesPreHandBeforeTranslucent();
         boolean runEarlyPost = pass.packPostChainActive
                 && pass.packPostTargets.isConfigured()
-                && pass.packFrameSchedule.hasWindow(PackFrameSchedulePlan.PostWindow.EARLY);
+                && pass.postChain.windowDue(PackFrameSchedulePlan.PostWindow.EARLY);
         if (!captureOpaque && !capturePreHand && !runEarlyPost) {
             return;
         }

@@ -137,13 +137,13 @@ final class FlipSidesTest {
         }
 
         /**
-         * One pass group, then the world it hands over to. Chimera opens a group that has passes or
-         * pre-flips (and always composite's), as Iris builds every group.
+         * One pass group, then the world it hands over to. Chimera opens a group as PackPostChain
+         * does: one with passes or pre-flips (windowDue), and always composite's.
          */
         private void group(PackFrameSchedulePlan.PostWindow window, Frame what) {
             List<PackFlipPlan.Step> steps = plan.steps().stream().filter(step -> step.window() == window).toList();
             boolean late = window == PackFrameSchedulePlan.PostWindow.LATE;
-            boolean runs = late || !steps.isEmpty() || plan.preFlips(window);
+            boolean runs = late || PackPostChain.windowDue(!steps.isEmpty(), plan, window);
             irisState = plan.open(window);
             if (runs) sides.openWindow(window, ops);
             for (PackFlipPlan.Step step : steps) {
@@ -398,6 +398,27 @@ final class FlipSidesTest {
         for (int frame = 0; frame < 2; frame++) harness.run(Frame.plain(Set.of(0)));
         assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
         assertEquals("clear12", harness.reads.get("composite2").get(12));
+    }
+
+    /**
+     * A prepare group with no pass and a flip.prepare_pre entry still opens, as Iris builds every
+     * group (audit FD4): the opaque world draws colortex0 and colortex3 on alt, and the HDR image
+     * moves to colortex0's alt side. A pre-flip set back to false opens nothing.
+     */
+    @Test
+    void aGroupWhoseOnlyWorkIsAPreFlipStillOpens(@TempDir Path root) throws Exception {
+        Harness harness = harness(root, Map.of(
+                "deferred1", "uniform sampler2D colortex0;\nuniform sampler2D colortex3;\n/* RENDERTARGETS: 0 */\n"
+                        + copies("colortex3")),
+                "flip.prepare_pre.colortex0=true\nflip.prepare_pre.colortex3=true\n"
+                        + "flip.begin_pre.colortex5=true\nflip.begin_pre.colortex5=false\n");
+        assertTrue(PackPostChain.windowDue(false, harness.plan, PackFrameSchedulePlan.PostWindow.PREPARE));
+        assertTrue(!PackPostChain.windowDue(false, harness.plan, PackFrameSchedulePlan.PostWindow.BEGIN),
+                "a pre-flip set back to false flips nothing");
+        for (int frame = 0; frame < 3; frame++) harness.run(Frame.plain(Set.of(0, 3)));
+        assertTrue(harness.mismatches.isEmpty(), String.join("\n", harness.mismatches));
+        assertEquals("clear3>world-PREPARE@2", harness.reads.get("deferred1").get(3));
+        assertEquals("clear0>world-PREPARE@2", harness.reads.get("deferred1").get(0));
     }
 
     /** A held draw buffer (flip=false) is written on its other side and stays unread until a later flip. */
