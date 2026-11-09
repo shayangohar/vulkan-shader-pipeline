@@ -479,6 +479,25 @@ final class PackFrontEndTest {
                 "a value reading a refused declaration was not refused: " + settings.deviations());
     }
 
+    /**
+     * Iris's parser binds {@code a / b} to {@code divide(a, b)} (IrisOptions), so a zero divisor
+     * gives one answer either way. Chimera's operators served a silent zero where divide gave
+     * infinity; both now give infinity, and a value that ends non-finite is reported and holds.
+     */
+    @Test
+    void anOperatorDividesAsItsFunctionDoes() {
+        assertEquals(Double.POSITIVE_INFINITY, value("1.0 / 0.0"));
+        assertEquals(value("divide(1.0, 0.0)"), value("1.0 / 0.0"));
+        assertTrue(Double.isNaN(value("1.0 % 0.0")) && Double.isNaN(value("remainder(1.0, 0.0)")), "x % 0");
+        assertEquals(1.0, value("clamp(1.0 / 0.0, 0.0, 1.0)"), "the infinity reaches the clamp, not a zero");
+        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(true, "float", "inverse", "1.0 / 0.0")), List.of());
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> 0.0, session, 0.05f);
+        assertTrue(session.failures().containsKey("inverse"), "a zero divisor is reported: " + session.failures());
+        assertEquals(0.0f, session.values()[settings.indexOf("inverse")], "the value holds its last finite result");
+    }
+
     private static double value(String expression) {
         PackExpression.Program program = PackExpression.parse(expression, BiomeIds.constants());
         return program.evaluate((name, component) -> 0.0, program.newState(), 0.0f);

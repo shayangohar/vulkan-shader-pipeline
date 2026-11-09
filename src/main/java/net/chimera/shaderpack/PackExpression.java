@@ -329,34 +329,36 @@ public final class PackExpression {
         }
     }
 
-    private record Binary(String operator, Node left, Node right, int width) implements Node {
-        @Override
-        public double evaluate(Context context, int lane) {
-            double a = lane(this.left, context, lane);
-            double b = lane(this.right, context, lane);
-            return switch (this.operator) {
-                case "+" -> a + b;
-                case "-" -> a - b;
-                case "*" -> a * b;
-                case "/" -> b == 0.0 ? 0.0 : a / b;
-                case "%" -> b == 0.0 ? 0.0 : a % b;
-                default -> holds(this.operator, a, b) ? 1.0 : 0.0;
+    /**
+     * An operator, evaluated by the function Iris's parser binds it to (IrisOptions): {@code a / b}
+     * is {@code divide(a, b)}, so a zero divisor gives the same infinity or NaN either way, which
+     * the session reports and holds (KNOW-402) rather than serving a silent zero.
+     */
+    private record Binary(PackFunction function, Node left, Node right, int width) implements Node {
+        /** The function an operator is evaluated by. */
+        static PackFunction function(String operator) {
+            return switch (operator) {
+                case "+" -> PackFunction.ADD;
+                case "-" -> PackFunction.SUBTRACT;
+                case "*" -> PackFunction.MULTIPLY;
+                case "/" -> PackFunction.DIVIDE;
+                case "%" -> PackFunction.REMAINDER;
+                case "==" -> PackFunction.EQUALS;
+                case "!=" -> PackFunction.NOTEQUALS;
+                case ">" -> PackFunction.MORETHAN;
+                case ">=" -> PackFunction.MORETHANOREQUALS;
+                case "<" -> PackFunction.LESSTHAN;
+                case "<=" -> PackFunction.LESSTHANOREQUALS;
+                case "&&" -> PackFunction.AND;
+                case "||" -> PackFunction.OR;
+                default -> throw new IllegalStateException("unknown operator " + operator);
             };
         }
 
-        /** Whether a comparison or logical operator holds between two scalars. */
-        private static boolean holds(String operator, double a, double b) {
-            return switch (operator) {
-                case "==" -> a == b;
-                case "!=" -> a != b;
-                case ">" -> a > b;
-                case ">=" -> a >= b;
-                case "<" -> a < b;
-                case "<=" -> a <= b;
-                case "&&" -> a != 0.0 && b != 0.0;
-                case "||" -> a != 0.0 || b != 0.0;
-                default -> throw new IllegalStateException("unknown operator " + operator);
-            };
+        @Override
+        public double evaluate(Context context, int lane) {
+            return this.function.binary().applyAsDouble(lane(this.left, context, lane),
+                    lane(this.right, context, lane));
         }
 
         @Override
@@ -612,7 +614,7 @@ public final class PackExpression {
                     return result;
                 }
                 Node right = multiply();
-                result = new Binary(operator, result, right, unify(operator, result, right));
+                result = new Binary(Binary.function(operator), result, right, unify(operator, result, right));
             }
         }
 
@@ -624,14 +626,14 @@ public final class PackExpression {
                     return result;
                 }
                 Node right = unary();
-                result = new Binary(operator, result, right, unify(operator, result, right));
+                result = new Binary(Binary.function(operator), result, right, unify(operator, result, right));
             }
         }
 
         private Node scalarBinary(String operator, Node left, Node right) {
             scalar(left, operator);
             scalar(right, operator);
-            return new Binary(operator, left, right, 1);
+            return new Binary(Binary.function(operator), left, right, 1);
         }
 
         private Node unary() {
