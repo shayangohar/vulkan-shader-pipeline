@@ -514,6 +514,45 @@ final class PackFrontEndTest {
         assertTrue(UniformRegistry.expressionWidth("biome_category") == 1, "biome_category is an int input");
     }
 
+    /**
+     * Iris defines the same symbols as macros in every shader and properties file it preprocesses
+     * (IrisDefines.createIrisReplacements). Chimera served them to expressions only, so a pack's
+     * {@code #if} on one read 0, and Ebin's {@code #ifndef PPT_NONE} fallback was taken.
+     */
+    @Test
+    void irisBiomeSymbolsAreMacrosToo(@TempDir Path root) throws IOException {
+        Map<String, String> macros = PackEngineDefines.standard();
+        assertTrue("5".equals(macros.get("BIOME_DESERT")) && "12".equals(macros.get("CAT_DESERT"))
+                && "2".equals(macros.get("PPT_SNOW")), "BIOME_*, CAT_* and PPT_* macros");
+        assertTrue(!macros.containsKey("BIOME_PALE_GARDEN"), "Iris 1.21.1 defines no BIOME_PALE_GARDEN");
+        assertEquals(64 + 19 + 3, BiomeIds.macros().size(), "64 biomes, 19 categories, 3 precipitation codes");
+        BiomeIds.macros().forEach((name, value) ->
+                assertEquals(Double.parseDouble(value), BiomeIds.constants().value(name), name));
+
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform float ppt;
+                uniform float desert;
+                void main() { gl_FragColor = vec4(ppt, desert, 0.0, 1.0); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #ifndef PPT_SNOW
+                #define PPT_SNOW 7
+                #endif
+                uniform.float.ppt = PPT_SNOW
+                #if BIOME_DESERT == 5 && CAT_DESERT == 12
+                uniform.float.desert = 1.0
+                #endif
+                """);
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(settings.rejected().isEmpty(), settings.deviations().toString());
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> 0.0, session, 0.05f);
+        assertEquals(2.0f, session.values()[settings.indexOf("ppt")], "the engine's PPT_SNOW, not the fallback");
+        assertTrue(settings.indexOf("desert") >= 0, "#if BIOME_DESERT == 5 holds in shaders.properties");
+    }
+
     private static void rejected(String source, PackExpression.Widths widths, String code) {
         try {
             PackExpression.parse(source, BiomeIds.constants(), widths);

@@ -26,6 +26,7 @@ public final class PackEngineDefines {
      * selects a pack's pre-1.13 paths. The device's macros (PackDeviceMacros) and
      * MC_MIPMAP_LEVEL join them in {@link #standard()}; texture-format macros are not
      * defined. IRIS_TAG_SUPPORT promises block.properties tags (PackMaterialResolver).
+     * Iris's biome, category and precipitation symbols (IrisDefines) are macros too.
      */
     private static final Map<String, String> STANDARD = standardMacros();
     /** Minecraft's default mipmap levels, until a pack load reads the game's option. */
@@ -50,6 +51,8 @@ public final class PackEngineDefines {
         for (var phase : PackRenderingPhase.values()) {
             result.put("MC_RENDER_STAGE_" + phase.name(), Integer.toString(phase.ordinal()));
         }
+        // Iris's IrisDefines joins them: BIOME_*, CAT_* and PPT_*, from the table expressions read.
+        result.putAll(BiomeIds.macros());
         return Collections.unmodifiableMap(result);
     }
 

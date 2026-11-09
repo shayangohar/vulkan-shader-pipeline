@@ -6,6 +6,7 @@ import net.minecraft.tags.BiomeTags;
 import net.minecraft.tags.TagKey;
 import net.minecraft.world.level.biome.Biome;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -53,13 +54,25 @@ public final class BiomeIds {
     private static final List<String> LATER = List.of("pale_garden");
 
     private static final Map<String, Integer> IDS = ids();
+    /** Iris's IrisDefines symbols: the vanilla biome numbers, the category ordinals, the precipitation codes. */
+    private static final Map<String, Integer> SYMBOLS = symbols();
     private static final PackExpression.Constants CONSTANTS = buildConstants();
+    private static final Map<String, String> MACROS = buildMacros();
 
     private BiomeIds() {}
 
     /** The {@code BIOME_*}, {@code CAT_*} and {@code PPT_*} symbols the packs write. */
     public static PackExpression.Constants constants() {
         return CONSTANTS;
+    }
+
+    /**
+     * The same symbols as preprocessor macros: Iris defines each in every shader and properties
+     * file it preprocesses (IrisDefines.createIrisReplacements). Only the 1.21.1 biomes: Iris has
+     * no BIOME_PALE_GARDEN macro, so a pack's {@code #ifdef} of it stays false.
+     */
+    public static Map<String, String> macros() {
+        return MACROS;
     }
 
     /** The number for a biome key, or {@link #UNKNOWN} when no constant names it. */
@@ -124,20 +137,36 @@ public final class BiomeIds {
         return Category.PLAINS;
     }
 
+    private static String symbol(String biome) {
+        return PREFIX + biome.toUpperCase(Locale.ROOT);
+    }
+
+    private static Map<String, Integer> symbols() {
+        Map<String, Integer> result = new TreeMap<>();
+        VANILLA.forEach(name -> result.put(symbol(name), IDS.get(name)));
+        for (Category category : Category.values()) {
+            result.put("CAT_" + category.name(), category.ordinal());
+        }
+        result.put("PPT_NONE", 0);
+        result.put("PPT_RAIN", 1);
+        result.put("PPT_SNOW", 2);
+        return Map.copyOf(result);
+    }
+
+    /** Iris's symbols, and the later biomes an expression may name (see {@link #LATER}). */
     private static PackExpression.Constants buildConstants() {
         Map<String, Double> values = new TreeMap<>();
-        IDS.forEach((name, id) ->
-                values.put(PREFIX + name.toUpperCase(Locale.ROOT), (double) id));
-        // Iris's IrisDefines: the category ordinals and the precipitation codes it serves.
-        for (Category category : Category.values()) {
-            values.put("CAT_" + category.name(), (double) category.ordinal());
-        }
-        values.put("PPT_NONE", 0.0);
-        values.put("PPT_RAIN", 1.0);
-        values.put("PPT_SNOW", 2.0);
+        SYMBOLS.forEach((name, value) -> values.put(name, (double) value));
+        LATER.forEach(name -> values.put(symbol(name), (double) IDS.get(name)));
         return name -> {
             Double value = values.get(name);
             return value == null ? Double.NaN : value;
         };
+    }
+
+    private static Map<String, String> buildMacros() {
+        Map<String, String> result = new TreeMap<>();
+        SYMBOLS.forEach((name, value) -> result.put(name, Integer.toString(value)));
+        return Collections.unmodifiableMap(result);
     }
 }
