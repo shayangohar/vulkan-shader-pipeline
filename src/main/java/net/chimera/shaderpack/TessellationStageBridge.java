@@ -2,6 +2,8 @@ package net.chimera.shaderpack;
 
 import net.chimera.shaderpack.WorldBetweenStages.PassedOn;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
@@ -30,6 +32,8 @@ final class TessellationStageBridge {
 
     /** The evaluation stage's input layout, {@code layout(triangles, ccw) in;}. */
     private static final Pattern INPUT_LAYOUT = Pattern.compile("\\blayout\\s*\\(([^)]*)\\)\\s*in\\s*;");
+    /** A vertex order among a layout's qualifiers. */
+    private static final Pattern VERTEX_ORDER = Pattern.compile("\\bc?cw\\b");
 
     /** The converted stages, and the locations of the evaluation stage's outputs, which the fragment stage reads. */
     record Conversion(String control, String evaluation, LegacyGlslConverter.TerrainVaryingLayout outputLayout) {}
@@ -220,14 +224,30 @@ final class TessellationStageBridge {
         });
     }
 
-    /** The evaluation stage with its triangle winding reversed: GL's default ccw becomes cw. */
+    /**
+     * The evaluation stage with its triangle winding reversed: GL's default ccw becomes cw. Every
+     * input layout outside comments that names a vertex order has it swapped, and with none, the
+     * first takes cw. Only the first, as written, was edited: a commented layout above the real one
+     * took the swap, and an order in a second layout statement (layout(ccw) in;) kept GL's.
+     */
     static String swappedWinding(String evaluation) {
-        Matcher layout = INPUT_LAYOUT.matcher(evaluation);
-        if (!layout.find()) return evaluation;
-        String qualifiers = layout.group(1);
-        String swapped = qualifiers.matches("(?s).*\\bccw\\b.*") ? qualifiers.replaceAll("\\bccw\\b", "cw")
-                : qualifiers.matches("(?s).*\\bcw\\b.*") ? qualifiers.replaceAll("\\bcw\\b", "ccw")
-                : qualifiers + ", cw";
-        return evaluation.substring(0, layout.start(1)) + swapped + evaluation.substring(layout.end(1));
+        // Layouts and their orders are read outside comments, at the offsets of the source as written.
+        String masked = GlslLexer.maskComments(evaluation);
+        Matcher layout = INPUT_LAYOUT.matcher(masked);
+        List<int[]> layouts = new ArrayList<>();
+        List<int[]> orders = new ArrayList<>();
+        while (layout.find()) {
+            layouts.add(new int[] {layout.start(1), layout.end(1)});
+            Matcher order = VERTEX_ORDER.matcher(masked).region(layout.start(1), layout.end(1));
+            while (order.find()) orders.add(new int[] {order.start(), order.end()});
+        }
+        if (layouts.isEmpty()) return evaluation;
+        StringBuilder result = new StringBuilder(evaluation);
+        if (orders.isEmpty()) return result.insert(layouts.get(0)[1], ", cw").toString();
+        for (int index = orders.size() - 1; index >= 0; index--) {
+            int[] range = orders.get(index);
+            result.replace(range[0], range[1], masked.substring(range[0], range[1]).equals("ccw") ? "cw" : "ccw");
+        }
+        return result.toString();
     }
 }

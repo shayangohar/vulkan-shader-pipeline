@@ -163,8 +163,18 @@ public final class PackMaterialResolver {
                 List.copyOf(collected.deviations()));
     }
 
+    /**
+     * The one resolver with no mapping. ChimeraTerrainPipelines tells material maps apart by
+     * identity, and a new empty one on each reset counted as a change that rebuilt the live level.
+     * Its caches are concurrent and only ever hold unmapped answers.
+     */
     public static PackMaterialResolver empty() {
-        return new PackMaterialResolver(new Collected(), Map.of());
+        return Empty.RESOLVER;
+    }
+
+    /** Built on first use, after the class's own constants. */
+    private static final class Empty {
+        static final PackMaterialResolver RESOLVER = new PackMaterialResolver(new Collected(), Map.of());
     }
 
     private static final List<String> LEGACY_COLORS = List.of("white", "orange", "magenta", "light_blue", "yellow",

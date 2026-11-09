@@ -183,7 +183,7 @@ final class GeometryStageBridge {
         outputs.forEach(output -> helper.append("    ").append(KEPT_PREFIX).append(output.name()).append(" = ")
                 .append(output.name()).append(";\n"));
         helper.append("    vec4 chimeraKeptPosition = gl_Position;\n")
-                .append("    gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n")
+                .append("    ").append(ClipDepth.TO_VULKAN).append('\n')
                 .append("    EmitVertex();\n")
                 .append("    gl_Position = chimeraKeptPosition;\n");
         outputs.forEach(output -> helper.append("    ").append(output.name()).append(" = ").append(KEPT_PREFIX)

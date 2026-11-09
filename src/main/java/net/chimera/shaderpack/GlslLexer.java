@@ -174,6 +174,26 @@ final class GlslLexer {
     }
 
     /**
+     * Blanks comment text but keeps every offset and line break, so a match on the result can edit
+     * the original source. A commented line such as {@code // layout(triangles, ccw) in;} must never
+     * be the line an edit finds.
+     */
+    static String maskComments(String source) {
+        StringBuilder masked = new StringBuilder(source.length());
+        for (Token token : lex(source)) {
+            String text = token.text();
+            if (token.kind() == Kind.TRIVIA && (text.startsWith("//") || text.startsWith("/*"))) {
+                for (int index = 0; index < text.length(); index++) {
+                    masked.append(text.charAt(index) == '\n' ? '\n' : ' ');
+                }
+            } else {
+                masked.append(text);
+            }
+        }
+        return masked.toString();
+    }
+
+    /**
      * Replaces each comment with one space, scanning left to right so whichever comment starts
      * first wins. Removing block comments before line comments misreads Bliss's
      * {@code x = viewPos.z;//*viewPos.z*...} as a block that swallows kilobytes of live code.

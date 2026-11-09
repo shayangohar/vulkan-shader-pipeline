@@ -42,6 +42,30 @@ final class GlslVendorExtensionsTest {
         assertEquals("", compile(translated, Shaderc.shaderc_glsl_compute_shader));
     }
 
+    /**
+     * A directive with a trailing comment stayed as written: GL_NV_gpu_shader5 unknown to shaderc,
+     * and GL_AMD_shader_trinary_minmax required of a device without it. Both are rewritten, the
+     * comment kept on the first line written in the directive's place.
+     */
+    @Test
+    void aDirectiveWithATrailingCommentIsRewritten() {
+        String nvidia = GlslVendorExtensions.forVulkan(
+                COMPUTE.replace(": enable\n", ": enable // NVIDIA path\n"), ALL);
+        assertTrue(nvidia.contains("#extension GL_AMD_gpu_shader_half_float : enable // NVIDIA path\n"
+                + "#extension GL_AMD_gpu_shader_int16 : enable\n") && !nvidia.contains("GL_NV_gpu_shader5"), nvidia);
+        assertEquals("", compile(nvidia, Shaderc.shaderc_glsl_compute_shader));
+        String amd = GlslVendorExtensions.forVulkan("""
+                #version 450
+                #extension GL_AMD_shader_trinary_minmax : require // AMD path
+                layout(local_size_x = 1) in;
+                layout(std430, binding = 0) buffer Data { float value; };
+                void main() { value = max3(value, 1.0, 2.0); }
+                """, GlslVendorExtensions.SizedTypes.NONE, false);
+        assertTrue(!amd.contains("#extension GL_AMD_shader_trinary_minmax")
+                && amd.contains("#define min3(a, b, c) min(a, min(b, c)) // AMD path\n"), amd);
+        assertEquals("", compile(amd, Shaderc.shaderc_glsl_compute_shader));
+    }
+
     /** A converted stage keeps the pack's directive below Chimera's declarations; it still compiles. */
     @Test
     void aDirectiveAfterDeclarationsCompiles() {

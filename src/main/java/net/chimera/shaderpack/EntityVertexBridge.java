@@ -567,14 +567,10 @@ public final class EntityVertexBridge {
     private static String wrapProjectedMain(String converted, String vertexPreamble) {
         String wrapped = converted;
         if (vertexPreamble == GlslVertexPreambles.HAND_VERTEX_PREAMBLE) {
-            wrapped = renamedMain(wrapped, "chimeraHandMain");
-            wrapped += "\nvoid main() { chimeraHandMain();"
-                    + " gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
+            wrapped = ClipDepth.afterRenamedEntry(renamedMain(wrapped, "chimeraHandMain"), "chimeraHandMain");
         }
         if (GlslVertexPreambles.isSkyPreamble(vertexPreamble)) {
-            wrapped = renamedMain(wrapped, "chimeraSkyMain");
-            wrapped += "\nvoid main() { chimeraSkyMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);"
-                    + " }\n";
+            wrapped = ClipDepth.afterRenamedEntry(renamedMain(wrapped, "chimeraSkyMain"), "chimeraSkyMain");
         }
         return wrapped;
     }
@@ -987,8 +983,6 @@ public final class EntityVertexBridge {
                     "chimeraEntityFtransform()");
         }
         body = GlslTokenRewriter.replaceIdentifiers(body, Map.of("ProjMat", "chimeraHandProjection()"));
-        body = renamedMain(body, "chimeraHandMain");
-        return hand + body
-                + "\nvoid main() { chimeraHandMain(); gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w); }\n";
+        return hand + ClipDepth.afterRenamedEntry(renamedMain(body, "chimeraHandMain"), "chimeraHandMain");
     }
 }

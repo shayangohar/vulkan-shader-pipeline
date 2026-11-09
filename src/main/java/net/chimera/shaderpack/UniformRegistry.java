@@ -795,7 +795,7 @@ public final class UniformRegistry {
                 unusedSamplers.add(deviation.substring("SAMPLER_DECLARATION_UNUSED:".length()));
             }
         }
-        String masked = maskComments(result);
+        String masked = GlslLexer.maskComments(result);
         Matcher matcher = UNIFORM_DECLARATION.matcher(masked);
         StringBuilder out = new StringBuilder();
         int last = 0;
@@ -957,25 +957,5 @@ public final class UniformRegistry {
             }
             return true;
         }).toList();
-    }
-
-    /**
-     * Blanks comment text but keeps every offset, so a declaration match on the
-     * result can edit the original source. A comment such as "a corresponding
-     * uniform in shaders.properties" must never start a declaration match.
-     */
-    private static String maskComments(String source) {
-        StringBuilder masked = new StringBuilder(source.length());
-        for (GlslLexer.Token token : GlslLexer.lex(source)) {
-            String text = token.text();
-            if (token.kind() == GlslLexer.Kind.TRIVIA && (text.startsWith("//") || text.startsWith("/*"))) {
-                for (int index = 0; index < text.length(); index++) {
-                    masked.append(text.charAt(index) == '\n' ? '\n' : ' ');
-                }
-            } else {
-                masked.append(text);
-            }
-        }
-        return masked.toString();
     }
 }

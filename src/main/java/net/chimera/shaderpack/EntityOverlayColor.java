@@ -30,6 +30,7 @@ final class EntityOverlayColor {
     private static final Pattern DECLARATION =
             Pattern.compile("(?m)^[ \\t]*uniform\\s+vec4\\s+entityColor\\s*;");
     private static final Pattern READ = Pattern.compile("\\bentityColor\\b");
+    /** A main's head, matched outside comments: a commented one must never take the inserted text. */
     private static final Pattern MAIN =
             Pattern.compile("\\bvoid\\s+main\\s*\\(\\s*(?:void\\s*)?\\)\\s*\\{");
 
@@ -43,12 +44,18 @@ final class EntityOverlayColor {
     /** {@code source} reading entityColor through {@code fetch}, with {@code input} declared just before main. */
     private static String inject(String source, String fetch, String input) {
         if (source == null) return null;
-        Matcher declaration = DECLARATION.matcher(source);
+        // The declaration and its repeats are found outside comments, at the offsets of the source as written.
+        Matcher declaration = DECLARATION.matcher(GlslLexer.maskComments(source));
         if (!declaration.find()) return source;
-        String declared = source.substring(0, declaration.start())
-                + "uniform sampler2D " + PackResourcePlan.OVERLAY_SAMPLER + ";\nvec4 entityColor;"
-                + DECLARATION.matcher(source.substring(declaration.end())).replaceAll("");
-        Matcher main = MAIN.matcher(declared);
+        StringBuilder rewritten = new StringBuilder(source.substring(0, declaration.start()))
+                .append("uniform sampler2D ").append(PackResourcePlan.OVERLAY_SAMPLER).append(";\nvec4 entityColor;");
+        int kept = declaration.end();
+        while (declaration.find()) {
+            rewritten.append(source, kept, declaration.start());
+            kept = declaration.end();
+        }
+        String declared = rewritten.append(source.substring(kept)).toString();
+        Matcher main = MAIN.matcher(GlslLexer.maskComments(declared));
         if (!main.find()) return source;
         // Iris's three lines: the texture stores how much of the mob shows
         // through, so the alpha turns around, and a pack reading only rgb
@@ -98,7 +105,7 @@ final class EntityOverlayColor {
                 || UV_READ.matcher(GlslLexer.stripComments(vertex)).find()) {
             return vertex;
         }
-        Matcher main = MAIN.matcher(vertex);
+        Matcher main = MAIN.matcher(GlslLexer.maskComments(vertex));
         if (!main.find()) return vertex;
         return vertex.substring(0, main.start()) + "flat out ivec2 " + UV_VARYING + ";\n"
                 + vertex.substring(main.start(), main.end()) + "\n    " + UV_VARYING + " = UV1;"
@@ -106,7 +113,7 @@ final class EntityOverlayColor {
     }
 
     private static boolean declares(String source) {
-        return source != null && DECLARATION.matcher(source).find();
+        return source != null && DECLARATION.matcher(GlslLexer.maskComments(source)).find();
     }
 
     /**

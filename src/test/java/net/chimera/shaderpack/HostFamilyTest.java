@@ -76,6 +76,51 @@ final class HostFamilyTest {
     }
 
     /**
+     * Each derived preamble edits its base by exact text. A target that went missing left the base's
+     * input bound where the derived layout has none, and nothing said so; each target must now occur
+     * exactly once, or the preambles fail to load.
+     */
+    @Test
+    void aPreambleEditsTargetsThatOccurExactlyOnce() {
+        assertEquals("const ivec2 UV1 = ivec2(0);\nin vec3 Normal;",
+                GlslVertexPreambles.replaceOnce("in ivec2 UV1;\nin vec3 Normal;", "in ivec2 UV1;",
+                        "const ivec2 UV1 = ivec2(0);"));
+        for (String source : List.of("in vec3 Normal;", "in ivec2 UV1; in ivec2 UV1;")) {
+            try {
+                GlslVertexPreambles.replaceOnce(source, "in ivec2 UV1;", "const ivec2 UV1 = ivec2(0);");
+                throw new AssertionError("edited " + source);
+            } catch (IllegalStateException expected) {
+                assertTrue(expected.getMessage().contains("in ivec2 UV1;"), expected.getMessage());
+            }
+        }
+        assertTrue(GlslVertexPreambles.PARTICLE_VERTEX_PREAMBLE.contains("const ivec2 UV1 = ivec2(0);")
+                && !GlslVertexPreambles.PARTICLE_VERTEX_PREAMBLE.contains("in ivec2 UV1;"),
+                GlslVertexPreambles.PARTICLE_VERTEX_PREAMBLE);
+    }
+
+    /**
+     * A commented main ahead of the real one took the overlay fetch and varying: the inserted text
+     * landed in the line comment, its line break ended the comment, and the rest became code.
+     */
+    @Test
+    void theOverlayIsServedInTheLiveMain() {
+        String fragment = EntityOverlayColor.inject("#version 120\nuniform vec4 entityColor;\n"
+                + "// void main() { old(); }\nvoid main() { gl_FragColor = entityColor; }\n");
+        assertTrue(fragment.contains("// void main() { old(); }\nvoid main() {\n    vec4 chimeraOverlayTexel"),
+                fragment);
+        String vertex = EntityOverlayColor.forwardOverlayUv("#version 330\nin ivec2 UV1;\n"
+                + "/* void main() { old(); } */\nvoid main() { gl_Position = vec4(0.0); }\n", fragment);
+        assertTrue(vertex.contains("/* void main() { old(); } */\nflat out ivec2 " + EntityOverlayColor.UV_VARYING
+                + ";\nvoid main() {\n    " + EntityOverlayColor.UV_VARYING + " = UV1;"), vertex);
+        assertTrue(GlslDeclarations.parseOrNull(vertex) != null, vertex);
+        String commentedDeclaration = EntityOverlayColor.inject("#version 120\n/*\nuniform vec4 entityColor;\n*/\n"
+                + "uniform vec4 entityColor;\nvoid main() { gl_FragColor = entityColor; }\n");
+        assertTrue(commentedDeclaration.startsWith("#version 120\n/*\nuniform vec4 entityColor;\n*/\n"
+                + "uniform sampler2D " + PackResourcePlan.OVERLAY_SAMPLER + ";\nvec4 entityColor;\n"),
+                "the live declaration is the one replaced: " + commentedDeclaration);
+    }
+
+    /**
      * Iris serves gl_NormalMatrix as the model view's inverse transpose on every lane. Nausea and
      * the portal warp stretch the model view, and mat3 of it then tilts the normals packs read.
      */

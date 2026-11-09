@@ -132,8 +132,11 @@ public final class ChimeraTerrainPipelines {
      * shadow-segment swap and its restore without touching ChimeraMainPass.
      */
     public static void setGeometryOverride(GraphicsPipeline pipeline) {
+        // Logged when it changes: the no-pack load clears it on every window resize.
+        if (pipeline != geometryOverride) {
+            ChimeraMod.LOGGER.info("[chimera] terrain override: {}", pipeline != null ? "installed" : "cleared");
+        }
         geometryOverride = pipeline;
-        ChimeraMod.LOGGER.info("[chimera] terrain override: {}", pipeline != null ? "installed" : "cleared");
         if (!initialized) {
             return;
         }
@@ -245,10 +248,11 @@ public final class ChimeraTerrainPipelines {
 
     /** Installs/clears the pack water override without affecting opaque terrain. */
     public static void setTranslucentOverride(GraphicsPipeline pipeline) {
+        if (pipeline != translucentOverride) {
+            ChimeraMod.LOGGER.info("[chimera] translucent override: {}", pipeline != null ? "installed" : "cleared");
+        }
         translucentOverride = pipeline;
         translucentOverrideSuspended = false;
-        ChimeraMod.LOGGER.info("[chimera] translucent override: {}",
-                pipeline != null ? "installed" : "cleared");
         if (!initialized) {
             return;
         }
