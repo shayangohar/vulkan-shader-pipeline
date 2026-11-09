@@ -917,6 +917,7 @@ final class PackFrameState {
         eyeBrightness[0] = 0;
         eyeBrightness[1] = 0;
         eyeBrightnessSmooth[0] = 0;
+        eyeBrightnessSmooth[1] = 0;
         isEyeInWater = 0;
     }
 
