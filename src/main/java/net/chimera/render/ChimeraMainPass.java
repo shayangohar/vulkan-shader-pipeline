@@ -4,6 +4,7 @@ import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.mixin.ChimeraRendererAccessor;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraPostPipelines;
+import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackGeometryContext;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.GeometryOutputPlan;
@@ -847,6 +848,7 @@ public final class ChimeraMainPass implements MainPass {
         this.postChain.nanTripwire.close();
         targets.cleanUpFramebuffersAndPasses();
         cleanUpPipelines();
+        ChimeraTerrainPipelines.cleanUp();
         if (this.packSource != null) this.packSource.close();
         this.packSource = null;
         this.sessions.packPath = null;

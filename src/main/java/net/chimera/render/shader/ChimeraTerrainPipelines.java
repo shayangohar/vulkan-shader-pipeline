@@ -147,6 +147,19 @@ public final class ChimeraTerrainPipelines {
         }
     }
 
+    /**
+     * Destroys Chimera's own terrain pipelines at the renderer's final teardown
+     * (ChimeraMainPass.cleanUp): VulkanMod's PipelineManager.destroyPipelines destroys only its
+     * own, so these outlived the device. The pack's overrides are its pipelines, destroyed with them.
+     */
+    public static void cleanUp() {
+        for (int variant = 0; variant < fixedPipelines.length; variant++) {
+            if (fixedPipelines[variant] != null) fixedPipelines[variant].cleanUp();
+            fixedPipelines[variant] = null;
+        }
+        initialized = false;
+    }
+
     public static void init() {
         if (initialized) {
             return;
