@@ -489,6 +489,7 @@ final class PackFrontEndTest {
         assertEquals(Double.POSITIVE_INFINITY, value("1.0 / 0.0"));
         assertEquals(value("divide(1.0, 0.0)"), value("1.0 / 0.0"));
         assertTrue(Double.isNaN(value("1.0 % 0.0")) && Double.isNaN(value("remainder(1.0, 0.0)")), "x % 0");
+        assertTrue(Double.isNaN(value("fmod(1.0, 0.0)")) && Double.isNaN(value("fmod(0.0, 0.0)")), "fmod(x, 0)");
         assertEquals(1.0, value("clamp(1.0 / 0.0, 0.0, 1.0)"), "the infinity reaches the clamp, not a zero");
     }
 

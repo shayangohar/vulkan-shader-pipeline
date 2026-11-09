@@ -514,9 +514,12 @@ public final class PackExpression {
                 : 1.0 / (halfLife * HALF_LIFE_UNIT_SECONDS / LN_OF_2);
     }
 
-    /** OptiFine's fmod is a floor modulo: the result takes the divisor's sign. */
+    /**
+     * OptiFine's fmod is a floor modulo: the result takes the divisor's sign. A zero divisor gives
+     * NaN, as Iris's float fmod ({@code (a % b + b) % b}) does.
+     */
     private static double floorModulo(double value, double divisor) {
-        return divisor == 0.0 ? 0.0 : value - divisor * Math.floor(value / divisor);
+        return value - divisor * Math.floor(value / divisor);
     }
 
     private static final class Parser {
