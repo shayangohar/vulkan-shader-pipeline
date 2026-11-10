@@ -58,9 +58,13 @@ public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
     /**
      * The noise Iris generates for a pack without texture.noise: {@code size} squared opaque
      * texels whose red, green and blue are the low three bytes of successive {@code java.util.Random}
-     * ints from seed 0, drawn column by column, sampled linear and repeating.
+     * ints from seed 0, drawn column by column, sampled linear and repeating. Refused, as a pack PNG
+     * is, past the device's 2D image limit (PackImageLimits), before any texel is made: a side of
+     * 20000 would first take 1.6 GB and seconds of hashing.
      */
     public static PackNoiseTexture generated(int size, String name) throws IOException {
+        String limit = PackImageLimits.deviceFailure("generated noise", 2, size, size);
+        if (limit != null) throw new IOException(limit);
         NativeImage pixels = new NativeImage(NativeImage.Format.RGBA, size, size, false);
         Random random = new Random(0);
         for (int x = 0; x < size; x++) {
