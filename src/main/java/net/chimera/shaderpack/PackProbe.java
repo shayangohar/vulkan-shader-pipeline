@@ -263,9 +263,12 @@ public final class PackProbe {
                     PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true));
             settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
+            // Only preparation's deviations are redone: a stage file the scan could not read is still
+            // unread (audit FD13).
             inventories.values().forEach(inventory -> {
                 inventory.preparedSources.clear();
-                inventory.deviations.clear();
+                inventory.deviations.removeAll(inventory.preparationDeviations);
+                inventory.preparationDeviations.clear();
             });
             addInventories(loaded.programs(), inventories, shadersDir);
         }
@@ -373,6 +376,7 @@ public final class PackProbe {
             if (prepared.source() != null) inventory.preparedSources.putIfAbsent(stage, prepared.source());
         });
         inventory.deviations.addAll(program.preparationDeviations());
+        inventory.preparationDeviations.addAll(program.preparationDeviations());
     }
 
     private static void addSource(
@@ -576,6 +580,8 @@ public final class PackProbe {
         final Map<String, String> preparedSources = new HashMap<>();
         final Map<String, Path> sourcePaths = new HashMap<>();
         final Set<String> deviations = new HashSet<>();
+        /** The deviations preparing the sources added, which a second preparation replaces. */
+        final Set<String> preparationDeviations = new HashSet<>();
         String variantFolder = "";
 
         private Inventory(String name) {
