@@ -95,7 +95,14 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
         ByteBuffer pixels = texels(bytes, spec, storage);
         try {
             PackRawTexture texture = create(spec, storage, format, name, linear, "clamp".equals(wrap));
-            texture.upload(pixels, spec, storage.uploadedChannels() * storage.bits() / 8);
+            try {
+                texture.upload(pixels, spec, storage.uploadedChannels() * storage.bits() / 8);
+            } catch (RuntimeException failure) {
+                // No owner holds the texture yet (audit RD6). The upload throws where it stages the
+                // texels or takes the upload commands, before it records anything that reads the image.
+                texture.free();
+                throw failure;
+            }
             return texture;
         } finally {
             MemoryUtil.memFree(pixels);

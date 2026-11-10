@@ -75,9 +75,16 @@ final class PackCenterDepth implements AutoCloseable {
                 PackAdvancedResourcePlan.Status.SUPPORTED, List.of());
         PackStorageImage image = PackStorageImage.create(spec, new int[] {1, 1, 1}, Set.of());
         float halfLife = plan.config() == null ? 1.0F : plan.config().directives().centerDepthHalfLife();
-        ComputeKernel kernel = ComputeKernel.create("chimera_center_depth.csh", source(halfLife),
-                new int[] {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
-                ComputeValueBlock.bufferSize(VALUES));
+        ComputeKernel kernel;
+        try {
+            kernel = ComputeKernel.create("chimera_center_depth.csh", source(halfLife),
+                    new int[] {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE},
+                    ComputeValueBlock.bufferSize(VALUES));
+        } catch (RuntimeException failure) {
+            // No owner holds the image yet, so nothing else would free it (audit RD6).
+            image.free();
+            throw failure;
+        }
         LOGGER.info("[chimera] centerDepthSmooth: halfLife={}, kernel={}", halfLife, kernel != null ? "ok" : "failed");
         return new PackCenterDepth(image, kernel);
     }
