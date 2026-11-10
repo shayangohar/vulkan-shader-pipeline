@@ -44,10 +44,28 @@ final class PackShadowComposites {
     private final ChimeraMainPass pass;
     /** The bound framebuffer VulkanMod sizes the viewport to: one wrapping the pass's first output. */
     private Framebuffer boundFramebuffer;
+    /** Whether a failed pass was logged this pack session; later failures are quiet until the next. */
     private boolean failureLogged;
 
     PackShadowComposites(ChimeraMainPass pass) {
         this.pass = pass;
+    }
+
+    /**
+     * A new pack session: its first failed pass is logged again, and the old session's framebuffer,
+     * which wraps a freed shadow target, is dropped. The pass lives as long as the game, so a second
+     * pack's failures went unlogged (audit RD4).
+     */
+    void resetSession() {
+        this.failureLogged = false;
+        this.boundFramebuffer = null;
+    }
+
+    /** True for the session's first failed pass, which is the one logged. */
+    boolean firstFailure() {
+        if (this.failureLogged) return false;
+        this.failureLogged = true;
+        return true;
     }
 
     /** Runs every shadowcomp pass in order over the map just drawn; computes dispatch at the screen's size. */
@@ -93,8 +111,7 @@ final class PackShadowComposites {
             return true;
         } catch (RuntimeException failure) {
             if (rendering) vkCmdEndRenderingKHR(commandBuffer);
-            if (!this.failureLogged) {
-                this.failureLogged = true;
+            if (firstFailure()) {
                 LOGGER.warn("[chimera] pack {}: shadowcomp pass failed; later passes this frame are skipped",
                         post.name(), failure);
             }

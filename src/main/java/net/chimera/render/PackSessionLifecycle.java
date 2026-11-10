@@ -230,6 +230,7 @@ final class PackSessionLifecycle {
         pass.postChain.packPostBoundaryLogged.clear();
         pass.postChain.packFinalExecution = null;
         pass.shadowPass.shadowCastersFailed = false;
+        pass.shadowPass.composites.resetSession();
         pass.shadowPass.shadowCutoutDispositionLogged = false;
         pass.shadowPass.shadowFrameReady = false;
         pass.shadowPass.shadowTransitionFallbackLogged = false;

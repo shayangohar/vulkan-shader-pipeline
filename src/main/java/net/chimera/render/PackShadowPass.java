@@ -52,7 +52,7 @@ final class PackShadowPass {
 
     ChimeraShadowMap shadowMap = new ChimeraShadowMap();
     final PackShadowDepth packShadowDepth = new PackShadowDepth();
-    private final PackShadowComposites composites;
+    final PackShadowComposites composites;
 
     /** Programs whose routed shadow sampler was already reported once. */
     final Set<String> loggedShadowSamplerPrograms = new HashSet<>();
