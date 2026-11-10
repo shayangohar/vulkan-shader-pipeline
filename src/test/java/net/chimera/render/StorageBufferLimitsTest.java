@@ -56,4 +56,22 @@ final class StorageBufferLimitsTest {
             throw new IllegalStateException("vmaCreateBuffer failed");
         }), "a failed allocation keeps the old buffer and does not throw");
     }
+
+    /**
+     * Audit FD11: a relative size whose product passes a long is past every device's range. It
+     * wrapped: 2^62 bytes a pixel at 1920x1080 came to 0, which passed the range check.
+     */
+    @Test
+    void aRelativeSizePastALongIsPastTheRange() {
+        PackAdvancedResourcePlan.BufferSpec huge = new PackAdvancedResourcePlan.BufferSpec(0, 1L << 62, "", true,
+                1.0F, 1.0F, PackAdvancedResourcePlan.Status.SUPPORTED, List.of());
+        assertEquals(Long.MAX_VALUE, huge.bytes(1920, 1080));
+        List<Integer> recreated = new ArrayList<>();
+        assertFalse(PackStorageBufferOwner.refit(0, huge.bytes(1920, 1080), Integer.MAX_VALUE, "1920x1080",
+                recreated::add));
+        assertEquals(List.of(), recreated);
+        PackAdvancedResourcePlan.BufferSpec half = new PackAdvancedResourcePlan.BufferSpec(0, 16, "", true,
+                0.5F, 0.5F, PackAdvancedResourcePlan.Status.SUPPORTED, List.of());
+        assertEquals(960L * 540 * 16, half.bytes(1920, 1080));
+    }
 }
