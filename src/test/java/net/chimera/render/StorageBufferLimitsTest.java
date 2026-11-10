@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.LongStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -73,5 +74,9 @@ final class StorageBufferLimitsTest {
         PackAdvancedResourcePlan.BufferSpec half = new PackAdvancedResourcePlan.BufferSpec(0, 16, "", true,
                 0.5F, 0.5F, PackAdvancedResourcePlan.Status.SUPPORTED, List.of());
         assertEquals(960L * 540 * 16, half.bytes(1920, 1080));
+        // The session's logged totals stay at Long.MAX_VALUE rather than wrapping negative.
+        assertEquals(Long.MAX_VALUE, PackStorageBufferOwner.totalBytes(
+                LongStream.of(huge.bytes(1920, 1080), half.bytes(1920, 1080))));
+        assertEquals(48L, PackStorageBufferOwner.totalBytes(LongStream.of(16, 32)));
     }
 }
