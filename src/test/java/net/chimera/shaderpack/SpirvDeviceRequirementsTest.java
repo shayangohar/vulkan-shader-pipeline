@@ -57,6 +57,16 @@ final class SpirvDeviceRequirementsTest {
                 "relaxed_extended_instruction"}) {
             assertEquals("VK_KHR_shader_" + name, SpirvDeviceRequirements.extension("SPV_KHR_" + name));
         }
+        assertEquals("VK_KHR_shader_untyped_pointers", SpirvDeviceRequirements.extension("SPV_KHR_untyped_pointers"));
+        assertEquals("VK_EXT_shader_replicated_composites",
+                SpirvDeviceRequirements.extension("SPV_EXT_replicated_composites"));
+        // Served by an extension of another name altogether.
+        assertEquals("VK_KHR_ray_tracing_pipeline", SpirvDeviceRequirements.extension("SPV_KHR_ray_tracing"));
+        assertEquals("VK_NV_shading_rate_image", SpirvDeviceRequirements.extension("SPV_NV_shading_rate"));
+        assertEquals("VK_EXT_conservative_rasterization",
+                SpirvDeviceRequirements.extension("SPV_EXT_fragment_fully_covered"));
+        assertEquals("VK_EXT_fragment_density_map",
+                SpirvDeviceRequirements.extension("SPV_EXT_fragment_invocation_density"));
         // The bundled shaderc knows none of their GLSL extensions yet, so the module is written by hand.
         SpirvDeviceRequirements.Requirements module =
                 SpirvDeviceRequirements.of(moduleDeclaring("SPV_KHR_subgroup_uniform_control_flow"));
