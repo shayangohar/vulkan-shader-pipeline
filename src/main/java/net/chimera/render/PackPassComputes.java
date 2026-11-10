@@ -73,7 +73,7 @@ final class PackPassComputes implements AutoCloseable {
     private final Set<String> failed = new HashSet<>();
     /** Computes that have skipped a frame, each logged once. */
     private final Set<String> skipped = new HashSet<>();
-    /** Computes whose work groups GL would refuse (dispatchGap), each logged once. */
+    /** Computes whose work groups cannot be dispatched (dispatchGap), each logged once. */
     private final Set<String> refused = new HashSet<>();
     /** The setup computes' round; a session's first round starts at load. */
     private final SetupRound setupRound = new SetupRound();
@@ -241,11 +241,31 @@ final class PackPassComputes implements AutoCloseable {
         return !PassComputePlan.isSetup(pass) && !PassComputePlan.isShadowcomp(pass);
     }
 
-    /**
-     * Dispatches one compute unless it failed before; false when it skips this frame (frameGap).
-     * Work groups GL refuses (dispatchGap) count as run with nothing dispatched, as glDispatchCompute
-     * leaves them: a setup round goes on to its next compute in the same frame.
-     */
+    /** What one compute does this frame, and whether it counts as run, as a setup round reads it. */
+    enum Step {
+        DISPATCH(true),
+        /**
+         * Work groups that cannot be dispatched (dispatchGap): nothing is dispatched and the compute
+         * counts as run, as glDispatchCompute leaves work groups it refuses, so a setup round goes on
+         * to its next compute in the same frame. The reason holds at this size, so waiting would not help.
+         */
+        NOTHING(true),
+        /** An image or indirect count missing this frame (frameGap): it skips, holding a setup round. */
+        SKIP_FRAME(false);
+
+        final boolean ran;
+
+        Step(boolean ran) {
+            this.ran = ran;
+        }
+    }
+
+    /** The step for a compute with this frame gap and dispatch gap, either null when it has none. */
+    static Step step(String frameGap, String dispatchGap) {
+        return frameGap != null ? Step.SKIP_FRAME : dispatchGap != null ? Step.NOTHING : Step.DISPATCH;
+    }
+
+    /** Dispatches one compute unless it failed before; whether it counts as run ({@link Step}). */
     private boolean run(Loaded compute, VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
         String name = compute.plan().name();
         if (failed.contains(name)) return true;
@@ -254,17 +274,21 @@ final class PackPassComputes implements AutoCloseable {
             PassComputePlan.Indirect indirect = compute.plan().indirect();
             String gap = frameGap(compute.plan(), binding -> images.get(binding) != null,
                     indirect == null ? 0L : buffers.buffer(indirect.buffer()).getBufferSize());
-            if (gap != null) {
-                if (skipped.add(name)) LOGGER.warn("[chimera] pack compute {} skips a frame: {}", name, gap);
-                return false;
+            String refusal = gap != null ? null
+                    : dispatchGap(compute.plan(), workGroupSize(compute), width, height, dispatchLimits());
+            Step step = step(gap, refusal);
+            switch (step) {
+                case DISPATCH -> dispatch(stack, commandBuffer, compute, images, sources, width, height);
+                case NOTHING -> {
+                    if (refused.add(name)) {
+                        LOGGER.warn("[chimera] pack compute {} dispatches nothing: {}", name, refusal);
+                    }
+                }
+                case SKIP_FRAME -> {
+                    if (skipped.add(name)) LOGGER.warn("[chimera] pack compute {} skips a frame: {}", name, gap);
+                }
             }
-            String refusal = dispatchGap(compute.plan(), workGroupSize(compute), width, height, dispatchLimits());
-            if (refusal == null) {
-                dispatch(stack, commandBuffer, compute, images, sources, width, height);
-            } else if (refused.add(name)) {
-                LOGGER.warn("[chimera] pack compute {} dispatches nothing, as GL would: {}", name, refusal);
-            }
-            return true;
+            return step.ran;
         } catch (RuntimeException failure) {
             failed.add(name);
             LOGGER.warn("[chimera] pack compute {} dispatch failed; it no longer runs: {}",
@@ -297,7 +321,8 @@ final class PackPassComputes implements AutoCloseable {
      * dispatched over {@code workGroupSize}, or null when they can. A count past {@code limits}, the
      * device's maxComputeWorkGroupCount, or a negative one, as a negative workGroupsRender share
      * makes, fails glDispatchCompute with INVALID_VALUE, which dispatches nothing; Vulkan leaves it
-     * undefined. A screen-sized count needs a positive work group size on x and y.
+     * undefined. A screen-sized count needs a positive work group size on x and y: one the module
+     * does not give is Chimera's gap, where GL knows the size and Iris dispatches.
      */
     static String dispatchGap(PassComputePlan.PassCompute compute, int[] workGroupSize, int width, int height,
                               int[] limits) {

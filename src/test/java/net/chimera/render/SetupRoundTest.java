@@ -94,6 +94,28 @@ final class SetupRoundTest {
     }
 
     /**
+     * Work groups that cannot be dispatched count as run with nothing dispatched, so a setup round
+     * goes on in the same frame, as Iris's next setup program runs after a refused glDispatchCompute.
+     * Only a frame gap holds the round. A refusal once held it for TRIES frames on every resize.
+     */
+    @Test
+    void aRefusedDispatchLetsTheRoundGoOn() {
+        assertTrue(PackPassComputes.step(null, "work groups -1x1x1 lie outside").ran);
+        assertTrue(PackPassComputes.step(null, null).ran);
+        assertTrue(!PackPassComputes.step("colorimg3 has no image this frame", null).ran);
+        SetupRound round = new SetupRound();
+        round.start(true);
+        List<String> ran = new ArrayList<>();
+        assertEquals(List.of(), round.advance(NAMES, name -> {
+            PackPassComputes.Step step = PackPassComputes.step(null, name.equals("setup") ? "refused" : null);
+            if (step == PackPassComputes.Step.DISPATCH) ran.add(name);
+            return step.ran;
+        }));
+        assertEquals(List.of("setup1", "setup2"), ran, "the computes after a refused one run in the same frame");
+        assertTrue(!round.due());
+    }
+
+    /**
      * A screen-sized count over a work group size of 0, as a layout sized by a constant expression
      * reads when the module gives none, would divide by zero: Integer.MAX_VALUE groups.
      */
