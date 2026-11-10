@@ -239,7 +239,7 @@ final class PackPassComputes implements AutoCloseable {
         return !PassComputePlan.isSetup(pass) && !PassComputePlan.isShadowcomp(pass);
     }
 
-    /** Dispatches one compute unless it failed before; false when it skips this frame (frameGap). */
+    /** Dispatches one compute unless it failed before; false when it skips this frame (frameGap, dispatchGap). */
     private boolean run(Loaded compute, VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
         String name = compute.plan().name();
         if (failed.contains(name)) return true;
@@ -248,6 +248,7 @@ final class PackPassComputes implements AutoCloseable {
             PassComputePlan.Indirect indirect = compute.plan().indirect();
             String gap = frameGap(compute.plan(), binding -> images.get(binding) != null,
                     indirect == null ? 0L : buffers.buffer(indirect.buffer()).getBufferSize());
+            if (gap == null) gap = dispatchGap(compute.plan(), workGroupSize(compute), width, height, dispatchLimits());
             if (gap == null) {
                 dispatch(stack, commandBuffer, compute, images, sources, width, height);
                 return true;
@@ -279,6 +280,43 @@ final class PackPassComputes implements AutoCloseable {
             return "indirect counts at " + indirect.offset() + " lie past bufferObject." + indirect.buffer();
         }
         return null;
+    }
+
+    /**
+     * Why {@code compute}'s work groups for a {@code width} by {@code height} screen cannot be
+     * dispatched over {@code workGroupSize}, or null when they can. A count past {@code limits}, the
+     * device's maxComputeWorkGroupCount, or a negative one, as a negative workGroupsRender share
+     * makes, fails glDispatchCompute with INVALID_VALUE, which dispatches nothing; Vulkan leaves it
+     * undefined. A screen-sized count needs a positive work group size on x and y.
+     */
+    static String dispatchGap(PassComputePlan.PassCompute compute, int[] workGroupSize, int width, int height,
+                              int[] limits) {
+        if (compute.indirect() != null) return null;
+        if (compute.workGroups() == null && (workGroupSize[0] <= 0 || workGroupSize[1] <= 0)) {
+            return "its work group size is unknown";
+        }
+        int[] groups = compute.groups(width, height, workGroupSize);
+        for (int axis = 0; axis < 3; axis++) {
+            if (Integer.compareUnsigned(groups[axis], limits[axis]) > 0) {
+                return "work groups " + groups[0] + "x" + groups[1] + "x" + groups[2]
+                        + " lie outside the device's maxComputeWorkGroupCount " + Integer.toUnsignedString(limits[0])
+                        + "x" + Integer.toUnsignedString(limits[1]) + "x" + Integer.toUnsignedString(limits[2]);
+            }
+        }
+        return null;
+    }
+
+    /** The work group size a compute dispatches over: its module's, as Iris reads it from GL, else its layout's. */
+    private static int[] workGroupSize(Loaded compute) {
+        int[] module = compute.kernel().localSize();
+        return module != null ? module : compute.plan().localSize();
+    }
+
+    /** The device's maxComputeWorkGroupCount; unbounded before a device. */
+    private static int[] dispatchLimits() {
+        if (DeviceManager.deviceProperties == null) return new int[] {-1, -1, -1};
+        var counts = DeviceManager.deviceProperties.limits().maxComputeWorkGroupCount();
+        return new int[] {counts.get(0), counts.get(1), counts.get(2)};
     }
 
     private void dispatch(MemoryStack stack, VkCommandBuffer commandBuffer, Loaded compute, List<VulkanImage> images,
@@ -369,8 +407,7 @@ final class PackPassComputes implements AutoCloseable {
         PassComputePlan.PassCompute plan = compute.plan();
         PassComputePlan.Indirect indirect = plan.indirect();
         if (indirect == null) {
-            int[] moduleSize = compute.kernel().localSize();
-            int[] groups = plan.groups(width, height, moduleSize != null ? moduleSize : plan.localSize());
+            int[] groups = plan.groups(width, height, workGroupSize(compute));
             vkCmdDispatch(commandBuffer, groups[0], groups[1], groups[2]);
             return;
         }
