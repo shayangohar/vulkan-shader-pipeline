@@ -75,11 +75,12 @@ final class SetupRoundTest {
     }
 
     /**
-     * Audit FD6: work groups GL refuses (INVALID_VALUE, nothing dispatched) skip the frame. A negative
-     * workGroupsRender share gives a negative count, which Vulkan would read as about four billion.
+     * Audit FD6: work groups GL refuses (INVALID_VALUE) dispatch nothing, and the compute counts as
+     * run. A negative workGroupsRender share gives a negative count, which Vulkan would read as about
+     * four billion.
      */
     @Test
-    void workGroupsGlRefusesSkipTheFrame() {
+    void workGroupsGlRefusesDispatchNothing() {
         int[] limits = {65535, 65535, 65535};
         int[] size = {8, 8, 1};
         assertEquals("work groups -120x135x1 lie outside the device's maxComputeWorkGroupCount 65535x65535x65535",

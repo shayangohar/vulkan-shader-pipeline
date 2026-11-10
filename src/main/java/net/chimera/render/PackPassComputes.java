@@ -73,6 +73,8 @@ final class PackPassComputes implements AutoCloseable {
     private final Set<String> failed = new HashSet<>();
     /** Computes that have skipped a frame, each logged once. */
     private final Set<String> skipped = new HashSet<>();
+    /** Computes whose work groups GL would refuse (dispatchGap), each logged once. */
+    private final Set<String> refused = new HashSet<>();
     /** The setup computes' round; a session's first round starts at load. */
     private final SetupRound setupRound = new SetupRound();
 
@@ -239,7 +241,11 @@ final class PackPassComputes implements AutoCloseable {
         return !PassComputePlan.isSetup(pass) && !PassComputePlan.isShadowcomp(pass);
     }
 
-    /** Dispatches one compute unless it failed before; false when it skips this frame (frameGap, dispatchGap). */
+    /**
+     * Dispatches one compute unless it failed before; false when it skips this frame (frameGap).
+     * Work groups GL refuses (dispatchGap) count as run with nothing dispatched, as glDispatchCompute
+     * leaves them: a setup round goes on to its next compute in the same frame.
+     */
     private boolean run(Loaded compute, VkCommandBuffer commandBuffer, ImageSources sources, int width, int height) {
         String name = compute.plan().name();
         if (failed.contains(name)) return true;
@@ -248,13 +254,17 @@ final class PackPassComputes implements AutoCloseable {
             PassComputePlan.Indirect indirect = compute.plan().indirect();
             String gap = frameGap(compute.plan(), binding -> images.get(binding) != null,
                     indirect == null ? 0L : buffers.buffer(indirect.buffer()).getBufferSize());
-            if (gap == null) gap = dispatchGap(compute.plan(), workGroupSize(compute), width, height, dispatchLimits());
-            if (gap == null) {
-                dispatch(stack, commandBuffer, compute, images, sources, width, height);
-                return true;
+            if (gap != null) {
+                if (skipped.add(name)) LOGGER.warn("[chimera] pack compute {} skips a frame: {}", name, gap);
+                return false;
             }
-            if (skipped.add(name)) LOGGER.warn("[chimera] pack compute {} skips a frame: {}", name, gap);
-            return false;
+            String refusal = dispatchGap(compute.plan(), workGroupSize(compute), width, height, dispatchLimits());
+            if (refusal == null) {
+                dispatch(stack, commandBuffer, compute, images, sources, width, height);
+            } else if (refused.add(name)) {
+                LOGGER.warn("[chimera] pack compute {} dispatches nothing, as GL would: {}", name, refusal);
+            }
+            return true;
         } catch (RuntimeException failure) {
             failed.add(name);
             LOGGER.warn("[chimera] pack compute {} dispatch failed; it no longer runs: {}",
