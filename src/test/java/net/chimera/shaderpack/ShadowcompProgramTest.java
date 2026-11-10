@@ -44,6 +44,15 @@ final class ShadowcompProgramTest {
         assertNotNull(graph.step("composite"), "the colortex graph lost its composite");
         assertSame(IrisSamplerOrder.SHADOWCOMP, IrisSamplerOrder.of("shadowcomp1", false),
                 "a shadowcomp program registers its samplers as ShadowCompositeRenderer.createProgram does");
+
+        // Audit FD12: its report row names what runs, a fullscreen program, not a world program's labels.
+        ConformanceReport.ProgramReport row = analysis.report().program("shadowcomp");
+        assertEquals("shadowcomp", row.family());
+        assertTrue(row.deviations().contains("POST_TARGET_ROUTE_APPLIED")
+                && row.deviations().stream().anyMatch(value -> value.startsWith("POST_VERTEX_"))
+                && row.deviations().stream().noneMatch(value -> value.equals("FIXED_VERTEX_SUBSTITUTION")
+                        || value.startsWith("GEOMETRY_TARGET_ROUTE") || value.startsWith("MRT_GEOMETRY")),
+                row.deviations().toString());
     }
 
     @Test

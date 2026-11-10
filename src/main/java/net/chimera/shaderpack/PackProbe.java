@@ -551,6 +551,8 @@ public final class PackProbe {
         if (name.startsWith("gbuffers_")) return "gbuffers";
         if (name.startsWith("composite")) return "composite";
         if (name.equals("final")) return "final";
+        // Fullscreen passes and computes over the shadowcolor targets, not shadow-pass programs (audit FD12).
+        if (name.startsWith("shadowcomp")) return "shadowcomp";
         if (name.startsWith("shadow")) return "shadow";
         if (name.startsWith("deferred")) return "deferred";
         if (name.startsWith("prepare")) return "prepare";
