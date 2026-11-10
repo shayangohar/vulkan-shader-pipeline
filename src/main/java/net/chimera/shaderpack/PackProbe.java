@@ -300,6 +300,13 @@ public final class PackProbe {
                 PackProgram program = planned.program();
                 Inventory inventory = new Inventory(program.name());
                 addProgramSources(inventory, program, shadersDir);
+                // The scan's findings for the requested name stay on its row: a stage file it could
+                // not read is why the program falls back.
+                Inventory requested = inventories.get(program.name());
+                if (requested != null) {
+                    requested.deviations.stream().filter(value -> !requested.preparationDeviations.contains(value))
+                            .forEach(inventory.deviations::add);
+                }
                 inventories.put(program.name(), inventory);
             }
         }
