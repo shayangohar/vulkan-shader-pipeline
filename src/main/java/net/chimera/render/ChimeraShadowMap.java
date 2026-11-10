@@ -154,8 +154,10 @@ public class ChimeraShadowMap {
         }
 
         // Register the light MVP supplier so the terrain pipeline's LightMVP
-        // UBO field is filled with our matrix during upload.
-        this.lightMVPBuffer = new MappedBuffer(64);
+        // UBO field is filled with our matrix during upload. The map lives as
+        // long as the game and init runs once a pack load, so one buffer serves
+        // every init; a new one each time leaked the last (audit W8).
+        if (this.lightMVPBuffer == null) this.lightMVPBuffer = new MappedBuffer(64);
         Uniforms.mat4f_uniformMap.put("LightMVP", () -> this.lightMVPBuffer);
 
         this.needsInitialSamplingLayout = true;
