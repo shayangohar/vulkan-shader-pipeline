@@ -38,7 +38,7 @@ final class PackShadowPass {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private final ChimeraMainPass pass;
 
-    /** Iris's AlphaTests.ONE_TENTH_ALPHA, used for solid and cutout shadow terrain. */
+    /** Iris's AlphaTests.ONE_TENTH_ALPHA, its cutout shadow pass's test; here the opaque layers'. */
     static final float SHADOW_CUTOUT_ALPHA = 0.1F;
 
     /** Set once the caster pass failed; the shadow map keeps its terrain for the rest of the session. */
@@ -238,9 +238,11 @@ final class PackShadowPass {
         VRenderSystem.applyModelViewMatrix(this.shadowMap.getLightView());
         VRenderSystem.calculateMVP();
         beginShadowSections(frame.cameraX(), frame.cameraY(), frame.cameraZ(), packShadow);
-        // Iris tests solid and cutout shadow casters at alpha 0.1 and
-        // translucent ones not at all; foliage quads otherwise cast
-        // their whole square.
+        // Iris tests its cutout shadow pass at alpha 0.1, and solid and
+        // translucent terrain not at all (SodiumPrograms.getAlphaTest).
+        // VulkanMod builds solid blocks into cutout_mipped, so they take
+        // the test with the cutout ones, and their opaque texels pass.
+        // Without it foliage quads cast their whole square.
         if (packShadow) {
             PackUniformProvider.updateDrawAlphaReference(SHADOW_CUTOUT_ALPHA);
         }
