@@ -40,7 +40,7 @@ final class ProgramReportRules {
         boolean fullscreen = PostTargetPlan.isFullscreenProgramName(name);
         boolean hasFragment = inventory.stages.contains("fragment");
         boolean modern = !modernTerrainPlan(name, programPlan) && !validatedConversion(inventory, programPlan, packPlan)
-                && usesUnsupportedModernGlsl(stripped, postName, FamilyAdapterRegistry.isEntityLike(name));
+                && usesUnsupportedModernGlsl(stripped, fullscreen, FamilyAdapterRegistry.isEntityLike(name));
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
         // The report has historically exposed all uniform declarations,
         // including samplers. Keep that public inventory stable while the

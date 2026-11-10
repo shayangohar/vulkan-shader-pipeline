@@ -55,6 +55,31 @@ final class ShadowcompProgramTest {
                 row.deviations().toString());
     }
 
+    /**
+     * A shadowcomp pass converts as a composite does, so a refused one reads its dialect as a refused
+     * composite with the same source does: stage declarations are the post converter's to take.
+     */
+    @Test
+    void aRefusedShadowcompReadsItsDialectAsAComposite(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        // A malformed draw-buffer directive refuses both programs (POST_TARGET_DIRECTIVE_MALFORMED).
+        String refused = """
+                #version 430 compatibility
+                in vec2 uv;
+                out vec4 color;
+                /* RENDERTARGETS: x */
+                void main() { color = vec4(uv, 0.0, 1.0); }
+                """;
+        Files.writeString(shaders.resolve("shadowcomp.fsh"), refused);
+        Files.writeString(shaders.resolve("composite.fsh"), refused);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        ConformanceReport.ProgramReport shadowcomp = analysis.report().program("shadowcomp");
+        ConformanceReport.ProgramReport composite = analysis.report().program("composite");
+        assertFalse(analysis.plan().shouldAttempt("shadowcomp") || analysis.plan().shouldAttempt("composite"),
+                shadowcomp.deviations() + " " + composite.deviations());
+        assertEquals(composite.dialect(), shadowcomp.dialect(), shadowcomp.deviations().toString());
+    }
+
     @Test
     void anAuthoredDirectiveKeepsItsShadowcolorTargets() {
         PostTargetPlan plan = PostTargetPlan.parseShadowcomp("shadowcomp", """
