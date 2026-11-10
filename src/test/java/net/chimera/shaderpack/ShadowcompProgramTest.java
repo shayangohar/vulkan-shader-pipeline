@@ -44,6 +44,40 @@ final class ShadowcompProgramTest {
         assertNotNull(graph.step("composite"), "the colortex graph lost its composite");
         assertSame(IrisSamplerOrder.SHADOWCOMP, IrisSamplerOrder.of("shadowcomp1", false),
                 "a shadowcomp program registers its samplers as ShadowCompositeRenderer.createProgram does");
+
+        // Audit FD12: its report row names what runs, a fullscreen program, not a world program's labels.
+        ConformanceReport.ProgramReport row = analysis.report().program("shadowcomp");
+        assertEquals("shadowcomp", row.family());
+        assertTrue(row.deviations().contains("POST_TARGET_ROUTE_APPLIED")
+                && row.deviations().stream().anyMatch(value -> value.startsWith("POST_VERTEX_"))
+                && row.deviations().stream().noneMatch(value -> value.equals("FIXED_VERTEX_SUBSTITUTION")
+                        || value.startsWith("GEOMETRY_TARGET_ROUTE") || value.startsWith("MRT_GEOMETRY")),
+                row.deviations().toString());
+    }
+
+    /**
+     * A shadowcomp pass converts as a composite does, so a refused one reads its dialect as a refused
+     * composite with the same source does: stage declarations are the post converter's to take.
+     */
+    @Test
+    void aRefusedShadowcompReadsItsDialectAsAComposite(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        // A malformed draw-buffer directive refuses both programs (POST_TARGET_DIRECTIVE_MALFORMED).
+        String refused = """
+                #version 430 compatibility
+                in vec2 uv;
+                out vec4 color;
+                /* RENDERTARGETS: x */
+                void main() { color = vec4(uv, 0.0, 1.0); }
+                """;
+        Files.writeString(shaders.resolve("shadowcomp.fsh"), refused);
+        Files.writeString(shaders.resolve("composite.fsh"), refused);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        ConformanceReport.ProgramReport shadowcomp = analysis.report().program("shadowcomp");
+        ConformanceReport.ProgramReport composite = analysis.report().program("composite");
+        assertFalse(analysis.plan().shouldAttempt("shadowcomp") || analysis.plan().shouldAttempt("composite"),
+                shadowcomp.deviations() + " " + composite.deviations());
+        assertEquals(composite.dialect(), shadowcomp.dialect(), shadowcomp.deviations().toString());
     }
 
     @Test

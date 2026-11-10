@@ -16,6 +16,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.IntConsumer;
+import java.util.stream.LongStream;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_VERTEX_BIT;
@@ -73,11 +74,18 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         this.plan = plan == null ? PackAdvancedResourcePlan.empty() : plan;
         this.screenWidth = screenWidth;
         this.screenHeight = screenHeight;
-        this.plannedBytes = used(this.plan, computeBuffers).stream()
+        this.plannedBytes = totalBytes(used(this.plan, computeBuffers).stream()
                 .map(this.plan.buffers()::get)
                 .filter(Objects::nonNull)
-                .mapToLong(spec -> spec.bytes(screenWidth, screenHeight))
-                .sum();
+                .mapToLong(spec -> spec.bytes(screenWidth, screenHeight)));
+    }
+
+    /**
+     * Buffer sizes added up to at most Long.MAX_VALUE: a relative size past a long is Long.MAX_VALUE
+     * itself (BufferSpec.bytes), and a plain sum with any other wrapped negative in the logs.
+     */
+    static long totalBytes(LongStream sizes) {
+        return sizes.reduce(0L, (total, bytes) -> total > Long.MAX_VALUE - bytes ? Long.MAX_VALUE : total + bytes);
     }
 
     /** The buffers a program or a pass compute binds. */
@@ -280,11 +288,10 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     }
 
     public long failedBytes() {
-        return failures.keySet().stream()
+        return totalBytes(failures.keySet().stream()
                 .map(plan.buffers()::get)
                 .filter(Objects::nonNull)
-                .mapToLong(spec -> spec.bytes(screenWidth, screenHeight))
-                .sum();
+                .mapToLong(spec -> spec.bytes(screenWidth, screenHeight)));
     }
 
     public String failureReason(String program) {

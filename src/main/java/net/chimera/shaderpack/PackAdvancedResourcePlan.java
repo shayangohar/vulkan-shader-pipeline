@@ -190,11 +190,18 @@ public final class PackAdvancedResourcePlan {
 
         /**
          * The buffer's bytes on a screen of this size: a relative buffer's size for each pixel of
-         * its truncated share (ShaderStorageBuffer.resizeIfRelative), at least one per side.
+         * its truncated share (ShaderStorageBuffer.resizeIfRelative), at least one per side. A product
+         * past a long is Long.MAX_VALUE, past every device's range, where Iris's wraps (audit FD11).
          */
         public long bytes(int screenWidth, int screenHeight) {
             if (!relative) return size;
-            return Math.max(1L, (long) (screenWidth * scaleX)) * Math.max(1L, (long) (screenHeight * scaleY)) * size;
+            long width = Math.max(1L, (long) (screenWidth * scaleX));
+            long height = Math.max(1L, (long) (screenHeight * scaleY));
+            try {
+                return Math.multiplyExact(Math.multiplyExact(width, height), size);
+            } catch (ArithmeticException overflow) {
+                return Long.MAX_VALUE;
+            }
         }
     }
 

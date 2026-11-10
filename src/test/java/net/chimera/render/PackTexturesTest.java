@@ -5,15 +5,20 @@ import net.chimera.shaderpack.PackResourceKind;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PackResourceStatus;
 import net.chimera.shaderpack.RawTextureSpec;
+import net.vulkanmod.vulkan.device.DeviceManager;
 import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.vulkan.VkPhysicalDeviceLimits;
+import org.lwjgl.vulkan.VkPhysicalDeviceProperties;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R16G16B16A16_SFLOAT;
 import static org.lwjgl.vulkan.VK10.VK_FORMAT_R8_UNORM;
@@ -39,6 +44,26 @@ final class PackTexturesTest {
                 PackImageLimits.failure("raw texture", 3, new int[] {64, 64, 4096}, 2048));
         assertNull(PackImageLimits.failure("raw texture", 1, new int[] {256, 99999, 99999}, 16384),
                 "a 1D image's unused axes are not its extent");
+    }
+
+    /**
+     * Audit FD7: the noise Iris generates for a pack without texture.noise is refused past the
+     * device's 2D limit, as a pack PNG is, and before its texels are made.
+     */
+    @Test
+    void generatedNoisePastTheDeviceLimitIsRefusedFirst() {
+        VkPhysicalDeviceProperties before = DeviceManager.deviceProperties;
+        VkPhysicalDeviceProperties device = VkPhysicalDeviceProperties.calloc();
+        MemoryUtil.memPutInt(device.address() + VkPhysicalDeviceProperties.LIMITS
+                + VkPhysicalDeviceLimits.MAXIMAGEDIMENSION2D, 64);
+        DeviceManager.deviceProperties = device;
+        try {
+            IOException refused = assertThrows(IOException.class, () -> PackNoiseTexture.generated(65, "noise"));
+            assertEquals("generated noise at 65x65 exceeds the device's 2D limit 64", refused.getMessage());
+        } finally {
+            DeviceManager.deviceProperties = before;
+            device.free();
+        }
     }
 
     /** Rows lose GL's 4-byte padding, and RGB gains an alpha of 1 in its own storage. */

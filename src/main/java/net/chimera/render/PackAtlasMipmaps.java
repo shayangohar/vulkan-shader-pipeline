@@ -10,9 +10,6 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.IdentityHashMap;
-import java.util.Map;
-
 /**
  * Gives the block atlas the mip levels Iris setups build (AtlasMipBlend) while a shader pack's
  * terrain directives are installed, and VulkanMod's own levels when none are (TASK-1000). Each
@@ -24,74 +21,76 @@ import java.util.Map;
  */
 public final class PackAtlasMipmaps {
     private static final Logger LOGGER = LoggerFactory.getLogger(PackAtlasMipmaps.class);
-    /** VulkanMod's levels 1.. of each rewritten sprite, by level; empty while VulkanMod's are in place. */
-    private static final Map<SpriteContents, int[][]> HOST_LEVELS = new IdentityHashMap<>();
+    /** The block atlas's levels: VulkanMod's, the pack's, or a mix a failed swap left (audit W7). */
+    private static final AtlasLevelSwap<SpriteContents> LEVELS = new AtlasLevelSwap<>();
     private static TextureAtlas atlas;
     private static boolean wanted;
-    private static boolean applied;
 
     private PackAtlasMipmaps() {}
 
-    /** Whether an installed pack's terrain directives are in force. */
+    /** Whether an installed pack's terrain directives are in force; a swap that failed may run again. */
     public static void setPackInstalled(boolean installed) {
         wanted = installed;
+        LEVELS.retry();
     }
 
     /** A stitched atlas finished uploading; the block atlas's sprites now carry VulkanMod's levels. */
     public static void noteAtlasUpload(TextureAtlas uploaded) {
         if (!InventoryMenu.BLOCK_ATLAS.equals(uploaded.location())) return;
         atlas = uploaded;
-        HOST_LEVELS.clear();
-        applied = false;
+        LEVELS.reset();
     }
 
-    /** At the frame boundary, gives the block atlas the levels the pack state wants. Never throws. */
+    /**
+     * At the frame boundary, gives the block atlas the levels the pack state wants. Never throws: a
+     * failed swap is logged once and runs again at the next pack load or unload.
+     */
     public static void reconcile() {
-        if (atlas == null || wanted == applied) return;
-        applied = wanted;
+        if (atlas == null || !LEVELS.due(wanted)) return;
         long start = System.nanoTime();
         try {
-            int sprites = applied ? rewrite() : restore();
-            upload();
+            int sprites = LEVELS.swap(wanted, atlas.getTextures().values().stream()
+                    .map(TextureAtlasSprite::contents).toList(), PackAtlasMipmaps::levels, PackAtlasMipmaps::upload);
             LOGGER.info("[chimera] pack atlas mipmaps: {} for {} sprites ({} ms)",
-                    applied ? "alpha-weighted levels, as Iris setups build" : "VulkanMod's levels restored",
+                    wanted ? "alpha-weighted levels, as Iris setups build" : "VulkanMod's levels restored",
                     sprites, (System.nanoTime() - start) / 1_000_000);
         } catch (RuntimeException failure) {
-            LOGGER.warn("[chimera] pack atlas mipmaps: {} failed", applied ? "rewrite" : "restore", failure);
+            LOGGER.warn("[chimera] pack atlas mipmaps: {} failed", wanted ? "rewrite" : "restore", failure);
         }
     }
 
-    /** Rebuilds every mipmapped sprite's levels from its level 0, keeping VulkanMod's to restore. */
-    private static int rewrite() {
-        int sprites = 0;
-        for (TextureAtlasSprite sprite : atlas.getTextures().values()) {
-            NativeImage[] levels = sprite.contents().byMipLevel;
-            if (levels.length < 2 || levels[0].format() != NativeImage.Format.RGBA) continue;
-            int[][] host = new int[levels.length][];
-            int[] above = pixels(levels[0]);
-            for (int level = 1; level < levels.length; level++) {
-                host[level] = pixels(levels[level]);
-                int[] below = AtlasMipBlend.reduce(above, levels[level - 1].getWidth(),
-                        levels[level - 1].getHeight(), levels[level].getWidth(), levels[level].getHeight());
-                store(levels[level], below);
-                above = below;
-            }
-            HOST_LEVELS.put(sprite.contents(), host);
-            sprites++;
-        }
-        return sprites;
+    /** A sprite's levels to rewrite: an RGBA sprite with mips; null for any other. */
+    private static AtlasLevelSwap.Levels levels(SpriteContents contents) {
+        NativeImage[] images = contents.byMipLevel;
+        return images.length < 2 || images[0].format() != NativeImage.Format.RGBA ? null : new SpriteLevels(images);
     }
 
-    /** Puts VulkanMod's levels back into every rewritten sprite. */
-    private static int restore() {
-        int sprites = HOST_LEVELS.size();
-        for (Map.Entry<SpriteContents, int[][]> entry : HOST_LEVELS.entrySet()) {
-            NativeImage[] levels = entry.getKey().byMipLevel;
-            int[][] host = entry.getValue();
-            for (int level = 1; level < levels.length; level++) store(levels[level], host[level]);
+    /** A sprite's NativeImage levels, read and written as ABGR texels. */
+    private record SpriteLevels(NativeImage[] images) implements AtlasLevelSwap.Levels {
+        @Override
+        public int count() {
+            return images.length;
         }
-        HOST_LEVELS.clear();
-        return sprites;
+
+        @Override
+        public int width(int level) {
+            return images[level].getWidth();
+        }
+
+        @Override
+        public int height(int level) {
+            return images[level].getHeight();
+        }
+
+        @Override
+        public int[] read(int level) {
+            return pixels(images[level]);
+        }
+
+        @Override
+        public void write(int level, int[] abgr) {
+            store(images[level], abgr);
+        }
     }
 
     /**

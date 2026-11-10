@@ -263,9 +263,12 @@ public final class PackProbe {
                     PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true));
             settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
+            // Only preparation's deviations are redone: a stage file the scan could not read is still
+            // unread (audit FD13).
             inventories.values().forEach(inventory -> {
                 inventory.preparedSources.clear();
-                inventory.deviations.clear();
+                inventory.deviations.removeAll(inventory.preparationDeviations);
+                inventory.preparationDeviations.clear();
             });
             addInventories(loaded.programs(), inventories, shadersDir);
         }
@@ -297,6 +300,13 @@ public final class PackProbe {
                 PackProgram program = planned.program();
                 Inventory inventory = new Inventory(program.name());
                 addProgramSources(inventory, program, shadersDir);
+                // The scan's findings for the requested name stay on its row: a stage file it could
+                // not read, which is why the program falls back when that file is its fragment stage.
+                Inventory requested = inventories.get(program.name());
+                if (requested != null) {
+                    requested.deviations.stream().filter(value -> !requested.preparationDeviations.contains(value))
+                            .forEach(inventory.deviations::add);
+                }
                 inventories.put(program.name(), inventory);
             }
         }
@@ -373,6 +383,7 @@ public final class PackProbe {
             if (prepared.source() != null) inventory.preparedSources.putIfAbsent(stage, prepared.source());
         });
         inventory.deviations.addAll(program.preparationDeviations());
+        inventory.preparationDeviations.addAll(program.preparationDeviations());
     }
 
     private static void addSource(
@@ -551,6 +562,8 @@ public final class PackProbe {
         if (name.startsWith("gbuffers_")) return "gbuffers";
         if (name.startsWith("composite")) return "composite";
         if (name.equals("final")) return "final";
+        // Fullscreen passes and computes over the shadowcolor targets, not shadow-pass programs (audit FD12).
+        if (name.startsWith("shadowcomp")) return "shadowcomp";
         if (name.startsWith("shadow")) return "shadow";
         if (name.startsWith("deferred")) return "deferred";
         if (name.startsWith("prepare")) return "prepare";
@@ -574,6 +587,8 @@ public final class PackProbe {
         final Map<String, String> preparedSources = new HashMap<>();
         final Map<String, Path> sourcePaths = new HashMap<>();
         final Set<String> deviations = new HashSet<>();
+        /** The deviations preparing the sources added, which a second preparation replaces. */
+        final Set<String> preparationDeviations = new HashSet<>();
         String variantFolder = "";
 
         private Inventory(String name) {

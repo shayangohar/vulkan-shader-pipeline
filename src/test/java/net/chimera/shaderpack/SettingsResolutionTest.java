@@ -5,6 +5,7 @@ import com.google.gson.JsonParser;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -156,6 +157,30 @@ final class SettingsResolutionTest {
                 "custom dimension did not use its explicit source mapping");
         assertEquals(overworld.sourceHashDigest(), custom.sourceHashDigest(),
                 "custom dimension source differs from its mapped folder");
+    }
+
+    /**
+     * A program whose own file cannot be read falls back to the program Iris would draw in its place,
+     * and its report row keeps the scan's SOURCE_READ_FAILED, which says why. The alias's inventory
+     * replaced the row's and dropped it.
+     */
+    @Test
+    void aFallbackForAnUnreadableFileKeepsItsReadFailure(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_textured.vsh"), """
+                #version 120
+                void main() { gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_textured.fsh"), """
+                #version 120
+                void main() { gl_FragData[0] = vec4(1.0); }
+                """);
+        // Malformed UTF-8, which Files.readString refuses.
+        Files.write(shaders.resolve("gbuffers_terrain.fsh"), new byte[] {(byte) 0xC3, (byte) 0x28});
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        assertEquals("gbuffers_textured", analysis.resolution().resolution("gbuffers_terrain").selectedProgram());
+        List<String> deviations = analysis.report().program("gbuffers_terrain").deviations();
+        assertTrue(deviations.contains("SOURCE_READ_FAILED"), deviations.toString());
     }
 
     @Test

@@ -58,6 +58,8 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
     private final long view;
     private long sampler;
     private boolean freed;
+    /** Whether the upload has begun recording commands that read the image. */
+    private boolean uploadRecorded;
 
     private PackRawTexture(long image, long allocation, int format, int width, int height,
                            int texelBytes, long view, long sampler) {
@@ -95,7 +97,14 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
         ByteBuffer pixels = texels(bytes, spec, storage);
         try {
             PackRawTexture texture = create(spec, storage, format, name, linear, "clamp".equals(wrap));
-            texture.upload(pixels, spec, storage.uploadedChannels() * storage.bits() / 8);
+            try {
+                texture.upload(pixels, spec, storage.uploadedChannels() * storage.bits() / 8);
+            } catch (RuntimeException failure) {
+                // No owner holds the texture yet (audit RD6). Once the copy is recorded, a command
+                // buffer VulkanMod may submit later reads the image, so it is left alive then.
+                if (!texture.uploadRecorded) texture.free();
+                throw failure;
+            }
             return texture;
         } finally {
             MemoryUtil.memFree(pixels);
@@ -183,6 +192,7 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
         staging.copyBuffer(pixels.remaining(), pixels);
         CommandPool.CommandBuffer commands = DeviceManager.getGraphicsQueue().getCommandBuffer();
         VkCommandBuffer commandBuffer = commands.getHandle();
+        uploadRecorded = true;
         try (MemoryStack stack = stackPush()) {
             transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
             VkBufferImageCopy.Buffer region = VkBufferImageCopy.calloc(1, stack);

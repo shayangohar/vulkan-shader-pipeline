@@ -36,9 +36,11 @@ final class ProgramReportRules {
         String fragment = sources.fragment();
         String stripped = stripComments(source);
         boolean postName = PostTargetPlan.isPostProgramName(name);
+        // The labels of what runs: a shadowcomp pass converts as a fullscreen program too (audit FD12).
+        boolean fullscreen = PostTargetPlan.isFullscreenProgramName(name);
         boolean hasFragment = inventory.stages.contains("fragment");
         boolean modern = !modernTerrainPlan(name, programPlan) && !validatedConversion(inventory, programPlan, packPlan)
-                && usesUnsupportedModernGlsl(stripped, postName, FamilyAdapterRegistry.isEntityLike(name));
+                && usesUnsupportedModernGlsl(stripped, fullscreen, FamilyAdapterRegistry.isEntityLike(name));
         List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
         // The report has historically exposed all uniform declarations,
         // including samplers. Keep that public inventory stable while the
@@ -59,12 +61,12 @@ final class ProgramReportRules {
             deviations.addAll(programPlan.deviations());
         }
         deviations.addAll(interfacePlan.deviations());
-        addTargetRouteDeviations(targetResult, postName, programPlan, deviations);
+        addTargetRouteDeviations(targetResult, fullscreen, programPlan, deviations);
         if (programPlan == null && postName && hasFragment && !modern) {
             addUnplannedPostDeviations(inventory, fragment, relaxed, targetResult, interfacePlan,
                     deviations);
         }
-        addVertexDeviations(inventory, packPlan, programPlan, fragment, postName, deviations);
+        addVertexDeviations(inventory, packPlan, programPlan, fragment, fullscreen, deviations);
         addSourceDeviations(inventory, packPlan, programPlan, sources.advancedDeclarations(), samplers, relaxed,
                 modern, deviations);
         addTargetCountDeviations(name, programPlan, targetResult, targets, deviations);
@@ -138,12 +140,12 @@ final class ProgramReportRules {
 
     /** The vertex bridge the program takes, and what its installed family fixes to the host. */
     static void addVertexDeviations(PackProbe.Inventory inventory, PackPlan packPlan, PackProgramPlan programPlan,
-                                    String fragment, boolean postName, Set<String> deviations) {
+                                    String fragment, boolean fullscreen, Set<String> deviations) {
         String name = inventory.name;
         boolean hasVertex = inventory.stages.contains("vertex");
         String vertex = inventory.preparedSources.getOrDefault("vertex", inventory.sources.get("vertex"));
         String vertexBridge = programPlan != null
-                ? plannedVertexBridge(name, hasVertex, programPlan, packPlan, postName)
+                ? plannedVertexBridge(name, hasVertex, programPlan, packPlan, fullscreen)
                 : unplannedVertexBridge(name, hasVertex, vertex, fragment);
         if (vertexBridge != null) {
             deviations.add(vertexBridge);
@@ -278,7 +280,7 @@ final class ProgramReportRules {
 
     static void addTargetRouteDeviations(
             PostTargetPlan.ParseResult targetResult,
-            boolean postName,
+            boolean fullscreen,
             PackProgramPlan programPlan,
             Collection<String> deviations
     ) {
@@ -290,11 +292,11 @@ final class ProgramReportRules {
             return;
         }
         PostTargetPlan plan = targetResult.plan();
-        if (!plan.targetSlots().equals(List.of(0)) && (postName || plan.requiresMrt())) {
-            deviations.add(postName ? "POST_TARGET_ROUTE_APPLIED" : "GEOMETRY_TARGET_ROUTE_APPLIED");
+        if (!plan.targetSlots().equals(List.of(0)) && (fullscreen || plan.requiresMrt())) {
+            deviations.add(fullscreen ? "POST_TARGET_ROUTE_APPLIED" : "GEOMETRY_TARGET_ROUTE_APPLIED");
         }
-        if (plan.requiresMrt() && (postName || programPlan == null || programPlan.executable())) {
-            deviations.add(postName ? "MRT_POST_BRIDGE" : "MRT_GEOMETRY_BRIDGE");
+        if (plan.requiresMrt() && (fullscreen || programPlan == null || programPlan.executable())) {
+            deviations.add(fullscreen ? "MRT_POST_BRIDGE" : "MRT_GEOMETRY_BRIDGE");
         }
     }
 
@@ -337,7 +339,7 @@ final class ProgramReportRules {
      * A cloud program that runs empty (PackPlan.cloudRunsEmpty) has no vertex bridge to name.
      */
     static String plannedVertexBridge(
-            String name, boolean hasVertex, PackProgramPlan plan, PackPlan packPlan, boolean postName) {
+            String name, boolean hasVertex, PackProgramPlan plan, PackPlan packPlan, boolean fullscreen) {
         boolean converted = plan.convertedVertex() != null;
         if (hasVertex) {
             if (packPlan != null && packPlan.cloudRunsEmpty(name)) {
@@ -356,7 +358,7 @@ final class ProgramReportRules {
             if (bridge != null) {
                 return reached(bridge, converted, plan);
             }
-            if (converted && postName) {
+            if (converted && fullscreen) {
                 return plan.deviations().contains("POST_VERTEX_AUTHORED_TRANSLATED")
                         ? "POST_VERTEX_AUTHORED_TRANSLATED" : "POST_VERTEX_ADAPTER";
             }

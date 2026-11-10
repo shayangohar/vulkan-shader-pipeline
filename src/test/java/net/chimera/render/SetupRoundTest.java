@@ -74,8 +74,69 @@ final class SetupRoundTest {
         assertNull(PackPassComputes.frameGap(compute, binding -> true, 20L + PassComputePlan.INDIRECT_COUNTS_BYTES));
     }
 
+    /**
+     * Audit FD6: work groups GL refuses (INVALID_VALUE) dispatch nothing, and the compute counts as
+     * run. A negative workGroupsRender share gives a negative count, which Vulkan would read as about
+     * four billion.
+     */
+    @Test
+    void workGroupsGlRefusesDispatchNothing() {
+        int[] limits = {65535, 65535, 65535};
+        int[] size = {8, 8, 1};
+        assertEquals("work groups -120x135x1 lie outside the device's maxComputeWorkGroupCount 65535x65535x65535",
+                PackPassComputes.dispatchGap(compute(null, new float[] {-0.5F, 1.0F}), size, 1920, 1080, limits));
+        assertNull(PackPassComputes.dispatchGap(compute(null, new float[] {0.5F, 1.0F}), size, 1920, 1080, limits));
+        assertEquals("work groups 65536x1x1 lie outside the device's maxComputeWorkGroupCount 65535x65535x65535",
+                PackPassComputes.dispatchGap(compute(new int[] {65536, 1, 1}, null), size, 1920, 1080, limits));
+        assertNull(PackPassComputes.dispatchGap(compute(new int[] {65535, 1, 1}, null), size, 1920, 1080, limits));
+        // An unsigned limit past Integer.MAX_VALUE holds every non-negative count.
+        assertNull(PackPassComputes.dispatchGap(compute(null, null), size, 1920, 1080, new int[] {-1, -1, -1}));
+    }
+
+    /**
+     * Work groups that cannot be dispatched count as run with nothing dispatched, so a setup round
+     * goes on in the same frame, as Iris's next setup program runs after a refused glDispatchCompute.
+     * Only a frame gap holds the round. A refusal once held it for TRIES frames on every resize.
+     */
+    @Test
+    void aRefusedDispatchLetsTheRoundGoOn() {
+        assertTrue(PackPassComputes.step(null, "work groups -1x1x1 lie outside").ran);
+        assertTrue(PackPassComputes.step(null, null).ran);
+        assertTrue(!PackPassComputes.step("colorimg3 has no image this frame", null).ran);
+        SetupRound round = new SetupRound();
+        round.start(true);
+        List<String> ran = new ArrayList<>();
+        assertEquals(List.of(), round.advance(NAMES, name -> {
+            PackPassComputes.Step step = PackPassComputes.step(null, name.equals("setup") ? "refused" : null);
+            if (step == PackPassComputes.Step.DISPATCH) ran.add(name);
+            return step.ran;
+        }));
+        assertEquals(List.of("setup1", "setup2"), ran, "the computes after a refused one run in the same frame");
+        assertTrue(!round.due());
+    }
+
+    /**
+     * A screen-sized count over a work group size of 0, as a layout sized by a constant expression
+     * reads when the module gives none, would divide by zero: Integer.MAX_VALUE groups.
+     */
+    @Test
+    void aScreenSizedCountNeedsAWorkGroupSize() {
+        int[] limits = {Integer.MAX_VALUE, 65535, 65535};
+        assertEquals("its work group size is unknown",
+                PackPassComputes.dispatchGap(compute(null, null), new int[] {0, 8, 1}, 1920, 1080, limits));
+        assertNull(PackPassComputes.dispatchGap(compute(new int[] {4, 1, 1}, null), new int[] {0, 8, 1}, 1920, 1080,
+                limits));
+        assertNull(PackPassComputes.dispatchGap(compute(new PassComputePlan.Indirect(2, 0L)), new int[] {0, 0, 0},
+                1920, 1080, limits));
+    }
+
     private static PassComputePlan.PassCompute compute(PassComputePlan.Indirect indirect) {
         return new PassComputePlan.PassCompute("composite_a", "composite", "void main() {}", new int[] {8, 8, 1},
                 null, null, indirect, BINDINGS, List.of(), List.of(), List.of());
+    }
+
+    private static PassComputePlan.PassCompute compute(int[] workGroups, float[] workGroupsRender) {
+        return new PassComputePlan.PassCompute("composite_a", "composite", "void main() {}", new int[] {8, 8, 1},
+                workGroups, workGroupsRender, null, BINDINGS, List.of(), List.of(), List.of());
     }
 }

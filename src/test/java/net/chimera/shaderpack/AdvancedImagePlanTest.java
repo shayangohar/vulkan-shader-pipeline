@@ -225,6 +225,25 @@ final class AdvancedImagePlanTest {
     }
 
     /**
+     * Audit FD13: negotiating custom images prepares the sources again and redoes the preparation
+     * deviations, but a stage file the first scan could not read stays reported. Its
+     * SOURCE_READ_FAILED was cleared with the rest.
+     */
+    @Test
+    void anUnreadableStageFileStaysReportedWhenImagesAreNegotiated(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"),
+                "image.light = lightSampler RGBA RGBA8 BYTE false false 16 16 16\n");
+        writeVolumeReader(shaders, "composite", "lightSampler");
+        // Malformed UTF-8, which Files.readString refuses.
+        Files.write(shaders.resolve("unreadable.fsh"), new byte[] {(byte) 0xC3, (byte) 0x28});
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        assertTrue(analysis.plan().advancedResources().capabilityPossible());
+        List<String> deviations = analysis.report().program("unreadable").deviations();
+        assertTrue(deviations.contains("SOURCE_READ_FAILED"), deviations.toString());
+    }
+
+    /**
      * A storage image nothing reads is inactive, as GL leaves it, and its declaration is dropped
      * (Pegasus's gbuffers declare cimage3_colored_light, which only voxelizing writes). So is one
      * only a helper main never calls reads: GL compiles the helper away, and Iris binds no

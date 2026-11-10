@@ -24,8 +24,10 @@ record PackAlphaTestPlan(
         DYNAMIC_ENTITY,
         /**
          * Each shadow terrain layer tests against the reference the shadow
-         * pass sets for it: Iris's 0.1 for solid and cutout, none for
-         * translucent. Without it every foliage quad cast a square shadow.
+         * pass sets for it: Iris's 0.1 for its cutout pass, none for solid
+         * and translucent. VulkanMod's cutout_mipped layer holds solid blocks
+         * too, which take the 0.1 with the cutout ones; their opaque texels
+         * pass. Without it every foliage quad cast a square shadow.
          * Entity casters test at 0.1 (Iris SHADOW_ENTITIES_CUTOUT).
          */
         DYNAMIC_SHADOW,
