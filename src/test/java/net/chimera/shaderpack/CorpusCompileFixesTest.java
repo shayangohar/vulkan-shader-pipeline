@@ -16,6 +16,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -180,6 +181,28 @@ final class CorpusCompileFixesTest {
                 }
                 """;
         assertEquals(vectors, LegacyShaderNormalizer.normalize(vectors, false).source());
+    }
+
+    /**
+     * Audit GD9: any(isnan(f) || isinf(f)) on a float. NVIDIA's GL compiler takes it, so Iris loads
+     * it; VectorLogicalOperators turns it into an or of any() calls, each on a scalar, which compile
+     * only with the scalar overloads.
+     */
+    @Test
+    void reductionsOverAnOrOfScalarTestsGetScalarOverloads() {
+        String source = LegacyShaderNormalizer.normalize("""
+                #version 430
+                layout(location = 0) out vec4 color;
+                void main() {
+                    float f = gl_FragCoord.x - 1.0;
+                    vec3 v = vec3(f);
+                    color = vec4(any(isnan(f) || isinf(f)) ? 1.0 : 0.0);
+                    if (all(isnan(v.x) && isinf(f))) color = vec4(0.5);
+                }
+                """, false).source();
+        assertTrue(source.contains("bool any(bool chimeraValue) { return chimeraValue; }")
+                && source.contains("bool all(bool chimeraValue) { return chimeraValue; }"), source);
+        assertNull(PackCompileTest.compile(source, false), "the stage must compile as Iris's driver compiles it");
     }
 
     /**

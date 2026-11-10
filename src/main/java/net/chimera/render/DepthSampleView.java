@@ -20,6 +20,8 @@ import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
  * world recreates the HDR depth image mid-frame).</p>
  */
 final class DepthSampleView {
+    /** Whether the view samples as R, R, R, 1, as Iris's shadow depth textures do (ImageViews.shadowDepth). */
+    private final boolean shadow;
     private long view;
     /**
      * The image the view was made for, compared by object: a recreated image can reuse a freed
@@ -27,14 +29,28 @@ final class DepthSampleView {
      */
     private VulkanImage image;
 
+    /** A plain depth view: a read without compare gives (d, 0, 0, 1), as GL's depthtex does. */
+    DepthSampleView() {
+        this(false);
+    }
+
+    private DepthSampleView(boolean shadow) {
+        this.shadow = shadow;
+    }
+
+    /** A view of a shadow depth image (shadowtex0 or shadowtex1), which samples as R, R, R, 1. */
+    static DepthSampleView shadow() {
+        return new DepthSampleView(true);
+    }
+
     /** Returns the depth-only view of the image, creating it for a new image. */
     long ensure(VulkanImage image) {
         if (view != 0L && this.image == image) {
             return view;
         }
         // Create before retiring, so the new handle cannot reuse the old one.
-        long next = VulkanImage.createImageView(image.getId(), image.format, VK_IMAGE_ASPECT_DEPTH_BIT,
-                image.mipLevels);
+        long next = shadow ? ImageViews.shadowDepth(image)
+                : VulkanImage.createImageView(image.getId(), image.format, VK_IMAGE_ASPECT_DEPTH_BIT, image.mipLevels);
         destroy();
         view = next;
         this.image = view == 0L ? null : image;

@@ -32,18 +32,36 @@ public final class SpirvDeviceRequirements {
             "SPV_KHR_physical_storage_buffer", "SPV_KHR_vulkan_memory_model", "SPV_EXT_descriptor_indexing",
             "SPV_EXT_shader_viewport_index_layer");
 
-    /** The SPIR-V extensions whose Vulkan extension is not named after them. */
-    private static final Map<String, String> RENAMED = Map.of(
-            "SPV_KHR_shader_ballot", "VK_EXT_shader_subgroup_ballot",
-            "SPV_KHR_subgroup_vote", "VK_EXT_shader_subgroup_vote",
-            "SPV_KHR_non_semantic_info", "VK_KHR_shader_non_semantic_info",
-            "SPV_KHR_terminate_invocation", "VK_KHR_shader_terminate_invocation",
-            "SPV_KHR_post_depth_coverage", "VK_EXT_post_depth_coverage",
-            "SPV_EXT_demote_to_helper_invocation", "VK_EXT_shader_demote_to_helper_invocation",
-            "SPV_EXT_shader_atomic_float_add", "VK_EXT_shader_atomic_float",
-            "SPV_EXT_shader_atomic_float_min_max", "VK_EXT_shader_atomic_float2",
-            "SPV_EXT_shader_atomic_float16_add", "VK_EXT_shader_atomic_float2",
-            "SPV_EXT_shader_image_int64", "VK_EXT_shader_image_atomic_int64");
+    /**
+     * The SPIR-V extensions whose Vulkan extension is not named after them. Most of the KHR ones
+     * gained a shader_ prefix in Vulkan (audit GD6): without their entry a refusal names an
+     * extension that does not exist, and a device created with the real one refuses the program.
+     */
+    private static final Map<String, String> RENAMED = Map.ofEntries(
+            Map.entry("SPV_KHR_shader_ballot", "VK_EXT_shader_subgroup_ballot"),
+            Map.entry("SPV_KHR_subgroup_vote", "VK_EXT_shader_subgroup_vote"),
+            Map.entry("SPV_KHR_non_semantic_info", "VK_KHR_shader_non_semantic_info"),
+            Map.entry("SPV_KHR_terminate_invocation", "VK_KHR_shader_terminate_invocation"),
+            Map.entry("SPV_KHR_subgroup_uniform_control_flow", "VK_KHR_shader_subgroup_uniform_control_flow"),
+            Map.entry("SPV_KHR_integer_dot_product", "VK_KHR_shader_integer_dot_product"),
+            Map.entry("SPV_KHR_expect_assume", "VK_KHR_shader_expect_assume"),
+            Map.entry("SPV_KHR_quad_control", "VK_KHR_shader_quad_control"),
+            Map.entry("SPV_KHR_maximal_reconvergence", "VK_KHR_shader_maximal_reconvergence"),
+            Map.entry("SPV_KHR_float_controls2", "VK_KHR_shader_float_controls2"),
+            Map.entry("SPV_KHR_subgroup_rotate", "VK_KHR_shader_subgroup_rotate"),
+            Map.entry("SPV_KHR_relaxed_extended_instruction", "VK_KHR_shader_relaxed_extended_instruction"),
+            Map.entry("SPV_KHR_untyped_pointers", "VK_KHR_shader_untyped_pointers"),
+            Map.entry("SPV_EXT_replicated_composites", "VK_EXT_shader_replicated_composites"),
+            Map.entry("SPV_KHR_ray_tracing", "VK_KHR_ray_tracing_pipeline"),
+            Map.entry("SPV_NV_shading_rate", "VK_NV_shading_rate_image"),
+            Map.entry("SPV_EXT_fragment_fully_covered", "VK_EXT_conservative_rasterization"),
+            Map.entry("SPV_EXT_fragment_invocation_density", "VK_EXT_fragment_density_map"),
+            Map.entry("SPV_KHR_post_depth_coverage", "VK_EXT_post_depth_coverage"),
+            Map.entry("SPV_EXT_demote_to_helper_invocation", "VK_EXT_shader_demote_to_helper_invocation"),
+            Map.entry("SPV_EXT_shader_atomic_float_add", "VK_EXT_shader_atomic_float"),
+            Map.entry("SPV_EXT_shader_atomic_float_min_max", "VK_EXT_shader_atomic_float2"),
+            Map.entry("SPV_EXT_shader_atomic_float16_add", "VK_EXT_shader_atomic_float2"),
+            Map.entry("SPV_EXT_shader_image_int64", "VK_EXT_shader_image_atomic_int64"));
 
     /** A module's device extensions and the capabilities it declares, each sorted. */
     public record Requirements(SortedSet<String> extensions, SortedSet<Integer> capabilities) {}

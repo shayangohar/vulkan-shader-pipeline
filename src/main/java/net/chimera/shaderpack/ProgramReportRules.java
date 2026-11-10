@@ -52,7 +52,7 @@ final class ProgramReportRules {
         if (resourcePlan != null) {
             deviations.addAll(reportedResourceDeviations(resourcePlan, name));
         }
-        deviations.addAll(relevantTargetDeviations(packConfig, targetResult));
+        deviations.addAll(relevantTargetDeviations(name, packConfig, targetResult));
         UniformRegistry.ProgramInterface interfacePlan =
                 interfacePlan(name, fragment, programPlan, targetResult, relaxed, postName);
         if (programPlan != null) {
@@ -705,13 +705,15 @@ final class ProgramReportRules {
      * The pack's target deviations that concern a target the program writes, and the integer targets
      * whose mip chain it asks for. The GL spec refuses glGenerateMipmap on a format it cannot filter,
      * so Iris's chain depends on the driver (incomplete, reading zero, or built); Chimera downsamples
-     * it nearest (PackTargetImages).
+     * it nearest (PackTargetImages). A shadow-pass program or a shadowcomp pass writes shadowcolor
+     * targets, which colortex deviations never concern (audit FD3).
      */
     static List<String> relevantTargetDeviations(
+            String program,
             PackConfig.PackConfigData config,
             PostTargetPlan.ParseResult targetResult
     ) {
-        if (targetResult == null) {
+        if (targetResult == null || PostTargetPlan.drawsShadowTargets(program)) {
             return List.of();
         }
         List<String> result = new ArrayList<>();

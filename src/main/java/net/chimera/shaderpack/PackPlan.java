@@ -84,14 +84,15 @@ public record PackPlan(
     }
 
     /**
-     * Whether the program writes a target whose declared format has no Vulkan image here, as the
-     * report reads it (Noble's RGBA32UI colortex1). The target keeps the default format, which
-     * the program's output does not fit.
+     * Whether the program writes a colortex target whose declared format has no Vulkan image here, as
+     * the report reads it. The target keeps the default format, which the program's output does not
+     * fit. A shadow-pass program or a shadowcomp pass writes shadowcolor targets, which a colortex
+     * format never concerns (audit FD3).
      */
     private boolean writesUnsupportedFormat(PackProgramPlan program) {
         PostTargetPlan targets = program.targetPlan() != null ? program.targetPlan()
                 : program.geometryOutputPlan() != null ? program.geometryOutputPlan().targetPlan() : null;
-        if (targets == null || config == null) return false;
+        if (targets == null || config == null || PostTargetPlan.drawsShadowTargets(program.name())) return false;
         return config.deviations().stream()
                 .filter(deviation -> deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:"))
                 .map(PackProbe::targetIndex)

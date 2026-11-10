@@ -40,10 +40,42 @@ final class GlslScalarReductions {
         return overloads;
     }
 
-    /** Whether the call at {@code name} passes a bool variable, or isnan/isinf of a scalar. */
+    /**
+     * Whether the call at {@code name} passes a bool variable, or isnan/isinf of a scalar, or such
+     * tests joined by {@code ||} or {@code &&}: {@code any(isnan(f) || isinf(f))} on a float, which
+     * VectorLogicalOperators later turns into {@code (any(isnan(f)) || any(isinf(f)))}, so each part
+     * needs the scalar overload (audit GD9).
+     */
     private static boolean scalarCall(GlslTree tree, int name) {
+        List<List<Integer>> operands = operands(tree.tokens(), argument(tree.tokens(), name));
+        return !operands.isEmpty() && operands.stream().allMatch(operand -> scalarOperand(tree, operand));
+    }
+
+    /** The argument's tokens split at its top-level {@code ||} and {@code &&}; none when a part is empty. */
+    private static List<List<Integer>> operands(List<GlslLexer.Token> tokens, List<Integer> argument) {
+        List<List<Integer>> operands = new ArrayList<>();
+        List<Integer> current = new ArrayList<>();
+        int depth = 0;
+        for (int index : argument) {
+            GlslLexer.Token token = tokens.get(index);
+            if (token.symbol("(") || token.symbol("[")) depth++;
+            if (token.symbol(")") || token.symbol("]")) depth--;
+            if (depth == 0 && (token.symbol("||") || token.symbol("&&"))) {
+                if (current.isEmpty()) return List.of();
+                operands.add(current);
+                current = new ArrayList<>();
+            } else {
+                current.add(index);
+            }
+        }
+        if (current.isEmpty()) return List.of();
+        operands.add(current);
+        return operands;
+    }
+
+    /** Whether one operand is a bool variable, or isnan/isinf of a scalar or of one vector component. */
+    private static boolean scalarOperand(GlslTree tree, List<Integer> argument) {
         List<GlslLexer.Token> tokens = tree.tokens();
-        List<Integer> argument = argument(tokens, name);
         if (argument.size() == 1) {
             return declaredType(tree, argument.get(0), "bool");
         }

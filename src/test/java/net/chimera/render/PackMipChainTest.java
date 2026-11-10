@@ -50,60 +50,20 @@ final class PackMipChainTest {
         assertTrue(result == VK_SUCCESS, "Vulkan result " + result);
     }
 
-    /** Does not start Minecraft or touch VulkanMod's global device. */
+    /** The headless device, with what the chain needs checked. */
     private static final class Gpu implements AutoCloseable {
-        private VkInstance instance;
-        private VkDevice device;
-        private VkQueue queue;
-        private VkCommandBuffer command;
-        private VkPhysicalDevice physical;
-        private long pool;
-        private long fence;
+        private final HeadlessVulkan.Device gpu;
+        private final VkDevice device;
+        private final VkCommandBuffer command;
 
         Gpu() {
+            // vkCmdBlitImage requires a graphics queue.
+            gpu = new HeadlessVulkan.Device("Chimera mip chain test", VK_QUEUE_GRAPHICS_BIT);
+            device = gpu.device();
+            command = gpu.command();
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                PointerBuffer pointer = stack.mallocPointer(1);
-                VkInstanceCreateInfo create = VkInstanceCreateInfo.calloc(stack).sType$Default()
-                        .pApplicationInfo(VkApplicationInfo.calloc(stack).sType$Default()
-                                .pApplicationName(stack.UTF8("Chimera mip chain test"))
-                                .apiVersion(VK_MAKE_VERSION(1, 2, 0)));
-                ok(vkCreateInstance(create, null, pointer));
-                instance = HeadlessVulkan.instance(pointer.get(0), create);
-                var count = stack.mallocInt(1);
-                ok(vkEnumeratePhysicalDevices(instance, count, null));
-                assertTrue(count.get(0) > 0, "no Vulkan device");
-                PointerBuffer devices = stack.mallocPointer(count.get(0));
-                ok(vkEnumeratePhysicalDevices(instance, count, devices));
-                physical = new VkPhysicalDevice(devices.get(0), instance);
-                vkGetPhysicalDeviceQueueFamilyProperties(physical, count, null);
-                VkQueueFamilyProperties.Buffer queues = VkQueueFamilyProperties.calloc(count.get(0), stack);
-                vkGetPhysicalDeviceQueueFamilyProperties(physical, count, queues);
-                int family = -1;
-                for (int i = 0; i < queues.remaining(); i++) {
-                    // vkCmdBlitImage requires a graphics queue.
-                    if ((queues.get(i).queueFlags() & VK_QUEUE_GRAPHICS_BIT) != 0) { family = i; break; }
-                }
-                assertTrue(family >= 0, "no graphics queue");
-                VkDeviceQueueCreateInfo.Buffer queueCreate = VkDeviceQueueCreateInfo.calloc(1, stack)
-                        .sType$Default().queueFamilyIndex(family).pQueuePriorities(stack.floats(1));
-                VkDeviceCreateInfo deviceCreate = VkDeviceCreateInfo.calloc(stack).sType$Default()
-                        .pQueueCreateInfos(queueCreate);
-                ok(vkCreateDevice(physical, deviceCreate, null, pointer));
-                device = new VkDevice(pointer.get(0), physical, deviceCreate);
-                vkGetDeviceQueue(device, family, 0, pointer);
-                queue = new VkQueue(pointer.get(0), device);
-                LongBuffer handle = stack.mallocLong(1);
-                ok(vkCreateCommandPool(device, VkCommandPoolCreateInfo.calloc(stack).sType$Default()
-                        .queueFamilyIndex(family).flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT),
-                        null, handle));
-                pool = handle.get(0);
-                ok(vkAllocateCommandBuffers(device, VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
-                        .commandPool(pool).level(VK_COMMAND_BUFFER_LEVEL_PRIMARY).commandBufferCount(1), pointer));
-                command = new VkCommandBuffer(pointer.get(0), device);
-                ok(vkCreateFence(device, VkFenceCreateInfo.calloc(stack).sType$Default(), null, handle));
-                fence = handle.get(0);
                 VkFormatProperties properties = VkFormatProperties.calloc(stack);
-                vkGetPhysicalDeviceFormatProperties(physical, FORMAT, properties);
+                vkGetPhysicalDeviceFormatProperties(gpu.physical(), FORMAT, properties);
                 int required = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT
                         | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT;
                 assertTrue((properties.optimalTilingFeatures() & required) == required, "RGBA16F blit support");
@@ -143,7 +103,7 @@ final class PackMipChainTest {
                 image = createImage(stack, handle, width, height, levels);
                 VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
                 vkGetImageMemoryRequirements(device, image, requirements);
-                memory = allocate(stack, requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+                memory = gpu.allocate(stack, requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
                 ok(vkBindImageMemory(device, image, memory, 0));
 
                 long bytes = chainBytes(width, height, levels);
@@ -153,7 +113,7 @@ final class PackMipChainTest {
                 buffer = handle.get(0);
                 VkMemoryRequirements bufferRequirements = VkMemoryRequirements.calloc(stack);
                 vkGetBufferMemoryRequirements(device, buffer, bufferRequirements);
-                bufferMemory = allocate(stack, bufferRequirements,
+                bufferMemory = gpu.allocate(stack, bufferRequirements,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 ok(vkBindBufferMemory(device, buffer, bufferMemory, 0));
                 PointerBuffer pointer = stack.mallocPointer(1);
@@ -192,7 +152,7 @@ final class PackMipChainTest {
                         VkMemoryBarrier.calloc(1, stack).sType$Default()
                                 .srcAccessMask(VK_ACCESS_TRANSFER_WRITE_BIT).dstAccessMask(VK_ACCESS_HOST_READ_BIT),
                         null, null);
-                submitAndWait(stack);
+                gpu.submitAndWait(stack);
 
                 float[][] result = readLevels(mapped, width, height, levels);
                 vkUnmapMemory(device, bufferMemory);
@@ -256,14 +216,6 @@ final class PackMipChainTest {
             return readback;
         }
 
-        private void submitAndWait(MemoryStack stack) {
-            ok(vkEndCommandBuffer(command));
-            ok(vkResetFences(device, fence));
-            ok(vkQueueSubmit(queue, VkSubmitInfo.calloc(stack).sType$Default()
-                    .pCommandBuffers(stack.pointers(command.address())), fence));
-            ok(vkWaitForFences(device, fence, true, 10_000_000_000L));
-        }
-
         /** Decodes every staged level from half floats. */
         private static float[][] readLevels(ByteBuffer mapped, int width, int height, int levels) {
             float[][] result = new float[levels][];
@@ -289,34 +241,9 @@ final class PackMipChainTest {
             vkCmdPipelineBarrier(command, sourceStage, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, barrier);
         }
 
-        private long allocate(MemoryStack stack, VkMemoryRequirements requirements, int properties) {
-            VkPhysicalDeviceMemoryProperties memory = VkPhysicalDeviceMemoryProperties.calloc(stack);
-            vkGetPhysicalDeviceMemoryProperties(physical, memory);
-            for (int i = 0; i < memory.memoryTypeCount(); i++) {
-                if ((requirements.memoryTypeBits() & (1 << i)) != 0
-                        && (memory.memoryTypes(i).propertyFlags() & properties) == properties) {
-                    LongBuffer handle = stack.mallocLong(1);
-                    ok(vkAllocateMemory(device, VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                            .allocationSize(requirements.size()).memoryTypeIndex(i), null, handle));
-                    return handle.get(0);
-                }
-            }
-            throw new AssertionError("mip chain: no memory type " + properties);
-        }
-
         @Override
         public void close() {
-            if (device != null) {
-                vkDeviceWaitIdle(device);
-                if (fence != 0) vkDestroyFence(device, fence, null);
-                if (pool != 0) vkDestroyCommandPool(device, pool, null);
-                vkDestroyDevice(device, null);
-                device = null;
-            }
-            if (instance != null) {
-                vkDestroyInstance(instance, null);
-                instance = null;
-            }
+            gpu.close();
         }
     }
 }

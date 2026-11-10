@@ -67,16 +67,12 @@ final class PackNanTripwireTest {
         assertTrue(result == VK_SUCCESS, "Vulkan result " + result);
     }
 
-    /** Does not start Minecraft or touch VulkanMod's global device. */
+    /** The scan's image, buffers and compute pipeline on the headless device. */
     private static final class GpuScan implements AutoCloseable {
-        private VkInstance instance;
-        private VkPhysicalDevice physical;
-        private VkDevice device;
-        private VkQueue queue;
-        private VkCommandBuffer command;
-        private int family;
-        private long pool, fence, image, imageMemory, view, sampler, shader, setLayout, layout, pipeline, descriptors,
-                set;
+        private final HeadlessVulkan.Device gpu;
+        private final VkDevice device;
+        private final VkCommandBuffer command;
+        private long image, imageMemory, view, sampler, shader, setLayout, layout, pipeline, descriptors, set;
         private long resultBuffer, resultMemory, hostBuffer, hostMemory;
         private ByteBuffer mapped;
         private int imageLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -84,46 +80,10 @@ final class PackNanTripwireTest {
         private static final int WIDTH = 1921, HEIGHT = 1081;
 
         GpuScan(ByteBuffer code) {
+            gpu = new HeadlessVulkan.Device("Chimera NaN scan test", VK_QUEUE_COMPUTE_BIT);
+            device = gpu.device();
+            command = gpu.command();
             try (MemoryStack stack = MemoryStack.stackPush()) {
-                PointerBuffer pointer = stack.mallocPointer(1);
-                VkInstanceCreateInfo create = VkInstanceCreateInfo.calloc(stack).sType$Default()
-                        .pApplicationInfo(VkApplicationInfo.calloc(stack).sType$Default()
-                                .pApplicationName(stack.UTF8("Chimera NaN scan test"))
-                                        .apiVersion(VK_MAKE_VERSION(1, 2, 0)));
-                ok(vkCreateInstance(create, null, pointer));
-                instance = HeadlessVulkan.instance(pointer.get(0), create);
-                var count = stack.mallocInt(1);
-                ok(vkEnumeratePhysicalDevices(instance, count, null));
-                assertTrue(count.get(0) > 0, "no Vulkan device");
-                PointerBuffer devices = stack.mallocPointer(count.get(0));
-                ok(vkEnumeratePhysicalDevices(instance, count, devices));
-                physical = new VkPhysicalDevice(devices.get(0), instance);
-                vkGetPhysicalDeviceQueueFamilyProperties(physical, count, null);
-                VkQueueFamilyProperties.Buffer queues = VkQueueFamilyProperties.calloc(count.get(0), stack);
-                vkGetPhysicalDeviceQueueFamilyProperties(physical, count, queues);
-                family = -1;
-                for (int i = 0; i < queues.remaining(); i++) {
-                    if ((queues.get(i).queueFlags() & VK_QUEUE_COMPUTE_BIT) != 0) { family = i; break; }
-                }
-                assertTrue(family >= 0, "no compute queue");
-                VkDeviceQueueCreateInfo.Buffer queueCreate = VkDeviceQueueCreateInfo.calloc(1, stack)
-                        .sType$Default().queueFamilyIndex(family).pQueuePriorities(stack.floats(1));
-                VkDeviceCreateInfo deviceCreate = VkDeviceCreateInfo.calloc(stack).sType$Default()
-                        .pQueueCreateInfos(queueCreate);
-                ok(vkCreateDevice(physical, deviceCreate, null, pointer));
-                device = new VkDevice(pointer.get(0), physical, deviceCreate);
-                vkGetDeviceQueue(device, family, 0, pointer);
-                queue = new VkQueue(pointer.get(0), device);
-                LongBuffer handle = stack.mallocLong(1);
-                ok(vkCreateCommandPool(device, VkCommandPoolCreateInfo.calloc(stack).sType$Default()
-                        .queueFamilyIndex(family).flags(VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT), null,
-                                handle));
-                pool = handle.get(0);
-                ok(vkAllocateCommandBuffers(device, VkCommandBufferAllocateInfo.calloc(stack).sType$Default()
-                        .commandPool(pool).level(VK_COMMAND_BUFFER_LEVEL_PRIMARY).commandBufferCount(1), pointer));
-                command = new VkCommandBuffer(pointer.get(0), device);
-                ok(vkCreateFence(device, VkFenceCreateInfo.calloc(stack).sType$Default(), null, handle));
-                fence = handle.get(0);
                 createResources(stack, code);
             } catch (RuntimeException | Error failure) {
                 close();
@@ -141,7 +101,7 @@ final class PackNanTripwireTest {
             image = handle.get(0);
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetImageMemoryRequirements(device, image, requirements);
-            imageMemory = allocate(stack, requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            imageMemory = gpu.allocate(stack, requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             ok(vkBindImageMemory(device, image, imageMemory, 0));
             VkImageViewCreateInfo viewCreate = VkImageViewCreateInfo.calloc(stack).sType$Default()
                     .image(image).viewType(VK_IMAGE_VIEW_TYPE_2D).format(VK_FORMAT_R32G32B32A32_SFLOAT);
@@ -215,24 +175,9 @@ final class PackNanTripwireTest {
             long buffer = handle.get(0);
             VkMemoryRequirements requirements = VkMemoryRequirements.calloc(stack);
             vkGetBufferMemoryRequirements(device, buffer, requirements);
-            long memory = allocate(stack, requirements, flags);
+            long memory = gpu.allocate(stack, requirements, flags);
             ok(vkBindBufferMemory(device, buffer, memory, 0));
             return new long[] {buffer, memory};
-        }
-
-        private long allocate(MemoryStack stack, VkMemoryRequirements requirements, int flags) {
-            VkPhysicalDeviceMemoryProperties properties = VkPhysicalDeviceMemoryProperties.calloc(stack);
-            vkGetPhysicalDeviceMemoryProperties(physical, properties);
-            int type = -1;
-            for (int i = 0; i < properties.memoryTypeCount(); i++) {
-                if ((requirements.memoryTypeBits() & (1 << i)) != 0
-                        && (properties.memoryTypes(i).propertyFlags() & flags) == flags) { type = i; break; }
-            }
-            assertTrue(type >= 0, "no suitable Vulkan memory type");
-            LongBuffer handle = stack.mallocLong(1);
-            ok(vkAllocateMemory(device, VkMemoryAllocateInfo.calloc(stack).sType$Default()
-                    .allocationSize(requirements.size()).memoryTypeIndex(type), null, handle));
-            return handle.get(0);
         }
 
         void runChecks() {
@@ -294,12 +239,8 @@ final class PackNanTripwireTest {
                         .size(checks == 1 ? 32 : PackNanTripwire.RESULT_BYTES));
                 memoryBarrier(stack, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
                         VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_HOST_READ_BIT);
-                ok(vkEndCommandBuffer(command));
-                ok(vkResetFences(device, fence));
                 long start = System.nanoTime();
-                ok(vkQueueSubmit(queue, VkSubmitInfo.calloc(stack).sType$Default()
-                        .pCommandBuffers(stack.pointers(command.address())), fence));
-                ok(vkWaitForFences(device, fence, true, 10_000_000_000L));
+                gpu.submitAndWait(stack);
                 long elapsed = System.nanoTime() - start;
                 if (checks == 1) assertTrue(mapped.getInt(0) == 0 && mapped.getInt(8) == -1,
                         "neighbor slot overwritten");
@@ -333,16 +274,11 @@ final class PackNanTripwireTest {
         }
 
         @Override public void close() {
-            if (device != null) {
-                vkDeviceWaitIdle(device);
-                if (mapped != null) vkUnmapMemory(device, hostMemory);
-                destroyComputePipeline();
-                destroyImageAndBuffers();
-                if (fence != 0) vkDestroyFence(device, fence, null);
-                if (pool != 0) vkDestroyCommandPool(device, pool, null);
-                vkDestroyDevice(device, null);
-            }
-            if (instance != null) vkDestroyInstance(instance, null);
+            vkDeviceWaitIdle(device);
+            if (mapped != null) vkUnmapMemory(device, hostMemory);
+            destroyComputePipeline();
+            destroyImageAndBuffers();
+            gpu.close();
         }
 
         private void destroyComputePipeline() {

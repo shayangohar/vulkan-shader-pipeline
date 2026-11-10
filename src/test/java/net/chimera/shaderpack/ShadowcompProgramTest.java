@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -53,6 +54,57 @@ final class ShadowcompProgramTest {
                 void main() { color = vec4(1.0); }
                 """, null).plan();
         assertEquals(List.of(1), plan.targetSlots());
+    }
+
+    /**
+     * Audit FD3: a colortex format Chimera cannot make refuses the colour programs that write that
+     * target, never a shadowcomp pass or a shadow-pass program, whose targets are shadowcolor
+     * indices. A shadowcomp pass and the shadow host-layout lanes (shadow_lines, shadow_basic, ...)
+     * write {0, 1} by default, so colortex1's error once refused them too.
+     */
+    @Test
+    void aColortexFormatErrorLeavesTheShadowTargetsAlone(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        writeShadowcomp(shaders);
+        writeComposite(shaders);
+        Files.writeString(shaders.resolve("shadow.vsh"), """
+                #version 120
+                varying vec2 uv;
+                void main() { uv = gl_MultiTexCoord0.xy; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("shadow.fsh"), """
+                #version 120
+                uniform sampler2D tex;
+                varying vec2 uv;
+                /* DRAWBUFFERS:01 */
+                void main() { gl_FragData[0] = texture2D(tex, uv); gl_FragData[1] = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("composite1.fsh"), """
+                #version 120
+                const int colortex1Format = NOT_A_FORMAT;
+                uniform sampler2D colortex0;
+                varying vec2 uv;
+                /* DRAWBUFFERS:1 */
+                void main() { gl_FragData[0] = texture2D(colortex0, uv); }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        assertTrue(analysis.config().deviations().stream()
+                .anyMatch(value -> value.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:colortex1")),
+                analysis.config().deviations().toString());
+        List<String> shadowPrograms = analysis.plan().programs().stream()
+                .filter(program -> program.executable() && (program.name().startsWith("shadowcomp")
+                        || FamilyAdapterRegistry.isShadowFamily(program.name())))
+                .map(PackProgramPlan::name).toList();
+        assertTrue(shadowPrograms.containsAll(List.of("shadow", "shadowcomp", "shadow_lines", "shadow_basic")),
+                shadowPrograms.toString());
+        for (String program : shadowPrograms) {
+            assertTrue(analysis.plan().shouldAttempt(program), program + " writes shadowcolor targets, not colortex1: "
+                    + analysis.plan().program(program).deviations());
+            assertTrue(analysis.report().program(program).deviations().stream()
+                            .noneMatch(value -> value.startsWith("POST_TARGET_FORMAT_UNSUPPORTED")),
+                    program + ": " + analysis.report().program(program).deviations());
+        }
+        assertFalse(analysis.plan().shouldAttempt("composite1"), "composite1 writes colortex1, which has no image");
     }
 
     private static void writeShadowcomp(Path shaders) throws Exception {

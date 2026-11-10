@@ -8,9 +8,7 @@ import net.chimera.render.ChimeraMainPass;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge.Family;
 import net.chimera.shaderpack.PackRenderingPhase;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.MultiBufferSource;
-import net.minecraft.client.renderer.RenderBuffers;
 import net.minecraft.client.renderer.RenderType;
 
 import java.util.ArrayList;
@@ -236,16 +234,32 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
     }
 
     /**
+     * The level's entity and crumbling sources. Found here, not through RenderBuffers, which hands
+     * them out only while the bridge routes the world's buffers (audit LD1).
+     */
+    static List<FamilyBufferSource> levelSources() {
+        return LIVE.stream().filter(source -> source.level).toList();
+    }
+
+    /**
+     * Drops every batch the level sources hold, unseen: the family bridge was switched off, by a
+     * pack falling back mid-frame or at a frame boundary, so no lane draws them any more, and
+     * RenderBuffers no longer hands the sources out for anything to flush them (audit LD1).
+     */
+    public static void discardLevelBatches() {
+        for (FamilyBufferSource source : levelSources()) {
+            List.copyOf(source.familyBuffers.keySet()).forEach(source::discard);
+        }
+    }
+
+    /**
      * Draws both level sources' started batches as one, in Iris's order, on the main target: Iris
      * buffers crumbling with the entities, so its decals land between their translucent kinds.
      */
     private static void endLevelBatches(ChimeraMainPass pass, Predicate<RenderType> drawn) {
-        RenderBuffers buffers = Minecraft.getInstance().renderBuffers();
         Map<RenderType, FamilyBufferSource> owners = new HashMap<>();
         List<RenderType> started = new ArrayList<>();
-        for (MultiBufferSource.BufferSource candidate : List.of(buffers.bufferSource(),
-                buffers.crumblingBufferSource())) {
-            if (!(candidate instanceof FamilyBufferSource source)) continue;
+        for (FamilyBufferSource source : levelSources()) {
             List<RenderType> own = source.startedTypes(drawn);
             source.noteFlush(own);
             own.forEach(type -> owners.put(type, source));

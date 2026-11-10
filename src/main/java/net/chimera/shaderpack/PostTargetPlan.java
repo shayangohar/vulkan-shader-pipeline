@@ -283,6 +283,14 @@ public final class PostTargetPlan {
     }
 
     /**
+     * Whether a program's target indices name shadowcolor targets rather than colortex ones: a
+     * shadowcomp pass, or a program that draws in the shadow pass (shadow and the shadow lanes).
+     */
+    public static boolean drawsShadowTargets(String name) {
+        return PassComputePlan.isShadowcomp(name) || FamilyAdapterRegistry.isShadowFamily(name);
+    }
+
+    /**
      * A fullscreen pass's route: a post program's over the colour targets in their formats, a
      * shadowcomp pass's over the shadowcolor targets in theirs; null for any other program.
      */

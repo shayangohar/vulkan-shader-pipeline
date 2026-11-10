@@ -298,9 +298,16 @@ public final class ChimeraEntityBridge {
                 status(shadowCasterPipeline), status(shadowMovingBlockPipeline), status(shadowBlockPipeline));
     }
 
+    /**
+     * Switches the lanes on or off. Off, the level sources drop what they hold: a pack that falls
+     * back mid-frame left batches held for a boundary its lanes no longer reach (audit LD1).
+     */
     public static void setEnabled(boolean value) {
         enabled = value && isInstalled();
-        if (!enabled) resetFrameState();
+        if (!enabled) {
+            resetFrameState();
+            FamilyBufferSource.discardLevelBatches();
+        }
     }
 
     /** Uninstalls every lane and frees the family batches built for them. */
