@@ -23,7 +23,10 @@ import static org.lwjgl.vulkan.VK10.VK_SUCCESS;
 import static org.lwjgl.vulkan.VK10.vkCreateImageView;
 import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
 
-/** Views VulkanMod does not create: of Chimera's own 1D and 3D images, and with alpha read as one. */
+/**
+ * Views VulkanMod does not create: of Chimera's own 1D and 3D images, with alpha read as one, and
+ * of a shadow depth image read as R, R, R, 1.
+ */
 final class ImageViews {
     private ImageViews() {}
 
@@ -54,8 +57,13 @@ final class ImageViews {
     }
 
     /** The component mapping of Iris's shadow depth swizzle, GL's {RED, RED, RED, ONE}. */
-    static final int[] SHADOW_DEPTH_COMPONENTS = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R,
+    private static final int[] SHADOW_DEPTH_COMPONENTS = {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R,
             VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE};
+
+    /** The shadow depth swizzle's r, g, b and a mapping, as a copy. */
+    static int[] shadowDepthComponents() {
+        return SHADOW_DEPTH_COMPONENTS.clone();
+    }
 
     /**
      * A depth-only view of a shadow depth image that samples as R, R, R, 1, as Iris swizzles its

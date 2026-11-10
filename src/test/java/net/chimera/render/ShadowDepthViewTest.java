@@ -15,7 +15,9 @@ import java.nio.LongBuffer;
 
 import static net.chimera.testing.HeadlessVulkan.ok;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.lwjgl.vulkan.VK10.*;
+import static org.lwjgl.vulkan.VK11.VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
 
 /**
  * Iris swizzles its shadow depth textures to R, R, R, 1 (ShadowRenderer.configureDepthSampler), so a
@@ -45,22 +47,36 @@ final class ShadowDepthViewTest {
             }
             """;
 
+    /**
+     * D32, which every device samples, and D24S8, the depth VulkanMod gives the shadow map here,
+     * whose view takes the depth aspect of a combined format, where the device samples it.
+     */
     @Test
     void shadowDepthSamplesAsRedRedRedOne() {
         HeadlessVulkan.assumeEnabled();
         ByteBuffer code = GlslCompiler.compile("shadow-depth-view.csh", SHADER, Shaderc.shaderc_glsl_compute_shader,
                 options -> {});
-        try (Gpu gpu = new Gpu(code)) {
-            float[] values = gpu.run();
-            assertArrayEquals(new float[] {DEPTH, DEPTH, DEPTH, 1}, slice(values, 0), EPSILON,
-                    "the shadow depth view reads R, R, R, 1, as Iris's swizzle does");
-            assertArrayEquals(new float[] {DEPTH, 0, 0, 1}, slice(values, 1), EPSILON,
-                    "an identity depth view reads (d, 0, 0, 1)");
-            assertArrayEquals(new float[] {1, 0}, new float[] {values[8], values[9]}, EPSILON,
-                    "a compare through the shadow view still compares the depth");
+        try {
+            for (int format : new int[] {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D24_UNORM_S8_UINT}) {
+                try (Gpu gpu = new Gpu(code, format)) {
+                    assertTrue(gpu.supported() || format != VK_FORMAT_D32_SFLOAT, "D32 must sample");
+                    if (gpu.supported()) check(gpu.run(), "format " + format);
+                    System.out.printf("[chimera] shadow depth view, format %d: %s%n", format,
+                            gpu.supported() ? "checked" : "not sampled by this device");
+                }
+            }
         } finally {
             MemoryUtil.memFree(code);
         }
+    }
+
+    private static void check(float[] values, String format) {
+        assertArrayEquals(new float[] {DEPTH, DEPTH, DEPTH, 1}, slice(values, 0), EPSILON,
+                format + ": the shadow depth view reads R, R, R, 1, as Iris's swizzle does");
+        assertArrayEquals(new float[] {DEPTH, 0, 0, 1}, slice(values, 1), EPSILON,
+                format + ": an identity depth view reads (d, 0, 0, 1)");
+        assertArrayEquals(new float[] {1, 0}, new float[] {values[8], values[9]}, EPSILON,
+                format + ": a compare through the shadow view still compares the depth");
     }
 
     private static float[] slice(float[] values, int vector) {
@@ -69,18 +85,32 @@ final class ShadowDepthViewTest {
         return result;
     }
 
-    /** A 1x1 D32 depth image, its two views, the samplers, a result buffer and a compute pipeline. */
+    /** A 1x1 depth image, its two views, the samplers, a result buffer and a compute pipeline. */
     private static final class Gpu implements AutoCloseable {
         private final HeadlessVulkan.Device gpu;
         private final VkDevice device;
+        private final int format;
+        /** Every aspect of the format, which a layout transition of a combined depth-stencil image names. */
+        private final int aspects;
+        private boolean supported;
         private long image, imageMemory, shadowView, identityView, sampler, compareSampler;
         private long buffer, bufferMemory, shader, setLayout, layout, pipeline, descriptors, set;
         private FloatBuffer mapped;
 
-        Gpu(ByteBuffer code) {
-            gpu = new HeadlessVulkan.Device("Chimera shadow depth view test", VK_QUEUE_COMPUTE_BIT);
+        Gpu(ByteBuffer code, int format) {
+            // The depth clear needs a graphics queue, the sampling a compute one.
+            gpu = new HeadlessVulkan.Device("Chimera shadow depth view test",
+                    VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT);
             device = gpu.device();
+            this.format = format;
+            aspects = format == VK_FORMAT_D24_UNORM_S8_UINT ? VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT
+                    : VK_IMAGE_ASPECT_DEPTH_BIT;
             try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkFormatProperties properties = VkFormatProperties.calloc(stack);
+                vkGetPhysicalDeviceFormatProperties(gpu.physical(), format, properties);
+                int needed = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+                supported = (properties.optimalTilingFeatures() & needed) == needed;
+                if (!supported) return;
                 createImage(stack);
                 createSamplersAndBuffer(stack);
                 createPipeline(stack, code);
@@ -91,11 +121,15 @@ final class ShadowDepthViewTest {
             }
         }
 
+        boolean supported() {
+            return supported;
+        }
+
         /** The depth image, with Chimera's shadow depth view of it beside an identity view. */
         private void createImage(MemoryStack stack) {
             LongBuffer handle = stack.mallocLong(1);
             ok(vkCreateImage(device, VkImageCreateInfo.calloc(stack).sType$Default()
-                    .imageType(VK_IMAGE_TYPE_2D).format(VK_FORMAT_D32_SFLOAT).extent(e -> e.set(1, 1, 1))
+                    .imageType(VK_IMAGE_TYPE_2D).format(format).extent(e -> e.set(1, 1, 1))
                     .mipLevels(1).arrayLayers(1).samples(VK_SAMPLE_COUNT_1_BIT).tiling(VK_IMAGE_TILING_OPTIMAL)
                     .usage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE).initialLayout(VK_IMAGE_LAYOUT_UNDEFINED), null, handle));
@@ -104,9 +138,9 @@ final class ShadowDepthViewTest {
             vkGetImageMemoryRequirements(device, image, requirements);
             imageMemory = gpu.allocate(stack, requirements, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
             ok(vkBindImageMemory(device, image, imageMemory, 0));
-            shadowView = ImageViews.create(device, image, VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_D32_SFLOAT,
-                    VK_IMAGE_ASPECT_DEPTH_BIT, 1, ImageViews.SHADOW_DEPTH_COMPONENTS, 0);
-            identityView = ImageViews.create(device, image, VK_IMAGE_VIEW_TYPE_2D, VK_FORMAT_D32_SFLOAT,
+            shadowView = ImageViews.create(device, image, VK_IMAGE_VIEW_TYPE_2D, format,
+                    VK_IMAGE_ASPECT_DEPTH_BIT, 1, ImageViews.shadowDepthComponents(), 0);
+            identityView = ImageViews.create(device, image, VK_IMAGE_VIEW_TYPE_2D, format,
                     VK_IMAGE_ASPECT_DEPTH_BIT, 1, IDENTITY, 0);
         }
 
@@ -224,7 +258,7 @@ final class ShadowDepthViewTest {
                     .image(image).oldLayout(from).newLayout(to)
                     .srcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
                     .srcAccessMask(sourceAccess).dstAccessMask(destinationAccess);
-            barrier.subresourceRange().aspectMask(VK_IMAGE_ASPECT_DEPTH_BIT).levelCount(1).layerCount(1);
+            barrier.subresourceRange().aspectMask(aspects).levelCount(1).layerCount(1);
             vkCmdPipelineBarrier(gpu.command(), sourceStage, destinationStage, 0, null, null, barrier);
         }
 
