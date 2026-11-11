@@ -23,8 +23,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -36,11 +34,6 @@ import java.util.zip.ZipFile;
 public final class PackSource {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final List<String> DIMENSION_FOLDERS = List.of("world0", "world-1", "world1");
-    // As in shaders.properties, a directive's name follows its '#' directly (PropertiesPreprocessor).
-    private static final Pattern PROPERTY_DIRECTIVE = Pattern.compile(
-            "^\\s*#(if|ifdef|ifndef|elif|else|endif|define)\\b(.*)$");
-    private static final Pattern PROPERTY_DEFINE = Pattern.compile(
-            "^([A-Za-z_]\\w*)(?:\\s+(.*))?$");
 
     /** A dimension's analysis, and the macros and locked names it left the sources prepared with. */
     record AnalyzedDimension(PackProbe.Analysis analysis, Map<String, String> macros, Set<String> locked) {}
@@ -397,9 +390,10 @@ public final class PackSource {
             return emptyResult(shadersDir, temporaryRoot, deviations, dimension);
         }
 
-        Map<String, String> dimensionFolders = readDimensionFolders(shadersDir, deviations);
+        DimensionProperties.Folders folders = DimensionProperties.read(shadersDir, deviations);
+        Map<String, String> dimensionFolders = folders.worlds();
         Map<String, Path> variantDirs = variantDirectories(shadersDir, dimensionFolders);
-        boolean dimensionProperties = Files.isRegularFile(shadersDir.resolve("dimension.properties"));
+        boolean dimensionProperties = folders.present();
         Map<String, List<PackProgram>> variants = new TreeMap<>();
         for (Map.Entry<String, Path> variant : variantDirs.entrySet()) {
             Map<String, PackProgram> byName = new TreeMap<>();
@@ -466,94 +460,6 @@ public final class PackSource {
             result.put("", shadersDir);
         }
         return result;
-    }
-
-    static Map<String, String> readDimensionFolders(
-            Path shadersDir,
-            List<String> deviations
-    ) {
-        Path properties = shadersDir.resolve("dimension.properties");
-        if (!Files.isRegularFile(properties)) {
-            return Map.of();
-        }
-        Map<String, String> result = new TreeMap<>();
-        PackConditionals.State conditions = new PackConditionals.State(Map.of());
-        boolean invalidCondition = false;
-        try {
-            for (String line : Files.readAllLines(properties, StandardCharsets.UTF_8)) {
-                Matcher directive = PROPERTY_DIRECTIVE.matcher(line);
-                if (directive.matches()) {
-                    if (!invalidCondition) {
-                        String name = directive.group(1).toLowerCase();
-                        // JCPP, which Iris preprocesses this file with, reads every comment as whitespace.
-                        String argument = PackConditionals.withoutComments(
-                                directive.group(2) == null ? "" : directive.group(2)).trim();
-                        try {
-                            if (name.equals("define")) {
-                                defineProperty(conditions, argument);
-                            } else {
-                                conditions.apply(name, argument);
-                            }
-                        } catch (RuntimeException failure) {
-                            deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
-                            conditions = new PackConditionals.State(Map.of());
-                            invalidCondition = true;
-                        }
-                    }
-                    continue;
-                }
-                if (!invalidCondition && conditions.active()) {
-                    putDimensionFolder(line, result);
-                }
-            }
-            if (!invalidCondition) {
-                try {
-                    conditions.finish();
-                } catch (RuntimeException failure) {
-                    deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
-                }
-            }
-        } catch (IOException ignored) {
-            return Map.of();
-        }
-        return Map.copyOf(result);
-    }
-
-    /** A {@code #define NAME [value]} directive, which only an active block applies. */
-    private static void defineProperty(PackConditionals.State conditions, String argument) {
-        if (!conditions.active()) {
-            return;
-        }
-        Matcher define = PROPERTY_DEFINE.matcher(argument);
-        if (!define.matches()) {
-            throw new IllegalArgumentException("invalid define");
-        }
-        conditions.define(define.group(1), define.group(2));
-    }
-
-    /** Maps each world a {@code dimension.<folder> = <worlds>} line lists to that folder. */
-    private static void putDimensionFolder(String line, Map<String, String> result) {
-        String value = line.trim();
-        if (value.isEmpty() || value.startsWith("#")) {
-            return;
-        }
-        int equals = value.indexOf('=');
-        if (equals <= "dimension.".length()) {
-            return;
-        }
-        String key = value.substring(0, equals).trim();
-        if (!key.startsWith("dimension.")) {
-            return;
-        }
-        String folder = key.substring("dimension.".length()).trim();
-        if (!folder.matches("[A-Za-z0-9_-]+")) {
-            return;
-        }
-        for (String world : value.substring(equals + 1).trim().split("\\s+")) {
-            if (!world.isBlank()) {
-                result.put(world.equals("*") ? "*" : normalizeDimension(world), folder);
-            }
-        }
     }
 
     private static boolean hasDirectStageFiles(Path directory) {
@@ -949,7 +855,7 @@ public final class PackSource {
         };
     }
 
-    private static String normalizeDimension(String dimension) {
+    static String normalizeDimension(String dimension) {
         if (dimension == null || dimension.isBlank()) {
             return "minecraft:overworld";
         }

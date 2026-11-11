@@ -219,6 +219,92 @@ final class BlockPropertiesResolverTest {
         assertEquals("gravel", entries.get("block.4"));
     }
 
+    /**
+     * JCPP lexes the whole file, so a block comment runs across lines (KNOW-1148): a directive line
+     * that leaves one open takes the lines up to its close and goes on after it (CUSTOM is 1 + 1);
+     * a directive inside a comment is comment text, in an inactive branch too; an active comment's
+     * text is kept as written, macros unexpanded (KEEPCOMMENTS), and Properties.load reads it. A
+     * {@code #} line naming no JCPP directive is emptied first, comment marks and all. Each value
+     * here is what Iris's PropertiesPreprocessor and Properties.load give for this file.
+     */
+    @Test
+    void aBlockCommentRunsAcrossLinesAsJcppLexesIt(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                #define STONE granite
+                #define CUSTOM 1 /* open
+                block.1 = swallowed
+                */ + 1
+                #if CUSTOM == 2
+                block.2 = STONE
+                #endif
+                /*
+                #if 0
+                */
+                block.3 = STONE /* STONE */ dirt // STONE
+                #ifdef MISSING
+                /*
+                #endif
+                */
+                block.4 = inactive
+                #endif
+                #note /* not a comment
+                block.5 = andesite
+                block.6 = STONE /* open
+                #if 0
+                block.7 = STONE
+                */ STONE
+                #endif
+                block.8 = after
+                """);
+        IdMapProperties.Loaded file = IdMapProperties.read(root, "block.properties", Map.of());
+        assertNull(file.failure());
+        Map<String, String> entries = file.entries();
+        assertNull(entries.get("block.1"), "the #define took the lines up to its comment's close");
+        assertEquals("granite", entries.get("block.2"), "the #define went on after the close");
+        assertEquals("granite /* STONE */ dirt // STONE", entries.get("block.3"), "comments kept, unexpanded");
+        assertNull(entries.get("block.4"), "#endif in a comment ends no branch");
+        assertEquals("andesite", entries.get("block.5"), "a # line naming no directive opens no comment");
+        assertEquals("granite /* open", entries.get("block.6"));
+        assertEquals("STONE", entries.get("block.7"), "#if 0 in a comment is text; the comment is kept unexpanded");
+        assertEquals("granite", entries.get("*/"), "the text after the close expands");
+        assertEquals("after", entries.get("block.8"));
+    }
+
+    /**
+     * JCPP lexes a quote as a string or character literal, so a comment mark inside one is text and
+     * a name inside one is not expanded. A broken character literal ({@code o'lantern}) runs to the
+     * next {@code '} or the end of the line, and Iris hides each backslash behind an identifier
+     * first, so {@code '\''} reads as two literals. Each value is JCPP's for this file.
+     */
+    @Test
+    void aQuoteHidesACommentMarkAsJcppLexesIt(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                #define STONE granite
+                block.1 = jack_o'lantern /* x
+                #if 0
+                */
+                block.2 = dirt
+                #endif
+                block.3 = "/*" STONE
+                #if 0
+                block.4 = hidden
+                #endif
+                block.5 = 'a' STONE '/*' STONE
+                block.6 = "open /* STONE
+                block.7 = after
+                block.8 = '\\'' /* c */ STONE
+                """);
+        Map<String, String> entries = IdMapProperties.read(root, "block.properties", Map.of()).entries();
+        assertEquals("jack_o'lantern /* x", entries.get("block.1"));
+        assertNull(entries.get("block.2"), "the quote kept the /* from opening a comment, so #if 0 applies");
+        assertEquals("\"/*\" granite", entries.get("block.3"));
+        assertNull(entries.get("block.4"));
+        assertEquals("'a' granite '/*' granite", entries.get("block.5"));
+        assertEquals("\"open /* STONE", entries.get("block.6"), "an open string runs to the end of its line");
+        assertEquals("after", entries.get("block.7"));
+        assertEquals("''' /* c */ STONE", entries.get("block.8"));
+    }
+
     /** IdMap.parseRenderTypeMap puts layer keys in key order: a block two keys name takes the later. */
     @Test
     void aBlockTwoLayerKeysNameTakesTheLaterKey(@TempDir Path root) throws IOException {

@@ -21,29 +21,72 @@ final class PackConditionals {
     /**
      * A directive's text as a C preprocessor such as Iris's JCPP reads it: each block comment is
      * one space, and the text ends at a line comment. A block comment still open at the end is cut
-     * there; the GLSL preprocessor first joins the lines up to its close, as the comment spans
-     * them. Read raw, a block comment after {@code #if FOO} became operators, and the condition
-     * evaluated 0.
+     * there; the line reader (ShaderSourcePreprocessor.LineReader) first joins the lines up to its
+     * close, as the comment spans them. A comment mark inside a string or character literal is
+     * text ({@link #literalEnd}). Read raw, a block comment after {@code #if FOO} became operators,
+     * and the condition evaluated 0.
      */
     static String withoutComments(String text) {
         StringBuilder result = new StringBuilder(text.length());
         int index = 0;
         while (index < text.length()) {
-            int block = text.indexOf("/*", index);
-            int line = text.indexOf("//", index);
-            if (line >= 0 && (block < 0 || line < block)) {
-                return result.append(text, index, line).toString();
+            int mark = nextCommentOrLiteral(text, index);
+            if (mark < 0) return result.append(text, index, text.length()).toString();
+            result.append(text, index, mark);
+            if (text.startsWith("//", mark)) return result.toString();
+            if (text.startsWith("/*", mark)) {
+                int end = text.indexOf("*/", mark + 2);
+                if (end < 0) return result.toString();
+                result.append(' ');
+                index = end + 2;
+            } else {
+                index = literalEnd(text, mark);
+                result.append(text, mark, index);
             }
-            if (block < 0) {
-                return result.append(text, index, text.length()).toString();
-            }
-            result.append(text, index, block);
-            int end = text.indexOf("*/", block + 2);
-            if (end < 0) return result.toString();
-            result.append(' ');
-            index = end + 2;
         }
         return result.toString();
+    }
+
+    /**
+     * Where the next comment or literal in {@code text} starts, from {@code from} on: a {@code /*},
+     * a {@code //}, a {@code "} or a {@code '}; or -1. JCPP lexes a quote as a string or character
+     * literal, and a comment mark inside one is text.
+     */
+    static int nextCommentOrLiteral(String text, int from) {
+        for (int index = from; index < text.length(); index++) {
+            char value = text.charAt(index);
+            if (value == '"' || value == '\'') return index;
+            if (value == '/' && index + 1 < text.length()
+                    && (text.charAt(index + 1) == '*' || text.charAt(index + 1) == '/')) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The end of the literal whose quote is at {@code start}, as JCPP's lexer reads it on one line.
+     * A string runs to its closing {@code "}, a backslash escaping the next character. A character
+     * literal is one character (or an escape) and its closing {@code '}; without that close it runs
+     * to the next {@code '}. Either one still open at the end of the line ends there: Iris reads
+     * {@code jack_o'lantern /* x} as a broken character literal, not a comment.
+     */
+    static int literalEnd(String text, int start) {
+        int index = start + 1;
+        if (text.charAt(start) == '"') {
+            while (index < text.length()) {
+                char value = text.charAt(index);
+                if (value == '"') return index + 1;
+                index += value == '\\' ? 2 : 1;
+            }
+            return text.length();
+        }
+        if (index >= text.length()) return text.length();
+        if (text.charAt(index) == '\'') return index + 1;
+        index += text.charAt(index) == '\\' ? 2 : 1;
+        if (index < text.length() && text.charAt(index) == '\'') return index + 1;
+        int close = index < text.length() ? text.indexOf('\'', index) : -1;
+        return close < 0 ? text.length() : close + 1;
     }
 
     /**
@@ -54,6 +97,39 @@ final class PackConditionals {
      */
     static String expandMacros(String text, Map<String, String> macros) {
         return expandMacros(text, macros, new HashSet<>());
+    }
+
+    /**
+     * {@code text} with its macros expanded ({@link #expandMacros}) outside its comments and
+     * literals, as Iris preprocesses a properties file: JCPP keeps a comment as written
+     * (KEEPCOMMENTS) and expands no name inside a literal ({@link #literalEnd}). {@code inComment}
+     * is whether a block comment is open where the text starts.
+     */
+    static String expandOutsideComments(String text, boolean inComment, Map<String, String> macros) {
+        StringBuilder result = new StringBuilder(text.length());
+        int index = 0;
+        if (inComment) {
+            int close = text.indexOf("*/");
+            index = close < 0 ? text.length() : close + 2;
+            result.append(text, 0, index);
+        }
+        while (index < text.length()) {
+            int mark = nextCommentOrLiteral(text, index);
+            result.append(expandMacros(text.substring(index, mark < 0 ? text.length() : mark), macros));
+            if (mark < 0) break;
+            int end;
+            if (text.startsWith("//", mark)) {
+                end = text.length();
+            } else if (text.startsWith("/*", mark)) {
+                int close = text.indexOf("*/", mark + 2);
+                end = close < 0 ? text.length() : close + 2;
+            } else {
+                end = literalEnd(text, mark);
+            }
+            result.append(text, mark, end);
+            index = end;
+        }
+        return result.toString();
     }
 
     private static String expandMacros(String text, Map<String, String> macros, Set<String> expanding) {

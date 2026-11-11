@@ -11,6 +11,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -40,9 +41,126 @@ final class PackSourceEdgesTest {
                 #endif
                 """);
         List<String> deviations = new ArrayList<>();
-        Map<String, String> folders = PackSource.readDimensionFolders(root, deviations);
+        Map<String, String> folders = DimensionProperties.read(root, Map.of(), deviations).worlds();
         assertEquals(Map.of("example:custom", "world_custom"), folders, String.valueOf(deviations));
         assertTrue(deviations.isEmpty(), String.valueOf(deviations));
+    }
+
+    /**
+     * Iris reads dimension.properties as it reads the id maps (PropertiesPreprocessor, then
+     * Properties.load), with the standard environment defines. A continuation goes on to the next
+     * line (superDuperVanilla lists undergarden:undergarden under world-1 that way), a block comment
+     * runs across lines (KNOW-1148), and a colon separates a key as an equals sign does. Each folder
+     * here is what JCPP and Properties.load give for this file.
+     */
+    @Test
+    void dimensionPropertiesReadsAsIrisLoadsIt(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("dimension.properties"), """
+                dimension.world-1 = minecraft:the_nether \\
+                    undergarden:undergarden
+                #if MC_VERSION >= 11300
+                dimension.world1 = the_end
+                #endif
+                /*
+                #if 0
+                */
+                dimension.world0 = *
+                #define CUSTOM 1 /* open
+                dimension.world_wrong = example:wrong
+                */
+                dimension.world2 : example:colon
+                """);
+        List<String> deviations = new ArrayList<>();
+        DimensionProperties.Folders folders = DimensionProperties.read(root, Map.of("MC_VERSION", "12101"), deviations);
+        assertEquals(Map.of("minecraft:the_nether", "world-1", "undergarden:undergarden", "world-1",
+                "minecraft:the_end", "world1", "*", "world0", "example:colon", "world2"), folders.worlds());
+        assertTrue(folders.present() && deviations.isEmpty(), String.valueOf(deviations));
+
+        Files.writeString(root.resolve("dimension.properties"), "# only a comment\n");
+        assertTrue(!DimensionProperties.read(root, Map.of(), deviations).present(),
+                "a file with no property maps the standard folders, as no file does");
+        assertTrue(DimensionProperties.folderNames(root).isEmpty(), "and the option scan takes the world folders");
+
+        // Iris preprocesses it with its environment defines (StandardMacros), IS_IRIS among them.
+        Files.writeString(root.resolve("dimension.properties"), """
+                #ifdef IS_IRIS
+                dimension.world0 = *
+                #endif
+                #if MC_VERSION < 11300
+                dimension.world_legacy = minecraft:overworld
+                #endif
+                """);
+        assertEquals(Map.of("*", "world0"), DimensionProperties.read(root, deviations).worlds());
+        assertEquals(Optional.of(List.of("world0")), DimensionProperties.folderNames(root),
+                "the option scan reads the same preprocessed keys");
+    }
+
+    /**
+     * Iris pastes an include in as text before JCPP reads the program (IncludeProcessor), so what an
+     * include leaves open goes on into the includer (KNOW-1148): its open block comment hides the
+     * includer's #define up to the close, and a directive whose comment is still open at the
+     * include's end goes on after the includer's close (X is 1 + 1). JCPP gives these results for
+     * the pasted text. Before, each file started outside any comment.
+     */
+    @Test
+    void whatAnIncludeLeavesOpenGoesOnIntoTheIncluder(@TempDir Path root) throws IOException {
+        Files.createDirectories(root.resolve("lib"));
+        Files.writeString(root.resolve("lib/open.glsl"), "float opened = 1.0; /* opens\n");
+        Files.writeString(root.resolve("lib/define.glsl"), "#define X 1 /* open\n");
+        String source = String.join("\n", "#version 120",
+                "#include \"/lib/open.glsl\"",
+                "#define HIDDEN 1",
+                "*/",
+                "#ifdef HIDDEN", "float hidden = 1.0;", "#endif",
+                "#include \"/lib/define.glsl\"",
+                "*/ + 1",
+                "#if X == 2", "float joined = 1.0;", "#endif",
+                "void main() {}");
+        ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(root, root.resolve("main.fsh"),
+                source, Map.of());
+        assertTrue(result.successful(), String.valueOf(result.deviations()));
+        assertTrue(result.source().contains("float opened"), result.source());
+        assertTrue(!result.source().contains("float hidden"), "the include's comment hides the #define:\n"
+                + result.source());
+        assertTrue(result.source().contains("float joined") && !result.source().contains("+ 1"),
+                "the include's #define goes on after the includer's close:\n" + result.source());
+        assertEquals(List.of("lib/define.glsl", "lib/open.glsl"), result.dependencies());
+    }
+
+    /**
+     * Iris's JCPP lexes a quote as a string or character literal, in a skipped branch too, so a
+     * comment mark after one is text: the apostrophe in {@code don't} keeps the {@code /*} from
+     * hiding the #endif, and a #define with a quoted comment mark takes no lines. JCPP gives these
+     * results.
+     */
+    @Test
+    void aQuoteHidesACommentMarkInGlsl() {
+        String source = String.join("\n", "#version 120",
+                "#if 0", "don't /* use this", "#endif", "float kept = 1.0;",
+                "#define Q \"a /* b\"", "float q = 1.0;",
+                "#if 1 /* x", "it's */ && 1", "float joined = 1.0;", "#endif",
+                "void main() {}");
+        ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(Path.of("."), null, source,
+                Map.of());
+        assertTrue(result.successful(), String.valueOf(result.deviations()));
+        for (String kept : List.of("float kept", "float q", "float joined")) {
+            assertTrue(result.source().contains(kept), kept + ":\n" + result.source());
+        }
+    }
+
+    /**
+     * An include name that is no path on Windows ({@code *} is not allowed there) is unresolved: it
+     * threw InvalidPathException out of prepare. A quoted {@code /*} now stays in the name, as JCPP
+     * reads it.
+     */
+    @Test
+    void anIncludeNameThatIsNoPathIsUnresolved(@TempDir Path root) {
+        for (String name : List.of("a*b.glsl", "a/*b.glsl")) {
+            String source = "#version 120\n#include \"" + name + "\"\nvoid main() {}\n";
+            ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(root,
+                    root.resolve("main.fsh"), source, Map.of());
+            assertEquals(List.of("SOURCE_INCLUDE_UNRESOLVED"), result.deviations(), name);
+        }
     }
 
     @Test

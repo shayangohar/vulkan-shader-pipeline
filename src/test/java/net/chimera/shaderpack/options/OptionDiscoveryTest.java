@@ -126,6 +126,29 @@ final class OptionDiscoveryTest {
                 "an include climbing above the root stays at the root, as Iris clamps it");
     }
 
+    /**
+     * The option scan reads the folders dimension.properties names, after Iris's preprocessing; a
+     * name that is no path on Windows ({@code *}) names nothing instead of throwing.
+     */
+    @Test
+    void dimensionFoldersComeFromThePreprocessedProperties(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.createDirectories(shaders.resolve("world0"));
+        Files.createDirectories(shaders.resolve("world_legacy"));
+        Files.writeString(shaders.resolve("world0/final.fsh"), "#define IN_WORLD0 1 // [1 2]\n");
+        Files.writeString(shaders.resolve("world_legacy/final.fsh"), "#define IN_LEGACY 1 // [1 2]\n");
+        Files.writeString(shaders.resolve("dimension.properties"), """
+                dimension.world0 = *
+                dimension.a*b = example:odd
+                #if MC_VERSION < 11300
+                dimension.world_legacy = minecraft:overworld
+                #endif
+                """);
+        OptionSet options = OptionDiscovery.discover(shaders).options();
+        assertTrue(options.isChoice("IN_WORLD0"));
+        assertFalse(options.isChoice("IN_LEGACY"), "a folder named only under a false #if is not scanned");
+    }
+
     @Test
     void storedValuesFollowTheOptionFileRules(@TempDir Path root) throws IOException {
         OptionSet options = discover(root).options();

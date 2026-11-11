@@ -40,10 +40,12 @@ import java.util.function.Predicate;
  * always write the sky the composite passes read. The pack horizon draws before all of it, after
  * the world clear (ChimeraLevelRendererMixin), as Iris draws it ahead of the sky. The celestial
  * plane turns by the pack's sun path rotation after vanilla's -90 degree Y turn. The pack's sun,
- * moon, stars and sky switches drop those parts as Iris's MixinLevelRenderer_SunMoonToggle does.
- * renderClouds draws in the CLOUDS phase, and not at all when the pack's cloud program draws nothing;
- * the pack's cloud program draws over Sodium's cloud mesh (ChimeraCloudRenderer), which Iris on 1.21.1
- * runs it on, unless the dimension draws its own clouds.
+ * moon, stars and sky switches drop those parts as Iris's MixinLevelRenderer_SunMoonToggle does,
+ * and in high fog the void plane and the sunrise colour go as Iris's sky mixins drop them
+ * (ChimeraVoidPlaneMixin, ChimeraSunriseColorMixin). renderClouds draws in the CLOUDS phase, and
+ * not at all when the pack's cloud program draws nothing; the pack's cloud program draws over
+ * Sodium's cloud mesh (ChimeraCloudRenderer), which Iris on 1.21.1 runs it on, unless the
+ * dimension draws its own clouds.
  */
 @Mixin(LevelRenderer.class)
 public abstract class ChimeraSkyRendererMixin {

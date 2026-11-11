@@ -1,5 +1,7 @@
 package net.chimera.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import net.chimera.render.ChimeraDevice;
 import net.chimera.render.ChimeraRenderingPass;
 import net.chimera.render.WindowBlendAttachments;
@@ -22,7 +24,6 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.Arrays;
 
@@ -52,19 +53,24 @@ public abstract class GraphicsPipelineMrtMixin {
     @Unique
     private int chimera$hostFormat;
 
-    @Inject(method = "createGraphicsPipeline", at = @At("HEAD"))
-    private void chimera$beginVariant(PipelineState state, CallbackInfoReturnable<Long> callback) {
+    /**
+     * Opens the variant's pipeline-creation scope around the creation and closes it however the
+     * creation ends: a creation that throws no longer leaves its registered contract swapped in
+     * for the pass's later variants.
+     */
+    @WrapMethod(method = "createGraphicsPipeline")
+    private long chimera$variant(PipelineState state, Operation<Long> original) {
         RenderPass renderPass = ((ChimeraPipelineStateAccessor) state).chimera$renderPass();
         this.chimera$window = renderPass instanceof ChimeraRenderingPass window ? window : null;
         this.chimera$hostFormat = renderPass == null || renderPass.getFramebuffer() == null
                 ? 0 : renderPass.getFramebuffer().getFormat();
         MrtPipelineContext.beginPipeline((GraphicsPipeline) (Object) this);
-    }
-
-    @Inject(method = "createGraphicsPipeline", at = @At("RETURN"))
-    private void chimera$endVariant(PipelineState state, CallbackInfoReturnable<Long> callback) {
-        MrtPipelineContext.endPipeline();
-        this.chimera$window = null;
+        try {
+            return original.call(state);
+        } finally {
+            MrtPipelineContext.endPipeline();
+            this.chimera$window = null;
+        }
     }
 
     @Inject(method = "cleanUp", at = @At("HEAD"))

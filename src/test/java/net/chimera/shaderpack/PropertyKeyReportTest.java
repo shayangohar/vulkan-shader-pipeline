@@ -69,6 +69,19 @@ final class PropertyKeyReportTest {
         assertEquals("false", values.get("vignette"));
     }
 
+    /**
+     * Iris hides each backslash behind an identifier before JCPP reads a properties file, so a
+     * string in a #define closes at a backslash's quote and what follows can be a comment. Read
+     * with the backslash, the string ran on and swallowed the comment.
+     */
+    @Test
+    void aPropertiesDirectiveReadsItsBackslashesHidden() {
+        assertEquals("\"a\\\"", PropertiesPreprocessor.withoutComments("\"a\\\" // b\"").trim());
+        assertEquals("\"a\\\" // b\"", PackConditionals.withoutComments("\"a\\\" // b\"").trim(),
+                "GLSL's reader keeps the escape, as JCPP reads a GLSL string");
+        assertEquals("1 + 1", PropertiesPreprocessor.withoutComments("1 /* c */+ 1").replaceAll("\\s+", " "));
+    }
+
     @Test
     void theReportNamesOnlyKeysIrisReadsAndChimeraDoesNotApply(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));

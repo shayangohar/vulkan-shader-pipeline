@@ -3,8 +3,11 @@ package net.chimera.shaderpack;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -72,7 +75,7 @@ public final class ShaderSourcePreprocessor {
         }
         Context context = new Context(shadersRoot, initialMacros, lockedMacros);
         try {
-            context.process(source, sourceFile, 0);
+            context.process(source, sourceFile);
             // Iris's preprocessor (JCPP) ends the source with a conditional still open and keeps what
             // it emitted: Bloop's TAA program never closes its #ifdef TAA.
             if (context.conditionState.open()) {
@@ -136,6 +139,7 @@ public final class ShaderSourcePreprocessor {
         private final Map<String, String> lockedMacros;
         private final Set<String> lockedUndefined = new TreeSet<>();
         private final Set<Path> includeStack = new HashSet<>();
+        private final LineReader reader = new LineReader();
         private final Set<String> deviations = new TreeSet<>();
         private final Set<String> dependencies = new TreeSet<>();
         private int expandedFiles;
@@ -168,7 +172,19 @@ public final class ShaderSourcePreprocessor {
             }
         }
 
-        private void process(String source, Path sourceFile, int depth) throws IOException {
+        /** Reads {@code source} and each include it reaches, an include where its directive stood. */
+        private void process(String source, Path sourceFile) throws IOException {
+            enter(source, sourceFile, 0);
+            for (LogicalLine line = reader.next(); line != null; line = reader.next()) {
+                processLine(line.text(), line.file(), line.depth(), line.inComment());
+            }
+        }
+
+        /**
+         * Reads {@code source} next, within the include depth, file and cycle limits. Its file
+         * leaves the include stack once its last line is read.
+         */
+        private void enter(String source, Path sourceFile, int depth) {
             if (depth > MAX_INCLUDE_DEPTH) {
                 throw new PreparationFailure("SOURCE_INCLUDE_DEPTH_EXCEEDED");
             }
@@ -179,15 +195,9 @@ public final class ShaderSourcePreprocessor {
             if (normalized != null && !includeStack.add(normalized)) {
                 throw new PreparationFailure("SOURCE_INCLUDE_CYCLE");
             }
-            try {
-                for (LogicalLine line : logicalLines(source)) {
-                    processLine(line.text(), sourceFile, depth, line.inComment());
-                }
-            } finally {
-                if (normalized != null) {
-                    includeStack.remove(normalized);
-                }
-            }
+            reader.push(source, sourceFile, depth, () -> {
+                if (normalized != null) includeStack.remove(normalized);
+            });
         }
 
         private void processLine(String line, Path sourceFile, int depth, boolean inComment) throws IOException {
@@ -271,7 +281,7 @@ public final class ShaderSourcePreprocessor {
             }
             dependencies.add(relativePath(include));
             emit("");
-            process(Files.readString(include, StandardCharsets.UTF_8), include, depth + 1);
+            enter(Files.readString(include, StandardCharsets.UTF_8), include, depth + 1);
         }
 
         private void emit(String line) {
@@ -288,14 +298,19 @@ public final class ShaderSourcePreprocessor {
                     .toString().replace('\\', '/');
         }
 
+        /** The include's file; a name that is no path on this system ({@code a*b.glsl} on Windows) is unresolved. */
         private Path resolveInclude(Path sourceFile, String name) {
             Path include;
-            if (name.startsWith("/")) {
-                include = shadersRoot.resolve(name.substring(1));
-            } else {
-                Path base = sourceFile == null || sourceFile.getParent() == null
-                        ? shadersRoot : sourceFile.getParent();
-                include = base.resolve(name);
+            try {
+                if (name.startsWith("/")) {
+                    include = shadersRoot.resolve(name.substring(1));
+                } else {
+                    Path base = sourceFile == null || sourceFile.getParent() == null
+                            ? shadersRoot : sourceFile.getParent();
+                    include = base.resolve(name);
+                }
+            } catch (InvalidPathException invalid) {
+                throw new PreparationFailure("SOURCE_INCLUDE_UNRESOLVED");
             }
             include = include.normalize().toAbsolutePath();
             if (!include.startsWith(shadersRoot)) {
@@ -379,30 +394,91 @@ public final class ShaderSourcePreprocessor {
         }
     }
 
-    /** One logical line of a source, and whether it starts inside a block comment. */
-    record LogicalLine(String text, boolean inComment) {}
+    /** One logical line, whether it starts inside a block comment, and the source it starts in. */
+    record LogicalLine(String text, boolean inComment, Path file, int depth) {}
+
+    /** {@code source}'s logical lines, read as one source ({@link LineReader}). */
+    static List<LogicalLine> logicalLines(String source) {
+        LineReader reader = new LineReader();
+        reader.push(source, null, 0, () -> { });
+        List<LogicalLine> result = new ArrayList<>();
+        for (LogicalLine line = reader.next(); line != null; line = reader.next()) result.add(line);
+        return result;
+    }
 
     /**
-     * {@code source}'s logical lines. GLSL 3.3 section 3.1: a backslash right before a newline
-     * splices the two lines before any directive is parsed. A comment is one space to a C
+     * Logical lines over a stack of sources. GLSL 3.3 section 3.1: a backslash right before a
+     * newline splices the two lines before any directive is parsed. A comment is one space to a C
      * preprocessor, so a block comment a directive line leaves open joins the lines up to its close
      * into that directive, which goes on after it: in JCPP, {@code #if 0 /* note}, then
      * {@code note *}{@code / || 1} on the next line, holds; one that never closes takes the rest of
-     * the source. A line that starts inside a block comment is comment text, not a directive: BSL
-     * documents its options with "#define FEATURE ..." lines inside comments.
+     * the text. A line that starts inside a block comment is no directive: BSL documents its
+     * options with "#define FEATURE ..." lines inside comments. (JCPP would read a {@code #} right
+     * after the comment's close on that line as one; no pack the gate reads writes that.) A source
+     * pushed while another is read is read next, then the rest of the other: Iris pastes an
+     * include's text where its directive stood before JCPP reads the program, so a comment, splice
+     * or directive an include leaves open goes on into the includer's next lines. Two pastes still
+     * differ: Iris drops a file's trailing empty lines, so a backslash on an include's last line
+     * splices into the includer there, and Iris pastes an #include that sits inside a comment.
      */
-    static List<LogicalLine> logicalLines(String source) {
-        String[] lines = source.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
-        List<LogicalLine> result = new ArrayList<>(lines.length);
-        StringBuilder logical = new StringBuilder();
-        boolean inComment = false;
+    static final class LineReader {
+        private final Deque<Source> sources = new ArrayDeque<>();
+        private final StringBuilder logical = new StringBuilder();
+        private boolean inComment;
         // A directive whose block comment is still open, and how much of it is scanned.
-        boolean joining = false;
-        int scanned = 0;
-        for (String line : lines) {
+        private boolean joining;
+        private int scanned;
+        // The source the pending logical line started in.
+        private Source start;
+
+        /** One source's physical lines, and what runs once they are all read. */
+        private static final class Source {
+            private final String[] lines;
+            private final Path file;
+            private final int depth;
+            private final Runnable exit;
+            private int next;
+
+            private Source(String text, Path file, int depth, Runnable exit) {
+                this.lines = text.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+                this.file = file;
+                this.depth = depth;
+                this.exit = exit;
+            }
+        }
+
+        /** Reads {@code text} before the rest of the sources pushed earlier, then runs {@code exit}. */
+        void push(String text, Path file, int depth, Runnable exit) {
+            sources.push(new Source(text, file, depth, exit));
+        }
+
+        /** The next logical line, or null once every source is read. */
+        LogicalLine next() {
+            for (Source source = current(); source != null; source = current()) {
+                if (logical.isEmpty() && !joining) start = source;
+                LogicalLine line = accept(source.lines[source.next++]);
+                if (line != null) return line;
+            }
+            if (logical.isEmpty()) return null;
+            LogicalLine last = line(logical.toString(), !joining && inComment);
+            logical.setLength(0);
+            joining = false;
+            return last;
+        }
+
+        /** The source with a line left to read, after running the exit of each one read through. */
+        private Source current() {
+            while (!sources.isEmpty() && sources.peek().next >= sources.peek().lines.length) {
+                sources.pop().exit.run();
+            }
+            return sources.peek();
+        }
+
+        /** Takes one physical line; returns the logical line it completes, or null. */
+        private LogicalLine accept(String line) {
             if (line.endsWith("\\")) {
                 logical.append(line, 0, line.length() - 1);
-                continue;
+                return null;
             }
             if (joining) {
                 // Only the text added since the last scan is scanned, from one character back so a
@@ -412,13 +488,13 @@ public final class ShaderSourcePreprocessor {
                 if (inCommentAfter(logical.substring(from), true)) {
                     scanned = logical.length();
                     logical.append(' ');
-                    continue;
+                    return null;
                 }
                 joining = false;
-                result.add(new LogicalLine(logical.toString(), false));
-                logical.setLength(0);
                 inComment = false;
-                continue;
+                LogicalLine directive = line(logical.toString(), false);
+                logical.setLength(0);
+                return directive;
             }
             if (!logical.isEmpty()) {
                 line = logical.append(line).toString();
@@ -429,13 +505,16 @@ public final class ShaderSourcePreprocessor {
                 logical.append(line);
                 scanned = logical.length();
                 logical.append(' ');
-                continue;
+                return null;
             }
-            result.add(new LogicalLine(line, inComment));
+            LogicalLine result = line(line, inComment);
             inComment = inCommentAfter(line, inComment);
+            return result;
         }
-        if (!logical.isEmpty()) result.add(new LogicalLine(logical.toString(), !joining && inComment));
-        return result;
+
+        private LogicalLine line(String text, boolean comment) {
+            return new LogicalLine(text, comment, start.file, start.depth);
+        }
     }
 
     /** Whether a block comment is still open after {@code line}, given whether one was open before it. */
@@ -449,11 +528,15 @@ public final class ShaderSourcePreprocessor {
                 open = false;
                 index = end + 2;
             } else {
-                int lineComment = line.indexOf("//", index);
-                int block = line.indexOf("/*", index);
-                if (block < 0 || (lineComment >= 0 && lineComment < block)) return false;
-                open = true;
-                index = block + 2;
+                // A comment mark inside a string or character literal is text, as JCPP lexes it.
+                int mark = PackConditionals.nextCommentOrLiteral(line, index);
+                if (mark < 0 || line.startsWith("//", mark)) return false;
+                if (line.startsWith("/*", mark)) {
+                    open = true;
+                    index = mark + 2;
+                } else {
+                    index = PackConditionals.literalEnd(line, mark);
+                }
             }
         }
         return open;

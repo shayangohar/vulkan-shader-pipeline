@@ -20,6 +20,8 @@
     "ChimeraFogRendererMixin",
     "ChimeraFogRangeMixin",
     "ChimeraSkyRendererMixin",
+    "ChimeraVoidPlaneMixin",
+    "ChimeraSunriseColorMixin",
     "ChimeraMinecraftMixin",
     "VTextureSelectorMixin",
     "WorldRendererMixin",
