@@ -132,6 +132,15 @@ final class PropertiesPreprocessor {
         }
     }
 
+    /**
+     * A properties directive's argument without its C comments, as JCPP reads it with each
+     * backslash hidden behind an identifier: in {@code "a\" // b"} the string closes at the
+     * backslash's quote, so the value is {@code "a\"}. shaders.properties' #define reader takes it.
+     */
+    static String withoutComments(String argument) {
+        return PackConditionals.withoutComments(argument.replace("\\", BACKSLASH)).replace(BACKSLASH, "\\");
+    }
+
     /** A directive's argument without its C comments, which JCPP skips (PackConditionals.withoutComments). */
     private static String stripComments(String argument) {
         return PackConditionals.withoutComments(argument == null ? "" : argument).trim();

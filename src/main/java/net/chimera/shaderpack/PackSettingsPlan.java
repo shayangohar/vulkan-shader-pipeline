@@ -700,7 +700,7 @@ record PackSettingsPlan(
                     return true;
                 }
                 boolean bare = define.group(2) == null || define.group(2).isBlank();
-                String value = bare ? "1" : PackConditionals.withoutComments(define.group(2)).trim();
+                String value = bare ? "1" : PropertiesPreprocessor.withoutComments(define.group(2)).trim();
                 options.putIfAbsent(name, new Option(name, "define", value, valuesFrom(line),
                         propertyFile.getFileName().toString()));
                 defaults.put(name, value);
