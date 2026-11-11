@@ -80,6 +80,38 @@ final class PackSourceEdgesTest {
                 "a file with no property maps the standard folders, as no file does");
     }
 
+    /**
+     * Iris pastes an include in as text before JCPP reads the program (IncludeProcessor), so what an
+     * include leaves open goes on into the includer (KNOW-1148): its open block comment hides the
+     * includer's #define up to the close, and a directive whose comment is still open at the
+     * include's end goes on after the includer's close (X is 1 + 1). JCPP gives these results for
+     * the pasted text. Before, each file started outside any comment.
+     */
+    @Test
+    void whatAnIncludeLeavesOpenGoesOnIntoTheIncluder(@TempDir Path root) throws IOException {
+        Files.createDirectories(root.resolve("lib"));
+        Files.writeString(root.resolve("lib/open.glsl"), "float opened = 1.0; /* opens\n");
+        Files.writeString(root.resolve("lib/define.glsl"), "#define X 1 /* open\n");
+        String source = String.join("\n", "#version 120",
+                "#include \"/lib/open.glsl\"",
+                "#define HIDDEN 1",
+                "*/",
+                "#ifdef HIDDEN", "float hidden = 1.0;", "#endif",
+                "#include \"/lib/define.glsl\"",
+                "*/ + 1",
+                "#if X == 2", "float joined = 1.0;", "#endif",
+                "void main() {}");
+        ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(root, root.resolve("main.fsh"),
+                source, Map.of());
+        assertTrue(result.successful(), String.valueOf(result.deviations()));
+        assertTrue(result.source().contains("float opened"), result.source());
+        assertTrue(!result.source().contains("float hidden"), "the include's comment hides the #define:\n"
+                + result.source());
+        assertTrue(result.source().contains("float joined") && !result.source().contains("+ 1"),
+                "the include's #define goes on after the includer's close:\n" + result.source());
+        assertEquals(List.of("lib/define.glsl", "lib/open.glsl"), result.dependencies());
+    }
+
     @Test
     void archiveEdges(@TempDir Path root) throws IOException {
         Path validZip = root.resolve("valid.zip");
