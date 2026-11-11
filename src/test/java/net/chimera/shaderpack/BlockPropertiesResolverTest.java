@@ -383,6 +383,18 @@ final class BlockPropertiesResolverTest {
         assertEquals("granite", entries.get("block.1"));
         assertEquals("DIRT", entries.get("block.2"), "a line that does not start with # loses its sign first");
         assertEquals("c */ define DIRT dirt", entries.get("/*"));
+
+        // A comment that opened after other text keeps the line it closes on from starting a directive.
+        Files.writeString(root.resolve("block.properties"), """
+                #if 0
+                block.0=a /* c
+                #define A */ #else
+                block.1=b
+                #endif
+                block.2=c
+                """);
+        assertEquals(List.of("block.2"),
+                List.copyOf(IdMapProperties.read(root, "block.properties", Map.of()).entries().keySet()));
     }
 
     /** IdMap.parseRenderTypeMap puts layer keys in key order: a block two keys name takes the later. */

@@ -166,7 +166,8 @@ final class PackSourceEdgesTest {
     /**
      * JCPP reads a comment as whitespace, so a {@code #} after block comments on its line starts a
      * directive, the close of one opened on an earlier line among them (KNOW-1148); a license
-     * comment before #version is one. The comments stay in the source. JCPP gives these results.
+     * comment before #version is one. A comment that opened after code keeps the line it closes on
+     * from starting one. The comments stay in the source. JCPP gives these results.
      */
     @Test
     void aDirectiveMayFollowCommentsOnItsLine() {
@@ -175,7 +176,9 @@ final class PackSourceEdgesTest {
                 "/* open", "*/ #define W 2", "int b = W;",
                 "   /* a */ /* b */ #ifdef NOPE", "int hidden;", "#endif",
                 "/* x */#define V 4 /* y", "z */ + 1", "int v = V;",
-                "/* x */ float texted;", "int t;", "void main() {}");
+                "/* x */ float texted;", "int t;",
+                "#if 0", "float a2; /* c", "*/ #else", "float afterCode = 1.0;", "#endif",
+                "void main() {}");
         ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(Path.of("."), null, source,
                 Map.of());
         assertTrue(result.successful(), String.valueOf(result.deviations()));
@@ -184,6 +187,8 @@ final class PackSourceEdgesTest {
             assertTrue(prepared.contains(kept), kept + ":\n" + result.source());
         }
         assertTrue(!prepared.contains("int hidden"), result.source());
+        assertTrue(!prepared.contains("afterCode"), "a comment that opened after code keeps the #else no directive:\n"
+                + result.source());
         assertEquals("#version 120", prepared.lines().map(String::trim)
                 .filter(line -> !line.isEmpty() && !line.startsWith("/*")).findFirst().orElse(""),
                 "the license comment's #version comes first:\n" + result.source());

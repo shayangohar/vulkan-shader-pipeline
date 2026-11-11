@@ -177,7 +177,7 @@ public final class ShaderSourcePreprocessor {
         private void process(String source, Path sourceFile) throws IOException {
             enter(source, sourceFile, 0);
             for (LogicalLine line = reader.next(); line != null; line = reader.next()) {
-                processLine(line.text(), line.file(), line.depth(), line.inComment());
+                processLine(line.text(), line.file(), line.depth(), line.directiveStart());
             }
         }
 
@@ -201,8 +201,8 @@ public final class ShaderSourcePreprocessor {
             });
         }
 
-        private void processLine(String line, Path sourceFile, int depth, boolean inComment) throws IOException {
-            int start = directiveStart(line, inComment);
+        /** One logical line; {@code start} is where its directive starts (LogicalLine.directiveStart). */
+        private void processLine(String line, Path sourceFile, int depth, int start) throws IOException {
             Matcher matcher = start < 0 ? null : directive(line.substring(start));
             if (matcher == null) {
                 if (active()) {
@@ -402,8 +402,11 @@ public final class ShaderSourcePreprocessor {
         }
     }
 
-    /** One logical line, whether it starts inside a block comment, and the source it starts in. */
-    record LogicalLine(String text, boolean inComment, Path file, int depth) {}
+    /**
+     * One logical line: whether it starts inside a block comment, where its directive starts or -1
+     * ({@link #directiveStart}), and the source it starts in.
+     */
+    record LogicalLine(String text, boolean inComment, int directiveStart, Path file, int depth) {}
 
     /** {@code source}'s logical lines, read as one source ({@link LineReader}). */
     static List<LogicalLine> logicalLines(String source) {
@@ -422,23 +425,28 @@ public final class ShaderSourcePreprocessor {
      * {@code note *}{@code / || 1} on the next line, holds; one that never closes takes the rest of
      * the text. A {@code #} inside a block comment starts no directive: BSL documents its options
      * with "#define FEATURE ..." lines inside comments. One after the comment's close is a directive
-     * when only whitespace and comments come before it on its line ({@link #directiveStart}). A source
+     * when only whitespace and comments come before it since its line began ({@link #directiveStart}):
+     * a comment that opened after code keeps it off the line it closes on. A source
      * pushed while another is read is read next, then the rest of the other: Iris pastes an
      * include's text where its directive stood before JCPP reads the program, so a comment, splice
      * or directive an include leaves open goes on into the includer's next lines, a backslash on
-     * an include's last line among them. Iris also pastes an #include that sits inside a comment
-     * or a skipped branch, and fails the pack on one it cannot find; Chimera reads only an active
-     * one.
+     * an include's last line among them. Iris pastes every #include line as text, also one inside
+     * a comment, in a skipped branch or right after a splice, and fails the pack on one it cannot
+     * find; Chimera reads an active one as a directive (KNOW-1148).
      */
     static final class LineReader {
         private final Deque<Source> sources = new ArrayDeque<>();
         private final StringBuilder logical = new StringBuilder();
         private boolean inComment;
+        // Whether the open block comment began where a directive may start (openedAtLineStart).
+        private boolean atLineStart = true;
         // A directive whose block comment is still open, and how much of it is scanned.
         private boolean joining;
         private int scanned;
-        // Whether the joined directive's first line started inside a block comment.
+        // Whether the joined directive's first line started inside a block comment, and where on
+        // that line the directive starts.
         private boolean joinStartsInComment;
+        private int joinStart;
         // The source the pending logical line started in.
         private Source start;
 
@@ -477,7 +485,9 @@ public final class ShaderSourcePreprocessor {
                 if (line != null) return line;
             }
             if (logical.isEmpty()) return null;
-            LogicalLine last = line(logical.toString(), joining ? joinStartsInComment : inComment);
+            String text = logical.toString();
+            LogicalLine last = joining ? line(text, joinStartsInComment, joinStart)
+                    : line(text, inComment, directiveStart(text, inComment, atLineStart));
             logical.setLength(0);
             joining = false;
             return last;
@@ -509,7 +519,7 @@ public final class ShaderSourcePreprocessor {
                 }
                 joining = false;
                 inComment = false;
-                LogicalLine directive = line(logical.toString(), joinStartsInComment);
+                LogicalLine directive = line(logical.toString(), joinStartsInComment, joinStart);
                 logical.setLength(0);
                 return directive;
             }
@@ -517,22 +527,25 @@ public final class ShaderSourcePreprocessor {
                 line = logical.append(line).toString();
                 logical.setLength(0);
             }
-            int start = directiveStart(line, inComment);
-            if (start >= 0 && inCommentAfter(line, inComment) && directive(line.substring(start)) != null) {
+            int start = directiveStart(line, inComment, atLineStart);
+            boolean openAfter = inCommentAfter(line, inComment);
+            if (start >= 0 && openAfter && directive(line.substring(start)) != null) {
                 joining = true;
                 joinStartsInComment = inComment;
+                joinStart = start;
                 logical.append(line);
                 scanned = logical.length();
                 logical.append(' ');
                 return null;
             }
-            LogicalLine result = line(line, inComment);
-            inComment = inCommentAfter(line, inComment);
+            LogicalLine result = line(line, inComment, start);
+            if (openAfter) atLineStart = openedAtLineStart(line, inComment, atLineStart);
+            inComment = openAfter;
             return result;
         }
 
-        private LogicalLine line(String text, boolean comment) {
-            return new LogicalLine(text, comment, start.file, start.depth);
+        private LogicalLine line(String text, boolean comment, int directiveStart) {
+            return new LogicalLine(text, comment, directiveStart, start.file, start.depth);
         }
     }
 
@@ -571,10 +584,14 @@ public final class ShaderSourcePreprocessor {
     /**
      * Where the directive on {@code line} starts, or -1: at a {@code #} with only whitespace and
      * block comments before it on the line, the first of them already open when {@code inComment}.
-     * JCPP reads a comment as whitespace, so {@code /* note *}{@code / #define X 1} defines X, and so
-     * does {@code #define X 1} after the close of a comment opened on an earlier line.
+     * JCPP takes a {@code #} as a directive at the start of a line, and a comment keeps that start
+     * as whitespace does, its newlines included, while any other token ends it: so
+     * {@code /* note *}{@code / #define X 1} defines X, and so does {@code #define X 1} after the
+     * close of a comment opened on an earlier line when {@code atLineStart} (nothing but whitespace
+     * and comments before it there, {@link #openedAtLineStart}); after code, it is no directive.
      */
-    static int directiveStart(String line, boolean inComment) {
+    static int directiveStart(String line, boolean inComment, boolean atLineStart) {
+        if (inComment && !atLineStart) return -1;
         int index = 0;
         boolean open = inComment;
         while (index < line.length()) {
@@ -595,6 +612,40 @@ public final class ShaderSourcePreprocessor {
             }
         }
         return -1;
+    }
+
+    /**
+     * Whether the block comment still open after {@code line} began where a directive may start:
+     * with only whitespace and comments before it since the line began, or since an open comment's
+     * start when {@code inComment} and that comment began so ({@code atLineStart}). Meaningful only
+     * when a comment is open after the line ({@link #inCommentAfter}).
+     */
+    static boolean openedAtLineStart(String line, boolean inComment, boolean atLineStart) {
+        boolean open = inComment;
+        boolean lineStart = !inComment || atLineStart;
+        boolean opened = atLineStart;
+        int index = 0;
+        while (index < line.length()) {
+            if (open) {
+                int end = line.indexOf("*/", index);
+                if (end < 0) return opened;
+                open = false;
+                index = end + 2;
+            } else if (line.startsWith("/*", index)) {
+                open = true;
+                opened = lineStart;
+                index += 2;
+            } else if (line.startsWith("//", index)) {
+                return opened;
+            } else if (line.charAt(index) == '"' || line.charAt(index) == '\'') {
+                lineStart = false;
+                index = PackConditionals.literalEnd(line, index);
+            } else {
+                lineStart &= whitespace(line.charAt(index));
+                index++;
+            }
+        }
+        return opened;
     }
 
     /**

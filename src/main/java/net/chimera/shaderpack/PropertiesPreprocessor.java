@@ -62,7 +62,7 @@ final class PropertiesPreprocessor {
         StringBuilder out = new StringBuilder(text.length());
         boolean failed = false;
         for (ShaderSourcePreprocessor.LogicalLine line : ShaderSourcePreprocessor.logicalLines(jcppInput(text))) {
-            int start = ShaderSourcePreprocessor.directiveStart(line.text(), line.inComment());
+            int start = line.directiveStart();
             Matcher directive = start < 0 ? null : DIRECTIVE.matcher(line.text().substring(start));
             if (directive != null && directive.matches()) {
                 // A comment that closes before the directive on its line stays as text (KEEPCOMMENTS).
@@ -117,14 +117,16 @@ final class PropertiesPreprocessor {
 
     /**
      * {@code physical}'s lines as JCPP lexes them after PropertiesPreprocessor's line pass
-     * ({@link #jcppLine}): a block comment runs across lines, and a directive line that leaves one
-     * open takes the lines up to its close and goes on after it, joined with spaces.
-     * shaders.properties is read this way; the id maps and dimension.properties through
-     * {@link #preprocess}.
+     * ({@link #jcppLine}): a block comment runs across lines; a directive may follow the close of
+     * the comment its line starts in (ShaderSourcePreprocessor.directiveStart), and that line is
+     * then the directive alone; a directive line that leaves a comment open takes the lines up to
+     * its close and goes on after it, joined with spaces. shaders.properties is read this way; the
+     * id maps and dimension.properties through {@link #preprocess}.
      */
     static List<Line> commentLines(List<String> physical) {
         List<Line> result = new ArrayList<>(physical.size());
         boolean inComment = false;
+        boolean atLineStart = true;
         StringBuilder directive = null;
         for (String raw : physical) {
             String seen = jcppLine(raw);
@@ -133,12 +135,20 @@ final class PropertiesPreprocessor {
                 if (ShaderSourcePreprocessor.inCommentAfter(seen, true)) continue;
                 result.add(new Line(directive.toString(), false));
                 directive = null;
-            } else if (!inComment && seen.startsWith("#") && ShaderSourcePreprocessor.inCommentAfter(seen, false)) {
-                directive = new StringBuilder(raw.strip());
-            } else {
-                result.add(new Line(raw, inComment));
-                inComment = ShaderSourcePreprocessor.inCommentAfter(seen, inComment);
+                inComment = false;
+                continue;
             }
+            int start = ShaderSourcePreprocessor.directiveStart(seen, inComment, atLineStart);
+            boolean openAfter = ShaderSourcePreprocessor.inCommentAfter(seen, inComment);
+            // The comment text before such a directive reads as a # comment line once loaded.
+            String text = start > 0 ? seen.substring(start).replace(BACKSLASH, "\\") : raw;
+            if (start >= 0 && openAfter) {
+                directive = new StringBuilder(text.strip());
+                continue;
+            }
+            result.add(new Line(text, inComment && start < 0));
+            if (openAfter) atLineStart = ShaderSourcePreprocessor.openedAtLineStart(seen, inComment, atLineStart);
+            inComment = openAfter;
         }
         if (directive != null) result.add(new Line(directive.toString(), false));
         return result;

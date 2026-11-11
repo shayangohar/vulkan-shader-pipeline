@@ -110,6 +110,19 @@ final class PropertyKeyReportTest {
         }
         assertEquals(-1, settings.indexOf("hidden"), "the #if line's comment took it");
         assertEquals(-1, settings.indexOf("d"), "the #endif in a comment ended no branch");
+
+        // A # after the close of a comment that began its line starts a directive there too.
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                uniform.float.k1 = 1.0
+                /*
+                #define A */ #if 0
+                uniform.float.k2 = 2.0
+                #endif
+                uniform.float.k3 = 3.0
+                """);
+        PackRuntimeSettings closed = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(closed.indexOf("k1") >= 0 && closed.indexOf("k3") >= 0);
+        assertEquals(-1, closed.indexOf("k2"), "the #if 0 after the comment's close applies");
     }
 
     /**
