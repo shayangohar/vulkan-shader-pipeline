@@ -10,6 +10,7 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -402,6 +403,76 @@ final class SpirvLocalInitializerTest {
                 """));
     }
 
+    /**
+     * An emit sends every output's current value as the vertex, so it reads them all: an output a
+     * geometry stage stores only after its first emit starts from zero, as GL's would, and one it
+     * stores before every emit needs no initializer. That holds for EmitStreamVertex, optimized or
+     * not, and for an emit in a helper that main calls. Only a return counted as a read, which
+     * GeometryStageBridge's keep helper happened to cover.
+     */
+    @Test
+    void anEmitReadsEveryOutput() {
+        String helper = "void emitAt(vec4 position) { gl_Position = position; %s; }\n";
+        for (String emit : List.of("EmitVertex()", "EmitStreamVertex(0)")) {
+            String layout = emit.startsWith("EmitStream") ? "points" : "triangle_strip";
+            String direct = """
+                    #version 460
+                    layout(triangles) in;
+                    layout(%s, max_vertices = 2) out;
+                    layout(location = 0) out vec4 late;
+                    layout(location = 1) out vec4 early;
+                    void main() {
+                        early = vec4(1.0);
+                        gl_Position = gl_in[0].gl_Position;
+                        %s;
+                        late = vec4(2.0);
+                        early = vec4(3.0);
+                        gl_Position = gl_in[1].gl_Position;
+                        %s;
+                    }
+                    """.formatted(layout, emit, emit);
+            String called = """
+                    #version 460
+                    layout(triangles) in;
+                    layout(%s, max_vertices = 2) out;
+                    layout(location = 0) out vec4 late;
+                    layout(location = 1) out vec4 early;
+                    %s
+                    void main() {
+                        early = vec4(1.0);
+                        emitAt(gl_in[0].gl_Position);
+                        late = vec4(2.0);
+                        emitAt(gl_in[1].gl_Position);
+                    }
+                    """.formatted(layout, helper.formatted(emit));
+            for (String source : List.of(direct, called)) {
+                for (boolean optimize : new boolean[] {false, true}) {
+                    Set<Integer> zeroed = initializedLocations(SpirvLocalInitializer.apply(
+                            words(compile(source, optimize, Shaderc.shaderc_glsl_geometry_shader))));
+                    String context = emit + (source == called ? " in a helper" : "")
+                            + (optimize ? ", optimized" : "") + ": locations " + zeroed;
+                    assertTrue(zeroed.contains(0), "late, stored after an emit: " + context);
+                    assertTrue(!zeroed.contains(1), "early, stored before every emit: " + context);
+                }
+            }
+        }
+    }
+
+    /** The locations of the outputs that carry an initializer; the optimizer strips the names. */
+    private static Set<Integer> initializedLocations(int[] module) {
+        Map<Integer, Integer> locations = new HashMap<>();
+        Set<Integer> result = new HashSet<>();
+        for (int at = 5; at < module.length; at += module[at] >>> 16) {
+            int opcode = module[at] & 0xFFFF;
+            if (opcode == 71 && module[at + 2] == 30) locations.put(module[at + 1], module[at + 3]);
+            if (opcode == 59 && module[at + 3] == 3 && module[at] >>> 16 == 5
+                    && locations.containsKey(module[at + 2])) {
+                result.add(locations.get(module[at + 2]));
+            }
+        }
+        return result;
+    }
+
     @Test
     void unreadableModuleWritesEverything() {
         assertEquals(SpirvOutputWrites.ALL, SpirvOutputWrites.writtenLocations(new int[] {1, 2, 3}));
@@ -424,13 +495,17 @@ final class SpirvLocalInitializerTest {
 
     /** Compiles {@code source}, optimized as pack modules are when {@code optimize} is set. */
     private static ByteBuffer compile(String source, boolean optimize) {
+        return compile(source, optimize, Shaderc.shaderc_glsl_fragment_shader);
+    }
+
+    /** {@link #compile(String, boolean)} for a stage of shaderc kind {@code kind}. */
+    private static ByteBuffer compile(String source, boolean optimize, int kind) {
         long compiler = Shaderc.shaderc_compiler_initialize();
         long options = Shaderc.shaderc_compile_options_initialize();
         Shaderc.shaderc_compile_options_set_target_env(options,
                 Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_2);
         if (optimize) GlslCompiler.optimize(options);
-        long result = Shaderc.shaderc_compile_into_spv(compiler, source,
-                Shaderc.shaderc_glsl_fragment_shader, "locals.fsh", "main", options);
+        long result = Shaderc.shaderc_compile_into_spv(compiler, source, kind, "locals.glsl", "main", options);
         try {
             assertTrue(result != 0 && Shaderc.shaderc_result_get_compilation_status(result)
                             == Shaderc.shaderc_compilation_status_success,
