@@ -7,6 +7,7 @@ import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.List;
@@ -424,9 +425,10 @@ public final class ShaderSourcePreprocessor {
      * when only whitespace and comments come before it on its line ({@link #directiveStart}). A source
      * pushed while another is read is read next, then the rest of the other: Iris pastes an
      * include's text where its directive stood before JCPP reads the program, so a comment, splice
-     * or directive an include leaves open goes on into the includer's next lines. Two pastes still
-     * differ: Iris drops a file's trailing empty lines, so a backslash on an include's last line
-     * splices into the includer there, and Iris pastes an #include that sits inside a comment.
+     * or directive an include leaves open goes on into the includer's next lines, a backslash on
+     * an include's last line among them. Iris also pastes an #include that sits inside a comment
+     * or a skipped branch, and fails the pack on one it cannot find; Chimera reads only an active
+     * one.
      */
     static final class LineReader {
         private final Deque<Source> sources = new ArrayDeque<>();
@@ -449,7 +451,13 @@ public final class ShaderSourcePreprocessor {
             private int next;
 
             private Source(String text, Path file, int depth, Runnable exit) {
-                this.lines = text.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+                String[] split = text.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+                // Iris pastes a file without its trailing empty lines (IncludeGraph splits on \R), so
+                // a backslash on its last line splices into the includer's next line.
+                int end = split.length;
+                while (end > 0 && split[end - 1].isEmpty()) end--;
+                this.lines = end > 0 && end < split.length && split[end - 1].endsWith("\\")
+                        ? Arrays.copyOf(split, end) : split;
                 this.file = file;
                 this.depth = depth;
                 this.exit = exit;

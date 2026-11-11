@@ -189,6 +189,22 @@ final class PackSourceEdgesTest {
                 "the license comment's #version comes first:\n" + result.source());
     }
 
+    /**
+     * Iris pastes an include without its trailing empty lines (IncludeGraph splits on \R), so a
+     * backslash on its last line splices into the includer's next line (KNOW-1148): LONG is 1 + 2.
+     * JCPP gives this result for the pasted text.
+     */
+    @Test
+    void anIncludesLastBackslashSplicesIntoTheIncluder(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("splice.glsl"), "#define LONG 1 + \\\n\n");
+        String source = String.join("\n", "#version 120", "#include \"/splice.glsl\"", "2",
+                "#if LONG == 3", "float spliced = 1.0;", "#endif", "void main() {}");
+        ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(root, root.resolve("main.fsh"),
+                source, Map.of());
+        assertTrue(result.successful() && result.source().contains("float spliced"),
+                result.deviations() + "\n" + result.source());
+    }
+
     @Test
     void archiveEdges(@TempDir Path root) throws IOException {
         Path validZip = root.resolve("valid.zip");
