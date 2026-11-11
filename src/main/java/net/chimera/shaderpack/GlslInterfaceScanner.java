@@ -8,6 +8,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.OptionalInt;
 import java.util.TreeMap;
 import java.util.function.Function;
@@ -159,8 +160,12 @@ public final class GlslInterfaceScanner {
         }
     }
 
-    /** One interface statement: its token range and the names it declares. */
-    private record Statement(int start, int end, List<Declaration> declarations) {}
+    /**
+     * One interface statement: its token range, where its qualifiers and type end, the names it
+     * declares, and each one's declarator range (its name and arrays), in the same order.
+     */
+    private record Statement(int start, int typeEnd, int end, List<Declaration> declarations,
+                             List<GlslTree.Range> declarators) {}
 
     private record Parse(List<GlslLexer.Token> tokens, List<Statement> statements, List<String> deviations) {}
 
@@ -252,7 +257,8 @@ public final class GlslInterfaceScanner {
      * Re-emits every interface statement of {@code source}: each declared name is replaced by
      * what {@code emit} returns for it (an empty string drops it), and the rest of the source is
      * untouched. A statement that declares several names becomes one declaration per name. When
-     * {@code emit} returns null for every name of a statement, that statement stays as written.
+     * {@code emit} returns null for every name of a statement, that statement stays as written; a
+     * name it returns null for beside others keeps a declaration of its own.
      *
      * @throws IllegalArgumentException when the interface itself cannot be parsed
      */
@@ -271,17 +277,20 @@ public final class GlslInterfaceScanner {
         int next = 0;
         for (Statement statement : parse.statements()) {
             result.append(GlslLexer.render(tokens.subList(next, statement.start())));
-            StringBuilder replacement = new StringBuilder();
-            boolean kept = true;
-            for (Declaration declaration : statement.declarations()) {
-                String emitted = emit.apply(declaration);
-                if (emitted != null) {
-                    kept = false;
-                    replacement.append(emitted);
+            List<String> emitted = new ArrayList<>();
+            statement.declarations().forEach(declaration -> emitted.add(emit.apply(declaration)));
+            if (emitted.stream().allMatch(Objects::isNull)) {
+                result.append(GlslLexer.render(tokens.subList(statement.start(), statement.end())));
+            } else {
+                // A name emit leaves alone keeps its own declaration: the statement's qualifiers
+                // and type, then its declarator, so `out vec2 a, b;` keeps b when only a changes.
+                String prefix = GlslLexer.render(tokens.subList(statement.start(), statement.typeEnd()));
+                for (int index = 0; index < emitted.size(); index++) {
+                    GlslTree.Range declarator = statement.declarators().get(index);
+                    result.append(emitted.get(index) != null ? emitted.get(index) : prefix + " "
+                            + GlslLexer.render(tokens.subList(declarator.start(), declarator.end())) + ";\n");
                 }
             }
-            result.append(kept ? GlslLexer.render(tokens.subList(statement.start(), statement.end()))
-                    : replacement);
             next = statement.end();
         }
         result.append(GlslLexer.render(tokens.subList(next, tokens.size())));
@@ -400,7 +409,8 @@ public final class GlslInterfaceScanner {
             deviations.add(DECLARATION_UNSUPPORTED);
             return null;
         }
-        return new Statement(start, end, declared);
+        return new Statement(start, declaration.type().range().end(), end, declared,
+                declaration.declarators().stream().map(GlslTree.Declarator::range).toList());
     }
 
     /**
