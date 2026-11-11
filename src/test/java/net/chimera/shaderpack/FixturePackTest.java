@@ -465,11 +465,19 @@ final class FixturePackTest {
         assertTrue(malformed.deviations().contains("POST_TARGET_DIRECTIVE_MALFORMED"),
                 "malformed target deviation is missing");
 
-        PostTargetPlan conflict = PostTargetPlan.parse(
+        // Iris takes the last directive whichever word it uses, and refuses none of them.
+        PostTargetPlan laterRenderTargets = PostTargetPlan.parse(
                 "composite", "/* DRAWBUFFERS:01 */\n/* RENDERTARGETS: 0,2 */").plan();
-        assertTrue(!conflict.executable(), "conflicting target directives were accepted");
-        assertTrue(conflict.deviations().contains("POST_TARGET_DIRECTIVE_CONFLICT"),
-                "target conflict deviation is missing");
+        assertTrue(laterRenderTargets.executable(), "two target directives are not a conflict");
+        assertEquals(List.of(0, 2), laterRenderTargets.targetSlots(), "the later RENDERTARGETS wins");
+        PostTargetPlan laterDrawBuffers = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0,2 */\n/* DRAWBUFFERS:13 */").plan();
+        assertEquals(List.of(1, 3), laterDrawBuffers.targetSlots(), "the later DRAWBUFFERS wins");
+        // Ebin's DEBUG exit (lib/Exit.glsl) writes its own route after the program's.
+        PostTargetPlan ebinDebug = PostTargetPlan.parse(
+                "composite", "/* DRAWBUFFERS:2 */\n/* DRAWBUFFERS:3 */").plan();
+        assertTrue(ebinDebug.executable(), "Ebin's debug exit route was refused");
+        assertEquals(List.of(3), ebinDebug.targetSlots(), "the debug exit route wins");
 
         PostTargetPlan unsupported = PostTargetPlan.parse(
                 "composite", "/* RENDERTARGETS: 0,16 */").plan();

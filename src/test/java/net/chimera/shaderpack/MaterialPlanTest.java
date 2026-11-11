@@ -223,12 +223,12 @@ final class MaterialPlanTest {
         GeometryOutputPlan narrowed = GeometryOutputPlan.parse("gbuffers_entities",
                 "#version 120\n/* DRAWBUFFERS:0364 */\n/* DRAWBUFFERS:036 */\n", Map.of());
         assertEquals(List.of(0, 3, 6), narrowed.targetSlots(), "later route wins over longer");
-        // Divergent survivors stay a hard conflict instead of a guess.
+        // Divergent survivors are no conflict either: Iris takes the last.
         GeometryOutputPlan divergent = GeometryOutputPlan.parse("gbuffers_entities",
                 "#version 120\n/* DRAWBUFFERS:036 */\n/* DRAWBUFFERS:05 */\n", Map.of());
         assertEquals(List.of(0, 5), divergent.targetSlots(), "divergent latest wins");
-        assertTrue(divergent.deviations().stream().anyMatch(value -> value.contains("CONFLICT")),
-                "divergent survivors did not conflict: " + divergent.deviations());
+        assertTrue(divergent.deviations().stream().noneMatch(value -> value.startsWith("GEOMETRY_")),
+                "divergent survivors refused the program: " + divergent.deviations());
         // Comma-separated list form stays a list of targets.
         GeometryOutputPlan listed = GeometryOutputPlan.parse("gbuffers_entities",
                 "#version 120\n/* RENDERTARGETS: 0,3,6 */\n", Map.of());

@@ -132,7 +132,7 @@ public final class PostTargetPlan {
         List<String> deviations = new ArrayList<>();
         List<List<Integer>> directives = parseDirectives(text, deviations);
 
-        List<Integer> targetSlots = selectDirective(directives, deviations);
+        List<Integer> targetSlots = selectDirective(directives);
         Set<Integer> outputSet = legacyOutputs(text, deviations);
         Map<Integer, String> outputTypes = new TreeMap<>();
         Map<Integer, Integer> outputComponents = new TreeMap<>();
@@ -350,49 +350,19 @@ public final class PostTargetPlan {
     }
 
     /**
-     * Selects the active output route from the surviving directives. The
-     * analyzed source is already branch-resolved, so surviving directives
-     * describe cumulative writes in file order and the pack author places
-     * the overriding route last (Iris last-directive-wins). Earlier routes
-     * are dormant remnants only when they differ in shape, which stays a
-     * hard conflict rather than a guess. Malformed parses never proxy for
-     * a real route.
+     * Selects the active output route from the surviving directives: the last one, whatever the
+     * earlier ones say, as Iris takes the last DRAWBUFFERS or RENDERTARGETS comment
+     * (CommentDirectiveParser, ProgramDirectives). The analyzed source is already branch-resolved.
+     * Ebin's DEBUG exit (lib/Exit.glsl) writes DRAWBUFFERS:3 or :0 after the program's own route,
+     * which Iris draws and Chimera refused as a conflict. Malformed parses never proxy for a real
+     * route.
      */
-    private static List<Integer> selectDirective(
-            List<List<Integer>> directives,
-            List<String> deviations
-    ) {
+    private static List<Integer> selectDirective(List<List<Integer>> directives) {
         if (directives == null || directives.isEmpty()) {
             return List.of(0);
         }
         List<Integer> selected = directives.get(directives.size() - 1);
-        if (selected == null || selected.isEmpty()) {
-            return List.of(0);
-        }
-        if (selected.size() == 1 && selected.get(0) == 0) {
-            return selected;
-        }
-        Set<List<Integer>> distinct = new HashSet<>(directives);
-        boolean hasUsable = distinct.stream().anyMatch(route ->
-                route != null && !route.isEmpty());
-        if (!hasUsable) {
-            return List.of(0);
-        }
-        Set<List<Integer>> latestShape = new HashSet<>();
-        for (int index = directives.size() - 1; index >= 0; index--) {
-            List<Integer> route = directives.get(index);
-            if (route == null || route.isEmpty()) {
-                continue;
-            }
-            if (route.size() != selected.size()) {
-                break;
-            }
-            latestShape.add(route);
-        }
-        if (latestShape.size() > 1) {
-            deviations.add("POST_TARGET_DIRECTIVE_CONFLICT");
-        }
-        return selected;
+        return selected == null || selected.isEmpty() ? List.of(0) : selected;
     }
 
     private static List<Integer> parseDigits(String digits, List<String> deviations) {
