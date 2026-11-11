@@ -347,9 +347,10 @@ public final class PackRuntimeSettings {
                 }
                 session.scratch[slot] = result;
                 // An int past float's 24 bits stays exact: RenderPearl's packedView at 1366x768
-                // is 50333014, which a float rounds to 50333016, a width of 1368.
-                session.output[slot] = value.type().equals("int") || value.type().equals("bool")
-                        ? (int) result : (float) result;
+                // is 50333014, which a float rounds to 50333016, a width of 1368. Both arms are
+                // double: an int and a float arm make the conditional a float (JLS 15.25).
+                boolean integral = value.type().equals("int") || value.type().equals("bool");
+                session.output[slot] = integral ? (double) (int) result : (double) (float) result;
             }
         }
     }
