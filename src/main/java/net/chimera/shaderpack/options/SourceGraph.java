@@ -5,6 +5,7 @@ import net.chimera.shaderpack.DimensionProperties;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -143,7 +144,13 @@ final class SourceGraph {
         }
 
         private static void addPresent(Path shadersRoot, String folder, List<String> starts) {
-            Path directory = folder.isEmpty() ? shadersRoot : shadersRoot.resolve(folder);
+            Path directory;
+            try {
+                directory = folder.isEmpty() ? shadersRoot : shadersRoot.resolve(folder);
+            } catch (InvalidPathException invalid) {
+                // A dimension.properties folder name that is no path here (a*b on Windows) names nothing.
+                return;
+            }
             if (!Files.isDirectory(directory)) return;
             Set<String> present = new HashSet<>();
             try (Stream<Path> listing = Files.list(directory)) {

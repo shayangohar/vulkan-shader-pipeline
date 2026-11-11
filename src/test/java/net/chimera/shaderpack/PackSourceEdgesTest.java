@@ -148,6 +148,21 @@ final class PackSourceEdgesTest {
         }
     }
 
+    /**
+     * An include name that is no path on Windows ({@code *} is not allowed there) is unresolved: it
+     * threw InvalidPathException out of prepare. A quoted {@code /*} now stays in the name, as JCPP
+     * reads it.
+     */
+    @Test
+    void anIncludeNameThatIsNoPathIsUnresolved(@TempDir Path root) {
+        for (String name : List.of("a*b.glsl", "a/*b.glsl")) {
+            String source = "#version 120\n#include \"" + name + "\"\nvoid main() {}\n";
+            ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(root,
+                    root.resolve("main.fsh"), source, Map.of());
+            assertEquals(List.of("SOURCE_INCLUDE_UNRESOLVED"), result.deviations(), name);
+        }
+    }
+
     @Test
     void archiveEdges(@TempDir Path root) throws IOException {
         Path validZip = root.resolve("valid.zip");

@@ -3,6 +3,7 @@ package net.chimera.shaderpack;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -297,14 +298,19 @@ public final class ShaderSourcePreprocessor {
                     .toString().replace('\\', '/');
         }
 
+        /** The include's file; a name that is no path on this system ({@code a*b.glsl} on Windows) is unresolved. */
         private Path resolveInclude(Path sourceFile, String name) {
             Path include;
-            if (name.startsWith("/")) {
-                include = shadersRoot.resolve(name.substring(1));
-            } else {
-                Path base = sourceFile == null || sourceFile.getParent() == null
-                        ? shadersRoot : sourceFile.getParent();
-                include = base.resolve(name);
+            try {
+                if (name.startsWith("/")) {
+                    include = shadersRoot.resolve(name.substring(1));
+                } else {
+                    Path base = sourceFile == null || sourceFile.getParent() == null
+                            ? shadersRoot : sourceFile.getParent();
+                    include = base.resolve(name);
+                }
+            } catch (InvalidPathException invalid) {
+                throw new PreparationFailure("SOURCE_INCLUDE_UNRESOLVED");
             }
             include = include.normalize().toAbsolutePath();
             if (!include.startsWith(shadersRoot)) {
