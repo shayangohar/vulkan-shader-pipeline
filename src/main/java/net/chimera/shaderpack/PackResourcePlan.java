@@ -345,7 +345,9 @@ public final class PackResourcePlan {
         String label = name.equals("noisetex") ? name : key;
         PackResourceKind kind = name.equals("noisetex")
                 ? PackResourceKind.NOISE : PackResourceKind.PACK_TEXTURE;
-        String filter = name.equals("noisetex") ? "linear" : "nearest";
+        // Iris starts every PNG, a declared noise among them, at blur and clamp false (ShaderPack
+        // readTexture); only its generated noise is linear.
+        String filter = "nearest";
         String wrap = "repeat";
         int resolvedSlot = name.equals("noisetex") ? 7 : slot;
         if (isHostBlockAtlasSource(declaration.source())) {

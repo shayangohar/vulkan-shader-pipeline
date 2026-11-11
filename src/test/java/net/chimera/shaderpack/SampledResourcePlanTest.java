@@ -73,6 +73,15 @@ final class SampledResourcePlanTest {
         assertTrue(declared != null && declared.status() == PackResourceStatus.PACK_FILE
                 && declared.resourceKey().equals("noisetex:texture/Noise2D.png") && declared.slot() == 7,
                 String.valueOf(declared));
+        // Iris samples a PNG without .mcmeta nearest and repeating, a declared noise too; only
+        // the generated noise is linear.
+        assertEquals("nearest", declared.filter(), "a declared noise without .mcmeta");
+        assertEquals("repeat", declared.wrap(), "a declared noise without .mcmeta");
+        assertEquals("linear", generated.filter(), "the generated noise");
+
+        Files.writeString(shaders.resolve("texture/Noise2D.png.mcmeta"), "{\"texture\":{\"blur\":true}}");
+        PackResourceBinding blurred = PackProbe.analyze(root).plan().resources().binding("deferred", "noisetex");
+        assertEquals("linear", blurred.filter(), "a declared noise whose .mcmeta sets blur");
     }
 
     private static void verifySupported(PackProbe.Analysis analysis) {
@@ -270,12 +279,12 @@ final class SampledResourcePlanTest {
     ) throws IOException {
         String expected = Files.readString(baseline, StandardCharsets.UTF_8).trim();
         assertTrue(expected.contains(supported.report().sha256()),
-                "supported report baseline mismatch");
+                "supported report baseline mismatch: " + supported.report().sha256());
         assertTrue(expected.contains(supported.plan().resources().fingerprint()),
-                "supported resource baseline mismatch");
+                "supported resource baseline mismatch: " + supported.plan().resources().fingerprint());
         assertTrue(expected.contains(unsupported.report().sha256()),
-                "unsupported report baseline mismatch");
+                "unsupported report baseline mismatch: " + unsupported.report().sha256());
         assertTrue(expected.contains(unsupported.plan().resources().fingerprint()),
-                "unsupported resource baseline mismatch");
+                "unsupported resource baseline mismatch: " + unsupported.plan().resources().fingerprint());
     }
 }
