@@ -150,6 +150,18 @@ final class PropertyKeyReportTest {
         assertEquals(-1, settings.indexOf("skipped"));
         assertEquals(-1, settings.indexOf("off"), "a stray #else turns the rest off");
 
+        // An #ifdef with no name keeps its branch on and takes the next line; blank lines are gone first.
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #ifdef
+
+                uniform.float.taken = 1.0
+                uniform.float.kept = 2.0
+                #endif
+                """);
+        PackRuntimeSettings ifdef = PackProbe.analyze(root).plan().runtimeSettings();
+        assertEquals(-1, ifdef.indexOf("taken"));
+        assertTrue(ifdef.indexOf("kept") >= 0);
+
         Files.writeString(shaders.resolve("dimension.properties"), """
                 dimension.world0 = *
                 #if F(1)

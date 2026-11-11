@@ -307,8 +307,9 @@ final class BlockPropertiesResolverTest {
 
     /**
      * JCPP reports a conditional it cannot read and reads on (KNOW-1148): an #if or #elif Chimera
-     * cannot evaluate, and an empty #if or #ifdef, read false; a second #else and an #elif after
-     * #else are ignored; a stray #endif is ignored and a stray #else turns the rest off. The file
+     * cannot evaluate, and an empty #if, read false; an empty #ifdef takes block.8, the line after
+     * it (anIfdefWithoutANameLeavesItsBranchOn); a second #else and an #elif after #else are
+     * ignored; a stray #endif is ignored and a stray #else turns the rest off. The file
      * used to read nothing (CONDITION_UNSUPPORTED). The entries are JCPP's for this file.
      */
     @Test
@@ -395,6 +396,56 @@ final class BlockPropertiesResolverTest {
                 """);
         assertEquals(List.of("block.2"),
                 List.copyOf(IdMapProperties.read(root, "block.properties", Map.of()).entries().keySet()));
+    }
+
+    /**
+     * JCPP reads an #ifdef or #ifndef whose argument starts with no identifier as an error that
+     * leaves its branch on; with no argument (a comment aside) it also takes the next line,
+     * whatever it is, an #endif included. In a skipped branch it does neither. The entries are
+     * JCPP's for this file.
+     */
+    @Test
+    void anIfdefWithoutANameLeavesItsBranchOn(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                #ifdef 123
+                block.1=a
+                #else
+                block.2=b
+                #endif
+                #ifdef
+                block.3=c
+                #else
+                block.4=d
+                #endif
+                #ifndef
+                block.5=e
+                #else
+                block.6=f
+                #endif
+                #if 0
+                #ifdef
+                block.7=g
+                #endif
+                #endif
+                block.8=h
+                #ifdef /* c */
+                block.9=i
+                #endif
+                #ifdef // c
+                block.10=j
+                #endif
+                #ifdef
+                #endif
+                block.11=k
+                #ifndef 7up
+                block.12=l
+                #endif
+                block.13=m
+                """);
+        IdMapProperties.Loaded file = IdMapProperties.read(root, "block.properties", Map.of());
+        assertEquals("CONDITION_UNSUPPORTED", file.failure());
+        assertEquals(List.of("block.1", "block.8", "block.11", "block.12", "block.13"),
+                List.copyOf(file.entries().keySet()));
     }
 
     /** IdMap.parseRenderTypeMap puts layer keys in key order: a block two keys name takes the later. */

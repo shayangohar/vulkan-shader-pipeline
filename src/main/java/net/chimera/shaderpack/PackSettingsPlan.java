@@ -589,6 +589,8 @@ record PackSettingsPlan(
         private final List<String> deviations;
         private final Set<String> toggleOptions;
         private PackConditionals.State conditions;
+        // An #ifdef with no name takes the next non-blank line, as JCPP reads it.
+        private boolean takeNextLine;
 
         PropertiesParse(Path propertyFile, Map<String, Option> options, Map<String, String> defaults,
                         Map<String, Profile> profiles, Map<String, String> values,
@@ -650,10 +652,14 @@ record PackSettingsPlan(
 
         /**
          * Whether a line adds nothing to the settings: a {@code #} line inside a block comment
-         * (comment text to JCPP, then a properties comment), a conditional, which it applies, or a
-         * line of an inactive branch.
+         * (comment text to JCPP, then a properties comment), a conditional, which it applies, a line
+         * of an inactive branch, or the line an #ifdef with no name takes.
          */
         private boolean skips(PropertiesPreprocessor.Line next) {
+            if (takeNextLine && !next.text().isBlank()) {
+                takeNextLine = false;
+                return true;
+            }
             if (next.inComment() && PropertyLineJoiner.endsContinuation(next.text())) return true;
             return applyCondition(next.text()) || !conditions.active();
         }
@@ -667,9 +673,12 @@ record PackSettingsPlan(
             if (!directive.matches()) {
                 return false;
             }
-            if (!PropertiesPreprocessor.applyConditional(conditions, directive.group(1), directive.group(2).trim())) {
+            PropertiesPreprocessor.Conditional applied = PropertiesPreprocessor.applyConditional(
+                    conditions, directive.group(1), directive.group(2).trim());
+            if (applied != PropertiesPreprocessor.Conditional.APPLIED) {
                 deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }
+            takeNextLine = applied == PropertiesPreprocessor.Conditional.TAKES_NEXT_LINE;
             return true;
         }
 
