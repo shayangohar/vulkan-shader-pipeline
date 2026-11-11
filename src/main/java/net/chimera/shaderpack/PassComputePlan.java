@@ -732,7 +732,12 @@ public final class PassComputePlan {
         }
     }
 
-    /** A {@code ivec3(x, y, z)} value as Iris's ComputeDirectiveParser reads it; null where it fails. */
+    /**
+     * A {@code ivec3(x, y, z)} value as Iris's ComputeDirectiveParser reads a well-formed one; null
+     * for any other, which keeps the earlier directive. Iris logs an error for another constructor
+     * or argument count and reads on (the first three of more, an exception for fewer); glslang
+     * rejects each of those initializers, so no program that compiles has one.
+     */
     static int[] workGroups(String value) {
         String[] parts = constructorArguments(value, "ivec3", 3);
         if (parts == null) return null;
@@ -743,7 +748,7 @@ public final class PassComputePlan {
         }
     }
 
-    /** A {@code vec2(x, y)} value as Iris's ComputeDirectiveParser reads it; null where it fails. */
+    /** A {@code vec2(x, y)} value as Iris's ComputeDirectiveParser reads a well-formed one; null for any other. */
     static float[] workGroupsRender(String value) {
         String[] parts = constructorArguments(value, "vec2", 2);
         if (parts == null) return null;

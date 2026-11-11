@@ -353,9 +353,8 @@ public final class PostTargetPlan {
      * Selects the active output route from the surviving directives: the last one, whatever the
      * earlier ones say, as Iris takes the last DRAWBUFFERS or RENDERTARGETS comment
      * (CommentDirectiveParser, ProgramDirectives). The analyzed source is already branch-resolved.
-     * Ebin's DEBUG exit (lib/Exit.glsl) writes DRAWBUFFERS:3 or :0 after the program's own route,
-     * which Iris draws and Chimera refused as a conflict. Malformed parses never proxy for a real
-     * route.
+     * Ebin's DEBUG exit (lib/Exit.glsl) writes DRAWBUFFERS:3 or :0 after the program's own route.
+     * Malformed parses never proxy for a real route.
      */
     private static List<Integer> selectDirective(List<List<Integer>> directives) {
         if (directives == null || directives.isEmpty()) {

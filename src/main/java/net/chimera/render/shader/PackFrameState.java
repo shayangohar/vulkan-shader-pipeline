@@ -703,7 +703,8 @@ final class PackFrameState {
     /**
      * Samples the level's sky for this frame and derives the celestial frame from it: the sun
      * turns with the time of day as LevelRenderer.renderSky turns it, the moon opposite, and the
-     * sky colour is the one the sky draws with.
+     * sky colour is the level's at the camera entity, where Iris samples it (the sky itself draws
+     * with the colour at the camera's position).
      */
     private void captureCelestial(ClientLevel level, Camera camera, float partialTick) {
         float sunAngle = level.getTimeOfDay(partialTick) * 360.0F;

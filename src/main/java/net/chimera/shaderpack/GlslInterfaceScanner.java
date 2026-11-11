@@ -162,7 +162,8 @@ public final class GlslInterfaceScanner {
 
     /**
      * One interface statement: its token range, where its qualifiers and type end, the names it
-     * declares, and each one's declarator range (its name and arrays), in the same order.
+     * declares, and each one's declarator range (its name and arrays; a declarator with an
+     * initializer makes no statement), in the same order.
      */
     private record Statement(int start, int typeEnd, int end, List<Declaration> declarations,
                              List<GlslTree.Range> declarators) {}

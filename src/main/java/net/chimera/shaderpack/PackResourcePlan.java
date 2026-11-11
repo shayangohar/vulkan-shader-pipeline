@@ -369,6 +369,8 @@ public final class PackResourcePlan {
                     declaration.source(), resolvedSlot, mcmetaFilter(packFile, filter),
                     mcmetaWrap(packFile, wrap), PackResourceStatus.PACK_FILE, deviations);
         }
+        // PackSettingsPlan drops a missing PNG as Iris skips it, so a missing file reaches here only
+        // when the settings were read without a shaders directory.
         deviations.add(isUnsafePath(declaration.source())
                 ? "PACK_TEXTURE_PATH_UNSAFE:" + label
                 : "PACK_TEXTURE_MISSING:" + label);

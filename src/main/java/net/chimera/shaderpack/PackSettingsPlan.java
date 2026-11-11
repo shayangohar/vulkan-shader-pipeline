@@ -277,8 +277,9 @@ record PackSettingsPlan(
      * ShaderPack.readTexture), as if it were never declared: a stage texture then leaves its
      * sampler to the program's own binding, a customTexture name reads unit 0, and a missing
      * texture.noise leaves the generated noise. A raw texture stays declared and refuses its
-     * program, since Iris still renames its sampler and binds nothing there, and so does an unsafe
-     * path. Mellow and Reverie name LUT files that only some LUT_FILE options ship.
+     * program, unlike Iris, which renames its sampler to customtexN and reads unit 0 there: a 1D or
+     * 3D sampler on unit 0's 2D image is a type mismatch. An unsafe path stays declared too. Mellow
+     * and Reverie name LUT files that only some LUT_FILE options ship.
      */
     private static void dropMissingTextures(Map<String, PackResourceDeclaration> declarations, Path shadersDir,
                                             List<String> deviations) {

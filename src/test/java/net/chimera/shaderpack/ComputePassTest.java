@@ -137,11 +137,6 @@ final class ComputePassTest {
     }
 
     /**
-     * Iris reads {@code <pass>.csh}, then {@code _a} on until a suffix is missing or disabled, and
-     * binds colorimgN and colortexN to the image the pass reads. Photon's deferred4_a writes the
-     * sky light deferred4 reads.
-     */
-    /**
      * Iris reads a work-group directive only where a line starts with it (ConstDirectiveParser), a
      * commented-out one too when the comment is a block, and keeps the last one whose value
      * ComputeDirectiveParser parses. Chimera took the first match anywhere: a line comment, a
@@ -193,6 +188,11 @@ final class ComputePassTest {
                         + Arrays.toString(byName.get("composite_b").workGroupsRender()));
     }
 
+    /**
+     * Iris reads {@code <pass>.csh}, then {@code _a} on until a suffix is missing or disabled, and
+     * binds colorimgN and colortexN to the image the pass reads. Photon's deferred4_a writes the
+     * sky light deferred4 reads.
+     */
     @Test
     void passComputes(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
