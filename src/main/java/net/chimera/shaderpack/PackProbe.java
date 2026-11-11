@@ -287,6 +287,10 @@ public final class PackProbe {
                     .filter(value -> value.startsWith("SETTING_UNSUPPORTED:"))
                     .map(value -> "SETTING_NOT_APPLIED:" + value.substring("SETTING_UNSUPPORTED:".length()))
                     .forEach(globalDeviations::add);
+            // A texture file Iris could not read and skipped, which it logs as an error.
+            settingsPlan.deviations().stream()
+                    .filter(value -> value.startsWith("PACK_TEXTURE_DROPPED:"))
+                    .forEach(globalDeviations::add);
             applyShadowSettingReporting(inventories, packConfig.shadowSettings(), globalDeviations);
         }
 

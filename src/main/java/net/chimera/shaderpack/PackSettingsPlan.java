@@ -151,6 +151,7 @@ record PackSettingsPlan(
             macros = parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
                     required, optional, customValues, resourceDeclarations, deviations, macros, toggles);
             AdvancedImageDeclarations.dropImagesPastIrisLimit(properties, deviations);
+            dropMissingTextures(resourceDeclarations, shadersDir, deviations);
         }
         // Iris drops a !program.NAME program of the matching profile whatever its own switch says.
         environment.disabledPrograms().forEach(program -> programEnabled.put(program, false));
@@ -270,6 +271,32 @@ record PackSettingsPlan(
     private static final Map<String, String> COLOR_SPACES = Map.of("COLOR_SPACE_SRGB", "0",
             "COLOR_SPACE_DCI_P3", "1", "COLOR_SPACE_DISPLAY_P3", "2", "COLOR_SPACE_REC2020", "3",
             "COLOR_SPACE_ADOBE_RGB", "4");
+
+    /**
+     * Iris skips a custom texture whose file it cannot read ("Unable to read the custom texture",
+     * ShaderPack.readTexture), as if it were never declared: a stage texture then leaves its
+     * sampler to the program's own binding, a customTexture name reads unit 0, and a missing
+     * texture.noise leaves the generated noise. A raw texture stays declared and refuses its
+     * program, since Iris still renames its sampler and binds nothing there, and so does an unsafe
+     * path. Mellow and Reverie name LUT files that only some LUT_FILE options ship.
+     */
+    private static void dropMissingTextures(Map<String, PackResourceDeclaration> declarations, Path shadersDir,
+                                            List<String> deviations) {
+        if (shadersDir == null) return;
+        declarations.values().removeIf(declaration -> {
+            if (declaration.kind() != PackResourceKind.PACK_TEXTURE && declaration.kind() != PackResourceKind.NOISE) {
+                return false;
+            }
+            String source = declaration.source();
+            if (PackResourcePlan.isUnsafePath(source) || PackResourcePlan.isNamespacedSource(source)
+                    || PackResourcePlan.isHostBlockAtlasSource(source)
+                    || PackResourcePlan.resolvePath(shadersDir, source) != null) {
+                return false;
+            }
+            deviations.add("PACK_TEXTURE_DROPPED:" + declaration.key());
+            return true;
+        });
+    }
 
     /** shaders.properties' supportsColorCorrection, which Iris reads as true or 1. */
     boolean supportsColorCorrection() {
