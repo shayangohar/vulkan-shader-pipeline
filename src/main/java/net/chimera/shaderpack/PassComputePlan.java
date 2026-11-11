@@ -38,10 +38,6 @@ public final class PassComputePlan {
             "layout\\s*\\(((?:[^()]|\\([^()]*\\))*\\blocal_size_[xyz](?:[^()]|\\([^()]*\\))*)\\)\\s*in\\s*;");
     private static final Pattern LOCAL_SIZE_AXIS = Pattern.compile(
             "local_size_([xyz])\\s*=\\s*((?:[^,()]|\\([^()]*\\))+)");
-    private static final Pattern WORK_GROUPS = Pattern.compile("\\bconst\\s+ivec3\\s+workGroups\\s*=\\s*"
-            + "ivec3\\s*\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)");
-    private static final Pattern WORK_GROUPS_RENDER = Pattern.compile("\\bconst\\s+vec2\\s+workGroupsRender"
-            + "\\s*=\\s*vec2\\s*\\(\\s*([-+0-9.eE]+)\\s*,\\s*([-+0-9.eE]+)\\s*\\)");
     private static final Pattern IMAGE_DECLARATION = Pattern.compile(
             "(?m)^[ \\t]*(" + PackPipelines.IMAGE_QUALIFIERS + ")(\\w*image\\w+)\\s+([A-Za-z_]\\w*)\\s*;");
     private static final Pattern LAYOUT = Pattern.compile("layout\\s*\\(([^)]*)\\)\\s*");
@@ -736,6 +732,39 @@ public final class PassComputePlan {
         }
     }
 
+    /** A {@code ivec3(x, y, z)} value as Iris's ComputeDirectiveParser reads it; null where it fails. */
+    static int[] workGroups(String value) {
+        String[] parts = constructorArguments(value, "ivec3", 3);
+        if (parts == null) return null;
+        try {
+            return new int[] {Integer.parseInt(parts[0]), Integer.parseInt(parts[1]), Integer.parseInt(parts[2])};
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** A {@code vec2(x, y)} value as Iris's ComputeDirectiveParser reads it; null where it fails. */
+    static float[] workGroupsRender(String value) {
+        String[] parts = constructorArguments(value, "vec2", 2);
+        if (parts == null) return null;
+        try {
+            return new float[] {Float.parseFloat(parts[0]), Float.parseFloat(parts[1])};
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** The trimmed arguments of {@code type(a, b, ...)}, or null unless there are exactly {@code count}. */
+    private static String[] constructorArguments(String value, String type, int count) {
+        if (!value.startsWith(type)) return null;
+        String arguments = value.substring(type.length()).trim();
+        if (!arguments.startsWith("(") || !arguments.endsWith(")")) return null;
+        String[] parts = arguments.substring(1, arguments.length() - 1).split(",");
+        if (parts.length != count) return null;
+        for (int index = 0; index < parts.length; index++) parts[index] = parts[index].trim();
+        return parts;
+    }
+
     /** One compute's translation in progress: its bindings, generated declarations and deviations. */
     private static final class Work {
         final String name;
@@ -765,14 +794,16 @@ public final class PassComputePlan {
         PassCompute result(String source, int[] localSize, List<ComputeValueBlock.Value> values, String text) {
             int[] workGroups = null;
             float[] render = null;
-            Matcher absolute = text == null ? null : WORK_GROUPS.matcher(text);
-            if (absolute != null && absolute.find()) {
-                workGroups = new int[] {Integer.parseInt(absolute.group(1)), Integer.parseInt(absolute.group(2)),
-                        Integer.parseInt(absolute.group(3))};
-            }
-            Matcher relative = text == null ? null : WORK_GROUPS_RENDER.matcher(text);
-            if (relative != null && relative.find()) {
-                render = new float[] {Float.parseFloat(relative.group(1)), Float.parseFloat(relative.group(2))};
+            // Iris reads each const directive that starts a line and keeps the last one whose value
+            // parses (ProgramSet, ConstDirectiveParser, ComputeDirectiveParser).
+            for (IrisConstDirectives.Directive directive : IrisConstDirectives.find(text)) {
+                if (directive.type().equals("ivec3") && directive.name().equals("workGroups")) {
+                    int[] parsed = workGroups(directive.value());
+                    if (parsed != null) workGroups = parsed;
+                } else if (directive.type().equals("vec2") && directive.name().equals("workGroupsRender")) {
+                    float[] parsed = workGroupsRender(directive.value());
+                    if (parsed != null) render = parsed;
+                }
             }
             return new PassCompute(name, pass, failed ? null : source, localSize, workGroups, render, indirect,
                     List.copyOf(bindings), List.copyOf(textures), values == null ? List.of() : values,

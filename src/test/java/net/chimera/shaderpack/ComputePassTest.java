@@ -141,6 +141,58 @@ final class ComputePassTest {
      * binds colorimgN and colortexN to the image the pass reads. Photon's deferred4_a writes the
      * sky light deferred4 reads.
      */
+    /**
+     * Iris reads a work-group directive only where a line starts with it (ConstDirectiveParser), a
+     * commented-out one too when the comment is a block, and keeps the last one whose value
+     * ComputeDirectiveParser parses. Chimera took the first match anywhere: a line comment, a
+     * {@code const const}, or a declaration after other code.
+     */
+    @Test
+    void workGroupDirectivesFollowIrisLineRule(@TempDir Path root) throws IOException {
+        assertTrue(Arrays.equals(new int[] {4, 5, 6}, PassComputePlan.workGroups("ivec3( 4 ,5, 6 )")));
+        assertTrue(PassComputePlan.workGroups("ivec3(4, 5)") == null, "two arguments");
+        assertTrue(PassComputePlan.workGroups("ivec3(4u, 5, 6)") == null, "not Integer.parseInt");
+        assertTrue(PassComputePlan.workGroups("uvec3(4, 5, 6)") == null, "another constructor");
+        assertTrue(Arrays.equals(new float[] {0.25F, 0.5F}, PassComputePlan.workGroupsRender("vec2(0.25f, 0.5)")),
+                "Float.parseFloat takes a suffix");
+
+        Path shaders = Files.createDirectory(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), "#version 120\n"
+                + "void main() {\n/* RENDERTARGETS: 0 */\n gl_FragData[0] = vec4(1.0);\n}\n");
+        String body = "layout(rgba16f) writeonly uniform image2D colorimg4;\n"
+                + "void main() { imageStore(colorimg4, ivec2(gl_GlobalInvocationID.xy), vec4(1.0)); }\n";
+        Files.writeString(shaders.resolve("composite_a.csh"), """
+                #version 430
+                layout(local_size_x = 8, local_size_y = 8) in;
+                // const ivec3 workGroups = ivec3(9, 9, 9);
+                const ivec3 workGroups = ivec3(1, 2, 3);
+                /*
+                const ivec3 workGroups = ivec3(4, 5, 6);
+                const ivec3 workGroups = ivec3(x, 1, 1);
+                float x; const ivec3 workGroups = ivec3(7, 7, 7);
+                const const ivec3 workGroups = ivec3(8, 8, 8);
+                */
+                """ + body);
+        Files.writeString(shaders.resolve("composite_b.csh"), """
+                #version 430
+                layout(local_size_x = 8, local_size_y = 8) in;
+                const vec2 workGroupsRender = vec2(1.0, 1.0);
+                /* const vec2 workGroupsRender = vec2(0.5f, 0.25f); */
+                /*
+                const vec2 workGroupsRender = vec2(0.5f, 0.25f);
+                */
+                """ + body);
+        PassComputePlan computes = PassComputePlan.build(PackProbe.analyze(root).plan(), shaders);
+        Map<String, PassComputePlan.PassCompute> byName = new TreeMap<>();
+        computes.computes().forEach(compute -> byName.put(compute.name(), compute));
+        assertTrue(Arrays.equals(new int[] {4, 5, 6}, byName.get("composite_a").workGroups()),
+                "the last directive that starts a line and parses: "
+                        + Arrays.toString(byName.get("composite_a").workGroups()));
+        assertTrue(Arrays.equals(new float[] {0.5F, 0.25F}, byName.get("composite_b").workGroupsRender()),
+                "the last workGroupsRender that starts a line: "
+                        + Arrays.toString(byName.get("composite_b").workGroupsRender()));
+    }
+
     @Test
     void passComputes(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectory(root.resolve("shaders"));
