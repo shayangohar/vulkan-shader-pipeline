@@ -40,9 +40,44 @@ final class PackSourceEdgesTest {
                 #endif
                 """);
         List<String> deviations = new ArrayList<>();
-        Map<String, String> folders = PackSource.readDimensionFolders(root, deviations);
+        Map<String, String> folders = DimensionProperties.read(root, Map.of(), deviations).worlds();
         assertEquals(Map.of("example:custom", "world_custom"), folders, String.valueOf(deviations));
         assertTrue(deviations.isEmpty(), String.valueOf(deviations));
+    }
+
+    /**
+     * Iris reads dimension.properties as it reads the id maps (PropertiesPreprocessor, then
+     * Properties.load), with the standard environment defines. A continuation goes on to the next
+     * line (superDuperVanilla lists undergarden:undergarden under world-1 that way), a block comment
+     * runs across lines (KNOW-1148), and a colon separates a key as an equals sign does. Each folder
+     * here is what JCPP and Properties.load give for this file.
+     */
+    @Test
+    void dimensionPropertiesReadsAsIrisLoadsIt(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("dimension.properties"), """
+                dimension.world-1 = minecraft:the_nether \\
+                    undergarden:undergarden
+                #if MC_VERSION >= 11300
+                dimension.world1 = the_end
+                #endif
+                /*
+                #if 0
+                */
+                dimension.world0 = *
+                #define CUSTOM 1 /* open
+                dimension.world_wrong = example:wrong
+                */
+                dimension.world2 : example:colon
+                """);
+        List<String> deviations = new ArrayList<>();
+        DimensionProperties.Folders folders = DimensionProperties.read(root, Map.of("MC_VERSION", "12101"), deviations);
+        assertEquals(Map.of("minecraft:the_nether", "world-1", "undergarden:undergarden", "world-1",
+                "minecraft:the_end", "world1", "*", "world0", "example:colon", "world2"), folders.worlds());
+        assertTrue(folders.present() && deviations.isEmpty(), String.valueOf(deviations));
+
+        Files.writeString(root.resolve("dimension.properties"), "# only a comment\n");
+        assertTrue(!DimensionProperties.read(root, Map.of(), deviations).present(),
+                "a file with no property maps the standard folders, as no file does");
     }
 
     @Test
