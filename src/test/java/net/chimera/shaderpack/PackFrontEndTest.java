@@ -328,6 +328,64 @@ final class PackFrontEndTest {
         assertTrue(settings.indexOf("notBare") >= 0, "#if !N on an empty macro holds");
     }
 
+    /**
+     * A comment on a directive line is whitespace to JCPP. Read raw, a block comment after
+     * {@code #if FOO} became operators and the condition evaluated 0, a comment before the
+     * expression failed it, and a #define body kept the comment.
+     */
+    @Test
+    void aCommentOnADirectiveLineIsWhitespace() {
+        for (String condition : List.of("#if FOO /* note */", "#if /* note */ FOO", "#if FOO /* a, b. */",
+                "#if FOO // note", "#ifdef FOO /* note */", "#if BODY", "#if FOO /* opens")) {
+            String source = String.join("\n",
+                    "#version 330",
+                    "#define BODY 1 /* note */",
+                    "#if 0",
+                    "#elif 1",
+                    "#endif",
+                    condition,
+                    condition.endsWith("opens") ? "and closes */" : "",
+                    "float kept = 1.0;",
+                    "#else",
+                    "float dropped = 1.0;",
+                    "#endif",
+                    "#if 0",
+                    "#elif FOO /* note */",
+                    "float elifKept = 1.0;",
+                    "#endif");
+            ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(
+                    Path.of("."), null, source, Map.of("FOO", "1"));
+            assertTrue(result.successful(), condition + " rejected: " + result.deviations());
+            assertTrue(result.source().contains("kept") && !result.source().contains("dropped")
+                    && result.source().contains("elifKept"),
+                    condition + " chose the wrong branch:\n" + result.source());
+            assertEquals(result.source().split("/\\*", -1).length, result.source().split("\\*/", -1).length,
+                    condition + " left a block comment unbalanced:\n" + result.source());
+        }
+    }
+
+    /** shaders.properties goes through JCPP too: a comment on its #if line is whitespace. */
+    @Test
+    void aCommentOnAPropertiesDirectiveIsWhitespace(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #define ON 1 /* note */
+                #if ON // note
+                uniform.float.lineComment = 1.0
+                #endif
+                #if ON /* note */
+                uniform.float.blockComment = 1.0
+                #endif
+                """);
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(settings.indexOf("lineComment") >= 0, "#if ON // note holds");
+        assertTrue(settings.indexOf("blockComment") >= 0, "#if ON /* note */ holds");
+    }
+
     /** GLSL 3.3 section 3.1: backslash-newline splices lines before directives are read. */
     @Test
     void lineContinuation() {

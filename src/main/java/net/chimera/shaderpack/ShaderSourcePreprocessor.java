@@ -219,7 +219,7 @@ public final class ShaderSourcePreprocessor {
             }
 
             String directive = matcher.group(1).toLowerCase();
-            String argument = stripDirectiveComment(
+            String argument = PackConditionals.withoutComments(
                     matcher.group(2) == null ? "" : matcher.group(2)).trim();
             switch (directive) {
                 case "if", "ifdef", "ifndef" -> applyCondition(directive, argument);
@@ -231,6 +231,11 @@ public final class ShaderSourcePreprocessor {
                 case "include" -> include(argument, sourceFile, depth);
                 case "version", "extension", "pragma", "line" -> passThrough(directive, line);
                 default -> otherDirective(directive);
+            }
+            // A block comment the directive line leaves open runs on into the lines after it, which
+            // pass through: open it in the output too, so their */ closes it.
+            if (active() && inCommentAfter(line, false)) {
+                emit("/*");
             }
         }
 
@@ -394,11 +399,6 @@ public final class ShaderSourcePreprocessor {
             } catch (RuntimeException e) {
                 throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }
-        }
-
-        private static String stripDirectiveComment(String argument) {
-            int lineComment = argument.indexOf("//");
-            return lineComment >= 0 ? argument.substring(0, lineComment) : argument;
         }
     }
 

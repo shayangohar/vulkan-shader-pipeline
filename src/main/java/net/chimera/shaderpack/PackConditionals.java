@@ -19,6 +19,32 @@ final class PackConditionals {
     private PackConditionals() {}
 
     /**
+     * A directive's text as a C preprocessor such as Iris's JCPP reads it: each block comment is
+     * one space, and the text ends at a line comment or at a block comment it leaves open. Read
+     * raw, a block comment after {@code #if FOO} became operators, and the condition evaluated 0.
+     */
+    static String withoutComments(String text) {
+        StringBuilder result = new StringBuilder(text.length());
+        int index = 0;
+        while (index < text.length()) {
+            int block = text.indexOf("/*", index);
+            int line = text.indexOf("//", index);
+            if (line >= 0 && (block < 0 || line < block)) {
+                return result.append(text, index, line).toString();
+            }
+            if (block < 0) {
+                return result.append(text, index, text.length()).toString();
+            }
+            result.append(text, index, block);
+            int end = text.indexOf("*/", block + 2);
+            if (end < 0) return result.toString();
+            result.append(' ');
+            index = end + 2;
+        }
+        return result.toString();
+    }
+
+    /**
      * {@code text} with every identifier that names a macro replaced by its value, again inside
      * that value, as the preprocessor expands a shaders.properties value: {@code size.buffer.colortex1
      * = REFLECTION_RES REFLECTION_RES} reads as {@code 0.5 0.5}. A macro is not expanded inside its
@@ -78,7 +104,7 @@ final class PackConditionals {
          * TAAU program ends in a stray #endif and still runs under Iris.
          */
         boolean apply(String directive, String expression) {
-            String argument = expression == null ? "" : expression.trim();
+            String argument = expression == null ? "" : withoutComments(expression).trim();
             boolean closing = directive.equalsIgnoreCase("elif") || directive.equalsIgnoreCase("else")
                     || directive.equalsIgnoreCase("endif");
             if (closing && branches.isEmpty()) return false;
