@@ -16,7 +16,9 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -50,26 +52,33 @@ final class MrtPipelineContextTest {
         int begin = indexOfCall(code, CONTEXT, "beginPipeline");
         int creation = indexOfCall(code, "com/llamalad7/mixinextras/injector/wrapoperation/Operation", "call");
         assertTrue(begin >= 0 && begin < creation, "the scope opens before the creation");
-        boolean finallyCloses = false;
-        for (TryCatchBlockNode block : wrapper.tryCatchBlocks) {
-            if (block.type != null) continue;
-            int start = code.indexOf(block.start);
-            int end = code.indexOf(block.end);
-            if (start > creation || creation >= end) continue;
-            int handler = code.indexOf(block.handler);
-            int close = indexOfCall(code.subList(handler, code.size()), CONTEXT, "endPipeline");
-            int rethrow = -1;
-            for (int index = handler; index < code.size(); index++) {
-                if (code.get(index).getOpcode() == Opcodes.ATHROW) {
-                    rethrow = index - handler;
-                    break;
-                }
-            }
-            finallyCloses |= close >= 0 && close < rethrow;
-        }
-        assertTrue(finallyCloses, "a finally around the creation closes the scope before it rethrows");
+        assertTrue(wrapper.tryCatchBlocks.stream().anyMatch(block -> closesBeforeRethrow(block, code, creation)),
+                "a finally around the creation closes the scope before it rethrows");
         int normalClose = indexOfCall(code.subList(creation, code.size()), CONTEXT, "endPipeline");
         assertTrue(normalClose >= 0, "the creation's normal exit closes the scope");
+    }
+
+    /**
+     * A registered pipeline's creation swaps its contract in and endPipeline puts the pass's back,
+     * so the pass's later variants read the pass's blend modes.
+     */
+    @Test
+    void endPipelineRestoresThePassContract() throws ReflectiveOperationException {
+        Map<Object, Object> registered = staticMap("REGISTERED");
+        try {
+            MrtPipelineContext.begin(new int[] {97}, 8);
+            Object pipelineContract = threadLocal("CURRENT").get();
+            MrtPipelineContext.begin(new int[] {37}, 8);
+            // A WeakHashMap takes a null key: it stands in for the pipeline being created.
+            registered.put(null, pipelineContract);
+            MrtPipelineContext.beginPipeline(null);
+            assertArrayEquals(new int[] {97}, MrtPipelineContext.colorFormats(), "the pipeline's own contract");
+            MrtPipelineContext.endPipeline();
+            assertArrayEquals(new int[] {37}, MrtPipelineContext.colorFormats(), "the pass's contract again");
+        } finally {
+            registered.remove(null);
+            MrtPipelineContext.end();
+        }
     }
 
     /** end() clears every thread-local, so nothing outlives the pass. */
@@ -88,6 +97,21 @@ final class MrtPipelineContextTest {
             threadLocal("CURRENT_HOST_PASS_BLENDS").remove();
             MrtPipelineContext.end();
         }
+    }
+
+    /**
+     * Whether {@code block} is a finally (or a catch of every Throwable) around the instruction at
+     * {@code creation} whose handler closes the scope before it rethrows.
+     */
+    private static boolean closesBeforeRethrow(TryCatchBlockNode block, List<AbstractInsnNode> code, int creation) {
+        if (block.type != null && !block.type.equals("java/lang/Throwable")) return false;
+        if (code.indexOf(block.start) > creation || creation >= code.indexOf(block.end)) return false;
+        int handler = code.indexOf(block.handler);
+        int close = indexOfCall(code.subList(handler, code.size()), CONTEXT, "endPipeline");
+        for (int index = handler; index < code.size(); index++) {
+            if (code.get(index).getOpcode() == Opcodes.ATHROW) return close >= 0 && close < index - handler;
+        }
+        return false;
     }
 
     /** The injector annotation on {@code method}, or null. */
@@ -130,6 +154,13 @@ final class MrtPipelineContextTest {
             }
         }
         return -1;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<Object, Object> staticMap(String name) throws ReflectiveOperationException {
+        Field field = MrtPipelineContext.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return (Map<Object, Object>) field.get(null);
     }
 
     @SuppressWarnings("unchecked")

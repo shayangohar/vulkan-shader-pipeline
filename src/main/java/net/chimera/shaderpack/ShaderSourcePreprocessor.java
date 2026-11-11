@@ -406,11 +406,14 @@ public final class ShaderSourcePreprocessor {
      * preprocessor, so a block comment a directive line leaves open joins the lines up to its close
      * into that directive, which goes on after it: in JCPP, {@code #if 0 /* note}, then
      * {@code note *}{@code / || 1} on the next line, holds; one that never closes takes the rest of
-     * the text. A line that starts inside a block comment is comment text, not a directive: BSL
-     * documents its options with "#define FEATURE ..." lines inside comments. A source pushed while
-     * another is read is read next, then the rest of the other: Iris pastes an include's text where
-     * its directive stood before JCPP reads the program, so a comment, splice or directive an
-     * include leaves open goes on into the includer's next lines.
+     * the text. A line that starts inside a block comment is no directive: BSL documents its
+     * options with "#define FEATURE ..." lines inside comments. (JCPP would read a {@code #} right
+     * after the comment's close on that line as one; no pack the gate reads writes that.) A source
+     * pushed while another is read is read next, then the rest of the other: Iris pastes an
+     * include's text where its directive stood before JCPP reads the program, so a comment, splice
+     * or directive an include leaves open goes on into the includer's next lines. Two pastes still
+     * differ: Iris drops a file's trailing empty lines, so a backslash on an include's last line
+     * splices into the includer there, and Iris pastes an #include that sits inside a comment.
      */
     static final class LineReader {
         private final Deque<Source> sources = new ArrayDeque<>();

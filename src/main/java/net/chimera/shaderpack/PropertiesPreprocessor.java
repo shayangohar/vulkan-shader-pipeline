@@ -37,8 +37,10 @@ final class PropertiesPreprocessor {
     private PropertiesPreprocessor() {}
 
     /**
-     * The preprocessed text. {@code failed} when a directive could not be evaluated: the text then
-     * ends before it, as Iris keeps what JCPP emitted before an error. {@code open} when a
+     * The preprocessed text. {@code failed} when Chimera cannot evaluate a directive (a function-like
+     * macro or a character literal in an #if, an #elif or second #else after #else): the text then
+     * ends before it. JCPP reports such an error and reads on, an #if it cannot evaluate taking 0,
+     * so Iris keeps the lines after it; no pack the gate reads has one. {@code open} when a
      * conditional is still open at the end, which JCPP keeps.
      */
     record Preprocessed(String text, boolean failed, boolean open) {}
