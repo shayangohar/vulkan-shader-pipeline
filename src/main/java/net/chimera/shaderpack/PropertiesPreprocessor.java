@@ -7,6 +7,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
@@ -38,11 +39,9 @@ final class PropertiesPreprocessor {
     private PropertiesPreprocessor() {}
 
     /**
-     * The preprocessed text. {@code failed} when Chimera cannot evaluate a directive (a function-like
-     * macro or a character literal in an #if, an #elif or second #else after #else): the text then
-     * ends before it. JCPP reports such an error and reads on, an #if it cannot evaluate taking 0,
-     * so Iris keeps the lines after it; no pack the gate reads has one. {@code open} when a
-     * conditional is still open at the end, which JCPP keeps.
+     * The preprocessed text. {@code failed} when Chimera could not evaluate a conditional and read
+     * it false ({@link #applyConditional}). {@code open} when a conditional is still open at the
+     * end, which JCPP keeps.
      */
     record Preprocessed(String text, boolean failed, boolean open) {}
 
@@ -60,20 +59,38 @@ final class PropertiesPreprocessor {
         PackConditionals.State conditions = new PackConditionals.State(macros);
         Map<String, String> expansions = new HashMap<>(macros == null ? Map.of() : macros);
         StringBuilder out = new StringBuilder(text.length());
+        boolean failed = false;
         for (ShaderSourcePreprocessor.LogicalLine line : ShaderSourcePreprocessor.logicalLines(jcppInput(text))) {
             Matcher directive = line.inComment() ? null : DIRECTIVE.matcher(line.text());
             if (directive != null && directive.matches()) {
-                try {
-                    apply(directive.group(1), stripComments(directive.group(2)), conditions, expansions);
-                } catch (RuntimeException unsupported) {
-                    return new Preprocessed(out.toString().replace(BACKSLASH, "\\"), true, conditions.open());
-                }
+                failed |= !apply(directive.group(1), stripComments(directive.group(2)), conditions, expansions);
             } else if (conditions.active()) {
                 out.append(PackConditionals.expandOutsideComments(line.text(), line.inComment(), expansions));
             }
             out.append('\n');
         }
-        return new Preprocessed(out.toString().replace(BACKSLASH, "\\"), false, conditions.open());
+        return new Preprocessed(out.toString().replace(BACKSLASH, "\\"), failed, conditions.open());
+    }
+
+    /**
+     * Applies a conditional directive in a properties file as JCPP does, which reports an error
+     * there and reads on (checked with JCPP 1.4.14): an #if, #ifdef, #ifndef or #elif Chimera cannot
+     * evaluate, an empty one among them, reads false; a second #else, or an #elif after #else, is
+     * ignored; a stray #else or #elif turns the rest of the file off; a stray #endif is ignored.
+     * False when Chimera could not evaluate it: JCPP may read it otherwise, as {@code #if 1 +}
+     * reads 1 and a character literal or a function-like macro has a value there.
+     */
+    static boolean applyConditional(PackConditionals.State conditions, String name, String argument) {
+        String directive = name.toLowerCase(Locale.ROOT);
+        boolean closing = directive.equals("else") || directive.equals("elif");
+        if (closing && conditions.afterElse()) return true;
+        try {
+            if (!conditions.apply(directive, argument) && closing) conditions.endAll();
+            return true;
+        } catch (RuntimeException unsupported) {
+            conditions.apply(directive.equals("elif") ? "elif" : "if", "0");
+            return false;
+        }
     }
 
     /**
@@ -156,18 +173,16 @@ final class PropertiesPreprocessor {
      * One directive. Conditionals nest inside inactive branches; {@code #define} and {@code #undef}
      * apply only in an active one. JCPP reports {@code #error} and {@code #warning}, cannot include a
      * file into a properties text, and skips a name it does not know; none of those changes the map.
+     * False when a conditional could not be evaluated ({@link #applyConditional}).
      */
-    private static void apply(String name, String argument, PackConditionals.State conditions,
-                              Map<String, String> expansions) {
-        if (CONDITIONALS.contains(name)) {
-            conditions.apply(name, argument);
-            return;
-        }
-        if (!conditions.active()) return;
+    private static boolean apply(String name, String argument, PackConditionals.State conditions,
+                                 Map<String, String> expansions) {
+        if (CONDITIONALS.contains(name)) return applyConditional(conditions, name, argument);
+        if (!conditions.active()) return true;
         if (name.equals("define")) {
             Matcher macro = MACRO.matcher(argument);
             // A function-like macro is not expanded here.
-            if (!macro.matches() || macro.group(2) != null) return;
+            if (!macro.matches() || macro.group(2) != null) return true;
             conditions.define(macro.group(1), macro.group(3));
             // A macro defined with no body expands to nothing.
             expansions.put(macro.group(1), macro.group(3));
@@ -176,6 +191,7 @@ final class PropertiesPreprocessor {
             conditions.undefine(macro);
             expansions.remove(macro);
         }
+        return true;
     }
 
     /**

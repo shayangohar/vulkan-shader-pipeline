@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -109,6 +110,44 @@ final class PropertyKeyReportTest {
         }
         assertEquals(-1, settings.indexOf("hidden"), "the #if line's comment took it");
         assertEquals(-1, settings.indexOf("d"), "the #endif in a comment ended no branch");
+    }
+
+    /**
+     * JCPP reports a conditional it cannot read and reads on (KNOW-1148): shaders.properties and
+     * dimension.properties used to stop at one. An #if Chimera cannot evaluate reads false, and a
+     * stray #else turns the rest off; JCPP gives these results.
+     */
+    @Test
+    void aConditionalJcppCannotReadIsSkippedAndTheFileReadsOn(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #if F(1)
+                uniform.float.skipped = 1.0
+                #endif
+                uniform.float.after = 2.0
+                #else
+                uniform.float.off = 3.0
+                """);
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(settings.indexOf("after") >= 0, "the file reads on past the #if");
+        assertEquals(-1, settings.indexOf("skipped"));
+        assertEquals(-1, settings.indexOf("off"), "a stray #else turns the rest off");
+
+        Files.writeString(shaders.resolve("dimension.properties"), """
+                dimension.world0 = *
+                #if F(1)
+                dimension.world_never = minecraft:overworld
+                #endif
+                dimension.world-1 = minecraft:the_nether
+                """);
+        List<String> deviations = new ArrayList<>();
+        assertEquals(Map.of("*", "world0", "minecraft:the_nether", "world-1"),
+                DimensionProperties.read(shaders, Map.of(), deviations).worlds());
+        assertEquals(List.of("PREPROCESSOR_CONDITION_UNSUPPORTED"), deviations);
     }
 
     /**

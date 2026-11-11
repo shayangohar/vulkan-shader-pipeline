@@ -589,7 +589,6 @@ record PackSettingsPlan(
         private final List<String> deviations;
         private final Set<String> toggleOptions;
         private PackConditionals.State conditions;
-        private boolean invalidCondition;
 
         PropertiesParse(Path propertyFile, Map<String, Option> options, Map<String, String> defaults,
                         Map<String, Profile> profiles, Map<String, String> values,
@@ -639,12 +638,10 @@ record PackSettingsPlan(
                         accept(line);
                     }
                 }
-                if (!invalidCondition) {
-                    try {
-                        conditions.finish();
-                    } catch (RuntimeException failure) {
-                        deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
-                    }
+                try {
+                    conditions.finish();
+                } catch (RuntimeException failure) {
+                    deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
                 }
             } catch (IOException e) {
                 deviations.add("SHADERS_PROPERTIES_READ_FAILED");
@@ -658,23 +655,20 @@ record PackSettingsPlan(
          */
         private boolean skips(PropertiesPreprocessor.Line next) {
             if (next.inComment() && PropertyLineJoiner.endsContinuation(next.text())) return true;
-            return applyCondition(next.text()) || invalidCondition || !conditions.active();
+            return applyCondition(next.text()) || !conditions.active();
         }
 
-        /** Applies an #if, #ifdef, #else or #endif line; false when the line is not one. */
+        /**
+         * Applies an #if, #ifdef, #else or #endif line as JCPP does, reading on past one Chimera
+         * cannot evaluate (PropertiesPreprocessor.applyConditional); false when the line is not one.
+         */
         private boolean applyCondition(String raw) {
             Matcher directive = CONDITION.matcher(raw);
             if (!directive.matches()) {
                 return false;
             }
-            if (!invalidCondition) {
-                try {
-                    conditions.apply(directive.group(1), directive.group(2).trim());
-                } catch (RuntimeException failure) {
-                    deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
-                    conditions = new PackConditionals.State(stageIndependentDefaults(defaults));
-                    invalidCondition = true;
-                }
+            if (!PropertiesPreprocessor.applyConditional(conditions, directive.group(1), directive.group(2).trim())) {
+                deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }
             return true;
         }

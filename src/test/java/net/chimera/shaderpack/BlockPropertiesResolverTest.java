@@ -305,6 +305,66 @@ final class BlockPropertiesResolverTest {
         assertEquals("''' /* c */ STONE", entries.get("block.8"));
     }
 
+    /**
+     * JCPP reports a conditional it cannot read and reads on (KNOW-1148): an #if or #elif Chimera
+     * cannot evaluate, and an empty #if or #ifdef, read false; a second #else and an #elif after
+     * #else are ignored; a stray #endif is ignored and a stray #else turns the rest off. The file
+     * used to read nothing (CONDITION_UNSUPPORTED). The entries are JCPP's for this file.
+     */
+    @Test
+    void aConditionalJcppCannotReadIsReportedAndSkipped(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                #if F(1)
+                block.1=a
+                #endif
+                block.2=b
+                #if 1
+                block.3=c
+                #else
+                block.4=d
+                #else
+                block.5=e
+                #endif
+                #if 0
+                #else
+                block.6=f
+                #elif 1
+                block.7=g
+                #endif
+                #ifdef
+                block.8=h
+                #endif
+                #if
+                block.9=i
+                #endif
+                #if 0
+                block.10=j
+                #elif G(2)
+                block.11=k
+                #else
+                block.12=l
+                #endif
+                #endif
+                block.13=m
+                #else
+                block.14=n
+                #if 1
+                block.15=o
+                #endif
+                #endif
+                block.16=p
+                """);
+        IdMapProperties.Loaded file = IdMapProperties.read(root, "block.properties", Map.of());
+        assertEquals("CONDITION_UNSUPPORTED", file.failure());
+        assertEquals(List.of("block.2", "block.3", "block.6", "block.7", "block.12", "block.13"),
+                List.copyOf(file.entries().keySet()));
+
+        Files.writeString(root.resolve("item.properties"), "#if F(1)\nitem.1=stick\n#endif\nitem.2=torch\n");
+        PackItemIdResolver.ParseResult items = PackItemIdResolver.parse(root, Map.of());
+        assertEquals(2, items.resolver().resolve("minecraft:torch"), "the item map reads on too");
+        assertTrue(items.deviations().contains("ITEM_PROPERTIES_CONDITION_UNSUPPORTED"), items.deviations().toString());
+    }
+
     /** IdMap.parseRenderTypeMap puts layer keys in key order: a block two keys name takes the later. */
     @Test
     void aBlockTwoLayerKeysNameTakesTheLaterKey(@TempDir Path root) throws IOException {

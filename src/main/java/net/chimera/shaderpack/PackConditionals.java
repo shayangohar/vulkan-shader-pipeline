@@ -152,6 +152,7 @@ final class PackConditionals {
     static final class State {
         private final Map<String, String> macros = new TreeMap<>();
         private final Deque<Branch> branches = new ArrayDeque<>();
+        private boolean ended;
 
         State(Map<String, String> initialMacros) {
             if (initialMacros != null) {
@@ -160,7 +161,7 @@ final class PackConditionals {
         }
 
         boolean active() {
-            return branches.isEmpty() || branches.peek().active();
+            return !ended && (branches.isEmpty() || branches.peek().active());
         }
 
         Map<String, String> macros() {
@@ -213,25 +214,41 @@ final class PackConditionals {
             return (ifdef ? "" : "!") + "defined(" + tested + ")";
         }
 
+        /** Takes the next branch; a failure leaves the open branch as it was. */
         private void elseIf(String argument) {
-            Branch previous = closeBranch();
+            Branch previous = branches.peek();
             if (previous.elseSeen()) {
                 throw new IllegalArgumentException("conditional after else");
             }
             boolean result = previous.parentActive() && !previous.taken()
                     && PreprocessorExpression.evaluate(argument, macros);
+            branches.pop();
             branches.push(new Branch(previous.parentActive(),
                     previous.parentActive() && result,
                     previous.taken() || result, false));
         }
 
         private void otherwise() {
-            Branch previous = closeBranch();
+            Branch previous = branches.peek();
             if (previous.elseSeen()) {
                 throw new IllegalArgumentException("duplicate else");
             }
+            branches.pop();
             branches.push(new Branch(previous.parentActive(),
                     previous.parentActive() && !previous.taken(), true, true));
+        }
+
+        /** Whether the innermost open branch has passed its #else. */
+        boolean afterElse() {
+            return !branches.isEmpty() && branches.peek().elseSeen();
+        }
+
+        /**
+         * Turns the rest of the text off, as JCPP does after a stray #else or #elif: branches
+         * opened later stay inactive, and no #endif turns it back on.
+         */
+        void endAll() {
+            ended = true;
         }
 
         /** Pops the innermost open branch; there must be one. */
