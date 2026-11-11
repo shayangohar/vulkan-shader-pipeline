@@ -1,7 +1,8 @@
 package net.chimera.shaderpack.options;
 
+import net.chimera.shaderpack.DimensionProperties;
+
 import java.io.IOException;
-import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -14,6 +15,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.stream.Stream;
@@ -156,29 +158,17 @@ final class SourceGraph {
         }
 
         /**
-         * The folders dimension.properties names, in file order; without that file, the world
-         * folders that exist. As in Iris, a dimension.properties with any entry at all turns the
-         * world-folder fallback off.
+         * The folders dimension.properties names, in file order, read through Iris's
+         * preprocessing (DimensionProperties); without that file, the world folders that exist. As
+         * in Iris, a dimension.properties that loads any property at all turns the world-folder
+         * fallback off.
          */
         private static List<String> dimensionFolders(Path shadersRoot) {
+            Optional<List<String>> named = DimensionProperties.folderNames(shadersRoot);
+            if (named.isPresent()) return named.get();
             List<String> folders = new ArrayList<>();
-            Path properties = shadersRoot.resolve("dimension.properties");
-            if (Files.isRegularFile(properties)) {
-                Map<String, String> entries;
-                try {
-                    entries = MenuProperties.orderedEntries(new StringReader(
-                            Files.readString(properties, StandardCharsets.ISO_8859_1)));
-                } catch (IOException | IllegalArgumentException unreadable) {
-                    entries = Map.of();
-                }
-                entries.keySet().stream().filter(key -> key.startsWith("dimension."))
-                        .map(key -> key.substring("dimension.".length())).forEach(folders::add);
-                if (!entries.isEmpty()) return folders;
-            }
-            if (folders.isEmpty()) {
-                for (String world : List.of("world0", "world-1", "world1")) {
-                    if (Files.isDirectory(shadersRoot.resolve(world))) folders.add(world);
-                }
+            for (String world : List.of("world0", "world-1", "world1")) {
+                if (Files.isDirectory(shadersRoot.resolve(world))) folders.add(world);
             }
             return folders;
         }

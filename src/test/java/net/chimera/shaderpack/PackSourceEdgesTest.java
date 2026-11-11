@@ -11,6 +11,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -78,6 +79,20 @@ final class PackSourceEdgesTest {
         Files.writeString(root.resolve("dimension.properties"), "# only a comment\n");
         assertTrue(!DimensionProperties.read(root, Map.of(), deviations).present(),
                 "a file with no property maps the standard folders, as no file does");
+        assertTrue(DimensionProperties.folderNames(root).isEmpty(), "and the option scan takes the world folders");
+
+        // Iris preprocesses it with its environment defines (StandardMacros), IS_IRIS among them.
+        Files.writeString(root.resolve("dimension.properties"), """
+                #ifdef IS_IRIS
+                dimension.world0 = *
+                #endif
+                #if MC_VERSION < 11300
+                dimension.world_legacy = minecraft:overworld
+                #endif
+                """);
+        assertEquals(Map.of("*", "world0"), DimensionProperties.read(root, deviations).worlds());
+        assertEquals(Optional.of(List.of("world0")), DimensionProperties.folderNames(root),
+                "the option scan reads the same preprocessed keys");
     }
 
     /**

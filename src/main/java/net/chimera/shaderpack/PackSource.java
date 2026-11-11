@@ -390,8 +390,7 @@ public final class PackSource {
             return emptyResult(shadersDir, temporaryRoot, deviations, dimension);
         }
 
-        DimensionProperties.Folders folders =
-                DimensionProperties.read(shadersDir, PackEngineDefines.standard(), deviations);
+        DimensionProperties.Folders folders = DimensionProperties.read(shadersDir, deviations);
         Map<String, String> dimensionFolders = folders.worlds();
         Map<String, Path> variantDirs = variantDirectories(shadersDir, dimensionFolders);
         boolean dimensionProperties = folders.present();
