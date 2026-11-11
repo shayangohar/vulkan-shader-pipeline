@@ -468,7 +468,7 @@ public final class PackSource {
         return result;
     }
 
-    private static Map<String, String> readDimensionFolders(
+    static Map<String, String> readDimensionFolders(
             Path shadersDir,
             List<String> deviations
     ) {
@@ -485,7 +485,9 @@ public final class PackSource {
                 if (directive.matches()) {
                     if (!invalidCondition) {
                         String name = directive.group(1).toLowerCase();
-                        String argument = stripLineComment(directive.group(2)).trim();
+                        // JCPP, which Iris preprocesses this file with, reads every comment as whitespace.
+                        String argument = PackConditionals.withoutComments(
+                                directive.group(2) == null ? "" : directive.group(2)).trim();
                         try {
                             if (name.equals("define")) {
                                 defineProperty(conditions, argument);
@@ -552,14 +554,6 @@ public final class PackSource {
                 result.put(world.equals("*") ? "*" : normalizeDimension(world), folder);
             }
         }
-    }
-
-    private static String stripLineComment(String value) {
-        if (value == null) {
-            return "";
-        }
-        int comment = value.indexOf("//");
-        return comment < 0 ? value : value.substring(0, comment);
     }
 
     private static boolean hasDirectStageFiles(Path directory) {
