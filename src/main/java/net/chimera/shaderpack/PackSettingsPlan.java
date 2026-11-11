@@ -259,7 +259,35 @@ record PackSettingsPlan(
             }
         });
         result.putAll(PackFeatureFlags.sourceDefines(optionalFeatures));
+        // Iris adds the colour spaces, in ColorSpace's order, to the shader and id-map defines of a
+        // pack that sets supportsColorCorrection (ShaderPack); currentColorSpace serves SRGB.
+        if (supportsColorCorrection()) {
+            result.putAll(COLOR_SPACES);
+        }
         return stageIndependentDefaults(result);
+    }
+
+    private static final Map<String, String> COLOR_SPACES = Map.of("COLOR_SPACE_SRGB", "0",
+            "COLOR_SPACE_DCI_P3", "1", "COLOR_SPACE_DISPLAY_P3", "2", "COLOR_SPACE_REC2020", "3",
+            "COLOR_SPACE_ADOBE_RGB", "4");
+
+    /** shaders.properties' supportsColorCorrection, which Iris reads as true or 1. */
+    boolean supportsColorCorrection() {
+        String value = propertyValues.get("supportsColorCorrection");
+        return value != null && (value.trim().equals("true") || value.trim().equals("1"));
+    }
+
+    /**
+     * The defines a prepared source keeps for the compiler as {@code #define} lines: the launcher's
+     * option values, and the colour spaces, which Kappa reads as values ({@code case
+     * COLOR_SPACE_SRGB:}) as well as in conditions.
+     */
+    Set<String> lockedDefineNames() {
+        Set<String> names = new TreeSet<>(overriddenNames());
+        if (supportsColorCorrection()) {
+            names.addAll(COLOR_SPACES.keySet());
+        }
+        return Collections.unmodifiableSet(names);
     }
 
     /** Names whose values were explicitly supplied by the Chimera launcher. */

@@ -124,7 +124,7 @@ public final class PackProbe {
         Analysis analyze() {
             loaded.prepare(
                     PackEngineDefines.forPack(settingsPlan.preprocessorDefines()),
-                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false));
+                    PackEngineDefines.lockedNames(settingsPlan.lockedDefineNames(), false));
             settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
             readPackFiles();
@@ -260,7 +260,7 @@ public final class PackProbe {
         private void prepareWithCustomImages() {
             loaded.prepare(
                     PackEngineDefines.forCustomImages(settingsPlan.preprocessorDefines()),
-                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true));
+                    PackEngineDefines.lockedNames(settingsPlan.lockedDefineNames(), true));
             settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
             // Only preparation's deviations are redone: a stage file the scan could not read is still

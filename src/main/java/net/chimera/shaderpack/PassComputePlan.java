@@ -304,7 +304,7 @@ public final class PassComputePlan {
             boolean customImages = advanced.capabilityPossible();
             this.macros = customImages ? PackEngineDefines.forCustomImages(plan.settingsPreprocessorDefines())
                     : PackEngineDefines.forPack(plan.settingsPreprocessorDefines());
-            this.lockedMacros = PackEngineDefines.lockedNames(plan.settingsOverriddenNames(), customImages);
+            this.lockedMacros = PackEngineDefines.lockedNames(plan.settingsLockedDefineNames(), customImages);
         }
 
         /**
