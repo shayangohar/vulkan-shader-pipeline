@@ -61,9 +61,8 @@ public final class MrtPipelineContext {
 
     /**
      * Ends the contract and clears every thread-local, a pipeline-creation scope's included, so
-     * nothing outlives the pass. beginPipeline sets the scope's write mask and host-pass blends at
-     * the head of every creation anyway; the contract a throwing creation left swapped in is what
-     * could leak, and beginPipeline restores it (endOpenScope).
+     * nothing outlives the pass. GraphicsPipelineMrtMixin closes each creation's scope in a
+     * finally, so a creation that throws restores the pass's contract before its next variant.
      */
     public static void end() {
         CURRENT.remove();
@@ -109,9 +108,11 @@ public final class MrtPipelineContext {
         HOST_PASS_BLENDS.remove(pipeline);
     }
 
-    /** Activates a registered contract at GraphicsPipeline.createGraphicsPipeline. */
+    /**
+     * Activates a registered contract at GraphicsPipeline.createGraphicsPipeline. The caller ends
+     * the scope with {@link #endPipeline} however the creation ends.
+     */
     public static void beginPipeline(GraphicsPipeline pipeline) {
-        endOpenScope();
         CURRENT_WRITES.set(WRITTEN_OUTPUTS.get(pipeline));
         CURRENT_HOST_PASS_BLENDS.set(HOST_PASS_BLENDS.get(pipeline));
         Contract contract = REGISTERED.get(pipeline);
@@ -122,15 +123,6 @@ public final class MrtPipelineContext {
         PREVIOUS.set(CURRENT.get());
         CURRENT.set(contract);
         PIPELINE_SCOPE.set(Boolean.TRUE);
-    }
-
-    /**
-     * Ends a creation's scope that never reached its RETURN injection, restoring the contract it
-     * saved. A registered pipeline's creation swaps its contract in; when the creation threw, the
-     * pass's later variants read that pipeline's blend modes until the pass ended.
-     */
-    private static void endOpenScope() {
-        if (Boolean.TRUE.equals(PIPELINE_SCOPE.get())) endPipeline();
     }
 
     /** Restores any outer render-pass contract after lazy pipeline creation. */
