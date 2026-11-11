@@ -15,7 +15,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
-import java.util.function.Function;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -44,8 +43,10 @@ final class PackFamilyWindows {
      */
     void drawFamilyBatches(List<RenderType> batches, Consumer<RenderType> draw, Consumer<RenderType> discard) {
         try {
-            for (List<RenderType> run : runs(batches, this::runKey)) {
-                drawRun(run, runKey(run.get(0)).outputs(), draw, discard);
+            List<RunKey> keys = new ArrayList<>(batches.size());
+            for (RenderType batch : batches) keys.add(runKey(batch));
+            for (int[] run : runs(keys)) {
+                drawRun(batches.subList(run[0], run[1]), keys.get(run[0]).outputs(), draw, discard);
             }
         } finally {
             pass.depth.markWorldDrawn();
@@ -62,15 +63,14 @@ final class PackFamilyWindows {
                 pass.worldStorageTargets(ChimeraEntityBridge.lanePipeline(family.family(), family.format())));
     }
 
-    /** {@code items} in runs of consecutive items with equal keys, in order. */
-    static <T> List<List<T>> runs(List<T> items, Function<T, ?> key) {
-        List<List<T>> runs = new ArrayList<>();
+    /** The runs of consecutive equal {@code keys}, in order, each as its start and end index. */
+    static List<int[]> runs(List<?> keys) {
+        List<int[]> runs = new ArrayList<>();
         int start = 0;
-        while (start < items.size()) {
-            Object first = key.apply(items.get(start));
+        while (start < keys.size()) {
             int end = start + 1;
-            while (end < items.size() && Objects.equals(key.apply(items.get(end)), first)) end++;
-            runs.add(items.subList(start, end));
+            while (end < keys.size() && Objects.equals(keys.get(end), keys.get(start))) end++;
+            runs.add(new int[] {start, end});
             start = end;
         }
         return runs;
