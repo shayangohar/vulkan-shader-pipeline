@@ -11,9 +11,11 @@ import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static org.lwjgl.vulkan.VK10.*;
 
@@ -31,29 +33,47 @@ final class PackFamilyWindows {
 
     /**
      * Draws held batches in order inside the pack windows their family lanes write, one window per
-     * run of consecutive batches with the same outputs. A host type's batch opens no window here:
-     * its host-layout lane opens its own when it draws. A run whose window cannot open is
-     * discarded: its widened meshes have no host program to fall back to. Every batch of one flush
-     * reads the depthtex0 its first reader captured, the world drawn before the flush.
+     * run of consecutive batches with the same outputs and the same stored targets. A run holds
+     * the targets its programs store to as colorimgN in the general layout, and a program that
+     * samples one (a world program reading colortexN) would fail to bind it, so the two never share
+     * a run; a program never samples a target it stores to itself (TARGET_IMAGE_ALSO_SAMPLED). A
+     * host type's batch opens no window here: its host-layout lane opens its own when it draws. A
+     * run whose window cannot open is discarded: its widened meshes have no host program to fall
+     * back to. Every batch of one flush reads the depthtex0 its first reader captured, the world
+     * drawn before the flush.
      */
     void drawFamilyBatches(List<RenderType> batches, Consumer<RenderType> draw, Consumer<RenderType> discard) {
-        int start = 0;
         try {
-            while (start < batches.size()) {
-                GeometryOutputPlan outputs = windowOutputs(batches.get(start));
-                int end = start + 1;
-                while (end < batches.size() && Objects.equals(windowOutputs(batches.get(end)), outputs)) end++;
-                drawRun(batches.subList(start, end), outputs, draw, discard);
-                start = end;
+            for (List<RenderType> run : runs(batches, this::runKey)) {
+                drawRun(run, runKey(run.get(0)).outputs(), draw, discard);
             }
         } finally {
             pass.depth.markWorldDrawn();
         }
     }
 
-    /** The outputs a held batch's family window binds; none for a host type's. */
-    private GeometryOutputPlan windowOutputs(RenderType batch) {
-        return batch instanceof FamilyRenderType family ? pass.laneWindowOutputs(family.family()) : null;
+    /** What one run's batches share: the outputs their window binds and the targets they store to. */
+    record RunKey(GeometryOutputPlan outputs, List<Integer> stored) {}
+
+    /** A held batch's run key; no outputs and nothing stored for a host type's. */
+    private RunKey runKey(RenderType batch) {
+        if (!(batch instanceof FamilyRenderType family)) return new RunKey(null, List.of());
+        return new RunKey(pass.laneWindowOutputs(family.family()),
+                pass.worldStorageTargets(ChimeraEntityBridge.lanePipeline(family.family(), family.format())));
+    }
+
+    /** {@code items} in runs of consecutive items with equal keys, in order. */
+    static <T> List<List<T>> runs(List<T> items, Function<T, ?> key) {
+        List<List<T>> runs = new ArrayList<>();
+        int start = 0;
+        while (start < items.size()) {
+            Object first = key.apply(items.get(start));
+            int end = start + 1;
+            while (end < items.size() && Objects.equals(key.apply(items.get(end)), first)) end++;
+            runs.add(items.subList(start, end));
+            start = end;
+        }
+        return runs;
     }
 
     /**
