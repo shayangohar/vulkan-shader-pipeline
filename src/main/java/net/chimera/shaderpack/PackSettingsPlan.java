@@ -614,11 +614,14 @@ record PackSettingsPlan(
         void run(Map<String, String> initialMacros) {
             conditions = new PackConditionals.State(initialMacros);
             try {
-                // Iris reads shaders.properties as ISO-8859-1, which never fails on a stray byte.
-                List<String> physical = Files.readAllLines(propertyFile, StandardCharsets.ISO_8859_1);
+                // Iris reads shaders.properties as ISO-8859-1, which never fails on a stray byte, and
+                // JCPP carries a block comment across lines (PropertiesPreprocessor.commentLines).
+                List<PropertiesPreprocessor.Line> lines = PropertiesPreprocessor.commentLines(
+                        Files.readAllLines(propertyFile, StandardCharsets.ISO_8859_1));
                 PropertyLineJoiner joiner = new PropertyLineJoiner();
-                for (int index = 0; index <= physical.size(); index++) {
-                    String raw = index < physical.size() ? physical.get(index) : null;
+                for (int index = 0; index <= lines.size(); index++) {
+                    PropertiesPreprocessor.Line next = index < lines.size() ? lines.get(index) : null;
+                    String raw = next == null ? null : next.text();
                     String line;
                     if (raw != null && PropertyLineJoiner.endsContinuation(raw) && joiner.pending()) {
                         // The # line ends the open continuation: handle that line first,
@@ -627,7 +630,7 @@ record PackSettingsPlan(
                         index--;
                     } else if (raw == null) {
                         line = joiner.finish();
-                    } else if (applyCondition(raw) || invalidCondition || !conditions.active()) {
+                    } else if (skips(next)) {
                         continue;
                     } else {
                         line = PropertyLineJoiner.endsContinuation(raw) ? raw : joiner.accept(raw);
@@ -646,6 +649,16 @@ record PackSettingsPlan(
             } catch (IOException e) {
                 deviations.add("SHADERS_PROPERTIES_READ_FAILED");
             }
+        }
+
+        /**
+         * Whether a line adds nothing to the settings: a {@code #} line inside a block comment
+         * (comment text to JCPP, then a properties comment), a conditional, which it applies, or a
+         * line of an inactive branch.
+         */
+        private boolean skips(PropertiesPreprocessor.Line next) {
+            if (next.inComment() && PropertyLineJoiner.endsContinuation(next.text())) return true;
+            return applyCondition(next.text()) || invalidCondition || !conditions.active();
         }
 
         /** Applies an #if, #ifdef, #else or #endif line; false when the line is not one. */
@@ -811,8 +824,8 @@ record PackSettingsPlan(
      * closes a multi-line {@code moon_phase_brightness} with {@code ") \"} right before its
      * {@code #else}, and Bliss's {@code screen} list ends at the commented-out one under it. (The
      * id maps differ: IdMap rejoins across those lines, see {@link IdMapProperties}.) Callers
-     * evaluate conditions on physical lines, end an open continuation at each {@code #} line, and
-     * feed only active other lines to {@link #accept}.
+     * evaluate conditions on the lines JCPP sees (PropertiesPreprocessor.commentLines), end an
+     * open continuation at each {@code #} line, and feed only active other lines to {@link #accept}.
      */
     static final class PropertyLineJoiner {
         private final StringBuilder pending = new StringBuilder();

@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import java.io.IOException;
 import java.io.StringReader;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -87,23 +88,68 @@ final class PropertiesPreprocessor {
     }
 
     /**
-     * The text PropertiesPreprocessor gives JCPP, one line per non-blank line, each backslash hidden
-     * (so no line ends in one, and none splices).
+     * One line of a properties file as JCPP lexes it, its own text kept: a physical line, or a
+     * directive line with the lines its open block comment takes. {@code inComment} when it starts
+     * inside a block comment, where a {@code #} line is comment text and no directive.
+     */
+    record Line(String text, boolean inComment) {}
+
+    /**
+     * {@code physical}'s lines as JCPP lexes them after PropertiesPreprocessor's line pass
+     * ({@link #jcppLine}): a block comment runs across lines, and a directive line that leaves one
+     * open takes the lines up to its close and goes on after it, joined with spaces.
+     * shaders.properties is read this way; the id maps and dimension.properties through
+     * {@link #preprocess}.
+     */
+    static List<Line> commentLines(List<String> physical) {
+        List<Line> result = new ArrayList<>(physical.size());
+        boolean inComment = false;
+        StringBuilder directive = null;
+        for (String raw : physical) {
+            String seen = jcppLine(raw);
+            if (directive != null) {
+                directive.append(' ').append(raw.strip());
+                if (ShaderSourcePreprocessor.inCommentAfter(seen, true)) continue;
+                result.add(new Line(directive.toString(), false));
+                directive = null;
+            } else if (!inComment && seen.startsWith("#") && ShaderSourcePreprocessor.inCommentAfter(seen, false)) {
+                directive = new StringBuilder(raw.strip());
+            } else {
+                result.add(new Line(raw, inComment));
+                inComment = ShaderSourcePreprocessor.inCommentAfter(seen, inComment);
+            }
+        }
+        if (directive != null) result.add(new Line(directive.toString(), false));
+        return result;
+    }
+
+    /**
+     * The text PropertiesPreprocessor gives JCPP, one line per non-blank line ({@link #jcppLine}),
+     * each backslash hidden (so no line ends in one, and none splices).
      */
     private static String jcppInput(String text) {
         StringJoiner lines = new StringJoiner("\n");
         for (String raw : text.split("\\R")) {
-            String line = raw.trim();
-            if (line.isBlank()) continue;
-            String kept;
-            if (!line.startsWith("#")) {
-                kept = line.replace("#", "");
-            } else {
-                kept = JCPP_DIRECTIVES.stream().anyMatch(name -> line.startsWith("#" + name)) ? line : "";
-            }
-            lines.add(kept.replace("\\", BACKSLASH));
+            // Iris trims first, so a line of control characters is blank too.
+            if (!raw.trim().isBlank()) lines.add(jcppLine(raw));
         }
         return lines.toString();
+    }
+
+    /**
+     * What PropertiesPreprocessor gives JCPP for one line: trimmed; a {@code #} line kept when it
+     * starts with a JCPP directive's name and emptied otherwise; any other line without its
+     * {@code #} signs; each backslash hidden behind an identifier.
+     */
+    private static String jcppLine(String raw) {
+        String line = raw.trim();
+        String kept;
+        if (!line.startsWith("#")) {
+            kept = line.replace("#", "");
+        } else {
+            kept = JCPP_DIRECTIVES.stream().anyMatch(name -> line.startsWith("#" + name)) ? line : "";
+        }
+        return kept.replace("\\", BACKSLASH);
     }
 
     /**

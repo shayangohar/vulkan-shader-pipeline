@@ -10,6 +10,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * shaders.properties keys as the report names them: a key Iris 1.21.1's ShaderProperties reads
@@ -67,6 +68,47 @@ final class PropertyKeyReportTest {
         assertEquals("A B", values.get("screen").replaceAll("\\s+", " ").trim());
         assertEquals("1", values.get("screen.A.columns"));
         assertEquals("false", values.get("vignette"));
+    }
+
+    /**
+     * JCPP lexes shaders.properties as a whole, so a block comment runs across lines (KNOW-1148):
+     * a directive inside one is comment text, in a skipped branch too, and a directive line that
+     * leaves one open takes the lines up to its close and goes on after it (#if 0 || 1). A comment's
+     * other lines stay properties, as JCPP keeps them and Properties.load reads them. The custom
+     * values read are JCPP's for this file.
+     */
+    @Test
+    void aBlockCommentRunsAcrossShadersPropertiesLines(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                uniform.float.a = 1.0
+                /*
+                #if 0
+                */
+                uniform.float.b = 2.0
+                #if 0 /* open
+                uniform.float.hidden = 3.0
+                */ || 1
+                uniform.float.c = 4.0
+                #endif
+                #ifdef MISSING
+                /*
+                #endif
+                */
+                uniform.float.d = 5.0
+                #endif
+                uniform.float.e = 6.0
+                """);
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        for (String read : List.of("a", "b", "c", "e")) {
+            assertTrue(settings.indexOf(read) >= 0, read + " is read");
+        }
+        assertEquals(-1, settings.indexOf("hidden"), "the #if line's comment took it");
+        assertEquals(-1, settings.indexOf("d"), "the #endif in a comment ended no branch");
     }
 
     /**
