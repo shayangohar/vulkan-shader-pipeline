@@ -33,14 +33,22 @@ class PackFamilyWindowsTest {
                 .map(run -> run[0] + "-" + run[1]).toList());
         assertTrue(PackFamilyWindows.runs(List.of()).isEmpty(), "no batches, no runs");
 
-        // Each batch's key carries the targets its own lane pipeline's program stores to.
-        var instructions = MixinBytecode.instructionsThrough(
-                MixinBytecode.nativeClass("net/chimera/render/PackFamilyWindows"), "drawFamilyBatches");
-        for (String callee : List.of("runKey", "laneWindowOutputs", "lanePipeline", "worldStorageTargets", "runs")) {
-            assertTrue(instructions.stream().anyMatch(instruction ->
-                    instruction instanceof MethodInsnNode call && call.name.equals(callee)),
-                    "drawFamilyBatches must reach " + callee);
-        }
+        // Each batch's key carries the targets its own lane pipeline's program stores to: runKey
+        // itself looks the pipeline up and passes it straight to worldStorageTargets (drawRun's
+        // own lanePipeline call does not count).
+        var windows = MixinBytecode.nativeClass("net/chimera/render/PackFamilyWindows");
+        List<String> keyCalls = MixinBytecode.instructionsThrough(windows, "runKey").stream()
+                .filter(instruction -> instruction instanceof MethodInsnNode)
+                .map(instruction -> ((MethodInsnNode) instruction).name).toList();
+        int lookup = keyCalls.indexOf("lanePipeline");
+        assertTrue(keyCalls.contains("laneWindowOutputs") && lookup >= 0
+                && keyCalls.indexOf("worldStorageTargets") == lookup + 1,
+                "runKey must read the stored targets of the batch's lane pipeline: " + keyCalls);
+        List<String> drawCalls = MixinBytecode.instructionsThrough(windows, "drawFamilyBatches").stream()
+                .filter(instruction -> instruction instanceof MethodInsnNode)
+                .map(instruction -> ((MethodInsnNode) instruction).name).toList();
+        assertTrue(drawCalls.contains("runKey") && drawCalls.contains("runs"),
+                "drawFamilyBatches keys its batches and runs them: " + drawCalls);
         var bindings = MixinBytecode.instructionsThrough(
                 MixinBytecode.nativeClass("net/chimera/render/ChimeraMainPass"), "worldStorageTargets");
         assertTrue(bindings.stream().anyMatch(instruction -> instruction instanceof MethodInsnNode call
