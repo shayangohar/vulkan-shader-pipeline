@@ -789,7 +789,7 @@ final class WorldStateUniformTest {
                         && session.values()[marker] < 2.5f,
                 "custom dependency evaluation was incorrect");
         int derived = settings.indexOf("m73Derived");
-        assertNear(6.25f, session.values()[derived], 1.0e-4f,
+        assertNear(6.25f, (float) session.values()[derived], 1.0e-4f,
                 "derived value must be the smoothing, the biome test, the root and the "
                         + "continued declaration together");
         int component = settings.indexOf("m73Component");
@@ -801,7 +801,7 @@ final class WorldStateUniformTest {
                 "the non-finite report must name the expression that produced it");
         assertTrue(session.failures().get("m73NonFinite").contains("is NaN at frame 1"),
                 "the non-finite report must carry the frame context");
-        assertTrue(Float.isNaN(session.values()[nonFinite]),
+        assertTrue(Double.isNaN(session.values()[nonFinite]),
                 "a non-finite derived value is served as computed, as Iris serves it");
     }
 

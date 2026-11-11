@@ -409,7 +409,7 @@ final class PackFrontEndTest {
             case "gbufferModelViewInverse" -> component == 12 ? 7.0 : 0.0;
             default -> 0.0;
         }, session, 0.05f);
-        float[] values = session.values();
+        double[] values = session.values();
         int res = settings.indexOf("view_res");
         assertTrue(values[res] == 1920.0f && values[res + 1] == 1080.0f, "view_res components");
         assertTrue(values[settings.indexOf("dir_y")] == 2.0f, "a value reads a vector value's component");
@@ -491,6 +491,26 @@ final class PackFrontEndTest {
         assertTrue(Double.isNaN(value("1.0 % 0.0")) && Double.isNaN(value("remainder(1.0, 0.0)")), "x % 0");
         assertTrue(Double.isNaN(value("fmod(1.0, 0.0)")) && Double.isNaN(value("fmod(0.0, 0.0)")), "fmod(x, 0)");
         assertEquals(1.0, value("clamp(1.0 / 0.0, 0.0, 1.0)"), "the infinity reaches the clamp, not a zero");
+    }
+
+    /**
+     * An int custom value is served exactly, as Iris's int uniforms are: RenderPearl packs the
+     * viewport into one int, and at 1366x768 a float rounded 50333014 to 50333016, a width of 1368.
+     * A float value keeps float rounding.
+     */
+    @Test
+    void anIntCustomValueIsExact() {
+        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(true, "int", "packedView",
+                        "65536 * floor(viewHeight) + floor(viewWidth)"),
+                PackRuntimeSettings.declaration(true, "float", "third", "1.0 / 3.0")), List.of());
+        assertTrue(settings.rejected().isEmpty(), settings.deviations().toString());
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> name.equals("viewHeight") ? 768.0 : 1366.0, session, 0.05f);
+        double packed = session.values()[settings.indexOf("packedView")];
+        assertEquals(50333014.0, packed);
+        assertEquals(1366, (int) packed & 0xFFFF, "the width RenderPearl unpacks");
+        assertEquals((double) (1.0F / 3.0F), session.values()[settings.indexOf("third")], "float rounding");
     }
 
     /**
