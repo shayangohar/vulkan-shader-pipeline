@@ -112,6 +112,27 @@ final class PackSourceEdgesTest {
         assertEquals(List.of("lib/define.glsl", "lib/open.glsl"), result.dependencies());
     }
 
+    /**
+     * Iris's JCPP lexes a quote as a string or character literal, in a skipped branch too, so a
+     * comment mark after one is text: the apostrophe in {@code don't} keeps the {@code /*} from
+     * hiding the #endif, and a #define with a quoted comment mark takes no lines. JCPP gives these
+     * results.
+     */
+    @Test
+    void aQuoteHidesACommentMarkInGlsl() {
+        String source = String.join("\n", "#version 120",
+                "#if 0", "don't /* use this", "#endif", "float kept = 1.0;",
+                "#define Q \"a /* b\"", "float q = 1.0;",
+                "#if 1 /* x", "it's */ && 1", "float joined = 1.0;", "#endif",
+                "void main() {}");
+        ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(Path.of("."), null, source,
+                Map.of());
+        assertTrue(result.successful(), String.valueOf(result.deviations()));
+        for (String kept : List.of("float kept", "float q", "float joined")) {
+            assertTrue(result.source().contains(kept), kept + ":\n" + result.source());
+        }
+    }
+
     @Test
     void archiveEdges(@TempDir Path root) throws IOException {
         Path validZip = root.resolve("valid.zip");

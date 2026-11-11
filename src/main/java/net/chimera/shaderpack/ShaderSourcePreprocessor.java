@@ -519,11 +519,15 @@ public final class ShaderSourcePreprocessor {
                 open = false;
                 index = end + 2;
             } else {
-                int lineComment = line.indexOf("//", index);
-                int block = line.indexOf("/*", index);
-                if (block < 0 || (lineComment >= 0 && lineComment < block)) return false;
-                open = true;
-                index = block + 2;
+                // A comment mark inside a string or character literal is text, as JCPP lexes it.
+                int mark = PackConditionals.nextCommentOrLiteral(line, index);
+                if (mark < 0 || line.startsWith("//", mark)) return false;
+                if (line.startsWith("/*", mark)) {
+                    open = true;
+                    index = mark + 2;
+                } else {
+                    index = PackConditionals.literalEnd(line, mark);
+                }
             }
         }
         return open;

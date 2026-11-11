@@ -270,6 +270,41 @@ final class BlockPropertiesResolverTest {
         assertEquals("after", entries.get("block.8"));
     }
 
+    /**
+     * JCPP lexes a quote as a string or character literal, so a comment mark inside one is text and
+     * a name inside one is not expanded. A broken character literal ({@code o'lantern}) runs to the
+     * next {@code '} or the end of the line, and Iris hides each backslash behind an identifier
+     * first, so {@code '\''} reads as two literals. Each value is JCPP's for this file.
+     */
+    @Test
+    void aQuoteHidesACommentMarkAsJcppLexesIt(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                #define STONE granite
+                block.1 = jack_o'lantern /* x
+                #if 0
+                */
+                block.2 = dirt
+                #endif
+                block.3 = "/*" STONE
+                #if 0
+                block.4 = hidden
+                #endif
+                block.5 = 'a' STONE '/*' STONE
+                block.6 = "open /* STONE
+                block.7 = after
+                block.8 = '\\'' /* c */ STONE
+                """);
+        Map<String, String> entries = IdMapProperties.read(root, "block.properties", Map.of()).entries();
+        assertEquals("jack_o'lantern /* x", entries.get("block.1"));
+        assertNull(entries.get("block.2"), "the quote kept the /* from opening a comment, so #if 0 applies");
+        assertEquals("\"/*\" granite", entries.get("block.3"));
+        assertNull(entries.get("block.4"));
+        assertEquals("'a' granite '/*' granite", entries.get("block.5"));
+        assertEquals("\"open /* STONE", entries.get("block.6"), "an open string runs to the end of its line");
+        assertEquals("after", entries.get("block.7"));
+        assertEquals("''' /* c */ STONE", entries.get("block.8"));
+    }
+
     /** IdMap.parseRenderTypeMap puts layer keys in key order: a block two keys name takes the later. */
     @Test
     void aBlockTwoLayerKeysNameTakesTheLaterKey(@TempDir Path root) throws IOException {
