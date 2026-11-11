@@ -154,6 +154,7 @@ final class PropertyKeyReportTest {
         Files.writeString(shaders.resolve("shaders.properties"), """
                 #ifdef
 
+                # a comment, emptied by Iris's line pass
                 uniform.float.taken = 1.0
                 uniform.float.kept = 2.0
                 #endif

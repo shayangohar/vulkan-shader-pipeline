@@ -589,7 +589,7 @@ record PackSettingsPlan(
         private final List<String> deviations;
         private final Set<String> toggleOptions;
         private PackConditionals.State conditions;
-        // An #ifdef with no name takes the next non-blank line, as JCPP reads it.
+        // An #ifdef with no name takes the next line with text, as JCPP reads it.
         private boolean takeNextLine;
 
         PropertiesParse(Path propertyFile, Map<String, Option> options, Map<String, String> defaults,
@@ -656,8 +656,9 @@ record PackSettingsPlan(
          * of an inactive branch, or the line an #ifdef with no name takes.
          */
         private boolean skips(PropertiesPreprocessor.Line next) {
-            if (takeNextLine && !next.text().isBlank()) {
-                takeNextLine = false;
+            if (takeNextLine) {
+                // The first line Iris's line pass leaves text on is taken; the emptied ones go anyway.
+                takeNextLine = PropertiesPreprocessor.emptiedByLinePass(next.text());
                 return true;
             }
             if (next.inComment() && PropertyLineJoiner.endsContinuation(next.text())) return true;

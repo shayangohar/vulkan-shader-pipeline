@@ -24,7 +24,11 @@ import java.util.regex.Pattern;
 final class PropertiesPreprocessor {
     /** A {@code #} line JCPP reads as a directive: {@code #} and a name with nothing between. */
     private static final Pattern DIRECTIVE = Pattern.compile("^#([A-Za-z_]\\w*)(.*)$");
-    /** A {@code #define} argument: the name, a {@code (} right after it for a function-like macro, the body. */
+    /**
+     * A {@code #define} argument: the name, a {@code (} right after it for a function-like macro, the
+     * body. JCPP also takes a name with {@code $} or a non-ASCII letter; Chimera neither defines nor
+     * expands one (KNOW-1148).
+     */
     private static final Pattern MACRO = Pattern.compile("^([A-Za-z_]\\w*)(\\()?\\s*(.*?)\\s*$");
     private static final Set<String> CONDITIONALS = Set.of("if", "ifdef", "ifndef", "elif", "else", "endif");
     /**
@@ -66,8 +70,8 @@ final class PropertiesPreprocessor {
             int start = line.directiveStart();
             Matcher directive = start < 0 ? null : DIRECTIVE.matcher(line.text().substring(start));
             if (takeNext) {
-                // An #ifdef with no name took this line (applyConditional).
-                takeNext = false;
+                // An #ifdef with no name takes the first line with text, past the emptied ones.
+                takeNext = line.text().isEmpty();
             } else if (directive != null && directive.matches()) {
                 // A comment that closes before the directive on its line stays as text (KEEPCOMMENTS).
                 if (conditions.active()) out.append(line.text(), 0, start);
@@ -92,7 +96,9 @@ final class PropertiesPreprocessor {
      * empty one among them, reads false; a second #else, or an #elif after #else, is ignored; a
      * stray #else or #elif turns the rest of the file off; a stray #endif is ignored. An #ifdef or
      * #ifndef in an active branch whose argument starts with no identifier leaves its branch on,
-     * and with no argument at all (comments aside) takes the next line too, whatever it is.
+     * and with no argument at all (comments aside) takes the next line with text too, whatever it
+     * is, past the lines Iris's line pass emptied; JCPP's identifier is a Java one, so it tests
+     * {@code $X} as a name (a {@code #define} of such a name is not read here, see MACRO).
      * REPORTED where Chimera read an expression false that JCPP may read otherwise ({@code #if 1 +}
      * reads 1, a character literal or a function-like macro has a value there), or where it read
      * an #ifdef's error as JCPP does.
@@ -102,11 +108,7 @@ final class PropertiesPreprocessor {
         boolean closing = directive.equals("else") || directive.equals("elif");
         if (closing && conditions.afterElse()) return Conditional.APPLIED;
         if ((directive.equals("ifdef") || directive.equals("ifndef")) && conditions.active()) {
-            String tested = PackConditionals.withoutComments(argument).trim();
-            if (tested.isEmpty() || !Character.isJavaIdentifierStart(tested.charAt(0))) {
-                conditions.apply("if", "1");
-                return tested.isEmpty() ? Conditional.TAKES_NEXT_LINE : Conditional.REPORTED;
-            }
+            return applyIfdef(conditions, directive.equals("ifdef"), argument);
         }
         try {
             if (!conditions.apply(directive, argument) && closing) conditions.endAll();
@@ -115,6 +117,23 @@ final class PropertiesPreprocessor {
             conditions.apply(directive.equals("elif") ? "elif" : "if", "0");
             return Conditional.REPORTED;
         }
+    }
+
+    /**
+     * An #ifdef or #ifndef in an active branch, its name read as JCPP reads it: a Java identifier,
+     * {@code $} and non-ASCII letters included (applyConditional).
+     */
+    private static Conditional applyIfdef(PackConditionals.State conditions, boolean ifdef, String argument) {
+        String tested = PackConditionals.withoutComments(argument).trim();
+        if (tested.isEmpty() || !Character.isJavaIdentifierStart(tested.charAt(0))) {
+            conditions.apply("if", "1");
+            return tested.isEmpty() ? Conditional.TAKES_NEXT_LINE : Conditional.REPORTED;
+        }
+        int end = 1;
+        while (end < tested.length() && Character.isJavaIdentifierPart(tested.charAt(end))) end++;
+        boolean defined = conditions.macros().containsKey(tested.substring(0, end));
+        conditions.apply("if", defined == ifdef ? "1" : "0");
+        return Conditional.APPLIED;
     }
 
     /**
@@ -192,6 +211,11 @@ final class PropertiesPreprocessor {
      * starts with a JCPP directive's name and emptied otherwise; any other line without its
      * {@code #} signs; each backslash hidden behind an identifier.
      */
+    /** Whether Iris's line pass leaves nothing of {@code raw}: a blank line or a non-directive {@code #} line. */
+    static boolean emptiedByLinePass(String raw) {
+        return jcppLine(raw).isEmpty();
+    }
+
     private static String jcppLine(String raw) {
         String line = raw.trim();
         String kept;

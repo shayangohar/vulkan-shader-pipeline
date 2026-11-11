@@ -446,6 +446,24 @@ final class BlockPropertiesResolverTest {
         assertEquals("CONDITION_UNSUPPORTED", file.failure());
         assertEquals(List.of("block.1", "block.8", "block.11", "block.12", "block.13"),
                 List.copyOf(file.entries().keySet()));
+
+        // The taken line is the first with text after Iris's line pass, which empties # comments;
+        // a name is a Java identifier to JCPP, so #ifndef $X tests an undefined $X.
+        Files.writeString(root.resolve("block.properties"), """
+                #ifdef
+                # comment
+                ## another
+                block.14=n
+                #endif
+                block.15=o
+                #ifndef $X
+                block.16=p
+                #else
+                block.17=q
+                #endif
+                """);
+        assertEquals(List.of("block.15", "block.16"),
+                List.copyOf(IdMapProperties.read(root, "block.properties", Map.of()).entries().keySet()));
     }
 
     /** IdMap.parseRenderTypeMap puts layer keys in key order: a block two keys name takes the later. */
