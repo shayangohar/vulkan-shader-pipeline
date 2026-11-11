@@ -485,11 +485,18 @@ final class FixturePackTest {
         assertTrue(unsupported.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:16"),
                 "unsupported target deviation is missing");
 
-        PostTargetPlan finalMrt = PostTargetPlan.parse(
-                "final", "/* RENDERTARGETS: 0,1 */ gl_FragData[0] = vec4(1.0);").plan();
-        assertTrue(!finalMrt.executable(), "final MRT was accepted");
-        assertTrue(finalMrt.deviations().contains("FINAL_MRT_UNSUPPORTED"),
-                "final MRT deviation is missing");
+        // Iris draws final into Minecraft's main framebuffer and never applies its directive:
+        // output 0 reaches the screen, any other is discarded. Ebin's DEBUG exit writes
+        // DRAWBUFFERS:3 in final.
+        PostTargetPlan finalMrt = PostTargetPlan.parse("final",
+                "/* RENDERTARGETS: 0,1 */ gl_FragData[0] = vec4(1.0); gl_FragData[1] = vec4(0.0);").plan();
+        assertTrue(finalMrt.executable(), "a final with two targets runs as in Iris: " + finalMrt.deviations());
+        assertEquals(List.of(0), finalMrt.targetSlots(), "final draws output 0 to the screen");
+        assertTrue(finalMrt.deviations().contains("FRAGMENT_OUTPUT_DISCARDED:1"), "output 1 has no buffer");
+        PostTargetPlan ebinDebugFinal = PostTargetPlan.parse("final",
+                "/* DRAWBUFFERS:0 */\n/* DRAWBUFFERS:3 */ gl_FragColor = vec4(0.0);").plan();
+        assertTrue(ebinDebugFinal.executable(), "Ebin's DEBUG final: " + ebinDebugFinal.deviations());
+        assertEquals(List.of(0), ebinDebugFinal.targetSlots(), "the directive does not move final's output");
     }
 
     private static void verifyUnsupportedTargets(Path pack, Path baselinePath) throws IOException {

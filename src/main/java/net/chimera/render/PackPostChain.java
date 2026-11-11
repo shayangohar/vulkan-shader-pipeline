@@ -473,8 +473,7 @@ final class PackPostChain {
             if (deviation.startsWith("POST_TARGET_ATTACHMENT_LIMIT:")
                     || deviation.startsWith("POST_TARGET_SIZE_CONFLICT:")
                     || deviation.startsWith("POST_TARGET_FORMAT_DEVICE_UNSUPPORTED:")
-                    || deviation.startsWith("POST_TARGET_FEEDBACK_UNSUPPORTED:")
-                    || deviation.equals("FINAL_MRT_UNSUPPORTED")) {
+                    || deviation.startsWith("POST_TARGET_FEEDBACK_UNSUPPORTED:")) {
                 return deviation;
             }
         }

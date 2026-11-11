@@ -296,10 +296,6 @@ public final class PackTargetGraphPlan {
             stepDeviations.add("POST_TARGET_ATTACHMENT_LIMIT:" + program.name());
             executable = false;
         }
-        if (post.isFinal() && writes.stream().anyMatch(value -> value != 0)) {
-            stepDeviations.add("FINAL_MRT_UNSUPPORTED");
-            executable = false;
-        }
         StepExtent extent = StepExtent.of(inputs, post, outputs, preliminary);
         if (extent.conflict()) {
             stepDeviations.add("POST_TARGET_SIZE_CONFLICT:" + program.name());

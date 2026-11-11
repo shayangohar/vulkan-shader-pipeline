@@ -132,7 +132,10 @@ public final class PostTargetPlan {
         List<String> deviations = new ArrayList<>();
         List<List<Integer>> directives = parseDirectives(text, deviations);
 
-        List<Integer> targetSlots = selectDirective(directives);
+        // Iris draws final into Minecraft's main framebuffer and never applies its draw-buffer
+        // directive (FinalPassRenderer): output 0 reaches the screen and any other is discarded.
+        // Ebin's DEBUG exit writes DRAWBUFFERS:3 in final, which Chimera refused.
+        List<Integer> targetSlots = programName.equals("final") ? List.of(0) : selectDirective(directives);
         Set<Integer> outputSet = legacyOutputs(text, deviations);
         Map<Integer, String> outputTypes = new TreeMap<>();
         Map<Integer, Integer> outputComponents = new TreeMap<>();
@@ -157,10 +160,6 @@ public final class PostTargetPlan {
         for (int output : discardedOutputs) {
             deviations.add("FRAGMENT_OUTPUT_DISCARDED:" + output);
         }
-        if (programName.equals("final") && targetSlots.size() != 1) {
-            deviations.add("FINAL_MRT_UNSUPPORTED");
-        }
-
         List<Integer> outputLocations = outputSet.stream()
                 .filter(output -> output < targetSlots.size()).toList();
         List<Integer> outputFormats = targetSlots.stream()
