@@ -20,8 +20,10 @@ final class PackConditionals {
 
     /**
      * A directive's text as a C preprocessor such as Iris's JCPP reads it: each block comment is
-     * one space, and the text ends at a line comment or at a block comment it leaves open. Read
-     * raw, a block comment after {@code #if FOO} became operators, and the condition evaluated 0.
+     * one space, and the text ends at a line comment. A block comment still open at the end is cut
+     * there; the GLSL preprocessor first joins the lines up to its close, as the comment spans
+     * them. Read raw, a block comment after {@code #if FOO} became operators, and the condition
+     * evaluated 0.
      */
     static String withoutComments(String text) {
         StringBuilder result = new StringBuilder(text.length());

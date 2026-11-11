@@ -195,6 +195,14 @@ public final class ShaderSourcePreprocessor {
                         line = logical.append(line).toString();
                         logical.setLength(0);
                     }
+                    // A comment is one space to a C preprocessor, so a block comment a directive
+                    // line leaves open joins the lines up to its */ into that directive, which goes
+                    // on after it: in JCPP, #if 0 /* note, then note */ || 1 on the next line, holds.
+                    if (!inComment && startsDirective(line) && inCommentAfter(line, false)
+                            && directive(line) != null) {
+                        logical.append(line).append(' ');
+                        continue;
+                    }
                     processLine(line, sourceFile, depth, inComment);
                     inComment = inCommentAfter(line, inComment);
                 }
@@ -231,11 +239,6 @@ public final class ShaderSourcePreprocessor {
                 case "include" -> include(argument, sourceFile, depth);
                 case "version", "extension", "pragma", "line" -> passThrough(directive, line);
                 default -> otherDirective(directive);
-            }
-            // A block comment the directive line leaves open runs on into the lines after it, which
-            // pass through: open it in the output too, so their */ closes it.
-            if (active() && inCommentAfter(line, false)) {
-                emit("/*");
             }
         }
 

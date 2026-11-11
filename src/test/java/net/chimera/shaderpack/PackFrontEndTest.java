@@ -331,20 +331,23 @@ final class PackFrontEndTest {
     /**
      * A comment on a directive line is whitespace to JCPP. Read raw, a block comment after
      * {@code #if FOO} became operators and the condition evaluated 0, a comment before the
-     * expression failed it, and a #define body kept the comment.
+     * expression failed it, and a #define body kept the comment. A block comment the line leaves
+     * open spans the lines up to its close, and the directive goes on after it.
      */
     @Test
     void aCommentOnADirectiveLineIsWhitespace() {
         for (String condition : List.of("#if FOO /* note */", "#if /* note */ FOO", "#if FOO /* a, b. */",
-                "#if FOO // note", "#ifdef FOO /* note */", "#if BODY", "#if FOO /* opens")) {
+                "#if FOO // note", "#ifdef FOO /* note */", "#if BODY", "#if FOO /* opens\nand closes */",
+                "#if 0 /* opens\nstill open\ncloses */ || 1", "#if SPANNED == 2")) {
             String source = String.join("\n",
                     "#version 330",
                     "#define BODY 1 /* note */",
+                    "#define SPANNED 1 /* opens",
+                    "closes */ + 1",
                     "#if 0",
                     "#elif 1",
                     "#endif",
                     condition,
-                    condition.endsWith("opens") ? "and closes */" : "",
                     "float kept = 1.0;",
                     "#else",
                     "float dropped = 1.0;",
@@ -359,8 +362,9 @@ final class PackFrontEndTest {
             assertTrue(result.source().contains("kept") && !result.source().contains("dropped")
                     && result.source().contains("elifKept"),
                     condition + " chose the wrong branch:\n" + result.source());
-            assertEquals(result.source().split("/\\*", -1).length, result.source().split("\\*/", -1).length,
-                    condition + " left a block comment unbalanced:\n" + result.source());
+            assertTrue(!result.source().contains("closes") && !result.source().contains("+ 1"),
+                    condition + ": a directive's comment and what follows it stay out of the code:\n"
+                            + result.source());
         }
     }
 
