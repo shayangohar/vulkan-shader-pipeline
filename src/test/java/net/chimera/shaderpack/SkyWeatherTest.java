@@ -9,6 +9,7 @@ import net.minecraft.client.CloudStatus;
 import net.vulkanmod.vulkan.memory.AutoIndexBuffer;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.tree.ClassNode;
 import org.objectweb.asm.tree.FieldInsnNode;
 import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
@@ -240,6 +241,49 @@ final class SkyWeatherTest {
                         instruction instanceof MethodInsnNode call && call.owner.equals(portal)
                                 && call.name.equals("render")),
                 "the gateway must draw its portal through TheEndPortalRenderer.render");
+    }
+
+    /**
+     * Iris's high-fog sky rules cancel at the heads of the methods every reader calls: the horizon
+     * height, which places renderSky's void plane, and the sunrise colour, which
+     * FogRenderer.setupColor reads as well as renderSky. The overworld's effects inherit
+     * getSunriseColor, so its head runs for them. Each rule holds only while a pack renders the
+     * world and reads the camera's fluid; the sunrise rule also reads LevelRenderer's blindness and
+     * darkness check.
+     */
+    @Test
+    void highFogSkyRules() throws IOException {
+        String levelData = "net/minecraft/client/multiplayer/ClientLevel$ClientLevelData";
+        String effects = "net/minecraft/client/renderer/DimensionSpecialEffects";
+        String voidPlane = "net/chimera/mixin/ChimeraVoidPlaneMixin";
+        String sunrise = "net/chimera/mixin/ChimeraSunriseColorMixin";
+        MixinBytecode.assertMixinRegistered("ChimeraVoidPlaneMixin");
+        MixinBytecode.assertMixinRegistered("ChimeraSunriseColorMixin");
+        MixinBytecode.assertCancellingHeadInject(voidPlane, levelData, "getHorizonHeight", false);
+        MixinBytecode.assertCancellingHeadInject(sunrise, effects, "getSunriseColor", false);
+        assertTrue(MixinBytecode.nativeClass(effects + "$OverworldEffects").methods.stream()
+                        .noneMatch(method -> method.name.equals("getSunriseColor")),
+                "the overworld inherits the sunrise colour");
+        assertTrue(calls(MixinBytecode.nativeClass("net/minecraft/client/renderer/FogRenderer"), "setupColor",
+                effects, "getSunriseColor"), "the fog colour reads the sunrise colour");
+        Map<String, String> handlers = Map.of(voidPlane, "chimera$noVoidPlaneInFluid",
+                sunrise, "chimera$noSunriseInHighFog");
+        for (Map.Entry<String, String> handler : handlers.entrySet()) {
+            ClassNode mixin = MixinBytecode.nativeClass(handler.getKey());
+            assertTrue(calls(mixin, handler.getValue(), "net/chimera/render/ChimeraRenderer", "packProjectionActive"),
+                    handler.getKey() + " holds only while a pack renders the world");
+            assertTrue(calls(mixin, handler.getValue(), "net/minecraft/client/Camera", "getFluidInCamera"),
+                    handler.getKey() + " reads the camera's fluid");
+        }
+        assertTrue(calls(MixinBytecode.nativeClass(sunrise), "chimera$noSunriseInHighFog",
+                        "net/chimera/mixin/ChimeraLevelRendererAccessor", "chimera$doesMobEffectBlockSky"),
+                "the sunrise rule reads blindness and darkness as LevelRenderer does");
+    }
+
+    private static boolean calls(ClassNode owner, String method, String calledOwner, String calledName) {
+        return MixinBytecode.instructionsThrough(owner, method).stream().anyMatch(instruction ->
+                instruction instanceof MethodInsnNode call && call.owner.equals(calledOwner)
+                        && call.name.equals(calledName));
     }
 
     /**
