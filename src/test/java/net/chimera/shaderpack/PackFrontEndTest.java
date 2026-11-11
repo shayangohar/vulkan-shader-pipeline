@@ -295,6 +295,39 @@ final class PackFrontEndTest {
                 "gtexture must alias the albedo atlas");
     }
 
+    /**
+     * Iris preprocesses shaders.properties with JCPP, where a bare {@code #define} written in the
+     * file is empty: #ifdef holds, while #if and #if N == 1 fail and #if !N holds.
+     */
+    @Test
+    void aBarePropertiesDefineIsEmpty(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #define BARE
+                #if BARE
+                uniform.float.ifBare = 1.0
+                #endif
+                #ifdef BARE
+                uniform.float.ifdefBare = 1.0
+                #endif
+                #if BARE == 1
+                uniform.float.bareIsOne = 1.0
+                #endif
+                #if !BARE
+                uniform.float.notBare = 1.0
+                #endif
+                """);
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(settings.indexOf("ifBare") < 0, "#if on an empty macro fails");
+        assertTrue(settings.indexOf("ifdefBare") >= 0, "#ifdef on an empty macro holds");
+        assertTrue(settings.indexOf("bareIsOne") < 0, "an empty macro is not 1");
+        assertTrue(settings.indexOf("notBare") >= 0, "#if !N on an empty macro holds");
+    }
+
     /** GLSL 3.3 section 3.1: backslash-newline splices lines before directives are read. */
     @Test
     void lineContinuation() {

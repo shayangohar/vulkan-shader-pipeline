@@ -643,12 +643,14 @@ record PackSettingsPlan(
                 if (isStageContextMacro(name) || isDimensionContextMacro(name)) {
                     return true;
                 }
-                String value = define.group(2) == null || define.group(2).isBlank()
-                        ? "1" : stripComment(define.group(2)).trim();
+                boolean bare = define.group(2) == null || define.group(2).isBlank();
+                String value = bare ? "1" : stripComment(define.group(2)).trim();
                 options.putIfAbsent(name, new Option(name, "define", value, valuesFrom(line),
                         propertyFile.getFileName().toString()));
                 defaults.put(name, value);
-                conditions.define(name, value);
+                // Iris preprocesses the file with JCPP, where a bare #define is empty: #ifdef holds,
+                // #if fails.
+                conditions.define(name, bare ? "" : value);
                 return true;
             }
             Matcher commentedDefine = COMMENTED_DEFINE.matcher(line);
