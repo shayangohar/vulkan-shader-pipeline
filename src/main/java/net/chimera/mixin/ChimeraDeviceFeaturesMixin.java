@@ -33,7 +33,8 @@ import static org.lwjgl.vulkan.VK11.vkGetPhysicalDeviceFeatures2;
  * Enables what Chimera needs on VulkanMod's logical device: the features pack GLSL compiles to,
  * where the device offers them, as a GL driver offers them all (ChimeraDevice's tables), among them
  * independentBlend for per-attachment blend and write masks and geometryShader for a pack
- * program's .gsh stage; VK_KHR_dynamic_rendering with its feature, which Chimera's windows render
+ * program's .gsh stage; drawIndirectFirstInstance, which VulkanMod's indirect terrain draws need;
+ * VK_KHR_dynamic_rendering with its feature, which Chimera's windows render
  * with (ChimeraDevice); and the device extensions pack GLSL compiles to. The device it creates is
  * the PackDevice pack GLSL compiles for.
  */
@@ -83,6 +84,15 @@ public abstract class ChimeraDeviceFeaturesMixin {
             if (feature.read().test(enabled)) chimera$features.add(feature.name());
         }
         if (enabled.tessellationShader()) chimera$features.add("tessellationShader");
+        // VulkanMod's terrain draws carry each section's offset in firstInstance
+        // (DrawBuffers.buildDrawBatchesIndirect), and an indirect draw may set it only with this feature.
+        if (available.drawIndirectFirstInstance()) enabled.drawIndirectFirstInstance(true);
+        if (enabled.drawIndirectFirstInstance()) {
+            chimera$features.add("drawIndirectFirstInstance");
+        } else {
+            LOGGER.warn("[chimera] no drawIndirectFirstInstance: VulkanMod's indirect terrain draws "
+                    + "set firstInstance without it");
+        }
         // A pack's blend directives and the buffers a program leaves unwritten differ per attachment.
         ChimeraDevice.setIndependentBlend(enabled.independentBlend());
         if (!enabled.independentBlend()) {
