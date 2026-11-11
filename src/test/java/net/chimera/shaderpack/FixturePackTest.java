@@ -465,11 +465,19 @@ final class FixturePackTest {
         assertTrue(malformed.deviations().contains("POST_TARGET_DIRECTIVE_MALFORMED"),
                 "malformed target deviation is missing");
 
-        PostTargetPlan conflict = PostTargetPlan.parse(
+        // Iris takes the last directive whichever word it uses, and refuses none of them.
+        PostTargetPlan laterRenderTargets = PostTargetPlan.parse(
                 "composite", "/* DRAWBUFFERS:01 */\n/* RENDERTARGETS: 0,2 */").plan();
-        assertTrue(!conflict.executable(), "conflicting target directives were accepted");
-        assertTrue(conflict.deviations().contains("POST_TARGET_DIRECTIVE_CONFLICT"),
-                "target conflict deviation is missing");
+        assertTrue(laterRenderTargets.executable(), "two target directives are not a conflict");
+        assertEquals(List.of(0, 2), laterRenderTargets.targetSlots(), "the later RENDERTARGETS wins");
+        PostTargetPlan laterDrawBuffers = PostTargetPlan.parse(
+                "composite", "/* RENDERTARGETS: 0,2 */\n/* DRAWBUFFERS:13 */").plan();
+        assertEquals(List.of(1, 3), laterDrawBuffers.targetSlots(), "the later DRAWBUFFERS wins");
+        // Ebin's DEBUG exit (lib/Exit.glsl) writes its own route after the program's.
+        PostTargetPlan ebinDebug = PostTargetPlan.parse(
+                "composite", "/* DRAWBUFFERS:2 */\n/* DRAWBUFFERS:3 */").plan();
+        assertTrue(ebinDebug.executable(), "Ebin's debug exit route was refused");
+        assertEquals(List.of(3), ebinDebug.targetSlots(), "the debug exit route wins");
 
         PostTargetPlan unsupported = PostTargetPlan.parse(
                 "composite", "/* RENDERTARGETS: 0,16 */").plan();
@@ -477,11 +485,18 @@ final class FixturePackTest {
         assertTrue(unsupported.deviations().contains("POST_TARGET_INDEX_UNSUPPORTED:16"),
                 "unsupported target deviation is missing");
 
-        PostTargetPlan finalMrt = PostTargetPlan.parse(
-                "final", "/* RENDERTARGETS: 0,1 */ gl_FragData[0] = vec4(1.0);").plan();
-        assertTrue(!finalMrt.executable(), "final MRT was accepted");
-        assertTrue(finalMrt.deviations().contains("FINAL_MRT_UNSUPPORTED"),
-                "final MRT deviation is missing");
+        // Iris draws final into Minecraft's main framebuffer and never applies its directive:
+        // output 0 reaches the screen, any other is discarded. Ebin's DEBUG exit writes
+        // DRAWBUFFERS:3 in final.
+        PostTargetPlan finalMrt = PostTargetPlan.parse("final",
+                "/* RENDERTARGETS: 0,1 */ gl_FragData[0] = vec4(1.0); gl_FragData[1] = vec4(0.0);").plan();
+        assertTrue(finalMrt.executable(), "a final with two targets runs as in Iris: " + finalMrt.deviations());
+        assertEquals(List.of(0), finalMrt.targetSlots(), "final draws output 0 to the screen");
+        assertTrue(finalMrt.deviations().contains("FRAGMENT_OUTPUT_DISCARDED:1"), "output 1 has no buffer");
+        PostTargetPlan ebinDebugFinal = PostTargetPlan.parse("final",
+                "/* DRAWBUFFERS:0 */\n/* DRAWBUFFERS:3 */ gl_FragColor = vec4(0.0);").plan();
+        assertTrue(ebinDebugFinal.executable(), "Ebin's DEBUG final: " + ebinDebugFinal.deviations());
+        assertEquals(List.of(0), ebinDebugFinal.targetSlots(), "the directive does not move final's output");
     }
 
     private static void verifyUnsupportedTargets(Path pack, Path baselinePath) throws IOException {

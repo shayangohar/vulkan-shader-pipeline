@@ -77,8 +77,7 @@ final class TargetGraphTest {
                 "unsupported graph did not produce a rejected step");
         assertTrue(rejectedGraph.deviations().stream().anyMatch(value ->
                         value.startsWith("POST_TARGET_SIZE_CONFLICT")
-                                || value.startsWith("POST_TARGET_ATTACHMENT_LIMIT")
-                                || value.equals("FINAL_MRT_UNSUPPORTED")),
+                                || value.startsWith("POST_TARGET_ATTACHMENT_LIMIT")),
                 "unsupported graph did not name its unsafe layout");
 
         Path baseline = TestPacks.baseline("m7_4");

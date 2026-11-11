@@ -15,7 +15,9 @@ import java.util.Set;
  * never seen: a store of the whole variable comes before every other instruction naming it on
  * every path, which is to say it dominates them. A local is judged in its own function. A private
  * global or output is judged in the module's only entry point, where a call counts as a read when
- * another function names the variable, and a return reads every output.
+ * another function names the variable, and a return or an emit reads every output. A geometry
+ * stage's outputs are undefined after an emit, which GeometryStageBridge's wrapper covers by
+ * storing them back; this only decides which start from zero.
  *
  * <p>A GLSL initializer is such a store. glslang writes it where the variable is declared, a
  * global's at the top of main, and the optimizer may then turn a global into a local and leave its
@@ -28,6 +30,8 @@ final class SpirvWrittenFirst {
     private static final int OP_FUNCTION_CALL = 57;
     private static final int OP_VARIABLE = 59;
     private static final int OP_STORE = 62;
+    private static final int OP_EMIT_VERTEX = 218;
+    private static final int OP_EMIT_STREAM_VERTEX = 220;
     private static final int OP_LABEL = 248;
     private static final int OP_RETURN = 253;
     private static final int OP_RETURN_VALUE = 254;
@@ -94,6 +98,9 @@ final class SpirvWrittenFirst {
     private void recordModuleNames(Function function) {
         for (List<Integer> block : function.blocks()) {
             for (int at : block) {
+                // An emit in a helper reads every output, so a call that reaches it does too.
+                int opcode = words[at] & 0xFFFF;
+                if (opcode == OP_EMIT_VERTEX || opcode == OP_EMIT_STREAM_VERTEX) namedElsewhere.addAll(outputs());
                 for (int i = at + 1; i < at + (words[at] >>> 16); i++) {
                     if (judged(words[i], true) && storage.get(words[i]) != STORAGE_FUNCTION) {
                         namedElsewhere.add(words[i]);
@@ -135,10 +142,21 @@ final class SpirvWrittenFirst {
         }
     }
 
-    /** What an entry point's instruction reads unnamed: a call, globals other functions name; a return, outputs. */
+    /**
+     * What an entry point's instruction reads unnamed: a call, globals other functions name; a
+     * return or a geometry stage's emit, every output, which the emit sends as its vertex.
+     */
     private Set<Integer> impliedReads(int opcode) {
         if (opcode == OP_FUNCTION_CALL) return namedElsewhere;
-        if (opcode != OP_RETURN && opcode != OP_RETURN_VALUE) return Set.of();
+        return readsOutputs(opcode) ? outputs() : Set.of();
+    }
+
+    private static boolean readsOutputs(int opcode) {
+        return opcode == OP_RETURN || opcode == OP_RETURN_VALUE
+                || opcode == OP_EMIT_VERTEX || opcode == OP_EMIT_STREAM_VERTEX;
+    }
+
+    private Set<Integer> outputs() {
         Set<Integer> outputs = new HashSet<>();
         storage.forEach((variable, kind) -> {
             if (kind == STORAGE_OUTPUT) outputs.add(variable);

@@ -151,6 +151,7 @@ record PackSettingsPlan(
             macros = parseProperties(propertyFile, options, defaults, profiles, properties, programEnabled,
                     required, optional, customValues, resourceDeclarations, deviations, macros, toggles);
             AdvancedImageDeclarations.dropImagesPastIrisLimit(properties, deviations);
+            dropMissingTextures(resourceDeclarations, shadersDir, deviations);
         }
         // Iris drops a !program.NAME program of the matching profile whatever its own switch says.
         environment.disabledPrograms().forEach(program -> programEnabled.put(program, false));
@@ -259,7 +260,62 @@ record PackSettingsPlan(
             }
         });
         result.putAll(PackFeatureFlags.sourceDefines(optionalFeatures));
+        // Iris adds the colour spaces, in ColorSpace's order, to the shader and id-map defines of a
+        // pack that sets supportsColorCorrection (ShaderPack); currentColorSpace serves SRGB.
+        if (supportsColorCorrection()) {
+            result.putAll(COLOR_SPACES);
+        }
         return stageIndependentDefaults(result);
+    }
+
+    private static final Map<String, String> COLOR_SPACES = Map.of("COLOR_SPACE_SRGB", "0",
+            "COLOR_SPACE_DCI_P3", "1", "COLOR_SPACE_DISPLAY_P3", "2", "COLOR_SPACE_REC2020", "3",
+            "COLOR_SPACE_ADOBE_RGB", "4");
+
+    /**
+     * Iris skips a custom texture whose file it cannot read ("Unable to read the custom texture",
+     * ShaderPack.readTexture), as if it were never declared: a stage texture then leaves its
+     * sampler to the program's own binding, a customTexture name reads unit 0, and a missing
+     * texture.noise leaves the generated noise. A raw texture stays declared and refuses its
+     * program, unlike Iris, which renames its sampler to customtexN and reads unit 0 there: a 1D or
+     * 3D sampler on unit 0's 2D image is a type mismatch. An unsafe path stays declared too. Mellow
+     * and Reverie name LUT files that only some LUT_FILE options ship.
+     */
+    private static void dropMissingTextures(Map<String, PackResourceDeclaration> declarations, Path shadersDir,
+                                            List<String> deviations) {
+        if (shadersDir == null) return;
+        declarations.values().removeIf(declaration -> {
+            if (declaration.kind() != PackResourceKind.PACK_TEXTURE && declaration.kind() != PackResourceKind.NOISE) {
+                return false;
+            }
+            String source = declaration.source();
+            if (PackResourcePlan.isUnsafePath(source) || PackResourcePlan.isNamespacedSource(source)
+                    || PackResourcePlan.isHostBlockAtlasSource(source)
+                    || PackResourcePlan.resolvePath(shadersDir, source) != null) {
+                return false;
+            }
+            deviations.add("PACK_TEXTURE_DROPPED:" + declaration.key());
+            return true;
+        });
+    }
+
+    /** shaders.properties' supportsColorCorrection, which Iris reads as true or 1. */
+    boolean supportsColorCorrection() {
+        String value = propertyValues.get("supportsColorCorrection");
+        return value != null && (value.trim().equals("true") || value.trim().equals("1"));
+    }
+
+    /**
+     * The defines a prepared source keeps for the compiler as {@code #define} lines: the launcher's
+     * option values, and the colour spaces, which Kappa reads as values ({@code case
+     * COLOR_SPACE_SRGB:}) as well as in conditions.
+     */
+    Set<String> lockedDefineNames() {
+        Set<String> names = new TreeSet<>(overriddenNames());
+        if (supportsColorCorrection()) {
+            names.addAll(COLOR_SPACES.keySet());
+        }
+        return Collections.unmodifiableSet(names);
     }
 
     /** Names whose values were explicitly supplied by the Chimera launcher. */
@@ -643,12 +699,14 @@ record PackSettingsPlan(
                 if (isStageContextMacro(name) || isDimensionContextMacro(name)) {
                     return true;
                 }
-                String value = define.group(2) == null || define.group(2).isBlank()
-                        ? "1" : stripComment(define.group(2)).trim();
+                boolean bare = define.group(2) == null || define.group(2).isBlank();
+                String value = bare ? "1" : PackConditionals.withoutComments(define.group(2)).trim();
                 options.putIfAbsent(name, new Option(name, "define", value, valuesFrom(line),
                         propertyFile.getFileName().toString()));
                 defaults.put(name, value);
-                conditions.define(name, value);
+                // Iris preprocesses the file with JCPP, where a bare #define is empty: #ifdef holds,
+                // #if fails.
+                conditions.define(name, bare ? "" : value);
                 return true;
             }
             Matcher commentedDefine = COMMENTED_DEFINE.matcher(line);

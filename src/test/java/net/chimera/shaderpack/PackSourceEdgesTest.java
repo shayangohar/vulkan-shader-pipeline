@@ -8,6 +8,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.zip.ZipEntry;
@@ -21,6 +23,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * macros, the legacy post conversion's edges, token boundaries and the preprocessor's budget.
  */
 final class PackSourceEdgesTest {
+    /**
+     * Iris preprocesses dimension.properties with JCPP, which reads every comment as whitespace.
+     * Only a line comment was stripped, so a block comment stayed in a #define body and the #if
+     * that tested it failed.
+     */
+    @Test
+    void aCommentInDimensionPropertiesIsWhitespace(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("dimension.properties"), """
+                #define CUSTOM 1 /* note */
+                #if CUSTOM == 1 /* note */
+                dimension.world_custom = example:custom
+                #endif
+                #if /* note */ CUSTOM == 2 // note
+                dimension.world_wrong = example:wrong
+                #endif
+                """);
+        List<String> deviations = new ArrayList<>();
+        Map<String, String> folders = PackSource.readDimensionFolders(root, deviations);
+        assertEquals(Map.of("example:custom", "world_custom"), folders, String.valueOf(deviations));
+        assertTrue(deviations.isEmpty(), String.valueOf(deviations));
+    }
+
     @Test
     void archiveEdges(@TempDir Path root) throws IOException {
         Path validZip = root.resolve("valid.zip");

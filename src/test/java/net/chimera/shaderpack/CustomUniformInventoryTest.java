@@ -99,7 +99,7 @@ final class CustomUniformInventoryTest {
         double tAfrc = (tAlin * 2.0) % 1.0;
         double tAfrs = tAfrc * tAfrc * (3.0 - 2.0 * tAfrc);
         double expected = (tAfrc * 0.7 + tAfrs * 0.3) * 0.5;
-        float actual = session.values()[index];
+        double actual = session.values()[index];
         assertTrue(Math.abs(actual - expected) < 1.0e-4,
                 "BSL timeAngle at noon is " + actual + ", expected " + expected);
     }

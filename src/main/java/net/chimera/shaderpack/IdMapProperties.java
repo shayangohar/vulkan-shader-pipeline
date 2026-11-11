@@ -133,11 +133,9 @@ final class IdMapProperties {
         }
     }
 
-    /** A directive's argument without its C comments, which JCPP skips. */
+    /** A directive's argument without its C comments, which JCPP skips (PackConditionals.withoutComments). */
     private static String stripComments(String argument) {
-        String text = argument.replaceAll("/\\*.*?\\*/", " ");
-        int lineComment = text.indexOf("//");
-        return (lineComment < 0 ? text : text.substring(0, lineComment)).trim();
+        return PackConditionals.withoutComments(argument == null ? "" : argument).trim();
     }
 
     /** java.util.Properties that also keeps each key where it first appeared, as OrderBackedProperties does. */

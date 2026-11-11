@@ -272,7 +272,8 @@ public final class PackRuntimeSettings {
     public static final class Session {
         private final PackExpression.State[] states;
         private final double[] scratch;
-        private final float[] output;
+        /** Served values: an int or bool exact, as Iris's int uniforms are; a float rounded to float. */
+        private final double[] output;
         /** One value's components for the frame, before they are stored. */
         private final double[] lanes = new double[4];
         private final Map<String, String> failures = new TreeMap<>();
@@ -284,11 +285,11 @@ public final class PackRuntimeSettings {
                 this.states[index] = values.get(index).program().newState();
             }
             this.scratch = new double[slots];
-            this.output = new float[slots];
+            this.output = new double[slots];
         }
 
         /** The frame's evaluated values, one slot per component, in dependency order. */
-        public float[] values() {
+        public double[] values() {
             return this.output;
         }
 
@@ -307,7 +308,7 @@ public final class PackRuntimeSettings {
                 state.reset();
             }
             Arrays.fill(this.scratch, 0.0);
-            Arrays.fill(this.output, 0.0F);
+            Arrays.fill(this.output, 0.0);
             this.failures.clear();
             this.frames = 0;
         }
@@ -345,8 +346,11 @@ public final class PackRuntimeSettings {
                                     + value.program().source() + ", inputs " + context(value, inputs));
                 }
                 session.scratch[slot] = result;
-                session.output[slot] = value.type().equals("int") || value.type().equals("bool")
-                        ? (float) ((int) result) : (float) result;
+                // An int past float's 24 bits stays exact: RenderPearl's packedView at 1366x768
+                // is 50333014, which a float rounds to 50333016, a width of 1368. Both arms are
+                // double: an int and a float arm make the conditional a float (JLS 15.25).
+                boolean integral = value.type().equals("int") || value.type().equals("bool");
+                session.output[slot] = integral ? (double) (int) result : (double) (float) result;
             }
         }
     }

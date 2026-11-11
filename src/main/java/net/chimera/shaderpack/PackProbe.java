@@ -124,7 +124,7 @@ public final class PackProbe {
         Analysis analyze() {
             loaded.prepare(
                     PackEngineDefines.forPack(settingsPlan.preprocessorDefines()),
-                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), false));
+                    PackEngineDefines.lockedNames(settingsPlan.lockedDefineNames(), false));
             settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
             readPackFiles();
@@ -260,7 +260,7 @@ public final class PackProbe {
         private void prepareWithCustomImages() {
             loaded.prepare(
                     PackEngineDefines.forCustomImages(settingsPlan.preprocessorDefines()),
-                    PackEngineDefines.lockedNames(settingsPlan.overriddenNames(), true));
+                    PackEngineDefines.lockedNames(settingsPlan.lockedDefineNames(), true));
             settingsPlan = resolveLiveSamplerSlots(settingsPlan, loaded.programs());
             globalDeviations.addAll(loaded.deviations());
             // Only preparation's deviations are redone: a stage file the scan could not read is still
@@ -286,6 +286,10 @@ public final class PackProbe {
             settingsPlan.deviations().stream()
                     .filter(value -> value.startsWith("SETTING_UNSUPPORTED:"))
                     .map(value -> "SETTING_NOT_APPLIED:" + value.substring("SETTING_UNSUPPORTED:".length()))
+                    .forEach(globalDeviations::add);
+            // A texture file Iris could not read and skipped, which it logs as an error.
+            settingsPlan.deviations().stream()
+                    .filter(value -> value.startsWith("PACK_TEXTURE_DROPPED:"))
                     .forEach(globalDeviations::add);
             applyShadowSettingReporting(inventories, packConfig.shadowSettings(), globalDeviations);
         }

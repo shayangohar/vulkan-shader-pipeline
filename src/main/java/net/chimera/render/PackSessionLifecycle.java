@@ -561,7 +561,13 @@ final class PackSessionLifecycle {
      */
     private PackSource.LoadResult loadPackPlan(Path dir) {
         boolean fresh = pass.packSource == null;
-        PackEngineDefines.setMipmapLevel(Minecraft.getInstance().options.mipmapLevels().get());
+        // Iris reads MC_MIPMAP_LEVEL once per pack load, and every dimension's programs and the id
+        // maps use that value until the next load (ShaderPack). Read again on a dimension switch,
+        // a dimension cached since the load kept the old level while a new one and the id maps
+        // took the new one.
+        if (fresh) {
+            PackEngineDefines.setMipmapLevel(Minecraft.getInstance().options.mipmapLevels().get());
+        }
         PackSource.LoadResult result = fresh
                 ? PackSource.loadResult(dir, this.currentDimension, PendingOptions.drain(dir)) : pass.packSource;
         pass.packSource = result;

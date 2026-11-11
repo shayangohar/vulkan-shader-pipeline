@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -179,27 +180,8 @@ public final class ShaderSourcePreprocessor {
                 throw new PreparationFailure("SOURCE_INCLUDE_CYCLE");
             }
             try {
-                String[] lines = source.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
-                StringBuilder logical = new StringBuilder();
-                // A line that starts inside a block comment is comment text, not a directive: BSL
-                // documents its options with "#define FEATURE ..." lines inside /* */.
-                boolean inComment = false;
-                for (String line : lines) {
-                    // GLSL 3.3 section 3.1: a backslash right before a newline
-                    // splices the two lines before any directive is parsed.
-                    if (line.endsWith("\\")) {
-                        logical.append(line, 0, line.length() - 1);
-                        continue;
-                    }
-                    if (!logical.isEmpty()) {
-                        line = logical.append(line).toString();
-                        logical.setLength(0);
-                    }
-                    processLine(line, sourceFile, depth, inComment);
-                    inComment = inCommentAfter(line, inComment);
-                }
-                if (!logical.isEmpty()) {
-                    processLine(logical.toString(), sourceFile, depth, inComment);
+                for (LogicalLine line : logicalLines(source)) {
+                    processLine(line.text(), sourceFile, depth, line.inComment());
                 }
             } finally {
                 if (normalized != null) {
@@ -219,7 +201,7 @@ public final class ShaderSourcePreprocessor {
             }
 
             String directive = matcher.group(1).toLowerCase();
-            String argument = stripDirectiveComment(
+            String argument = PackConditionals.withoutComments(
                     matcher.group(2) == null ? "" : matcher.group(2)).trim();
             switch (directive) {
                 case "if", "ifdef", "ifndef" -> applyCondition(directive, argument);
@@ -395,11 +377,65 @@ public final class ShaderSourcePreprocessor {
                 throw new PreparationFailure("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }
         }
+    }
 
-        private static String stripDirectiveComment(String argument) {
-            int lineComment = argument.indexOf("//");
-            return lineComment >= 0 ? argument.substring(0, lineComment) : argument;
+    /** One logical line of a source, and whether it starts inside a block comment. */
+    record LogicalLine(String text, boolean inComment) {}
+
+    /**
+     * {@code source}'s logical lines. GLSL 3.3 section 3.1: a backslash right before a newline
+     * splices the two lines before any directive is parsed. A comment is one space to a C
+     * preprocessor, so a block comment a directive line leaves open joins the lines up to its close
+     * into that directive, which goes on after it: in JCPP, {@code #if 0 /* note}, then
+     * {@code note *}{@code / || 1} on the next line, holds; one that never closes takes the rest of
+     * the source. A line that starts inside a block comment is comment text, not a directive: BSL
+     * documents its options with "#define FEATURE ..." lines inside comments.
+     */
+    static List<LogicalLine> logicalLines(String source) {
+        String[] lines = source.replace("\r\n", "\n").replace('\r', '\n').split("\n", -1);
+        List<LogicalLine> result = new ArrayList<>(lines.length);
+        StringBuilder logical = new StringBuilder();
+        boolean inComment = false;
+        // A directive whose block comment is still open, and how much of it is scanned.
+        boolean joining = false;
+        int scanned = 0;
+        for (String line : lines) {
+            if (line.endsWith("\\")) {
+                logical.append(line, 0, line.length() - 1);
+                continue;
+            }
+            if (joining) {
+                // Only the text added since the last scan is scanned, from one character back so a
+                // close a backslash splice joined still counts; the join stays linear.
+                int from = Math.max(scanned - 1, 0);
+                logical.append(line);
+                if (inCommentAfter(logical.substring(from), true)) {
+                    scanned = logical.length();
+                    logical.append(' ');
+                    continue;
+                }
+                joining = false;
+                result.add(new LogicalLine(logical.toString(), false));
+                logical.setLength(0);
+                inComment = false;
+                continue;
+            }
+            if (!logical.isEmpty()) {
+                line = logical.append(line).toString();
+                logical.setLength(0);
+            }
+            if (!inComment && startsDirective(line) && inCommentAfter(line, false) && directive(line) != null) {
+                joining = true;
+                logical.append(line);
+                scanned = logical.length();
+                logical.append(' ');
+                continue;
+            }
+            result.add(new LogicalLine(line, inComment));
+            inComment = inCommentAfter(line, inComment);
         }
+        if (!logical.isEmpty()) result.add(new LogicalLine(logical.toString(), !joining && inComment));
+        return result;
     }
 
     /** Whether a block comment is still open after {@code line}, given whether one was open before it. */

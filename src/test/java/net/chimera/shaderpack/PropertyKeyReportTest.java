@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -21,7 +22,7 @@ final class PropertyKeyReportTest {
         for (String applied : List.of("clouds", "blend.composite", "screen.MAIN", "screen", "sliders",
                 "profile.HIGH", "vignette", "shadowTranslucent", "particles.ordering", "image.voxels",
                 "size.buffer.colortex1", "uniform.float.x", "shadow.culling", "shadow.enabled",
-                "separateEntityDraws", "voxelizeLightBlocks", "rain.depth")) {
+                "separateEntityDraws", "voxelizeLightBlocks", "rain.depth", "supportsColorCorrection")) {
             assertNull(PackPropertyKeys.unread(applied), applied);
         }
         // Source const names: Iris reads them only as const directives, so neither reader takes them here.
@@ -90,5 +91,44 @@ final class PropertyKeyReportTest {
         List<String> settings = PackProbe.analyze(root).report().deviations().stream()
                 .filter(deviation -> deviation.startsWith("SETTING_")).toList();
         assertEquals(List.of("SETTING_NOT_APPLIED:backFace.solid"), settings);
+    }
+
+    /**
+     * With supportsColorCorrection true or 1, Iris adds COLOR_SPACE_SRGB=0 through
+     * COLOR_SPACE_ADOBE_RGB=4 to the shader defines (ShaderPack, ColorSpace), after it has
+     * preprocessed shaders.properties. Kappa's ACES output switches on currentColorSpace with them.
+     */
+    @Test
+    void colorCorrectionDefinesTheColorSpaces(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                void main() {
+                #if defined COLOR_SPACE_SRGB && COLOR_SPACE_REC2020 == 3 && COLOR_SPACE_ADOBE_RGB == 4
+                    gl_FragColor = vec4(0.25 * float(COLOR_SPACE_DISPLAY_P3));
+                #else
+                    gl_FragColor = vec4(0.75);
+                #endif
+                }
+                """);
+        for (String flag : List.of("true", "1", "false", "0")) {
+            Files.writeString(shaders.resolve("shaders.properties"), """
+                    supportsColorCorrection = %s
+                    #ifdef COLOR_SPACE_SRGB
+                    uniform.float.inProperties = 1.0
+                    #endif
+                    """.formatted(flag));
+            PackPlan plan = PackProbe.analyze(root).plan();
+            boolean on = flag.equals("true") || flag.equals("1");
+            Map<String, String> defines = plan.settingsPreprocessorDefines();
+            assertEquals(on ? "0" : null, defines.get("COLOR_SPACE_SRGB"), flag);
+            assertEquals(on ? "2" : null, defines.get("COLOR_SPACE_DISPLAY_P3"), flag);
+            String fragment = plan.program("composite").convertedFragment();
+            assertEquals(on, fragment.contains("0.25") && !fragment.contains("0.75"), flag + ":\n" + fragment);
+            // Kappa reads them as values too (case COLOR_SPACE_SRGB:): the use expands to the value.
+            assertEquals(on, fragment.contains("0.25 * float(2)"), flag + ":\n" + fragment);
+            assertEquals(-1, plan.runtimeSettings().indexOf("inProperties"),
+                    "shaders.properties is preprocessed before the colour spaces are defined");
+        }
     }
 }

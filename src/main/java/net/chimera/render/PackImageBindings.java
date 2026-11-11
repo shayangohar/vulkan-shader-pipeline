@@ -277,6 +277,15 @@ final class PackImageBindings {
         }
     }
 
+    /**
+     * The targets {@code pipeline}'s program stores to as colorimgN, which preparing it holds in
+     * the general layout until its run ends; none for a pipeline with no pack program.
+     */
+    public List<Integer> worldStorageTargets(GraphicsPipeline pipeline) {
+        ChimeraMainPass.ProgramImages program = pipeline == null ? null : this.programImages.get(pipeline);
+        return program == null ? List.of() : worldStorageTargets(program);
+    }
+
     /** The targets a world program stores to as colorimgN (a hand program, TargetImages), ascending. */
     private static List<Integer> worldStorageTargets(ChimeraMainPass.ProgramImages program) {
         if (!TargetImages.world(program.name())) return List.of();

@@ -954,6 +954,11 @@ public final class ChimeraMainPass implements MainPass {
         images.prepareProgramImages(pipeline);
     }
 
+    /** The targets {@code pipeline}'s program holds as storage while its run draws (PackImageBindings). */
+    List<Integer> worldStorageTargets(GraphicsPipeline pipeline) {
+        return images.worldStorageTargets(pipeline);
+    }
+
     public boolean packShadowPassActive() {
         return shadowPass.packShadowPassActive();
     }

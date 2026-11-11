@@ -19,10 +19,10 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Reads compiled classes and their mixin annotations, to pin the hooks a feature relies on. */
-final class MixinBytecode {
+public final class MixinBytecode {
     private MixinBytecode() {}
 
-    static ClassNode nativeClass(String name) throws IOException {
+    public static ClassNode nativeClass(String name) throws IOException {
         try (var input = MixinBytecode.class.getClassLoader().getResourceAsStream(name + ".class")) {
             if (input == null) throw new IOException("missing native class " + name);
             var result = new ClassNode();
@@ -36,7 +36,7 @@ final class MixinBytecode {
      * same class followed by that method's own instructions. A check on what a method calls then
      * still holds when the method is split into helpers of its class.
      */
-    static List<AbstractInsnNode> instructionsThrough(ClassNode owner, String method) {
+    public static List<AbstractInsnNode> instructionsThrough(ClassNode owner, String method) {
         var root = owner.methods.stream().filter(candidate -> candidate.name.equals(method)).findFirst()
                 .orElseThrow(() -> new AssertionError(owner.name + "." + method + " is missing"));
         List<AbstractInsnNode> instructions = new ArrayList<>();

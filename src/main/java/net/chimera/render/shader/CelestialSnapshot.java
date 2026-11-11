@@ -106,11 +106,4 @@ final class CelestialSnapshot {
                 .rotateZ((float) Math.toRadians(-(angleDegrees + offsetDegrees)))
                 .rotateX((float) Math.toRadians(sunPathRotation));
     }
-
-    /** The host's packed sky colour, as the format hands it to a pack: components over 255. */
-    static void skyColor(int packed, Vector3f dest) {
-        dest.set(((packed >> 16) & 0xFF) / 255.0F,
-                ((packed >> 8) & 0xFF) / 255.0F,
-                (packed & 0xFF) / 255.0F);
-    }
 }

@@ -703,25 +703,22 @@ final class PackFrameState {
     /**
      * Samples the level's sky for this frame and derives the celestial frame from it: the sun
      * turns with the time of day as LevelRenderer.renderSky turns it, the moon opposite, and the
-     * sky colour is the one the sky draws with.
+     * sky colour is the level's at the camera entity, where Iris samples it (the sky itself draws
+     * with the colour at the camera's position).
      */
     private void captureCelestial(ClientLevel level, Camera camera, float partialTick) {
         float sunAngle = level.getTimeOfDay(partialTick) * 360.0F;
-        var sky = level.getSkyColor(camera.getPosition(), partialTick);
-        deriveCelestial(sunAngle, sunAngle + 180.0F, packedRgb(sky.x, sky.y, sky.z));
-    }
-
-    private static int packedRgb(double red, double green, double blue) {
-        return (channel(red) << 16) | (channel(green) << 8) | channel(blue);
-    }
-
-    private static int channel(double value) {
-        return Math.round(clamp((float) value, 0.0F, 1.0F) * 255.0F);
+        // As Iris's CommonUniforms.getSkyColor: at the camera entity's position, unrounded, and zero
+        // without an entity.
+        Entity entity = camera.getEntity();
+        Vec3 sky = entity == null ? Vec3.ZERO : level.getSkyColor(entity.position(), partialTick);
+        deriveCelestial(sunAngle, sunAngle + 180.0F, (float) sky.x, (float) sky.y, (float) sky.z);
     }
 
     /** Test seam: the same derivation from explicit host samples. */
-    void setCelestialForTest(float sunAngleDegrees, float moonAngleDegrees, int skyColorPacked) {
-        deriveCelestial(sunAngleDegrees, moonAngleDegrees, skyColorPacked);
+    void setCelestialForTest(float sunAngleDegrees, float moonAngleDegrees,
+                             float skyRed, float skyGreen, float skyBlue) {
+        deriveCelestial(sunAngleDegrees, moonAngleDegrees, skyRed, skyGreen, skyBlue);
     }
 
     /**
@@ -729,7 +726,7 @@ final class PackFrameState {
      * vector, so a caster and a receiver cannot disagree about where the light is.
      */
     private void deriveCelestial(float sunAngleDegrees, float moonAngleDegrees,
-                                 int skyColorPacked) {
+                                 float skyRed, float skyGreen, float skyBlue) {
         float lightAngleDegrees = CelestialSnapshot.isDay(sunAngleDegrees)
                 ? sunAngleDegrees : moonAngleDegrees;
 
@@ -746,7 +743,7 @@ final class PackFrameState {
                 lightAngleDegrees, sunLightVector);
         CelestialSnapshot.shadowRotation(sunPathRotation, sunPathOffset,
                 lightAngleDegrees, shadowLightRotation);
-        CelestialSnapshot.skyColor(skyColorPacked, skyColor);
+        skyColor.set(skyRed, skyGreen, skyBlue);
     }
 
     /** The camera biome's key, which is the name the constant table numbers. */

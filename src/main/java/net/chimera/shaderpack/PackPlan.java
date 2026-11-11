@@ -147,6 +147,11 @@ public record PackPlan(
         return settings.overriddenNames();
     }
 
+    /** The defines a prepared source keeps as {@code #define} lines (PackSettingsPlan.lockedDefineNames). */
+    public Set<String> settingsLockedDefineNames() {
+        return settings.lockedDefineNames();
+    }
+
     /**
      * Whether the pack switches a program or pass off. A pass of computes alone has no resolved
      * program, so its switch is read directly: Iris's source provider then reads none of its files

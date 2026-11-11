@@ -73,6 +73,65 @@ final class SampledResourcePlanTest {
         assertTrue(declared != null && declared.status() == PackResourceStatus.PACK_FILE
                 && declared.resourceKey().equals("noisetex:texture/Noise2D.png") && declared.slot() == 7,
                 String.valueOf(declared));
+        // Iris samples a PNG without .mcmeta nearest and repeating, a declared noise too; only
+        // the generated noise is linear.
+        assertEquals("nearest", declared.filter(), "a declared noise without .mcmeta");
+        assertEquals("repeat", declared.wrap(), "a declared noise without .mcmeta");
+        assertEquals("linear", generated.filter(), "the generated noise");
+
+        Files.writeString(shaders.resolve("texture/Noise2D.png.mcmeta"), "{\"texture\":{\"blur\":true}}");
+        PackResourceBinding blurred = PackProbe.analyze(root).plan().resources().binding("deferred", "noisetex");
+        assertEquals("linear", blurred.filter(), "a declared noise whose .mcmeta sets blur");
+    }
+
+    /**
+     * Iris skips a custom texture it cannot read (ShaderPack.readTexture) and runs the program:
+     * a stage texture leaves the sampler its own target, a customTexture name reads unit 0, and a
+     * missing texture.noise leaves the generated noise. A raw texture still refuses its program.
+     * Mellow's and Reverie's LUT_FILE options name files only some of them ship.
+     */
+    @Test
+    void aMissingTextureIsSkippedAsIrisSkipsIt(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                texture.composite.gaux4 = lut/missing.png
+                customTexture.lutTexture = lut/missing.png
+                texture.noise = tex/missing.png
+                texture.composite.lut = lut/missing.dat TEXTURE_2D R8 4 4 RED UNSIGNED_BYTE
+                """);
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                uniform sampler2D gaux4;
+                uniform sampler2D lutTexture;
+                uniform sampler2D noisetex;
+                varying vec2 texcoord;
+                void main() {
+                    gl_FragData[0] = texture2D(gaux4, texcoord) + texture2D(lutTexture, texcoord)
+                            + texture2D(noisetex, texcoord);
+                }
+                """);
+        Files.writeString(shaders.resolve("composite1.fsh"), """
+                #version 120
+                uniform sampler2D lut;
+                varying vec2 texcoord;
+                void main() { gl_FragData[0] = texture2D(lut, texcoord); }
+                """);
+        PackProbe.Analysis analysis = PackProbe.analyze(root);
+        PackPlan plan = analysis.plan();
+        PackResourcePlan resources = plan.resources();
+        assertTrue(plan.shouldAttempt("composite"), "a missing PNG refused its program: "
+                + resources.bindings("composite"));
+        PackResourceBinding stage = resources.binding("composite", "gaux4");
+        assertTrue(stage != null && stage.kind() == PackResourceKind.TARGET, "gaux4 reads its target: " + stage);
+        PackResourceBinding noise = resources.binding("composite", "noisetex");
+        assertTrue(noise != null && noise.status() == PackResourceStatus.GENERATED, "the generated noise: " + noise);
+        PackResourceBinding custom = resources.binding("composite", "lutTexture");
+        assertTrue(custom == null || custom.status() != PackResourceStatus.UNAVAILABLE, "lutTexture: " + custom);
+        assertTrue(!plan.shouldAttempt("composite1"), "a missing raw texture still refuses its program");
+        for (String key : List.of("texture.composite.gaux4", "customTexture.lutTexture", "texture.noise")) {
+            assertTrue(analysis.report().deviations().contains("PACK_TEXTURE_DROPPED:" + key),
+                    key + " was not reported: " + analysis.report().deviations());
+        }
     }
 
     private static void verifySupported(PackProbe.Analysis analysis) {
@@ -126,8 +185,11 @@ final class SampledResourcePlanTest {
         PackResourcePlan resources = plan.resources();
         PackResourceBinding missing = resources.binding("composite", "missing");
         PackResourceBinding unsafe = resources.binding("composite", "unsafe");
-        assertTrue(missing != null && missing.status() == PackResourceStatus.UNAVAILABLE,
-                "missing resource was not unavailable");
+        // Iris skips a texture it cannot read: the name then reads unit 0, colortex0 in a pass.
+        assertTrue(missing == null || missing.status() != PackResourceStatus.UNAVAILABLE,
+                "a missing texture still refused its program: " + missing);
+        assertTrue(analysis.report().deviations().contains("PACK_TEXTURE_DROPPED:customTexture.missing"),
+                "the dropped texture was not reported: " + analysis.report().deviations());
         assertTrue(unsafe != null && unsafe.deviations().stream().anyMatch(value ->
                         value.startsWith("PACK_TEXTURE_PATH_UNSAFE:")),
                 "unsafe path was not named");
@@ -270,12 +332,12 @@ final class SampledResourcePlanTest {
     ) throws IOException {
         String expected = Files.readString(baseline, StandardCharsets.UTF_8).trim();
         assertTrue(expected.contains(supported.report().sha256()),
-                "supported report baseline mismatch");
+                "supported report baseline mismatch: " + supported.report().sha256());
         assertTrue(expected.contains(supported.plan().resources().fingerprint()),
-                "supported resource baseline mismatch");
+                "supported resource baseline mismatch: " + supported.plan().resources().fingerprint());
         assertTrue(expected.contains(unsupported.report().sha256()),
-                "unsupported report baseline mismatch");
+                "unsupported report baseline mismatch: " + unsupported.report().sha256());
         assertTrue(expected.contains(unsupported.plan().resources().fingerprint()),
-                "unsupported resource baseline mismatch");
+                "unsupported resource baseline mismatch: " + unsupported.plan().resources().fingerprint());
     }
 }

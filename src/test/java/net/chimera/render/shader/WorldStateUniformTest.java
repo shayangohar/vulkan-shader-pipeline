@@ -147,9 +147,9 @@ final class WorldStateUniformTest {
                 "pack sun angle must be the host sky angle plus the quarter turn");
         assertNear(0.25f, writtenFloat(state, "shadowAngle"), 1.0e-6f,
                 "noon shadow angle must follow the sun");
-        verifyWrittenVec3(state, "skyColor",
-                new Vector3f(0x4C / 255.0f, 0x7B / 255.0f, 0xC8 / 255.0f),
-                "sky colour must be the host's packed colour");
+        // Off the 8-bit grid, as Iris serves the level's sky colour unrounded.
+        verifyWrittenVec3(state, "skyColor", new Vector3f(0.3001f, 0.5003f, 0.7007f),
+                "sky colour must be the host's sampled colour, unrounded");
         verifyWrittenVec3(state, "upPosition", expectedUp,
                 "up position must be the sky's quarter turn carried by the view");
         verifyWrittenVec3(state, "sunPosition", expectedSun,
@@ -170,7 +170,7 @@ final class WorldStateUniformTest {
             state.installSunPath(sunPath[0], sunPath[1]);
             for (float[] time : new float[][] {{0.0f, 0.0f}, {90.0f, 90.0f},
                     {180.0f, 30.0f}, {270.0f, 270.0f}}) {
-                state.setCelestialForTest(time[0], time[1], 0x102030);
+                state.setCelestialForTest(time[0], time[1], 0.0627f, 0.1255f, 0.1882f);
                 float lightAngle = CelestialSnapshot.isDay(time[0]) ? time[0] : time[1];
                 assertNear(CelestialSnapshot.angle01(time[0]), writtenFloat(state, "sunAngle"),
                         1.0e-6f,
@@ -207,7 +207,7 @@ final class WorldStateUniformTest {
         PackFrameState state = new PackFrameState();
         state.rotateViewForTest(modelView, legacyProjection(forwardProjection(0.05f, 1000.0f, 16.0f / 9.0f)));
         state.installSunPath(0.0f, 0.0f);
-        state.setCelestialForTest(0.0f, 0.0f, 0x4C7BC8);
+        state.setCelestialForTest(0.0f, 0.0f, 0.3001f, 0.5003f, 0.7007f);
         return state;
     }
 
@@ -789,7 +789,7 @@ final class WorldStateUniformTest {
                         && session.values()[marker] < 2.5f,
                 "custom dependency evaluation was incorrect");
         int derived = settings.indexOf("m73Derived");
-        assertNear(6.25f, session.values()[derived], 1.0e-4f,
+        assertNear(6.25f, (float) session.values()[derived], 1.0e-4f,
                 "derived value must be the smoothing, the biome test, the root and the "
                         + "continued declaration together");
         int component = settings.indexOf("m73Component");
@@ -801,7 +801,7 @@ final class WorldStateUniformTest {
                 "the non-finite report must name the expression that produced it");
         assertTrue(session.failures().get("m73NonFinite").contains("is NaN at frame 1"),
                 "the non-finite report must carry the frame context");
-        assertTrue(Float.isNaN(session.values()[nonFinite]),
+        assertTrue(Double.isNaN(session.values()[nonFinite]),
                 "a non-finite derived value is served as computed, as Iris serves it");
     }
 

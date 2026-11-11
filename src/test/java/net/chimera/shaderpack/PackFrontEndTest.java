@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -13,6 +14,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -295,6 +297,134 @@ final class PackFrontEndTest {
                 "gtexture must alias the albedo atlas");
     }
 
+    /**
+     * Iris preprocesses shaders.properties with JCPP, where a bare {@code #define} written in the
+     * file is empty: #ifdef holds, while #if and #if N == 1 fail and #if !N holds.
+     */
+    @Test
+    void aBarePropertiesDefineIsEmpty(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #define BARE
+                #if BARE
+                uniform.float.ifBare = 1.0
+                #endif
+                #ifdef BARE
+                uniform.float.ifdefBare = 1.0
+                #endif
+                #if BARE == 1
+                uniform.float.bareIsOne = 1.0
+                #endif
+                #if !BARE
+                uniform.float.notBare = 1.0
+                #endif
+                """);
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(settings.indexOf("ifBare") < 0, "#if on an empty macro fails");
+        assertTrue(settings.indexOf("ifdefBare") >= 0, "#ifdef on an empty macro holds");
+        assertTrue(settings.indexOf("bareIsOne") < 0, "an empty macro is not 1");
+        assertTrue(settings.indexOf("notBare") >= 0, "#if !N on an empty macro holds");
+    }
+
+    /**
+     * A comment on a directive line is whitespace to JCPP. Read raw, a block comment after
+     * {@code #if FOO} became operators and the condition evaluated 0, a comment before the
+     * expression failed it, and a #define body kept the comment. A block comment the line leaves
+     * open spans the lines up to its close, and the directive goes on after it.
+     */
+    @Test
+    void aCommentOnADirectiveLineIsWhitespace() {
+        for (String condition : List.of("#if FOO /* note */", "#if /* note */ FOO", "#if FOO /* a, b. */",
+                "#if FOO // note", "#ifdef FOO /* note */", "#if BODY", "#if FOO /* opens\nand closes */",
+                "#if 0 /* opens\nstill open\ncloses */ || 1", "#if SPANNED == 2")) {
+            String source = String.join("\n",
+                    "#version 330",
+                    "#define BODY 1 /* note */",
+                    "#define SPANNED 1 /* opens",
+                    "closes */ + 1",
+                    "#if 0",
+                    "#elif 1",
+                    "#endif",
+                    condition,
+                    "float kept = 1.0;",
+                    "#else",
+                    "float dropped = 1.0;",
+                    "#endif",
+                    "#if 0",
+                    "#elif FOO /* note */",
+                    "float elifKept = 1.0;",
+                    "#endif");
+            ShaderSourcePreprocessor.Result result = ShaderSourcePreprocessor.prepare(
+                    Path.of("."), null, source, Map.of("FOO", "1"));
+            assertTrue(result.successful(), condition + " rejected: " + result.deviations());
+            assertTrue(result.source().contains("kept") && !result.source().contains("dropped")
+                    && result.source().contains("elifKept"),
+                    condition + " chose the wrong branch:\n" + result.source());
+            assertTrue(!result.source().contains("closes") && !result.source().contains("+ 1"),
+                    condition + ": a directive's comment and what follows it stay out of the code:\n"
+                            + result.source());
+        }
+    }
+
+    /**
+     * A directive's open block comment takes the lines up to its close, in an inactive branch too,
+     * and the rest of the file when it never closes, as in JCPP. Joining scans each line once: it
+     * rescanned the whole joined text per line, 1.2 s for a 1600-line comment.
+     */
+    @Test
+    void aDirectiveCommentJoinsLinearlyUpToItsClose() {
+        String inactive = String.join("\n", "#version 330", "#if 0", "#define HIDDEN 1 /* open",
+                "#endif */", "#endif", "float kept = 1.0;");
+        ShaderSourcePreprocessor.Result skipped = ShaderSourcePreprocessor.prepare(Path.of("."), null, inactive,
+                Map.of());
+        assertTrue(skipped.successful() && skipped.source().contains("float kept"),
+                "the comment hides an #endif in the skipped branch: " + skipped.deviations() + "\n" + skipped.source());
+
+        String unclosed = String.join("\n", "#version 330", "float kept = 1.0;", "#define X 1 /* never closes",
+                "float swallowed = 1.0;");
+        ShaderSourcePreprocessor.Result open = ShaderSourcePreprocessor.prepare(Path.of("."), null, unclosed,
+                Map.of());
+        assertTrue(open.successful() && open.source().contains("float kept")
+                && !open.source().contains("swallowed"), "an unclosed comment takes the rest of the file:\n"
+                + open.source());
+
+        StringBuilder longComment = new StringBuilder("#version 330\n#define LONG 1 /* open\n");
+        for (int line = 0; line < 20_000; line++) {
+            longComment.append("    documentation line ").append(line).append('\n');
+        }
+        longComment.append("*/ + 1\n#if LONG == 2\nfloat kept = 1.0;\n#endif\n");
+        ShaderSourcePreprocessor.Result joined = assertTimeout(Duration.ofSeconds(5), () ->
+                ShaderSourcePreprocessor.prepare(Path.of("."), null, longComment.toString(), Map.of()));
+        assertTrue(joined.successful() && joined.source().contains("float kept"), "a long comment: "
+                + joined.deviations());
+    }
+
+    /** shaders.properties goes through JCPP too: a comment on its #if line is whitespace. */
+    @Test
+    void aCommentOnAPropertiesDirectiveIsWhitespace(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #define ON 1 /* note */
+                #if ON // note
+                uniform.float.lineComment = 1.0
+                #endif
+                #if ON /* note */
+                uniform.float.blockComment = 1.0
+                #endif
+                """);
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(settings.indexOf("lineComment") >= 0, "#if ON // note holds");
+        assertTrue(settings.indexOf("blockComment") >= 0, "#if ON /* note */ holds");
+    }
+
     /** GLSL 3.3 section 3.1: backslash-newline splices lines before directives are read. */
     @Test
     void lineContinuation() {
@@ -409,7 +539,7 @@ final class PackFrontEndTest {
             case "gbufferModelViewInverse" -> component == 12 ? 7.0 : 0.0;
             default -> 0.0;
         }, session, 0.05f);
-        float[] values = session.values();
+        double[] values = session.values();
         int res = settings.indexOf("view_res");
         assertTrue(values[res] == 1920.0f && values[res + 1] == 1080.0f, "view_res components");
         assertTrue(values[settings.indexOf("dir_y")] == 2.0f, "a value reads a vector value's component");
@@ -491,6 +621,26 @@ final class PackFrontEndTest {
         assertTrue(Double.isNaN(value("1.0 % 0.0")) && Double.isNaN(value("remainder(1.0, 0.0)")), "x % 0");
         assertTrue(Double.isNaN(value("fmod(1.0, 0.0)")) && Double.isNaN(value("fmod(0.0, 0.0)")), "fmod(x, 0)");
         assertEquals(1.0, value("clamp(1.0 / 0.0, 0.0, 1.0)"), "the infinity reaches the clamp, not a zero");
+    }
+
+    /**
+     * An int custom value is served exactly, as Iris's int uniforms are: RenderPearl packs the
+     * viewport into one int, and at 1366x768 a float rounded 50333014 to 50333016, a width of 1368.
+     * A float value keeps float rounding.
+     */
+    @Test
+    void anIntCustomValueIsExact() {
+        PackRuntimeSettings settings = PackRuntimeSettings.build(List.of(
+                PackRuntimeSettings.declaration(true, "int", "packedView",
+                        "65536 * floor(viewHeight) + floor(viewWidth)"),
+                PackRuntimeSettings.declaration(true, "float", "third", "1.0 / 3.0")), List.of());
+        assertTrue(settings.rejected().isEmpty(), settings.deviations().toString());
+        PackRuntimeSettings.Session session = settings.newSession();
+        settings.evaluate((name, component) -> name.equals("viewHeight") ? 768.0 : 1366.0, session, 0.05f);
+        double packed = session.values()[settings.indexOf("packedView")];
+        assertEquals(50333014.0, packed);
+        assertEquals(1366, (int) packed & 0xFFFF, "the width RenderPearl unpacks");
+        assertEquals((double) (1.0F / 3.0F), session.values()[settings.indexOf("third")], "float rounding");
     }
 
     /**
