@@ -50,8 +50,9 @@ final class PropertiesPreprocessor {
      * dropped; a {@code #} line that starts with a JCPP directive's name is kept and any other
      * {@code #} line is emptied, and every other line loses its {@code #} signs. JCPP then reads the
      * text as C, so a block comment runs across lines (ShaderSourcePreprocessor.logicalLines): a
-     * directive inside one is comment text, and one a directive line leaves open takes the lines up
-     * to its close into the directive, which goes on after it. An active branch's comment text is
+     * directive inside one is comment text, one right after its close on a line is a directive
+     * (ShaderSourcePreprocessor.directiveStart), and one a directive line leaves open takes the
+     * lines up to its close into the directive, which goes on after it. An active branch's comment text is
      * kept as written (KEEPCOMMENTS) and the rest of its text expands the macros defined before it.
      * Directive lines and inactive branches are left empty.
      */
@@ -61,8 +62,11 @@ final class PropertiesPreprocessor {
         StringBuilder out = new StringBuilder(text.length());
         boolean failed = false;
         for (ShaderSourcePreprocessor.LogicalLine line : ShaderSourcePreprocessor.logicalLines(jcppInput(text))) {
-            Matcher directive = line.inComment() ? null : DIRECTIVE.matcher(line.text());
+            int start = ShaderSourcePreprocessor.directiveStart(line.text(), line.inComment());
+            Matcher directive = start < 0 ? null : DIRECTIVE.matcher(line.text().substring(start));
             if (directive != null && directive.matches()) {
+                // A comment that closes before the directive on its line stays as text (KEEPCOMMENTS).
+                if (conditions.active()) out.append(line.text(), 0, start);
                 failed |= !apply(directive.group(1), stripComments(directive.group(2)), conditions, expansions);
             } else if (conditions.active()) {
                 out.append(PackConditionals.expandOutsideComments(line.text(), line.inComment(), expansions));

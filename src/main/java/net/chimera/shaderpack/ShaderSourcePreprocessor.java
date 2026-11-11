@@ -201,13 +201,20 @@ public final class ShaderSourcePreprocessor {
         }
 
         private void processLine(String line, Path sourceFile, int depth, boolean inComment) throws IOException {
-            Matcher matcher = inComment ? null : directive(line);
+            int start = directiveStart(line, inComment);
+            Matcher matcher = start < 0 ? null : directive(line.substring(start));
             if (matcher == null) {
                 if (active()) {
                     emitLockedDefinitions();
                     emit(line);
                 }
                 return;
+            }
+            String prefix = line.substring(0, start);
+            if (!prefix.isBlank()) {
+                // The comments before the directive stay in the source: one may close a comment it opened.
+                if (active()) emit(prefix);
+                line = line.substring(start);
             }
 
             String directive = matcher.group(1).toLowerCase();
@@ -412,9 +419,9 @@ public final class ShaderSourcePreprocessor {
      * preprocessor, so a block comment a directive line leaves open joins the lines up to its close
      * into that directive, which goes on after it: in JCPP, {@code #if 0 /* note}, then
      * {@code note *}{@code / || 1} on the next line, holds; one that never closes takes the rest of
-     * the text. A line that starts inside a block comment is no directive: BSL documents its
-     * options with "#define FEATURE ..." lines inside comments. (JCPP would read a {@code #} right
-     * after the comment's close on that line as one; no pack the gate reads writes that.) A source
+     * the text. A {@code #} inside a block comment starts no directive: BSL documents its options
+     * with "#define FEATURE ..." lines inside comments. One after the comment's close is a directive
+     * when only whitespace and comments come before it on its line ({@link #directiveStart}). A source
      * pushed while another is read is read next, then the rest of the other: Iris pastes an
      * include's text where its directive stood before JCPP reads the program, so a comment, splice
      * or directive an include leaves open goes on into the includer's next lines. Two pastes still
@@ -428,6 +435,8 @@ public final class ShaderSourcePreprocessor {
         // A directive whose block comment is still open, and how much of it is scanned.
         private boolean joining;
         private int scanned;
+        // Whether the joined directive's first line started inside a block comment.
+        private boolean joinStartsInComment;
         // The source the pending logical line started in.
         private Source start;
 
@@ -460,7 +469,7 @@ public final class ShaderSourcePreprocessor {
                 if (line != null) return line;
             }
             if (logical.isEmpty()) return null;
-            LogicalLine last = line(logical.toString(), !joining && inComment);
+            LogicalLine last = line(logical.toString(), joining ? joinStartsInComment : inComment);
             logical.setLength(0);
             joining = false;
             return last;
@@ -492,7 +501,7 @@ public final class ShaderSourcePreprocessor {
                 }
                 joining = false;
                 inComment = false;
-                LogicalLine directive = line(logical.toString(), false);
+                LogicalLine directive = line(logical.toString(), joinStartsInComment);
                 logical.setLength(0);
                 return directive;
             }
@@ -500,8 +509,10 @@ public final class ShaderSourcePreprocessor {
                 line = logical.append(line).toString();
                 logical.setLength(0);
             }
-            if (!inComment && startsDirective(line) && inCommentAfter(line, false) && directive(line) != null) {
+            int start = directiveStart(line, inComment);
+            if (start >= 0 && inCommentAfter(line, inComment) && directive(line.substring(start)) != null) {
                 joining = true;
+                joinStartsInComment = inComment;
                 logical.append(line);
                 scanned = logical.length();
                 logical.append(' ');
@@ -550,6 +561,35 @@ public final class ShaderSourcePreprocessor {
     }
 
     /**
+     * Where the directive on {@code line} starts, or -1: at a {@code #} with only whitespace and
+     * block comments before it on the line, the first of them already open when {@code inComment}.
+     * JCPP reads a comment as whitespace, so {@code /* note *}{@code / #define X 1} defines X, and so
+     * does {@code #define X 1} after the close of a comment opened on an earlier line.
+     */
+    static int directiveStart(String line, boolean inComment) {
+        int index = 0;
+        boolean open = inComment;
+        while (index < line.length()) {
+            if (open) {
+                int end = line.indexOf("*/", index);
+                if (end < 0) return -1;
+                index = end + 2;
+                open = false;
+            } else if (line.charAt(index) == '#') {
+                return index;
+            } else if (line.startsWith("/*", index)) {
+                open = true;
+                index += 2;
+            } else if (whitespace(line.charAt(index))) {
+                index++;
+            } else {
+                return -1;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Whether the first character past leading whitespace (regex {@code \s}) is {@code #}. No other
      * line can be a directive, and most lines of a pack are not, so line scanners test this before
      * running a directive pattern.
@@ -558,12 +598,14 @@ public final class ShaderSourcePreprocessor {
         for (int index = 0; index < line.length(); index++) {
             char value = line.charAt(index);
             if (value == '#') return true;
-            if (value != ' ' && value != '\t' && value != '\n' && value != '\u000B' && value != '\f'
-                    && value != '\r') {
-                return false;
-            }
+            if (!whitespace(value)) return false;
         }
         return false;
+    }
+
+    /** Regex {@code \s}: the whitespace a directive may follow on its line. */
+    private static boolean whitespace(char value) {
+        return value == ' ' || value == '\t' || value == '\n' || value == '\u000B' || value == '\f' || value == '\r';
     }
 
     private static final class PreparationFailure extends RuntimeException {

@@ -365,6 +365,26 @@ final class BlockPropertiesResolverTest {
         assertTrue(items.deviations().contains("ITEM_PROPERTIES_CONDITION_UNSUPPORTED"), items.deviations().toString());
     }
 
+    /**
+     * A {@code #} right after a comment's close on its line starts a directive in JCPP; only a
+     * {@code #} line survives Iris's line pass with its sign, so it takes a directive name's line
+     * inside a comment. The comment text before it stays. The entries are JCPP's for this file.
+     */
+    @Test
+    void aDirectiveMayFollowACommentsClose(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                /*
+                #if 0 */ #define STONE granite
+                block.1 = STONE
+                /* c */ #define DIRT dirt
+                block.2 = DIRT
+                """);
+        Map<String, String> entries = IdMapProperties.read(root, "block.properties", Map.of()).entries();
+        assertEquals("granite", entries.get("block.1"));
+        assertEquals("DIRT", entries.get("block.2"), "a line that does not start with # loses its sign first");
+        assertEquals("c */ define DIRT dirt", entries.get("/*"));
+    }
+
     /** IdMap.parseRenderTypeMap puts layer keys in key order: a block two keys name takes the later. */
     @Test
     void aBlockTwoLayerKeysNameTakesTheLaterKey(@TempDir Path root) throws IOException {
