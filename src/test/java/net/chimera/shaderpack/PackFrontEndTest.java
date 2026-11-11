@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -13,6 +14,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -366,6 +368,39 @@ final class PackFrontEndTest {
                     condition + ": a directive's comment and what follows it stay out of the code:\n"
                             + result.source());
         }
+    }
+
+    /**
+     * A directive's open block comment takes the lines up to its close, in an inactive branch too,
+     * and the rest of the file when it never closes, as in JCPP. Joining scans each line once: it
+     * rescanned the whole joined text per line, 1.2 s for a 1600-line comment.
+     */
+    @Test
+    void aDirectiveCommentJoinsLinearlyUpToItsClose() {
+        String inactive = String.join("\n", "#version 330", "#if 0", "#define HIDDEN 1 /* open",
+                "#endif */", "#endif", "float kept = 1.0;");
+        ShaderSourcePreprocessor.Result skipped = ShaderSourcePreprocessor.prepare(Path.of("."), null, inactive,
+                Map.of());
+        assertTrue(skipped.successful() && skipped.source().contains("float kept"),
+                "the comment hides an #endif in the skipped branch: " + skipped.deviations() + "\n" + skipped.source());
+
+        String unclosed = String.join("\n", "#version 330", "float kept = 1.0;", "#define X 1 /* never closes",
+                "float swallowed = 1.0;");
+        ShaderSourcePreprocessor.Result open = ShaderSourcePreprocessor.prepare(Path.of("."), null, unclosed,
+                Map.of());
+        assertTrue(open.successful() && open.source().contains("float kept")
+                && !open.source().contains("swallowed"), "an unclosed comment takes the rest of the file:\n"
+                + open.source());
+
+        StringBuilder longComment = new StringBuilder("#version 330\n#define LONG 1 /* open\n");
+        for (int line = 0; line < 20_000; line++) {
+            longComment.append("    documentation line ").append(line).append('\n');
+        }
+        longComment.append("*/ + 1\n#if LONG == 2\nfloat kept = 1.0;\n#endif\n");
+        ShaderSourcePreprocessor.Result joined = assertTimeout(Duration.ofSeconds(5), () ->
+                ShaderSourcePreprocessor.prepare(Path.of("."), null, longComment.toString(), Map.of()));
+        assertTrue(joined.successful() && joined.source().contains("float kept"), "a long comment: "
+                + joined.deviations());
     }
 
     /** shaders.properties goes through JCPP too: a comment on its #if line is whitespace. */
