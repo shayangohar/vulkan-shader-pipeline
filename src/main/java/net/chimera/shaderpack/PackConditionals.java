@@ -21,9 +21,9 @@ final class PackConditionals {
     /**
      * A directive's text as a C preprocessor such as Iris's JCPP reads it: each block comment is
      * one space, and the text ends at a line comment. A block comment still open at the end is cut
-     * there; the GLSL preprocessor first joins the lines up to its close, as the comment spans
-     * them. Read raw, a block comment after {@code #if FOO} became operators, and the condition
-     * evaluated 0.
+     * there; the line readers (ShaderSourcePreprocessor.logicalLines) first join the lines up to
+     * its close, as the comment spans them. Read raw, a block comment after {@code #if FOO} became
+     * operators, and the condition evaluated 0.
      */
     static String withoutComments(String text) {
         StringBuilder result = new StringBuilder(text.length());
@@ -54,6 +54,39 @@ final class PackConditionals {
      */
     static String expandMacros(String text, Map<String, String> macros) {
         return expandMacros(text, macros, new HashSet<>());
+    }
+
+    /**
+     * {@code text} with its macros expanded ({@link #expandMacros}) outside its comments, which JCPP
+     * keeps as written with KEEPCOMMENTS, as Iris preprocesses a properties file. {@code inComment}
+     * is whether a block comment is open where the text starts.
+     */
+    static String expandOutsideComments(String text, boolean inComment, Map<String, String> macros) {
+        StringBuilder result = new StringBuilder(text.length());
+        int index = 0;
+        boolean open = inComment;
+        while (index < text.length()) {
+            if (open) {
+                int end = text.indexOf("*/", index);
+                int stop = end < 0 ? text.length() : end + 2;
+                result.append(text, index, stop);
+                index = stop;
+                open = false;
+                continue;
+            }
+            int line = text.indexOf("//", index);
+            int block = text.indexOf("/*", index);
+            int stop = line >= 0 && (block < 0 || line < block) ? line : block < 0 ? text.length() : block;
+            result.append(expandMacros(text.substring(index, stop), macros));
+            if (stop == line) return result.append(text, line, text.length()).toString();
+            if (stop < text.length()) {
+                result.append("/*");
+                stop += 2;
+                open = true;
+            }
+            index = stop;
+        }
+        return result.toString();
     }
 
     private static String expandMacros(String text, Map<String, String> macros, Set<String> expanding) {

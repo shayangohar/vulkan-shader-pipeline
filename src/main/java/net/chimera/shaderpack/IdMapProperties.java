@@ -12,6 +12,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.StringJoiner;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,6 +29,12 @@ final class IdMapProperties {
     /** A {@code #define} argument: the name, a {@code (} right after it for a function-like macro, the body. */
     private static final Pattern MACRO = Pattern.compile("^([A-Za-z_]\\w*)(\\()?\\s*(.*?)\\s*$");
     private static final Set<String> CONDITIONALS = Set.of("if", "ifdef", "ifndef", "elif", "else", "endif");
+    /**
+     * JCPP 1.4.14's directive names (PreprocessorCommand): PropertiesPreprocessor keeps a {@code #}
+     * line that starts with one and empties any other, a properties comment.
+     */
+    private static final List<String> JCPP_DIRECTIVES = List.of("define", "elif", "else", "endif", "error",
+            "if", "ifdef", "ifndef", "include", "line", "pragma", "undef", "warning", "include_next", "import");
     /** Stands in for a backslash while a line expands, as Iris hides backslashes from JCPP. */
     private static final String BACKSLASH = "IRIS_PASSTHROUGHBACKSLASH";
     /** A continuation whose next lines preprocessing emptied goes on past them (IdMap.loadProperties). */
@@ -80,31 +87,50 @@ final class IdMapProperties {
     }
 
     /**
-     * The file as PropertiesPreprocessor hands it on. Each line is trimmed and blank lines are dropped.
-     * A {@code #} line naming a directive acts as JCPP's directive and any other {@code #} line is a
-     * comment; both are left empty, as are the lines of an inactive branch. Every other line loses its
-     * {@code #} signs and expands the macros defined before it. A conditional still open at the end is
+     * The file as PropertiesPreprocessor hands it on. Each line is trimmed and blank lines are
+     * dropped; a {@code #} line that starts with a JCPP directive's name is kept and any other
+     * {@code #} line is emptied, and every other line loses its {@code #} signs. JCPP then reads the
+     * text as C, so a block comment runs across lines (ShaderSourcePreprocessor.logicalLines): a
+     * directive inside one is comment text, and one a directive line leaves open takes the lines up
+     * to its close into the directive, which goes on after it. An active branch's comment text is
+     * kept as written (KEEPCOMMENTS) and the rest of its text expands the macros defined before it.
+     * Directive lines and inactive branches are left empty. A conditional still open at the end is
      * kept, as JCPP keeps it.
      */
     private static String preprocess(String text, Map<String, String> macros) {
         PackConditionals.State conditions = new PackConditionals.State(macros);
         Map<String, String> expansions = new HashMap<>(macros == null ? Map.of() : macros);
         StringBuilder out = new StringBuilder(text.length());
-        for (String raw : text.split("\\R")) {
-            String line = raw.trim();
-            if (line.isEmpty()) continue;
-            if (line.startsWith("#")) {
-                Matcher directive = DIRECTIVE.matcher(line);
-                if (directive.matches()) {
-                    apply(directive.group(1), stripComments(directive.group(2)), conditions, expansions);
-                }
+        for (ShaderSourcePreprocessor.LogicalLine line : ShaderSourcePreprocessor.logicalLines(jcppInput(text))) {
+            Matcher directive = line.inComment() ? null : DIRECTIVE.matcher(line.text());
+            if (directive != null && directive.matches()) {
+                apply(directive.group(1), stripComments(directive.group(2)), conditions, expansions);
             } else if (conditions.active()) {
-                String hidden = line.replace("#", "").replace("\\", BACKSLASH);
-                out.append(PackConditionals.expandMacros(hidden, expansions).replace(BACKSLASH, "\\"));
+                out.append(PackConditionals.expandOutsideComments(line.text(), line.inComment(), expansions));
             }
             out.append('\n');
         }
-        return out.toString();
+        return out.toString().replace(BACKSLASH, "\\");
+    }
+
+    /**
+     * The text PropertiesPreprocessor gives JCPP, one line per non-blank line, each backslash hidden
+     * (so no line ends in one, and none splices).
+     */
+    private static String jcppInput(String text) {
+        StringJoiner lines = new StringJoiner("\n");
+        for (String raw : text.split("\\R")) {
+            String line = raw.trim();
+            if (line.isBlank()) continue;
+            String kept;
+            if (!line.startsWith("#")) {
+                kept = line.replace("#", "");
+            } else {
+                kept = JCPP_DIRECTIVES.stream().anyMatch(name -> line.startsWith("#" + name)) ? line : "";
+            }
+            lines.add(kept.replace("\\", BACKSLASH));
+        }
+        return lines.toString();
     }
 
     /**
