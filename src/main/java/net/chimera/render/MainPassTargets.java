@@ -62,6 +62,19 @@ final class MainPassTargets {
         return pass.packPostTargets.carriesColortex0() ? hdrAuxClearDepthRenderPass : hdrRenderPass;
     }
 
+    /**
+     * The pass that resumes {@code bound} after Reforged 0.3.5 splits it (MainPass.resumeRenderPass):
+     * Renderer.flushCmds for a readback and RenderTargetBlit for a blit end the bound pass and begin
+     * it again. A world or output pass that clears resumes with its load twin, so what was drawn
+     * before the split stays, as DefaultMainPass resumes its own passes. Any other pass resumes
+     * as it is.
+     */
+    RenderPass resumePass(RenderPass bound) {
+        if (bound == hdrRenderPass || bound == hdrAuxClearDepthRenderPass) return hdrAuxRenderPass;
+        if (bound == compositeRenderPass || bound == compositeAuxClearDepthRenderPass) return compositeAuxRenderPass;
+        return bound;
+    }
+
     void createOutputFramebuffer(int width, int height) {
         // Beryl's stable MainPass output uses VK_FORMAT_R8G8B8A8_UNORM (37).
         this.compositeFramebuffer = framebuffer(width, height, 37);
@@ -70,9 +83,9 @@ final class MainPassTargets {
     }
 
     /**
-     * A framebuffer as Reforged's builder makes one, except that its colour image also allows
-     * transfers: the post chain copies colortex0 into and out of the HDR image, and screenshots copy
-     * the output. Reforged's builder drops the transfer usage upstream VulkanMod gave colour images.
+     * A framebuffer as Reforged's builder makes one, with transfer usage on its colour image: the
+     * post chain copies colortex0 into and out of the HDR image, and screenshots copy the output.
+     * Reforged 0.3.0's builder dropped that usage; 0.3.5's gives it again, and Chimera asks for it.
      */
     private static Framebuffer framebuffer(int width, int height, int colorFormat) {
         VulkanImage color = VulkanImage.builder(width, height)

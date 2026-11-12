@@ -22,14 +22,35 @@ import java.util.function.BooleanSupplier;
  * Family batches arrive with their draw already open (FamilyRenderType) and pass through.
  */
 public final class PackHostDraws {
+    /** True while a host draw runs under the program this class chose for it. */
+    private static boolean serving;
+
     private PackHostDraws() {}
 
-    /** Runs {@code draw} under the pack program serving it; {@code drop} discards the mesh instead. */
+    /**
+     * Runs {@code draw} under the pack program serving it; {@code drop} discards the mesh instead. A
+     * draw inside one this class already serves runs as it is: Reforged 0.3.5 draws an immediate mesh
+     * by uploading it to its immediate VertexBuffer and drawing that (BufferUploaderM), so
+     * ChimeraBufferUploaderMixin's draw reaches ChimeraVertexBufferMixin's with the same mesh.
+     */
     public static void draw(ShaderInstance shader, VertexFormat format, Runnable draw, Runnable drop) {
-        if (ChimeraEntityBridge.isDrawActive()) {
+        if (serving || ChimeraEntityBridge.isDrawActive()) {
             draw.run();
             return;
         }
+        serving = true;
+        try {
+            serve(shader, format, draw, drop);
+        } finally {
+            serving = false;
+        }
+    }
+
+    static boolean serving() {
+        return serving;
+    }
+
+    private static void serve(ShaderInstance shader, VertexFormat format, Runnable draw, Runnable drop) {
         String name = shader == null ? null : shader.getName();
         ChimeraMainPass pass = ChimeraRenderer.getMainPass();
         PackPipelines.PackSky sky = pass == null ? null : ChimeraSkyBridge.programFor(name, format);

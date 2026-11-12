@@ -122,7 +122,8 @@ public final class ChimeraMainPass implements MainPass {
         state.pipeline().restore();
         if (state.viewportWidth() > 0 && state.viewportHeight() > 0) {
             Renderer.setViewport(0, 0, state.viewportWidth(), state.viewportHeight());
-            Renderer.setScissor(0, 0, state.viewportWidth(), state.viewportHeight());
+            // The pack passes set Vulkan's scissor themselves; the host's box is GL state, reapplied.
+            Renderer.applyScissor();
         }
     }
 
@@ -797,6 +798,11 @@ public final class ChimeraMainPass implements MainPass {
         return this.currentFramebuffer == this.targets.hdrFramebuffer
                 ? this.targets.hdrDepthGlId
                 : this.targets.compositeDepthGlId;
+    }
+
+    @Override
+    public RenderPass resumeRenderPass(RenderPass renderPass) {
+        return this.targets.resumePass(renderPass);
     }
 
     /** Records a depth clear to apply when the current target reopens. */
