@@ -1,13 +1,13 @@
 package net.chimera.mixin;
 
 import net.chimera.render.ChimeraDevice;
+import net.chimera.render.DeviceFeatureChain;
 import net.chimera.shaderpack.PackDevice;
 import net.vulkanmod.vulkan.device.Device;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VkDeviceCreateInfo;
-import org.lwjgl.vulkan.VkPhysicalDeviceDynamicRenderingFeaturesKHR;
 import org.lwjgl.vulkan.VkPhysicalDeviceFeatures;
 import org.lwjgl.vulkan.VkPhysicalDeviceFeatures2;
 import org.lwjgl.vulkan.VkPhysicalDeviceVulkan11Features;
@@ -106,8 +106,8 @@ public abstract class ChimeraDeviceFeaturesMixin {
     }
 
     /**
-     * Enables the offered Vulkan 1.1 features on VulkanMod's struct and chains the offered Vulkan
-     * 1.2 features and, when the device offers it, the dynamic rendering feature after it.
+     * Enables the offered Vulkan 1.1 features on VulkanMod's struct, and records the offered Vulkan
+     * 1.2 features and dynamic rendering, which chimera$chainPackFeatures puts on the chain.
      */
     @Redirect(
             method = "createLogicalDevice",
@@ -117,7 +117,7 @@ public abstract class ChimeraDeviceFeaturesMixin {
                             + "Lorg/lwjgl/vulkan/VkDeviceCreateInfo;"),
             require = 1
     )
-    private static VkDeviceCreateInfo chimera$chainDynamicRendering(
+    private static VkDeviceCreateInfo chimera$enableVulkan11(
             VkDeviceCreateInfo info, VkPhysicalDeviceVulkan11Features vulkan11
     ) {
         info.pNext(vulkan11);
@@ -126,28 +126,34 @@ public abstract class ChimeraDeviceFeaturesMixin {
             if (feature.read().test(vulkan11)) chimera$features.add(feature.name());
         }
         if (vulkan11.shaderDrawParameters()) chimera$features.add("shaderDrawParameters");
-        // Like the dynamic rendering struct below, it lives on the caller's stack frame.
-        VkPhysicalDeviceVulkan12Features vulkan12 = VkPhysicalDeviceVulkan12Features.calloc(MemoryStack.stackGet())
-                .sType$Default();
-        for (ChimeraDevice.Feature<VkPhysicalDeviceVulkan12Features> feature : ChimeraDevice.VULKAN12_FEATURES) {
-            if (!chimera$offered.contains(feature.name())) continue;
-            feature.write().accept(vulkan12, true);
-            chimera$features.add(feature.name());
-        }
-        if (ChimeraDevice.VULKAN12_FEATURES.stream().anyMatch(feature -> feature.read().test(vulkan12))) {
-            info.pNext(vulkan12);
-        }
+        ChimeraDevice.VULKAN12_FEATURES.stream().map(ChimeraDevice.Feature::name)
+                .filter(chimera$offered::contains).forEach(chimera$features::add);
         boolean supported = ChimeraDevice.supportsExtension(DeviceManager.physicalDevice,
                 VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
         ChimeraDevice.setDynamicRendering(supported);
-        if (supported) {
-            // The struct lives on the caller's stack frame, which outlasts vkCreateDevice.
-            info.pNext(VkPhysicalDeviceDynamicRenderingFeaturesKHR.calloc(MemoryStack.stackGet())
-                    .sType$Default().dynamicRendering(true));
-        } else {
+        if (!supported) {
             LOGGER.error("[chimera] the device lacks {}; shader packs cannot run",
                     VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME);
         }
+        return info;
+    }
+
+    /**
+     * Puts the offered Vulkan 1.2 features and dynamic rendering on the chain VulkanMod hands
+     * vkCreateDevice, once the host has chained all of its own structs (DeviceFeatureChain, audit
+     * LD5). New structs live on the caller's stack frame, which outlasts vkCreateDevice.
+     */
+    @ModifyArg(
+            method = "createLogicalDevice",
+            at = @At(value = "INVOKE", target =
+                    "Lorg/lwjgl/vulkan/VK10;vkCreateDevice(Lorg/lwjgl/vulkan/VkPhysicalDevice;"
+                            + "Lorg/lwjgl/vulkan/VkDeviceCreateInfo;Lorg/lwjgl/vulkan/VkAllocationCallbacks;"
+                            + "Lorg/lwjgl/PointerBuffer;)I"),
+            index = 1,
+            require = 1
+    )
+    private static VkDeviceCreateInfo chimera$chainPackFeatures(VkDeviceCreateInfo info) {
+        DeviceFeatureChain.apply(info, MemoryStack.stackGet(), chimera$offered, ChimeraDevice.dynamicRendering());
         return info;
     }
 
