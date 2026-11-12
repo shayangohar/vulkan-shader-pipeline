@@ -5,10 +5,7 @@ import net.chimera.shaderpack.SpirvOutputWrites;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.Map;
 import java.util.Objects;
-import java.util.WeakHashMap;
 
 /**
  * Render-thread-only context used by the narrow Chimera GraphicsPipeline mixin.
@@ -25,25 +22,19 @@ public final class MrtPipelineContext {
 
     /**
      * This thread's contracts: the pass's ({@link #begin}), and, while VulkanMod creates one of a
-     * pipeline's variants ({@link #beginPipeline}), that pipeline's registered contract, the output
-     * locations its fragment stage writes and its blends for VulkanMod's own render passes. The
-     * pipeline's contract stands in for the pass's during its creation.
+     * pipeline's variants ({@link #beginPipeline}), that pipeline's side: its registered contract,
+     * which stands in for the pass's during the creation, the output locations its fragment stage
+     * writes and its blends for VulkanMod's own render passes.
      */
-    private record Scope(Contract pass, Contract pipeline, Integer writes, PackBlendPlan.Mode[] hostPassBlends) {
-        static final Scope EMPTY = new Scope(null, null, null, null);
+    private record Scope(Contract pass, PipelineSide pipeline) {
+        static final Scope EMPTY = new Scope(null, null);
 
         Contract contract() {
-            return this.pipeline != null ? this.pipeline : this.pass;
+            return this.pipeline != null && this.pipeline.contract != null ? this.pipeline.contract : this.pass;
         }
     }
 
     private static final ThreadLocal<Scope> SCOPE = ThreadLocal.withInitial(() -> Scope.EMPTY);
-    private static final Map<GraphicsPipeline, Contract> REGISTERED =
-            Collections.synchronizedMap(new WeakHashMap<>());
-    private static final Map<GraphicsPipeline, Integer> WRITTEN_OUTPUTS =
-            Collections.synchronizedMap(new WeakHashMap<>());
-    private static final Map<GraphicsPipeline, PackBlendPlan.Mode[]> HOST_PASS_BLENDS =
-            Collections.synchronizedMap(new WeakHashMap<>());
 
     private MrtPipelineContext() {}
 
@@ -61,8 +52,7 @@ public final class MrtPipelineContext {
         if (formats == null || formats.length < 1 || formats.length > limit) {
             throw new IllegalArgumentException("post MRT exceeds the safe attachment limit " + limit);
         }
-        Scope scope = SCOPE.get();
-        SCOPE.set(new Scope(contract(formats, blends), scope.pipeline(), scope.writes(), scope.hostPassBlends()));
+        SCOPE.set(new Scope(contract(formats, blends), SCOPE.get().pipeline()));
     }
 
     /** Enables the two-output geometry contract: pack color plus coverage depth. */
@@ -91,12 +81,12 @@ public final class MrtPipelineContext {
     public static void register(GraphicsPipeline pipeline, int[] formats, PackBlendPlan.Mode[] blends) {
         if (pipeline == null) throw new IllegalArgumentException("pipeline is required");
         validate(formats, LOGICAL_LIMIT);
-        REGISTERED.put(pipeline, contract(formats, blends));
+        PipelineSide.of(pipeline).contract = contract(formats, blends);
     }
 
     /** Records the output locations {@code pipeline}'s fragment stage writes (SpirvOutputWrites). */
     public static void recordWrittenOutputs(GraphicsPipeline pipeline, int locations) {
-        if (pipeline != null) WRITTEN_OUTPUTS.put(pipeline, locations);
+        if (pipeline != null) PipelineSide.of(pipeline).writtenOutputs = locations;
     }
 
     /**
@@ -105,14 +95,7 @@ public final class MrtPipelineContext {
      */
     public static void registerHostPassBlends(GraphicsPipeline pipeline, PackBlendPlan.Mode[] blends) {
         if (pipeline == null || blends == null || Arrays.stream(blends).allMatch(Objects::isNull)) return;
-        HOST_PASS_BLENDS.put(pipeline, blends.clone());
-    }
-
-    public static void unregister(GraphicsPipeline pipeline) {
-        if (pipeline == null) return;
-        REGISTERED.remove(pipeline);
-        WRITTEN_OUTPUTS.remove(pipeline);
-        HOST_PASS_BLENDS.remove(pipeline);
+        PipelineSide.of(pipeline).hostPassBlends = blends.clone();
     }
 
     /**
@@ -121,19 +104,19 @@ public final class MrtPipelineContext {
      * the creation ends.
      */
     public static void beginPipeline(GraphicsPipeline pipeline) {
-        beginPipeline(REGISTERED.get(pipeline), WRITTEN_OUTPUTS.get(pipeline), HOST_PASS_BLENDS.get(pipeline));
+        beginPipeline(pipeline == null ? null : PipelineSide.of(pipeline));
     }
 
-    /** Opens a creation scope with the creating pipeline's registered state; null for none. */
-    static void beginPipeline(Contract contract, Integer writes, PackBlendPlan.Mode[] hostPassBlends) {
-        SCOPE.set(new Scope(SCOPE.get().pass(), contract, writes, hostPassBlends));
+    /** Opens a creation scope with the creating pipeline's side; null for none. */
+    static void beginPipeline(PipelineSide side) {
+        SCOPE.set(new Scope(SCOPE.get().pass(), side));
     }
 
     /** Closes the creation scope: the pass's contract applies again. */
     public static void endPipeline() {
         Contract pass = SCOPE.get().pass();
         if (pass == null) SCOPE.remove();
-        else SCOPE.set(new Scope(pass, null, null, null));
+        else SCOPE.set(new Scope(pass, null));
     }
 
     public static int[] colorFormats() {
@@ -149,8 +132,8 @@ public final class MrtPipelineContext {
 
     /** The pack blend modes for the pipeline being created in a VulkanMod render pass, or null. */
     public static PackBlendPlan.Mode[] hostPassBlends() {
-        PackBlendPlan.Mode[] blends = SCOPE.get().hostPassBlends();
-        return blends == null ? null : blends.clone();
+        PipelineSide side = SCOPE.get().pipeline();
+        return side == null || side.hostPassBlends == null ? null : side.hostPassBlends.clone();
     }
 
     /**
@@ -158,8 +141,8 @@ public final class MrtPipelineContext {
      * that is not recorded (Chimera's own pipelines, VulkanMod's).
      */
     public static int writtenOutputs() {
-        Integer locations = SCOPE.get().writes();
-        return locations == null ? SpirvOutputWrites.ALL : locations;
+        PipelineSide side = SCOPE.get().pipeline();
+        return side == null ? SpirvOutputWrites.ALL : side.writtenOutputs;
     }
 
     static Contract contract(int[] formats, PackBlendPlan.Mode[] blends) {

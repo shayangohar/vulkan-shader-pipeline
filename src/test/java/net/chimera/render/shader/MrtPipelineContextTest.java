@@ -64,8 +64,8 @@ final class MrtPipelineContextTest {
     void endPipelineRestoresThePassContract() {
         try {
             MrtPipelineContext.begin(new int[] {37}, 8);
-            MrtPipelineContext.beginPipeline(MrtPipelineContext.contract(new int[] {97}, null), 0b1,
-                    new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF});
+            MrtPipelineContext.beginPipeline(side(MrtPipelineContext.contract(new int[] {97}, null), 0b1,
+                    new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF}));
             assertArrayEquals(new int[] {97}, MrtPipelineContext.colorFormats(), "the pipeline's own contract");
             assertEquals(0b1, MrtPipelineContext.writtenOutputs(), "the pipeline's written outputs");
             assertArrayEquals(new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF}, MrtPipelineContext.hostPassBlends());
@@ -78,13 +78,15 @@ final class MrtPipelineContextTest {
         }
     }
 
-    /** A creation without a registered contract renders into the pass's. */
+    /** A creation without a registered contract renders into the pass's, with every output written. */
     @Test
     void anUnregisteredPipelineTakesThePassContract() {
         try {
             MrtPipelineContext.begin(new int[] {37}, 8);
-            MrtPipelineContext.beginPipeline(null, null, null);
+            MrtPipelineContext.beginPipeline(new PipelineSide());
             assertArrayEquals(new int[] {37}, MrtPipelineContext.colorFormats());
+            assertEquals(SpirvOutputWrites.ALL, MrtPipelineContext.writtenOutputs());
+            assertNull(MrtPipelineContext.hostPassBlends());
             MrtPipelineContext.endPipeline();
             assertArrayEquals(new int[] {37}, MrtPipelineContext.colorFormats());
         } finally {
@@ -97,8 +99,8 @@ final class MrtPipelineContextTest {
     void endClearsTheScopeWithTheContract() {
         try {
             MrtPipelineContext.begin(new int[] {97}, 8);
-            MrtPipelineContext.beginPipeline(MrtPipelineContext.contract(new int[] {37}, null), 0b1,
-                    new PackBlendPlan.Mode[1]);
+            MrtPipelineContext.beginPipeline(side(MrtPipelineContext.contract(new int[] {37}, null), 0b1,
+                    new PackBlendPlan.Mode[1]));
             MrtPipelineContext.end();
             assertEquals(SpirvOutputWrites.ALL, MrtPipelineContext.writtenOutputs());
             assertNull(MrtPipelineContext.hostPassBlends());
@@ -163,5 +165,31 @@ final class MrtPipelineContextTest {
             }
         }
         return -1;
+    }
+
+    /** A pipeline side as a pack load leaves it: registered contract, written outputs, host-pass blends. */
+    private static PipelineSide side(MrtPipelineContext.Contract contract, int writes, PackBlendPlan.Mode[] blends) {
+        PipelineSide side = new PipelineSide();
+        side.contract = contract;
+        side.writtenOutputs = writes;
+        side.hostPassBlends = blends;
+        return side;
+    }
+
+    /**
+     * The per-pipeline state is a field every GraphicsPipeline carries (ChimeraPipelineSideMixin),
+     * not maps keyed by the pipeline, so it goes with the pipeline and a draw reads it without a lookup.
+     */
+    @Test
+    void everyGraphicsPipelineCarriesItsSide() throws IOException {
+        // MixinTargetAuditTest checks that it is registered and resolves against GraphicsPipeline.
+        ClassNode mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraPipelineSideMixin");
+        assertTrue(mixin.interfaces.contains("net/chimera/render/shader/PipelineSide$Holder"));
+        for (String owner : List.of(CONTEXT, "net/chimera/render/shader/IrisDrawState",
+                "net/chimera/render/shader/GeometryStageModules")) {
+            ClassNode node = MixinBytecode.nativeClass(owner);
+            assertTrue(node.fields.stream().noneMatch(field -> field.desc.equals("Ljava/util/Map;")),
+                    owner + " keeps no map keyed by the pipeline");
+        }
     }
 }

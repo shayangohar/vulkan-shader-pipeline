@@ -10,6 +10,7 @@ import net.chimera.shaderpack.UniformRegistry;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineState;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
@@ -297,7 +298,7 @@ public final class PackUniformProvider {
             new UniformKey("gtextureSize", "ivec2"), new UniformKey("blendFunc", "ivec4"));
 
     /** Records a pack pipeline's {@code blend.<program>} directive for its draws' blendFunc. */
-    public static void registerProgramBlend(Pipeline pipeline, PackBlendPlan.Mode programBlend) {
+    public static void registerProgramBlend(GraphicsPipeline pipeline, PackBlendPlan.Mode programBlend) {
         IrisDrawState.registerProgramBlend(pipeline, programBlend);
     }
 

@@ -41,6 +41,7 @@
     "QuadSorterMixin",
     "GraphicsPipelineMrtMixin",
     "GraphicsPipelineGeometryStageMixin",
+    "ChimeraPipelineSideMixin",
     "ChimeraBufferBuilderMixin",
     "ChimeraByteBufferBuilderAccessor",
     "ChimeraPipelineBuilderAccessor",
