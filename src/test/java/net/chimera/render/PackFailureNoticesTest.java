@@ -132,6 +132,21 @@ final class PackFailureNoticesTest {
     }
 
     @Test
+    void theLabelSaysFallbackOrHowManyWereSkipped() {
+        PackFailureNotices.beginLoad("Pack", null);
+        assertEquals("", PackFailureNotices.label("Pack"));
+        PackFailureNotices.record(skipped("Pack", "final", "x"));
+        PackFailureNotices.record(skipped("Pack", "composite5", "x"));
+        assertEquals(" (2 skipped)", PackFailureNotices.label("Pack"));
+        assertEquals("", PackFailureNotices.label("Other"), "another pack's failures are not this one's");
+        PackFailureNotices.record(new PackFailureNotices.Failure("Pack", "pack", "load",
+                PackFailureNotices.Outcome.VANILLA, "it is not supported yet.", "info"));
+        assertEquals(" (fallback)", PackFailureNotices.label("Pack"), "as Iris labels a pack that fell back");
+        PackFailureNotices.beginLoad("Pack", null);
+        assertEquals("", PackFailureNotices.label("Pack"), "a new load starts clean");
+    }
+
+    @Test
     void aReasonIsOneShortLine() {
         assertEquals("first", PackFailureNotices.oneLine(" first\nsecond"));
         assertEquals("unknown", PackFailureNotices.oneLine(null));

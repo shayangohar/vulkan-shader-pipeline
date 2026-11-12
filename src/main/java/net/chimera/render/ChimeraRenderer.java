@@ -187,6 +187,17 @@ public final class ChimeraRenderer {
         return failures.isEmpty() ? status : status + "\nFailures this load:\n" + String.join("\n", failures);
     }
 
+    /**
+     * F3's lines, below the system information where Iris puts its own: the pack, and whether it
+     * fell back to vanilla or Chimera skipped programs of it (PackFailureNotices.label).
+     */
+    public static List<String> debugLines() {
+        Path pack = selectedPackPath();
+        if (pack == null) return List.of("", "[Chimera] Shaders are disabled");
+        String name = PackSessionLifecycle.packLabel(pack);
+        return List.of("", "[Chimera] Shaderpack: " + name + PackFailureNotices.label(name));
+    }
+
     /** Applies pending pack work before VulkanMod begins a new main command buffer. */
     public static void beforeMainCommandBuffer() {
         if (!ready || chimeraPass == null) {

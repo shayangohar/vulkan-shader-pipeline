@@ -185,6 +185,21 @@ public final class PackFailureNotices {
         }
     }
 
+    /**
+     * What F3 and the shader pack screen add after {@code pack}'s name: " (fallback)" when the pack
+     * fell back to vanilla, as Iris's label says, " (N skipped)" when Chimera skipped programs of it
+     * this load, and nothing otherwise.
+     */
+    public static String label(String pack) {
+        int skipped = 0;
+        for (Failure failure : current()) {
+            if (!failure.pack().equals(pack)) continue;
+            if (failure.outcome() == Outcome.VANILLA) return " (fallback)";
+            if (failure.outcome() == Outcome.SKIPPED) skipped++;
+        }
+        return skipped == 0 ? "" : " (" + skipped + " skipped)";
+    }
+
     /** The status command's lines for the current pack's failures; empty without any. */
     public static List<String> statusLines() {
         List<String> lines = new ArrayList<>();
