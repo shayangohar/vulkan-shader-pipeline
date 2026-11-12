@@ -217,6 +217,7 @@ public final class ChimeraMainPass implements MainPass {
     ChimeraMainPass(Path initialPackPath) {
         this.sessions.packPath = initialPackPath;
         this.levelPhase = true;
+        PackFailureNotices.setReporter(new PackFailureReporter(this));
         resources.createResources();
         // VulkanMod already resizes the current main pass; this covers the
         // frames where the host owns it, so Chimera's targets follow the

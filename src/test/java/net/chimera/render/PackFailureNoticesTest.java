@@ -2,7 +2,10 @@ package net.chimera.render;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -99,6 +102,33 @@ final class PackFailureNoticesTest {
         PackFailureNotices.publish();
         assertEquals(1, PackFailureNotices.current().size());
         assertEquals(1, PackFailureNotices.held().size(), "told once a game");
+    }
+
+    @Test
+    void eachToldFailureGetsARedactedReportItsLineLinks(@TempDir Path reports) {
+        List<PackFailureNotices.Failure> written = new ArrayList<>();
+        PackFailureNotices.setReporter(new PackFailureNotices.Reporter() {
+            @Override
+            public Path write(PackFailureNotices.Failure failure) {
+                written.add(failure);
+                return reports.resolve("report-" + written.size() + ".txt");
+            }
+
+            @Override
+            public String redact(String text) {
+                return text.replace("C:\\Users\\Alex", "~");
+            }
+        });
+        PackFailureNotices.beginLoad("Pack", null);
+        PackFailureNotices.record(new PackFailureNotices.Failure("Pack", "final", "shader-compilation",
+                PackFailureNotices.Outcome.SKIPPED, "compile error", "at C:\\Users\\Alex\\shaderpacks"));
+        for (int index = 0; index < 4; index++) PackFailureNotices.record(skipped("Pack", "composite" + index, "x"));
+        PackFailureNotices.publish();
+        assertEquals(5, written.size(), "a folded failure still gets its report");
+        PackFailureNotices.Line first = PackFailureNotices.held().get(0);
+        assertEquals(reports.resolve("report-1.txt"), first.report());
+        assertEquals("at ~\\shaderpacks\nReport: chimera/reports/report-1.txt", first.info());
+        assertNull(PackFailureNotices.held().get(PackFailureNotices.LINES_PER_PUBLISH - 1).report());
     }
 
     @Test

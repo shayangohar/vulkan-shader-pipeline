@@ -59,10 +59,19 @@ public final class PackFailureNotices {
     }
 
     /**
-     * One chat line: its text, whether it says the pack stopped (red) or not (yellow), and the text
-     * its Copy Info copies, or null for a line without one.
+     * One chat line: its text, whether it says the pack stopped (red) or not (yellow), the text its
+     * Copy Info copies (null for a line without one), and its report file (null without one).
      */
-    record Line(String text, boolean severe, String info) {}
+    record Line(String text, boolean severe, String info, Path report) {}
+
+    /** Writes a failure's report file, and keeps the user out of what is shared (PackFailureReport). */
+    public interface Reporter {
+        /** Writes {@code failure}'s report; null when it could not be written. */
+        Path write(Failure failure);
+
+        /** {@code text} with no user in it. */
+        String redact(String text);
+    }
 
     /** One publish posts this many lines; the rest fold into one that points at the status command. */
     static final int LINES_PER_PUBLISH = 3;
@@ -79,8 +88,15 @@ public final class PackFailureNotices {
     private static final List<Line> held = new ArrayList<>();
     private static String currentPack;
     private static Path currentShadersDir;
+    /** The running game's reports; null in tests, which write none. */
+    private static volatile Reporter reporter;
 
     private PackFailureNotices() {}
+
+    /** Sets who writes each told failure's report (the main pass, as it starts). */
+    public static void setReporter(Reporter value) {
+        reporter = value;
+    }
 
     /**
      * A load of {@code pack} begins, from {@code shadersDir}: the status command lists this load's
@@ -120,8 +136,9 @@ public final class PackFailureNotices {
     }
 
     /**
-     * Queues a line for each failure recorded since the last publish: at most
-     * {@link #LINES_PER_PUBLISH}, the rest folded into one line.
+     * Writes each failure recorded since the last publish its report, and queues its line: at most
+     * {@link #LINES_PER_PUBLISH}, the rest folded into one line. Call once the load or frame that
+     * found them has its conformance report, which each report carries.
      */
     public static void publish() {
         List<Failure> told;
@@ -131,12 +148,17 @@ public final class PackFailureNotices {
             pending.clear();
             told.forEach(failure -> announced.add(failure.key()));
         }
+        Reporter writer = reporter;
         List<Line> lines = new ArrayList<>();
         int shown = told.size() <= LINES_PER_PUBLISH ? told.size() : LINES_PER_PUBLISH - 1;
-        for (int index = 0; index < shown; index++) lines.add(line(told.get(index)));
+        for (int index = 0; index < told.size(); index++) {
+            Failure failure = told.get(index);
+            Path report = writer == null ? null : writer.write(failure);
+            if (index < shown) lines.add(line(failure, report, writer));
+        }
         if (shown < told.size()) {
             lines.add(new Line("[Chimera] " + told.get(shown).pack() + ": " + (told.size() - shown)
-                    + " more failures; /chimera pack status lists them.", false, null));
+                    + " more failures; /chimera pack status lists them.", false, null, null));
         }
         synchronized (LOCK) {
             held.addAll(lines);
@@ -173,8 +195,17 @@ public final class PackFailureNotices {
         return lines;
     }
 
-    /** One failure's chat line. */
+    /** One failure's chat line, without a report. */
     static Line line(Failure failure) {
+        return line(failure, null, null);
+    }
+
+    /**
+     * One failure's chat line. Its Copy Info names the {@code report} file, and {@code writer}
+     * keeps the user out of what it copies; either may be null.
+     */
+    static Line line(Failure failure, Path report, Reporter writer) {
+        String info = failure.info() + (report == null ? "" : "\nReport: chimera/reports/" + report.getFileName());
         String text = switch (failure.outcome()) {
             case SKIPPED -> "[Chimera] " + failure.pack() + ": Chimera skipped " + failure.subject() + " ("
                     + failure.reason() + "); the rest of the pack runs. ";
@@ -185,23 +216,37 @@ public final class PackFailureNotices {
                     + (failure.subject().equals("pack") ? "" : " (" + failure.subject() + ")") + ": "
                     + failure.reason() + " ";
         };
-        return new Line(text, failure.outcome() != Outcome.SKIPPED, failure.info());
+        boolean severe = failure.outcome() != Outcome.SKIPPED;
+        return writer == null ? new Line(text, severe, info, report)
+                : new Line(writer.redact(text), severe, writer.redact(info), report);
     }
 
     /**
-     * A line as chat shows it, ending with Iris's Copy Info link: underlined and blue, it copies the
-     * line's info, and hovering says so. Built on the client thread, where the chat classes are ready.
+     * A line as chat shows it, ending with Iris's Copy Info link (underlined and blue, it copies the
+     * line's info, and hovering says so) and a link that opens its report. Built on the client
+     * thread, where the chat classes are ready.
      */
     static Component component(Line line) {
         MutableComponent text = Component.literal(line.text())
                 .withStyle(line.severe() ? ChatFormatting.RED : ChatFormatting.YELLOW);
-        if (line.info() == null) return text;
-        return text.append(Component.literal("[Copy Info]").withStyle(Style.EMPTY
+        if (line.info() != null) {
+            text.append(link("[Copy Info]", new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, line.info()),
+                    "Click to copy to clipboard"));
+        }
+        if (line.report() != null) {
+            text.append(Component.literal(" ")).append(link("[Report]",
+                    new ClickEvent(ClickEvent.Action.OPEN_FILE, line.report().toAbsolutePath().toString()),
+                    "Open " + line.report().getFileName()));
+        }
+        return text;
+    }
+
+    private static Component link(String label, ClickEvent click, String hover) {
+        return Component.literal(label).withStyle(Style.EMPTY
                 .withColor(ChatFormatting.BLUE)
                 .withUnderlined(true)
-                .withClickEvent(new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, line.info()))
-                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT,
-                        Component.literal("Click to copy to clipboard")))));
+                .withClickEvent(click)
+                .withHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, Component.literal(hover))));
     }
 
     private static String describe(Outcome outcome) {
@@ -233,6 +278,7 @@ public final class PackFailureNotices {
             currentPack = null;
             currentShadersDir = null;
         }
+        reporter = null;
     }
 
     /** The lines waiting for a player; tests only. */
