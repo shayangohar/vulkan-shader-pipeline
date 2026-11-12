@@ -348,7 +348,13 @@ final class PackSessionLifecycle {
                 preparePackSessionReplacement(false);
                 this.packPath = previousPath;
                 this.currentDimension = previousDimension;
-                pass.resources.createResources();
+                // Still the pack change: its message says what runs, not a second one for the rollback.
+                this.changingPack = true;
+                try {
+                    pass.resources.createResources();
+                } finally {
+                    this.changingPack = false;
+                }
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;
                 LOGGER.info("[chimera] pack change rolled back: {}", packLabel(previousPath));

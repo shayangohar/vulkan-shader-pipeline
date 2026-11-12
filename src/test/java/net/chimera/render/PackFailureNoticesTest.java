@@ -70,6 +70,48 @@ final class PackFailureNoticesTest {
     }
 
     @Test
+    void aRepeatedFallbackStillCarriesItsRootCause() {
+        PackFailureNotices.beginLoad("Insanity", null);
+        PackFailureNotices.record(skipped("Insanity", "gbuffers_entities", "shader-compilation"));
+        PackFailureNotices.publish();
+        // The player changes an option and applies again: the skip was told, the fallback is new.
+        PackFailureNotices.beginLoad("Insanity", null);
+        PackFailureNotices.record(skipped("Insanity", "gbuffers_entities", "shader-compilation"));
+        PackFailureNotices.record(new PackFailureNotices.Failure("Insanity", "pack", "load",
+                PackFailureNotices.Outcome.VANILLA, "it is not supported yet (entity could not load).", "info"));
+        PackFailureNotices.publish();
+        List<PackFailureNotices.Line> held = PackFailureNotices.held();
+        assertEquals(2, held.size());
+        assertTrue(held.get(1).info().contains("Skipped before it:\n- gbuffers_entities: pack_gbuffers_entities.fsh"),
+                held.get(1).info());
+    }
+
+    @Test
+    void aFailedPackChangeTakesInTheSkipsItsRollbackLeftUntold() {
+        PackFailureNotices.beginLoad("B.zip", null);
+        PackFailureNotices.record(skipped("B.zip", "final", "shader-compilation"));
+        // A contract defect fails B's load; the rollback loads A, which publishes as it ends.
+        PackFailureNotices.beginLoad("A.zip", null);
+        PackFailureNotices.publish();
+        assertTrue(PackFailureNotices.held().isEmpty(), "B's skip waits for B's own notice");
+        PackFailureNotices.record(new PackFailureNotices.Failure("B.zip", "pack", "load",
+                PackFailureNotices.Outcome.LOAD_FAILED, "contract defect. Previous pack restored.", "info"));
+        PackFailureNotices.publish();
+        List<PackFailureNotices.Line> held = PackFailureNotices.held();
+        assertEquals(1, held.size());
+        assertTrue(held.get(0).info().contains("Skipped before it:\n- final:"), held.get(0).info());
+    }
+
+    @Test
+    void aFailedDimensionVariantDoesNotLabelThePackThatStillRuns() {
+        PackFailureNotices.beginLoad("Pack", null);
+        PackFailureNotices.record(new PackFailureNotices.Failure("Pack", "dimension minecraft:the_nether",
+                "dimension change", PackFailureNotices.Outcome.LOAD_FAILED, "boom. The overworld variant still runs.",
+                "info"));
+        assertEquals("", PackFailureNotices.label("Pack"));
+    }
+
+    @Test
     void aWholePackFailureIsToldEachTimeItHappens() {
         for (int load = 0; load < 2; load++) {
             PackFailureNotices.beginLoad("Previous", null);

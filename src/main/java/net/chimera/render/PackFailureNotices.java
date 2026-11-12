@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -140,8 +141,9 @@ public final class PackFailureNotices {
      * Records a failure for the next publish to tell. Within a load the first record of a program's
      * skip wins: a build failure, with its compiler's message, before the load's report says the
      * program did not run. A skip told before, for the same reason, is not told again. A whole-pack
-     * failure, which the player sees, is told each time, and takes in the skips not yet told:
-     * "skipped X" beside "fell back to vanilla" would contradict it.
+     * failure, which the player sees, is told each time, and takes in its load's skips of the pack,
+     * the root cause, whether told before or not: "skipped X" beside "fell back to vanilla" would
+     * contradict it.
      */
     public static void record(Failure failure) {
         synchronized (LOCK) {
@@ -155,9 +157,12 @@ public final class PackFailureNotices {
                 if (!announced.contains(failure.toldKey())) pending.add(failure);
                 return;
             }
-            List<Failure> skips = pending.stream().filter(skip -> skip.outcome() == Outcome.SKIPPED
-                    && skip.pack().equals(failure.pack())).toList();
-            pending.removeAll(skips);
+            // This load's skips are in current; a pack change's, after its rollback began another
+            // load, wait in pending alone (publish keeps them).
+            Set<Failure> skips = new LinkedHashSet<>();
+            current.stream().filter(skip -> isSkipOf(skip, failure.pack())).forEach(skips::add);
+            pending.stream().filter(skip -> isSkipOf(skip, failure.pack())).forEach(skips::add);
+            pending.removeIf(skip -> isSkipOf(skip, failure.pack()));
             skips.forEach(skip -> announced.add(skip.toldKey()));
             StringBuilder more = new StringBuilder();
             if (!skips.isEmpty()) more.append("\n\nSkipped before it:");
@@ -169,6 +174,10 @@ public final class PackFailureNotices {
         }
     }
 
+    private static boolean isSkipOf(Failure failure, String pack) {
+        return failure.outcome() == Outcome.SKIPPED && failure.pack().equals(pack);
+    }
+
     /**
      * Writes each failure recorded since the last publish its report, and queues its line: at most
      * {@link #LINES_PER_PUBLISH}, the rest folded into one line. Call once the load or frame that
@@ -177,9 +186,14 @@ public final class PackFailureNotices {
     public static void publish() {
         List<Failure> told;
         synchronized (LOCK) {
-            if (pending.isEmpty()) return;
-            told = List.copyOf(pending);
-            pending.clear();
+            // Another pack's skips belong to a load that did not finish: a pack change rolled back,
+            // whose failed-load notice takes them in.
+            String running = currentPack == null ? "?" : currentPack;
+            told = pending.stream()
+                    .filter(failure -> failure.outcome() != Outcome.SKIPPED || failure.pack().equals(running))
+                    .toList();
+            if (told.isEmpty()) return;
+            pending.removeAll(told);
             told.forEach(failure -> announced.add(failure.toldKey()));
         }
         Reporter writer = reporter;
@@ -233,7 +247,11 @@ public final class PackFailureNotices {
         int skipped = 0;
         for (Failure failure : current()) {
             if (!failure.pack().equals(pack)) continue;
-            if (failure.outcome() != Outcome.SKIPPED) return " (fallback)";
+            // A failed dimension variant leaves the last one running: only the whole pack's counts.
+            if (failure.outcome() == Outcome.VANILLA
+                    || failure.outcome() == Outcome.LOAD_FAILED && failure.subject().equals("pack")) {
+                return " (fallback)";
+            }
             if (failure.outcome() == Outcome.SKIPPED) skipped++;
         }
         return skipped == 0 ? "" : " (" + skipped + " skipped)";
