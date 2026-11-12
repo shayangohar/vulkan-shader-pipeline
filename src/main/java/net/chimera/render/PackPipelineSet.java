@@ -1,7 +1,9 @@
 package net.chimera.render;
 
 import net.chimera.render.shader.ChimeraEntityBridge;
+import net.chimera.render.shader.InstalledLanes;
 import net.chimera.shaderpack.GeometryOutputPlan;
+import net.chimera.shaderpack.PackEntityIdResolver;
 import net.chimera.shaderpack.PackPipelines;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 
@@ -217,5 +219,40 @@ final class PackPipelineSet {
             case BEACON_BEAM -> this.beaconBeam;
             default -> this.hostLayout.get(family);
         };
+    }
+
+    /** The lanes these pipelines give the family bridge, each field into its namesake. */
+    InstalledLanes lanes(PackEntityIdResolver entityIds) {
+        EnumMap<ChimeraEntityBridge.Family, GraphicsPipeline> hostLayoutPipelines =
+                new EnumMap<>(ChimeraEntityBridge.Family.class);
+        this.hostLayout.forEach((family, lane) -> hostLayoutPipelines.put(family, pipeline(lane)));
+        return new InstalledLanes(
+                pipeline(this.entity),
+                pipeline(this.translucentEntity),
+                pipeline(this.translucentEntityText),
+                pipeline(this.spiderEyes),
+                pipeline(this.block),
+                pipeline(this.blockTranslucent),
+                pipeline(this.blockTranslucentText),
+                pipeline(this.movingBlock),
+                pipeline(this.damagedBlock),
+                pipeline(this.beaconBeam),
+                this.hand,
+                this.handWater,
+                pipeline(this.particle),
+                pipeline(this.translucentParticle),
+                hostLayoutPipelines,
+                pipeline(this.shadowEntities),
+                pipeline(this.shadowMovingBlock),
+                pipeline(this.shadowBlock),
+                entityIds);
+    }
+
+    private static GraphicsPipeline pipeline(PackPipelines.PackEntity entity) {
+        return entity == null ? null : entity.pipeline();
+    }
+
+    private static GraphicsPipeline pipeline(PackPipelines.PackParticle lane) {
+        return lane == null ? null : lane.pipeline();
     }
 }

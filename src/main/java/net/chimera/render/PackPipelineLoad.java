@@ -102,17 +102,7 @@ final class PackPipelineLoad {
 
     /** Hands the installed entity, block, hand, particle and caster pipelines to the family bridge. */
     private void installFamilyBridge() {
-        ChimeraEntityBridge.install(pass.pipelines.entity, pass.pipelines.translucentEntity,
-                pass.pipelines.spiderEyes, pass.pipelines.block, pass.pipelines.damagedBlock,
-                pass.pipelines.hand, pass.pipelines.handWater, pass.pipelines.particle,
-                pass.pipelines.translucentParticle,
-                pass.packPlan == null ? null : pass.packPlan.entityIds());
-        ChimeraEntityBridge.installLayoutVariants(pass.pipelines.translucentEntityText,
-                pass.pipelines.blockTranslucent, pass.pipelines.blockTranslucentText, pass.pipelines.movingBlock);
-        ChimeraEntityBridge.installBeaconBeam(pass.pipelines.beaconBeam);
-        ChimeraEntityBridge.installHostLayout(pass.pipelines.hostLayout);
-        ChimeraEntityBridge.installShadowCasters(pass.pipelines.shadowEntities, pass.pipelines.shadowMovingBlock,
-                pass.pipelines.shadowBlock);
+        ChimeraEntityBridge.install(pass.pipelines.lanes(pass.packPlan == null ? null : pass.packPlan.entityIds()));
         LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
                 familyTargets(pass.pipelines.entity), familyTargets(pass.pipelines.block));
     }

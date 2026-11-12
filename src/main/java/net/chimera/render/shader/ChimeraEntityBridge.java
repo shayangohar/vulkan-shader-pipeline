@@ -9,8 +9,6 @@ import net.chimera.mixin.ChimeraShaderStateShardAccessor;
 import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.ChimeraTextureBindingState;
 import net.chimera.render.vertex.ChimeraVertexFormats;
-import net.chimera.shaderpack.PackEntityIdResolver;
-import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackRenderingPhase;
 import net.minecraft.client.particle.ParticleRenderType;
 import net.minecraft.client.renderer.GameRenderer;
@@ -20,7 +18,6 @@ import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
-import java.util.EnumMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -157,35 +154,12 @@ public final class ChimeraEntityBridge {
     private static final Set<String> TEXT_SHADERS = Set.of("rendertype_text", "rendertype_text_see_through",
             "position_color_tex_lightmap", "rendertype_text_intensity", "rendertype_text_intensity_see_through");
 
-    private static PackEntityIdResolver resolver = PackEntityIdResolver.empty();
+    /** The session's lane pipelines and entity ids, installed and dropped whole. */
+    private static InstalledLanes lanes = InstalledLanes.NONE;
     /** The pack's lightning_bolt id as Iris's entityId uniform reads it. */
     private static int lightningBoltEntityId;
     /** True while LightningBoltRenderType, the bolt's render type, draws its batch. */
     private static boolean lightningBoltDraw;
-    private static GraphicsPipeline entityPipeline;
-    private static GraphicsPipeline translucentEntityPipeline;
-    private static GraphicsPipeline spiderEyesPipeline;
-    private static GraphicsPipeline blockPipeline;
-    private static GraphicsPipeline damagedBlockPipeline;
-    private static PackPipelines.PackHand handVariants;
-    private static PackPipelines.PackHand handWaterVariants;
-    private static GraphicsPipeline blockTranslucentPipeline;
-    /** The translucent-entity and block-translucent programs built for Iris's GLYPH text layout. */
-    private static GraphicsPipeline translucentEntityTextPipeline;
-    private static GraphicsPipeline blockTranslucentTextPipeline;
-    /** gbuffers_block on the block layout. */
-    private static GraphicsPipeline movingBlockPipeline;
-    /** gbuffers_beaconbeam on the block layout. */
-    private static GraphicsPipeline beaconBeamPipeline;
-    private static GraphicsPipeline particlePipeline;
-    private static GraphicsPipeline translucentParticlePipeline;
-    /** The installed lanes of {@link HostLayoutLane}, keyed by their family. */
-    private static final EnumMap<Family, GraphicsPipeline> hostLayoutPipelines = new EnumMap<>(Family.class);
-    /** shadow_entities, drawing the shadow pass's entity-format casters, and on the block layout its moving blocks. */
-    private static GraphicsPipeline shadowCasterPipeline;
-    private static GraphicsPipeline shadowMovingBlockPipeline;
-    /** shadow_block, drawing a block entity's models in the shadow pass. */
-    private static GraphicsPipeline shadowBlockPipeline;
     private static boolean enabled;
 
     /** True from LevelRenderer.renderLevel's head to its return while the pack renders the world. */
@@ -216,86 +190,30 @@ public final class ChimeraEntityBridge {
 
     private ChimeraEntityBridge() {}
 
-    /** Installs the family lanes; the other lanes follow through the install methods below. */
-    public static void install(
-            PackPipelines.PackEntity entity,
-            PackPipelines.PackEntity translucentEntity,
-            PackPipelines.PackEntity spiderEyes,
-            PackPipelines.PackEntity block,
-            PackPipelines.PackEntity damagedBlock,
-            PackPipelines.PackHand hand,
-            PackPipelines.PackHand handWater,
-            PackPipelines.PackParticle particle,
-            PackPipelines.PackParticle translucentParticle,
-            PackEntityIdResolver nextResolver
-    ) {
+    /**
+     * Installs a session's lanes whole, in place of any installed before. Iris draws TEXT with
+     * gbuffers_entities_translucent, a block entity's BE_TRANSLUCENT and TEXT_BE with
+     * gbuffers_block_translucent, and MOVING_BLOCK with gbuffers_block. Without shadow_entities no
+     * entity casts a pack shadow; without shadow_block block entities cast theirs with
+     * shadow_entities. A host-layout lane without a pipeline keeps its host draw.
+     */
+    public static void install(InstalledLanes next) {
         disable();
-        entityPipeline = pipeline(entity);
-        translucentEntityPipeline = pipeline(translucentEntity);
-        spiderEyesPipeline = pipeline(spiderEyes);
-        blockPipeline = pipeline(block);
-        damagedBlockPipeline = pipeline(damagedBlock);
-        handVariants = hand;
-        handWaterVariants = handWater;
-        particlePipeline = particle == null ? null : particle.pipeline();
-        translucentParticlePipeline = translucentParticle == null ? null : translucentParticle.pipeline();
-        resolver = nextResolver == null ? PackEntityIdResolver.empty() : nextResolver;
-        lightningBoltEntityId = resolver.uniformId("minecraft:lightning_bolt");
+        lanes = next == null ? InstalledLanes.NONE : next;
+        lightningBoltEntityId = lanes.entityIds().uniformId("minecraft:lightning_bolt");
         ChimeraMod.LOGGER.info("[chimera] family bridge: entity={}, entityTranslucent={}, spiderEyes={}, "
                         + "block={}, damagedBlock={}, hand={}, handWater={}, particle={}, particleTranslucent={}",
-                status(entityPipeline), status(translucentEntityPipeline), status(spiderEyesPipeline),
-                status(blockPipeline), status(damagedBlockPipeline), status(hand == null ? null : hand.primary()),
-                status(handWater == null ? null : handWater.primary()), status(particlePipeline),
-                status(translucentParticlePipeline));
-    }
-
-    /**
-     * Installs gbuffers_block_translucent and the other layouts after {@link #install}: Iris draws
-     * TEXT with gbuffers_entities_translucent, a block entity's BE_TRANSLUCENT and TEXT_BE with
-     * gbuffers_block_translucent, and MOVING_BLOCK with gbuffers_block.
-     */
-    public static void installLayoutVariants(PackPipelines.PackEntity translucentEntityText,
-                                             PackPipelines.PackEntity blockTranslucent,
-                                             PackPipelines.PackEntity blockTranslucentText,
-                                             PackPipelines.PackEntity movingBlock) {
-        translucentEntityTextPipeline = pipeline(translucentEntityText);
-        blockTranslucentPipeline = pipeline(blockTranslucent);
-        blockTranslucentTextPipeline = pipeline(blockTranslucentText);
-        movingBlockPipeline = pipeline(movingBlock);
-    }
-
-    /** Installs gbuffers_beaconbeam, Iris BEACON on the widened block layout, after {@link #install}. */
-    public static void installBeaconBeam(PackPipelines.PackParticle beam) {
-        beaconBeamPipeline = beam == null ? null : beam.pipeline();
-    }
-
-    /** Installs the host-layout lanes after {@link #install}. A lane without a pipeline keeps its host draw. */
-    public static void installHostLayout(Map<Family, PackPipelines.PackParticle> lanes) {
-        hostLayoutPipelines.clear();
-        if (lanes != null) {
-            lanes.forEach((family, lane) -> {
-                if (HostLayoutLane.of(family) != null && lane != null) hostLayoutPipelines.put(family, lane.pipeline());
-            });
-        }
-        if (!hostLayoutPipelines.isEmpty()) {
+                status(lanes.entity()), status(lanes.translucentEntity()), status(lanes.spiderEyes()),
+                status(lanes.block()), status(lanes.damagedBlock()),
+                status(lanes.hand() == null ? null : lanes.hand().primary()),
+                status(lanes.handWater() == null ? null : lanes.handWater().primary()), status(lanes.particle()),
+                status(lanes.translucentParticle()));
+        if (!lanes.hostLayout().isEmpty()) {
             ChimeraMod.LOGGER.info("[chimera] family bridge: host-layout lanes={}",
-                    hostLayoutPipelines.keySet().stream().map(family -> family.name().toLowerCase()).toList());
+                    lanes.hostLayout().keySet().stream().map(family -> family.name().toLowerCase()).toList());
         }
-    }
-
-    /**
-     * Installs shadow_entities, its block layout and shadow_block after {@link #install}. Without
-     * shadow_entities no entity casts a pack shadow; without shadow_block block entities cast
-     * theirs with shadow_entities.
-     */
-    public static void installShadowCasters(PackPipelines.PackEntity casters,
-                                            PackPipelines.PackEntity movingBlockCasters,
-                                            PackPipelines.PackEntity blockCasters) {
-        shadowCasterPipeline = pipeline(casters);
-        shadowMovingBlockPipeline = pipeline(movingBlockCasters);
-        shadowBlockPipeline = pipeline(blockCasters);
         ChimeraMod.LOGGER.info("[chimera] family bridge: shadow casters={}, moving blocks={}, block entities={}",
-                status(shadowCasterPipeline), status(shadowMovingBlockPipeline), status(shadowBlockPipeline));
+                status(lanes.shadowEntities()), status(lanes.shadowMovingBlock()), status(lanes.shadowBlock()));
     }
 
     /**
@@ -314,35 +232,14 @@ public final class ChimeraEntityBridge {
     public static void disable() {
         enabled = false;
         resetFrameState();
-        entityPipeline = null;
-        translucentEntityPipeline = null;
-        spiderEyesPipeline = null;
-        blockPipeline = null;
-        damagedBlockPipeline = null;
-        handVariants = null;
-        handWaterVariants = null;
-        blockTranslucentPipeline = null;
-        translucentEntityTextPipeline = null;
-        blockTranslucentTextPipeline = null;
-        movingBlockPipeline = null;
-        beaconBeamPipeline = null;
-        particlePipeline = null;
-        translucentParticlePipeline = null;
-        hostLayoutPipelines.clear();
-        shadowCasterPipeline = null;
-        shadowMovingBlockPipeline = null;
-        shadowBlockPipeline = null;
-        resolver = PackEntityIdResolver.empty();
+        lanes = InstalledLanes.NONE;
         lightningBoltEntityId = 0;
         FamilyBufferSource.releaseAll();
         FamilyDrawTrace.reset();
     }
 
     public static boolean isInstalled() {
-        return entityPipeline != null || translucentEntityPipeline != null || spiderEyesPipeline != null
-                || blockPipeline != null || damagedBlockPipeline != null || handVariants != null
-                || handWaterVariants != null || particlePipeline != null || translucentParticlePipeline != null
-                || beaconBeamPipeline != null || !hostLayoutPipelines.isEmpty() || shadowCasterPipeline != null;
+        return lanes.any();
     }
 
     private static void resetFrameState() {
@@ -409,7 +306,7 @@ public final class ChimeraEntityBridge {
      */
     public static boolean beginShadowCasters() {
         lightningBoltDraw = false;
-        shadowCasterPass = enabled && !drawActive && shadowCasterPipeline != null;
+        shadowCasterPass = enabled && !drawActive && lanes.shadowEntities() != null;
         return shadowCasterPass;
     }
 
@@ -494,7 +391,7 @@ public final class ChimeraEntityBridge {
 
     /** Opens an entity's context for what EntityRenderDispatcher.render draws, with its entity.properties id. */
     public static void beginEntity(String name) {
-        push(Family.ENTITY, resolver.resolveName(name), 0);
+        push(Family.ENTITY, lanes.entityIds().resolveName(name), 0);
     }
 
     /**
@@ -575,7 +472,7 @@ public final class ChimeraEntityBridge {
 
     /** The entity id Iris gives burning-entity fire: the pack's entity.properties id for minecraft:entity_flame. */
     public static int flameEntityId() {
-        return resolver.resolveName("minecraft:entity_flame");
+        return lanes.entityIds().resolveName("minecraft:entity_flame");
     }
 
     // ------------------------------------------------------------------
@@ -710,7 +607,7 @@ public final class ChimeraEntityBridge {
         HostLayoutLane.Pass pass = currentPass();
         if (pass == null) return null;
         HostLayoutLane lane = HostLayoutLane.forDraw(shader, format, pass);
-        if (lane != null) return hostLayoutPipelines.containsKey(lane.family()) ? lane.family() : null;
+        if (lane != null) return lanes.hostLayout().containsKey(lane.family()) ? lane.family() : null;
         return pass == HostLayoutLane.Pass.WORLD ? worldHostLane(shader, format) : null;
     }
 
@@ -740,8 +637,8 @@ public final class ChimeraEntityBridge {
     private static Family worldHostLane(String shader, VertexFormat format) {
         if (!particleWindow || !shader.equals("particle") || format != DefaultVertexFormat.PARTICLE) return null;
         // The call's program draws every sheet in it (beginParticleCall), each with its host blend.
-        if (particleTranslucent) return translucentParticlePipeline != null ? Family.PARTICLE_TRANSLUCENT : null;
-        return particlePipeline != null ? Family.PARTICLE : null;
+        if (particleTranslucent) return lanes.translucentParticle() != null ? Family.PARTICLE_TRANSLUCENT : null;
+        return lanes.particle() != null ? Family.PARTICLE : null;
     }
 
     /**
@@ -852,38 +749,38 @@ public final class ChimeraEntityBridge {
 
     private static GraphicsPipeline pipelineFor(Family family, VertexFormat format) {
         return switch (family) {
-            case ENTITY -> entityPipeline;
+            case ENTITY -> lanes.entity();
             case ENTITY_TRANSLUCENT -> format == ChimeraVertexFormats.EXTENDED_GLYPH
-                    ? translucentEntityTextPipeline : translucentEntityPipeline;
-            case SPIDER_EYES -> spiderEyesPipeline;
-            case BLOCK -> blockPipeline;
+                    ? lanes.translucentEntityText() : lanes.translucentEntity();
+            case SPIDER_EYES -> lanes.spiderEyes();
+            case BLOCK -> lanes.block();
             case BLOCK_TRANSLUCENT -> format == ChimeraVertexFormats.EXTENDED_GLYPH
-                    ? blockTranslucentTextPipeline : blockTranslucentPipeline;
-            case MOVING_BLOCK -> movingBlockPipeline;
+                    ? lanes.blockTranslucentText() : lanes.blockTranslucent();
+            case MOVING_BLOCK -> lanes.movingBlock();
             case DAMAGED_BLOCK, BEACON_BEAM -> widenedBlockPipeline(family, format);
             case HAND, HAND_WATER -> handPipeline(family, format);
-            case PARTICLE -> particlePipeline;
-            case PARTICLE_TRANSLUCENT -> translucentParticlePipeline;
+            case PARTICLE -> lanes.particle();
+            case PARTICLE_TRANSLUCENT -> lanes.translucentParticle();
             case SHADOW_ENTITIES, SHADOW_BLOCK -> shadowCasterPipeline(family, format);
-            default -> hostLayoutPipelines.get(family);
+            default -> lanes.hostLayout().get(family);
         };
     }
 
     /** The crumbling overlay's or a beacon beam's pipeline, which draw only on the widened block layout. */
     private static GraphicsPipeline widenedBlockPipeline(Family family, VertexFormat format) {
         if (format != ChimeraVertexFormats.EXTENDED_BLOCK) return null;
-        return family == Family.DAMAGED_BLOCK ? damagedBlockPipeline : beaconBeamPipeline;
+        return family == Family.DAMAGED_BLOCK ? lanes.damagedBlock() : lanes.beaconBeam();
     }
 
     /** A shadow caster family's pipeline for {@code format}; null outside the caster window. */
     private static GraphicsPipeline shadowCasterPipeline(Family family, VertexFormat format) {
         if (!shadowCasterPass) return null;
-        if (family == Family.SHADOW_BLOCK) return shadowBlockPipeline;
-        return format == ChimeraVertexFormats.EXTENDED_BLOCK ? shadowMovingBlockPipeline : shadowCasterPipeline;
+        if (family == Family.SHADOW_BLOCK) return lanes.shadowBlock();
+        return format == ChimeraVertexFormats.EXTENDED_BLOCK ? lanes.shadowMovingBlock() : lanes.shadowEntities();
     }
 
     private static GraphicsPipeline handPipeline(Family family, VertexFormat format) {
-        var variants = family == Family.HAND ? handVariants : handWaterVariants;
+        var variants = family == Family.HAND ? lanes.hand() : lanes.handWater();
         var variant = variants == null ? null : variants.forFormat(format);
         return variant == null ? null : variant.pipeline();
     }
@@ -920,10 +817,6 @@ public final class ChimeraEntityBridge {
             VTextureSelector.bindTexture(index, previousTextures[index]);
             previousTextures[index] = null;
         }
-    }
-
-    private static GraphicsPipeline pipeline(PackPipelines.PackEntity entity) {
-        return entity == null ? null : entity.pipeline();
     }
 
     private static String status(Object value) {
