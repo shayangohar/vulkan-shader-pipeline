@@ -36,9 +36,10 @@ neoForge {
 }
 
 dependencies {
-    // Host renderer: VulkanMod Reforged, treated as GPL-3.0 (KNOW-658). Linked as a library;
-    // chimera stays MIT.
-    implementation "maven.modrinth:vulkanmod-reforged:${project.reforged_version}"
+    // Host renderer: VulkanMod Reforged 0.3.5, treated as GPL-3.0 (KNOW-658). Linked as a library;
+    // chimera stays MIT. Built against the reference copy until its Modrinth artifact is pinned
+    // (TASK-923); reforged_version stays 0.3.0, the control tools/check-reforged.ps1 compares with.
+    implementation files('../references/VulkanMod-Reforged-0.3.5-ALPHA+1.21.1.jar')
 
     // Vulkan bindings: bundled by VulkanMod at runtime; compile-only here
     compileOnly "org.lwjgl:lwjgl-vulkan:3.3.3"
