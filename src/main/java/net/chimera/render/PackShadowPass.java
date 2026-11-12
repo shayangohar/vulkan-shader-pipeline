@@ -430,8 +430,8 @@ final class PackShadowPass {
      * depth, which the frustum test expects; both projections cover the same volume.
      */
     void beginShadowSections(double cameraX, double cameraY, double cameraZ, boolean pack) {
-        if (!(WorldRenderer.getInstance() instanceof ChimeraSectionGridAccess access)) return;
-        var grid = access.chimera$sectionGrid();
+        WorldRenderer world = WorldRenderer.getInstance();
+        var grid = world == null ? null : world.getSectionGrid();
         if (grid == null) return;
         Matrix4f lightVolume = pack ? null
                 : new Matrix4f(this.shadowMap.getPackLightProjection()).mul(this.shadowMap.getLightView());

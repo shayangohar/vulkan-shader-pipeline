@@ -62,8 +62,6 @@ public abstract class ChimeraSkyRendererMixin {
 
     @Shadow
     private ClientLevel level;
-    @Shadow
-    private int ticks;
 
     @WrapMethod(method = "renderSky")
     private void chimera$skyWindow(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
@@ -88,12 +86,6 @@ public abstract class ChimeraSkyRendererMixin {
         chimera$phase(PackRenderingPhase.SKY);
     }
 
-    @Inject(method = "renderSky", at = @At(value = "INVOKE", target = SUNRISE), require = 1)
-    private void chimera$sunset(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
-                                boolean foggy, Runnable skyFog, CallbackInfo callback) {
-        chimera$phase(PackRenderingPhase.SUNSET);
-    }
-
     @Inject(method = "renderSky", at = @At(value = "FIELD", target = SUN), require = 1)
     private void chimera$sun(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
                              boolean foggy, Runnable skyFog, CallbackInfo callback) {
@@ -104,12 +96,6 @@ public abstract class ChimeraSkyRendererMixin {
     private void chimera$moon(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
                               boolean foggy, Runnable skyFog, CallbackInfo callback) {
         chimera$phase(PackRenderingPhase.MOON);
-    }
-
-    @Inject(method = "renderSky", at = @At(value = "INVOKE", target = STARS), require = 1)
-    private void chimera$stars(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
-                               boolean foggy, Runnable skyFog, CallbackInfo callback) {
-        chimera$phase(PackRenderingPhase.STARS);
     }
 
     @Inject(method = "renderSky", at = @At(value = "INVOKE",
@@ -159,10 +145,11 @@ public abstract class ChimeraSkyRendererMixin {
         if (chimera$keeps(SkyDirectives::sky)) original.call(buffer, modelView, projection, shader);
     }
 
-    /** No sunrise fan with sky=false: vanilla skips it for a null colour. */
+    /** The sunset phase begins here; no sunrise fan with sky=false: vanilla skips it for a null colour. */
     @WrapOperation(method = "renderSky", at = @At(value = "INVOKE", target = SUNRISE), require = 1)
     private float[] chimera$sunriseColor(DimensionSpecialEffects effects, float timeOfDay, float partialTick,
                                          Operation<float[]> original) {
+        chimera$phase(PackRenderingPhase.SUNSET);
         return chimera$keeps(SkyDirectives::sky) ? original.call(effects, timeOfDay, partialTick) : null;
     }
 
@@ -175,9 +162,10 @@ public abstract class ChimeraSkyRendererMixin {
         return chimera$keeps(SkyDirectives::sky) ? original.call(data, level) : Double.NEGATIVE_INFINITY;
     }
 
-    /** No stars with stars=false: vanilla draws them only for a brightness above zero. */
+    /** The stars phase begins here; no stars with stars=false: vanilla draws them only for a brightness above zero. */
     @WrapOperation(method = "renderSky", at = @At(value = "INVOKE", target = STARS), require = 1)
     private float chimera$starBrightness(ClientLevel level, float partialTick, Operation<Float> original) {
+        chimera$phase(PackRenderingPhase.STARS);
         return chimera$keeps(SkyDirectives::stars) ? original.call(level, partialTick) : -0.1F;
     }
 
@@ -191,11 +179,12 @@ public abstract class ChimeraSkyRendererMixin {
         }
         var previous = PackUniformProvider.setRenderingPhase(PackRenderingPhase.CLOUDS);
         try {
+            int ticks = ((LevelRenderer) (Object) this).getTicks();
             if (!ChimeraSkyBridge.drawsPackClouds() || this.level == null) {
                 original.call(pose, frustum, projection, partialTick, cameraX, cameraY, cameraZ);
-            } else if (!this.level.effects().renderClouds(this.level, this.ticks, partialTick, pose, cameraX, cameraY,
+            } else if (!this.level.effects().renderClouds(this.level, ticks, partialTick, pose, cameraX, cameraY,
                     cameraZ, frustum, projection)) {
-                ChimeraCloudRenderer.shared().draw(this.level, this.ticks, pose, frustum, projection, partialTick,
+                ChimeraCloudRenderer.shared().draw(this.level, ticks, pose, frustum, projection, partialTick,
                         cameraX, cameraY, cameraZ);
             }
         } finally {

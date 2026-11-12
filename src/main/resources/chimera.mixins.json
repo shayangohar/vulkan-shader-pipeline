@@ -48,7 +48,6 @@
     "ChimeraRenderPassAccessor",
     "ChimeraShadowProjectionMixin",
     "ChimeraRendererAccessor",
-    "ChimeraDeviceAccessor",
     "ChimeraDeviceFeaturesMixin",
     "ChimeraImageDescriptorMixin",
     "ChimeraImageFormatSizeMixin",

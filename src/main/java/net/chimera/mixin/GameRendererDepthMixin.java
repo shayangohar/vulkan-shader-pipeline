@@ -15,7 +15,6 @@ import net.vulkanmod.vulkan.Renderer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
@@ -28,21 +27,23 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(GameRenderer.class)
 public abstract class GameRendererDepthMixin {
 
-    @Redirect(method = "renderItemInHand", at = @At(value = "INVOKE",
+    @WrapOperation(method = "renderItemInHand", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/renderer/ItemInHandRenderer;"
                     + "renderHandsWithItems(FLcom/mojang/blaze3d/vertex/PoseStack;"
                     + "Lnet/minecraft/client/renderer/MultiBufferSource$BufferSource;"
                     + "Lnet/minecraft/client/player/LocalPlayer;I)V"), require = 1)
     private void chimera$skipLateHand(ItemInHandRenderer renderer, float tick, PoseStack poses,
-                                      MultiBufferSource.BufferSource buffers, LocalPlayer player, int light) {
-        if (!ChimeraHandRenderer.diverted()) renderer.renderHandsWithItems(tick, poses, buffers, player, light);
+                                      MultiBufferSource.BufferSource buffers, LocalPlayer player, int light,
+                                      Operation<Void> original) {
+        if (!ChimeraHandRenderer.diverted()) original.call(renderer, tick, poses, buffers, player, light);
     }
 
+    /** The hand and the shadow casters go with the game renderer. */
     @Inject(method = "close", at = @At("HEAD"), require = 1)
-    private void chimera$destroyHand(CallbackInfo callback) { ChimeraHandRenderer.destroy(); }
-
-    @Inject(method = "close", at = @At("HEAD"), require = 1)
-    private void chimera$destroyShadowCasters(CallbackInfo callback) { ChimeraShadowCasters.destroy(); }
+    private void chimera$destroyRenderers(CallbackInfo callback) {
+        ChimeraHandRenderer.destroy();
+        ChimeraShadowCasters.destroy();
+    }
 
     @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE",
             target = "Lcom/mojang/blaze3d/systems/RenderSystem;clear(IZ)V"), require = 1)

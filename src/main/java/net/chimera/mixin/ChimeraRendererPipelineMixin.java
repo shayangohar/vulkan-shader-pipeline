@@ -2,6 +2,7 @@ package net.chimera.mixin;
 
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.chimera.render.ChimeraRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraSkyBridge;
@@ -14,7 +15,6 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
  * Uploads a pack draw's uniforms under its per-draw state, and binds each pipeline's pack images
@@ -63,18 +63,18 @@ public abstract class ChimeraRendererPipelineMixin {
     }
 
     @SuppressWarnings("try") // the binding scope restores descriptor state on close
-    @Redirect(method = "uploadAndBindUBOs", at = @At(value = "INVOKE",
+    @WrapOperation(method = "uploadAndBindUBOs", at = @At(value = "INVOKE",
             target = "Lnet/vulkanmod/vulkan/shader/Pipeline;bindDescriptorSets(Lorg/lwjgl/vulkan/VkCommandBuffer;I)V"),
                     require = 1)
-    private void chimera$bindImages(Pipeline pipeline,
-            VkCommandBuffer commandBuffer, int frame) {
+    private void chimera$bindImages(Pipeline pipeline, VkCommandBuffer commandBuffer, int frame,
+                                    Operation<Void> original) {
         var pass = ChimeraRenderer.getMainPass();
         if (pass == null || !(pipeline instanceof GraphicsPipeline graphics)) {
-            pipeline.bindDescriptorSets(commandBuffer, frame);
+            original.call(pipeline, commandBuffer, frame);
             return;
         }
         try (var bindings = pass.bindDescriptorImages(graphics)) {
-            pipeline.bindDescriptorSets(commandBuffer, frame);
+            original.call(pipeline, commandBuffer, frame);
         }
     }
 }

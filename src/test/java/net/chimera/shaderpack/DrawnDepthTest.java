@@ -36,7 +36,10 @@ final class DrawnDepthTest {
         assertCalls("net/chimera/render/ChimeraMainPass", "openLevelSegment", "markWorldDrawn");
         assertCalls("net/chimera/render/PackSceneCoverage", "endPackCoverageWindow", "markWorldDrawn");
         assertCalls("net/chimera/render/PackFamilyWindows", "drawFamilyBatches", "markWorldDrawn");
-        assertCalls("net/chimera/mixin/ChimeraLevelRendererMixin", "chimera$particleLanes", "markWorldDrawn");
+        for (String particles : new String[] {"chimera$fabulousParticles", "chimera$earlyParticles",
+                "chimera$lateParticles"}) {
+            assertCalls("net/chimera/mixin/ChimeraLevelRendererMixin", particles, "markWorldDrawn");
+        }
         // A post pass that runs before the world ends, prepare among them, needs no earlier capture.
         assertCalls("net/chimera/render/PackPostChain", "packDepthInputsAvailable", "drawnDepthCapturable");
     }

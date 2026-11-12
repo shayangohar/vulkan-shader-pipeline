@@ -1,6 +1,5 @@
 package net.chimera.render;
 
-import net.chimera.mixin.ChimeraVulkanImageAccessor;
 import net.chimera.shaderpack.ComputeValueBlock;
 import net.chimera.shaderpack.IrisColorFormats;
 import net.chimera.shaderpack.PackConfig;
@@ -478,7 +477,7 @@ final class PackPassComputes implements AutoCloseable {
             }
             VulkanImage image = image(binding, sources);
             if (image != null && writesTarget(binding)
-                    && (((ChimeraVulkanImageAccessor) image).chimera$usage() & VK_IMAGE_USAGE_STORAGE_BIT) == 0) {
+                    && (image.getUsage() & VK_IMAGE_USAGE_STORAGE_BIT) == 0) {
                 throw new IllegalStateException(binding.symbol() + " image was not created for storage");
             }
             images.add(image);

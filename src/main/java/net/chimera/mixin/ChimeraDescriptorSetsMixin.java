@@ -1,11 +1,12 @@
 package net.chimera.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.chimera.render.ChimeraTextureBindingState;
 import net.vulkanmod.vulkan.shader.descriptor.ImageDescriptor;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
  * Pack descriptors in VulkanMod's per-pipeline descriptor sets: the descriptor writes and checks
@@ -15,12 +16,12 @@ import org.spongepowered.asm.mixin.injection.Redirect;
  */
 @Mixin(targets = "net.vulkanmod.vulkan.shader.Pipeline$DescriptorSets", remap = false)
 public abstract class ChimeraDescriptorSetsMixin {
-    @Redirect(method = {"needsUpdate", "updateDescriptorSet"},
+    @WrapOperation(method = {"needsUpdate", "updateDescriptorSet"},
             at = @At(value = "INVOKE", target = "Lnet/vulkanmod/vulkan/shader/descriptor/ImageDescriptor;"
                     + "getSampler(Lnet/vulkanmod/vulkan/texture/VulkanImage;)J"),
             require = 2)
-    private long chimera$packSampler(ImageDescriptor descriptor, VulkanImage image) {
+    private long chimera$packSampler(ImageDescriptor descriptor, VulkanImage image, Operation<Long> original) {
         return ChimeraTextureBindingState.samplerForDescriptor(descriptor.getTextureUnit(), image,
-                descriptor.getSampler(image));
+                original.call(descriptor, image));
     }
 }

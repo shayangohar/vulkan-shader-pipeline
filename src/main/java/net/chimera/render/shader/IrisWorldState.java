@@ -2,7 +2,6 @@ package net.chimera.render.shader;
 
 import com.mojang.blaze3d.shaders.FogShape;
 import com.mojang.blaze3d.systems.RenderSystem;
-import net.chimera.mixin.ChimeraLevelRendererAccessor;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
@@ -107,8 +106,7 @@ final class IrisWorldState implements FrameValueSource {
     }
 
     void capture(Minecraft minecraft, float partialTick) {
-        int ticks = minecraft.levelRenderer == null ? 0
-                : ((ChimeraLevelRendererAccessor) minecraft.levelRenderer).chimera$ticks();
+        int ticks = minecraft.levelRenderer == null ? 0 : minecraft.levelRenderer.getTicks();
         this.cloudTime = (ticks + partialTick) * 0.03F;
     }
 
