@@ -8,16 +8,17 @@ package net.chimera.render;
  * Chimera's own single-channel images are built from a Vulkan format and keep identity views.
  */
 public final class IntensityTextureViews {
-    // Render thread only: prepareImage asserts it.
-    private static boolean preparing;
+    private static final AllocationScope<Boolean> PREPARING = new AllocationScope<>();
 
     private IntensityTextureViews() {}
 
-    public static void setPreparing(boolean value) {
-        preparing = value;
+    /** Runs {@code allocate}, a RED texture's allocation, with the views it creates marked. */
+    public static void allocate(Runnable allocate) {
+        PREPARING.run(Boolean.TRUE, allocate);
     }
 
+    /** Whether the view VulkanMod is creating belongs to a RED texture this thread is allocating. */
     public static boolean preparing() {
-        return preparing;
+        return PREPARING.current() != null;
     }
 }

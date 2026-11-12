@@ -1,5 +1,6 @@
 package net.chimera.render.shader;
 
+import net.chimera.render.AllocationScope;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import org.lwjgl.system.MemoryStack;
@@ -35,21 +36,19 @@ public final class GeometryStageModules {
         }
     }
 
-    private static final ThreadLocal<Pending> PENDING = new ThreadLocal<>();
+    private static final AllocationScope<Pending> PENDING = new AllocationScope<>();
 
     private GeometryStageModules() {}
 
     /** Constructs a pipeline with {@code create}, giving it {@code spirv} as its geometry stage. */
     public static GraphicsPipeline construct(ByteBuffer spirv, Supplier<GraphicsPipeline> create) {
         Pending pending = new Pending(spirv);
-        PENDING.set(pending);
         boolean constructed = false;
         try {
-            GraphicsPipeline pipeline = create.get();
+            GraphicsPipeline pipeline = PENDING.with(pending, create);
             constructed = true;
             return pipeline;
         } finally {
-            PENDING.remove();
             if (!constructed && pending.module != 0L) {
                 PipelineSide.of(pending.pipeline).geometryModule = 0L;
                 destroy(pending.module);
@@ -59,7 +58,7 @@ public final class GeometryStageModules {
 
     /** At construction: makes the geometry module of the pipeline this thread is constructing, if it has one. */
     public static void attach(GraphicsPipeline pipeline) {
-        Pending pending = PENDING.get();
+        Pending pending = PENDING.current();
         if (pending == null || pending.module != 0L) return;
         pending.module = createModule(pending.spirv);
         pending.pipeline = pipeline;

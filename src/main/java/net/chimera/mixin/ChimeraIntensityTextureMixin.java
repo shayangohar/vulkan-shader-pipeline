@@ -17,11 +17,6 @@ public abstract class ChimeraIntensityTextureMixin {
             original.call(format, id, mipLevels, width, height);
             return;
         }
-        IntensityTextureViews.setPreparing(true);
-        try {
-            original.call(format, id, mipLevels, width, height);
-        } finally {
-            IntensityTextureViews.setPreparing(false);
-        }
+        IntensityTextureViews.allocate(() -> original.call(format, id, mipLevels, width, height));
     }
 }
