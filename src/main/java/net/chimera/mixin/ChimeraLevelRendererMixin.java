@@ -174,23 +174,17 @@ public abstract class ChimeraLevelRendererMixin {
         ChimeraHandRenderer.drawSolid();
     }
 
-    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = PARTICLES), require = 1)
-    private void chimera$particleLanes(ParticleEngine particles, LightTexture lightTexture, Camera camera,
-                                       float partialTick, Frustum frustum, Predicate<ParticleRenderType> types,
-                                       Operation<Void> original) {
-        ChimeraEntityBridge.beginParticles();
-        try {
-            original.call(particles, lightTexture, camera, partialTick, frustum, types);
-        } finally {
-            ChimeraEntityBridge.endParticles();
-            ChimeraMainPass pass = ChimeraRenderer.segmentsActive() ? ChimeraRenderer.getMainPass() : null;
-            if (pass != null) pass.markWorldDrawn();
-        }
+    /** The Fabulous path's particle call, which Iris leaves in place too. */
+    @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = PARTICLES, ordinal = 0), require = 1)
+    private void chimera$fabulousParticles(ParticleEngine particles, LightTexture lightTexture, Camera camera,
+                                           float partialTick, Frustum frustum, Predicate<ParticleRenderType> types,
+                                           Operation<Void> original) {
+        chimera$drawParticles(particles, lightTexture, camera, partialTick, frustum, types, original);
     }
 
     /**
      * NeoForge's early particle call: opaque particles, before translucent terrain and so before the
-     * pack's deferred passes. Ordinal 0 is the Fabulous path, which Iris leaves alone too.
+     * pack's deferred passes.
      */
     @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE", target = PARTICLES, ordinal = 1), require = 1)
     private void chimera$earlyParticles(ParticleEngine particles, LightTexture lightTexture, Camera camera,
@@ -217,10 +211,24 @@ public abstract class ChimeraLevelRendererMixin {
                                                Predicate<ParticleRenderType> types, Operation<Void> original) {
         ParticleDirectives.Ordering ordering = ChimeraRenderer.packParticleOrdering();
         if (ordering == null) {
-            original.call(particles, lightTexture, camera, partialTick, frustum, types);
+            chimera$drawParticles(particles, lightTexture, camera, partialTick, frustum, types, original);
         } else if (ordering.drawsIn(early)) {
             Predicate<ParticleRenderType> ordered = type -> ordering.drawsSheet(early, type.isTranslucent());
-            original.call(particles, lightTexture, camera, partialTick, frustum, ordered);
+            chimera$drawParticles(particles, lightTexture, camera, partialTick, frustum, ordered, original);
+        }
+    }
+
+    /** One particle call inside the particle lanes; the world has drawn once it returns. */
+    private static void chimera$drawParticles(ParticleEngine particles, LightTexture lightTexture, Camera camera,
+                                              float partialTick, Frustum frustum,
+                                              Predicate<ParticleRenderType> types, Operation<Void> original) {
+        ChimeraEntityBridge.beginParticles();
+        try {
+            original.call(particles, lightTexture, camera, partialTick, frustum, types);
+        } finally {
+            ChimeraEntityBridge.endParticles();
+            ChimeraMainPass pass = ChimeraRenderer.segmentsActive() ? ChimeraRenderer.getMainPass() : null;
+            if (pass != null) pass.markWorldDrawn();
         }
     }
 
