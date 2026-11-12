@@ -1,14 +1,12 @@
 package net.chimera.render.shader;
 
 import net.chimera.shaderpack.PackBlendPlan;
+import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.shader.Pipeline;
 import net.vulkanmod.vulkan.shader.PipelineState;
 import net.vulkanmod.vulkan.util.MappedBuffer;
 
-import java.util.Collections;
-import java.util.Map;
 import java.util.Set;
-import java.util.WeakHashMap;
 
 /**
  * Iris's per-draw texture and blend uniforms (CommonUniforms), set as each draw uploads its
@@ -20,20 +18,18 @@ import java.util.WeakHashMap;
 final class IrisDrawState implements FrameValueSource {
     static final Set<String> NAMES = Set.of("gtextureSize", "blendFunc");
 
-    private static final Map<Pipeline, PackBlendPlan.Mode> PROGRAM_BLENDS =
-            Collections.synchronizedMap(new WeakHashMap<>());
-
     private final int[] textureSize = new int[2];
     private final int[] blendFunc = new int[4];
 
-    /** Records the blend a pack pipeline's draws report in place of the host's. */
-    static void registerProgramBlend(Pipeline pipeline, PackBlendPlan.Mode mode) {
-        if (pipeline != null && mode != null) PROGRAM_BLENDS.put(pipeline, mode);
+    /** Records the blend a pack pipeline's draws report in place of the host's (PipelineSide). */
+    static void registerProgramBlend(GraphicsPipeline pipeline, PackBlendPlan.Mode mode) {
+        if (pipeline != null && mode != null) PipelineSide.of(pipeline).programBlend = mode;
     }
 
     /** The blend a pipeline's draws report in place of the host's, or null. */
     static PackBlendPlan.Mode programBlend(Pipeline pipeline) {
-        return pipeline == null ? null : PROGRAM_BLENDS.get(pipeline);
+        PipelineSide side = PipelineSide.ofBound(pipeline);
+        return side == null ? null : side.programBlend;
     }
 
     /** Sets the next draw's values, the program's blend or else the host's; true when either changed. */

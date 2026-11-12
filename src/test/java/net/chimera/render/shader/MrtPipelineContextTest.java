@@ -13,10 +13,8 @@ import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.TryCatchBlockNode;
 
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -63,38 +61,51 @@ final class MrtPipelineContextTest {
      * so the pass's later variants read the pass's blend modes.
      */
     @Test
-    void endPipelineRestoresThePassContract() throws ReflectiveOperationException {
-        Map<Object, Object> registered = staticMap("REGISTERED");
+    void endPipelineRestoresThePassContract() {
         try {
-            MrtPipelineContext.begin(new int[] {97}, 8);
-            Object pipelineContract = threadLocal("CURRENT").get();
             MrtPipelineContext.begin(new int[] {37}, 8);
-            // A WeakHashMap takes a null key: it stands in for the pipeline being created.
-            registered.put(null, pipelineContract);
-            MrtPipelineContext.beginPipeline(null);
+            MrtPipelineContext.beginPipeline(side(MrtPipelineContext.contract(new int[] {97}, null), 0b1,
+                    new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF}));
             assertArrayEquals(new int[] {97}, MrtPipelineContext.colorFormats(), "the pipeline's own contract");
+            assertEquals(0b1, MrtPipelineContext.writtenOutputs(), "the pipeline's written outputs");
+            assertArrayEquals(new PackBlendPlan.Mode[] {PackBlendPlan.Mode.OFF}, MrtPipelineContext.hostPassBlends());
             MrtPipelineContext.endPipeline();
             assertArrayEquals(new int[] {37}, MrtPipelineContext.colorFormats(), "the pass's contract again");
+            assertEquals(SpirvOutputWrites.ALL, MrtPipelineContext.writtenOutputs(), "no creation is open");
+            assertNull(MrtPipelineContext.hostPassBlends());
         } finally {
-            registered.remove(null);
             MrtPipelineContext.end();
         }
     }
 
-    /** end() clears every thread-local, so nothing outlives the pass. */
+    /** A creation without a registered contract renders into the pass's, with every output written. */
     @Test
-    void endClearsTheScopeWithTheContract() throws ReflectiveOperationException {
+    void anUnregisteredPipelineTakesThePassContract() {
         try {
-            threadLocal("CURRENT_WRITES").set(0b1);
-            threadLocal("CURRENT_HOST_PASS_BLENDS").set(new PackBlendPlan.Mode[1]);
+            MrtPipelineContext.begin(new int[] {37}, 8);
+            MrtPipelineContext.beginPipeline(new PipelineSide());
+            assertArrayEquals(new int[] {37}, MrtPipelineContext.colorFormats());
+            assertEquals(SpirvOutputWrites.ALL, MrtPipelineContext.writtenOutputs());
+            assertNull(MrtPipelineContext.hostPassBlends());
+            MrtPipelineContext.endPipeline();
+            assertArrayEquals(new int[] {37}, MrtPipelineContext.colorFormats());
+        } finally {
+            MrtPipelineContext.end();
+        }
+    }
+
+    /** end() closes an open creation scope with the pass's contract, so nothing outlives the pass. */
+    @Test
+    void endClearsTheScopeWithTheContract() {
+        try {
             MrtPipelineContext.begin(new int[] {97}, 8);
+            MrtPipelineContext.beginPipeline(side(MrtPipelineContext.contract(new int[] {37}, null), 0b1,
+                    new PackBlendPlan.Mode[1]));
             MrtPipelineContext.end();
             assertEquals(SpirvOutputWrites.ALL, MrtPipelineContext.writtenOutputs());
             assertNull(MrtPipelineContext.hostPassBlends());
             assertNull(MrtPipelineContext.colorFormats());
         } finally {
-            threadLocal("CURRENT_WRITES").remove();
-            threadLocal("CURRENT_HOST_PASS_BLENDS").remove();
             MrtPipelineContext.end();
         }
     }
@@ -156,17 +167,29 @@ final class MrtPipelineContextTest {
         return -1;
     }
 
-    @SuppressWarnings("unchecked")
-    private static Map<Object, Object> staticMap(String name) throws ReflectiveOperationException {
-        Field field = MrtPipelineContext.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return (Map<Object, Object>) field.get(null);
+    /** A pipeline side as a pack load leaves it: registered contract, written outputs, host-pass blends. */
+    private static PipelineSide side(MrtPipelineContext.Contract contract, int writes, PackBlendPlan.Mode[] blends) {
+        PipelineSide side = new PipelineSide();
+        side.contract = contract;
+        side.writtenOutputs = writes;
+        side.hostPassBlends = blends;
+        return side;
     }
 
-    @SuppressWarnings("unchecked")
-    private static <T> ThreadLocal<T> threadLocal(String name) throws ReflectiveOperationException {
-        Field field = MrtPipelineContext.class.getDeclaredField(name);
-        field.setAccessible(true);
-        return (ThreadLocal<T>) field.get(null);
+    /**
+     * The per-pipeline state is a field every GraphicsPipeline carries (ChimeraPipelineSideMixin),
+     * not maps keyed by the pipeline, so it goes with the pipeline and a draw reads it without a lookup.
+     */
+    @Test
+    void everyGraphicsPipelineCarriesItsSide() throws IOException {
+        // MixinTargetAuditTest checks that it is registered and resolves against GraphicsPipeline.
+        ClassNode mixin = MixinBytecode.nativeClass("net/chimera/mixin/ChimeraPipelineSideMixin");
+        assertTrue(mixin.interfaces.contains("net/chimera/render/shader/PipelineSide$Holder"));
+        for (String owner : List.of(CONTEXT, "net/chimera/render/shader/IrisDrawState",
+                "net/chimera/render/shader/GeometryStageModules")) {
+            ClassNode node = MixinBytecode.nativeClass(owner);
+            assertTrue(node.fields.stream().noneMatch(field -> field.desc.equals("Ljava/util/Map;")),
+                    owner + " keeps no map keyed by the pipeline");
+        }
     }
 }

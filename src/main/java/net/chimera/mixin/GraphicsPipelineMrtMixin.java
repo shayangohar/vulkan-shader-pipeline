@@ -20,10 +20,8 @@ import org.lwjgl.vulkan.VkPipelineRenderingCreateInfoKHR;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.Redirect;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.Arrays;
 
@@ -71,11 +69,6 @@ public abstract class GraphicsPipelineMrtMixin {
             MrtPipelineContext.endPipeline();
             this.chimera$window = null;
         }
-    }
-
-    @Inject(method = "cleanUp", at = @At("HEAD"))
-    private void chimera$unregisterMrt(CallbackInfo callback) {
-        MrtPipelineContext.unregister((GraphicsPipeline) (Object) this);
     }
 
     /** A window variant has no render pass. */

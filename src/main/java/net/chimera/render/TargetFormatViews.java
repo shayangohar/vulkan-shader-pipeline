@@ -22,7 +22,7 @@ import static org.lwjgl.vulkan.VK10.vkDestroyImageView;
  */
 public final class TargetFormatViews {
     /** Per thread: MemoryManager.createImage is shared, and only this thread's allocation is the target. */
-    private static final ThreadLocal<Boolean> PREPARING = ThreadLocal.withInitial(() -> false);
+    private static final AllocationScope<Boolean> MUTABLE = new AllocationScope<>();
     // Render thread only: targets are created, bound and freed while the frame is recorded.
     private static final Map<VulkanImage, Map<Integer, Long>> VIEWS = new IdentityHashMap<>();
 
@@ -30,21 +30,15 @@ public final class TargetFormatViews {
 
     /** Whether the image VulkanMod is allocating now is to be created mutable. */
     public static boolean preparing() {
-        return PREPARING.get();
+        return MUTABLE.current() != null;
     }
 
     /** The image {@code create} allocates, mutable with a storage view in each of {@code formats} but its own. */
     static VulkanImage create(Supplier<VulkanImage> create, int format, Set<Integer> formats) {
         Map<Integer, Long> views = new TreeMap<>();
         boolean mutable = formats.stream().anyMatch(view -> view != format);
-        PREPARING.set(mutable);
-        VulkanImage image;
-        try {
-            image = create.get();
-        } finally {
-            PREPARING.set(false);
-        }
-        if (!mutable) return image;
+        if (!mutable) return create.get();
+        VulkanImage image = MUTABLE.with(Boolean.TRUE, create);
         try {
             for (int view : formats) {
                 if (view != format) {
