@@ -1,15 +1,20 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.MixinBytecode;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PostTargetPlan;
+import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.tree.MethodInsnNode;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -80,6 +85,36 @@ final class PackPostTargetsTest {
         }
         targets.generateMipmaps(null, "final");
         assertTrue(targets.samplesMips(sky), "still mip-sampled at final");
+    }
+
+    /**
+     * Reforged 0.3.5 sets a viewport's y from the bound framebuffer's height. Pegasus draws its sky
+     * into colortex6 at a third of the screen and composite2 into colortex9 at a tenth; bound to
+     * colortex0's full-size stand-in, both passes drew below their images and the sky came out black.
+     */
+    @Test
+    void aPostPassBindsAStandInOfItsOwnSize() throws IOException {
+        VulkanImage[][] images = new VulkanImage[2][16];
+        images[0][0] = MaterialMapFixtures.markerImage(2560, 1440);
+        images[1][0] = MaterialMapFixtures.markerImage(2560, 1440);
+        images[0][6] = MaterialMapFixtures.markerImage(844, 475);
+        images[0][9] = MaterialMapFixtures.markerImage(256, 144);
+        Map<Long, Framebuffer> standIns = new HashMap<>();
+        PackPostTargets.addStandIns(standIns, images);
+        assertEquals(3, standIns.size(), "one stand-in per extent");
+        for (VulkanImage first : new VulkanImage[] {images[1][0], images[0][6], images[0][9]}) {
+            Framebuffer bound = PackPostTargets.standIn(standIns, first);
+            assertEquals(first.width, bound.getWidth());
+            assertEquals(first.height, bound.getHeight(), "the viewport's y comes from this height");
+        }
+        VulkanImage hdr = MaterialMapFixtures.markerImage(1920, 1080);
+        assertEquals(1080, PackPostTargets.standIn(standIns, hdr).getHeight(), "an HDR image no target matches");
+        assertEquals(3, standIns.size(), "the window replaces the HDR image, so its stand-in is not kept");
+
+        var prepare = MixinBytecode.instructionsThrough(
+                MixinBytecode.nativeClass("net/chimera/render/PackPostTargets"), "prepare");
+        assertTrue(prepare.stream().anyMatch(instruction -> instruction instanceof MethodInsnNode call
+                && call.name.equals("standIn")), "a post pass binds the stand-in of its first attachment");
     }
 
     @Test
