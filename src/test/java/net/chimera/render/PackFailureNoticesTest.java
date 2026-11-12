@@ -196,6 +196,10 @@ final class PackFailureNoticesTest {
         assertEquals(" (fallback)", PackFailureNotices.label("Pack"), "as Iris labels a pack that fell back");
         PackFailureNotices.beginLoad("Pack", null);
         assertEquals("", PackFailureNotices.label("Pack"), "a new load starts clean");
+        // A saved pack whose source no longer loads renders vanilla as it starts.
+        PackFailureNotices.record(new PackFailureNotices.Failure("Pack", "pack", "load",
+                PackFailureNotices.Outcome.LOAD_FAILED, "PACK_ARCHIVE_INVALID. Rendering vanilla.", "info"));
+        assertEquals(" (fallback)", PackFailureNotices.label("Pack"));
     }
 
     @Test

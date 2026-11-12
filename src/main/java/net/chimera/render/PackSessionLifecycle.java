@@ -71,6 +71,8 @@ final class PackSessionLifecycle {
 
     /** Prevents a blocked request from producing per-frame diagnostics. */
     String loggedPendingPackChange;
+    /** A pack change is loading its pack: a source that does not load is told by its rollback. */
+    private boolean changingPack;
 
     /** Current live dimension, also used when a new pack is selected in-game. */
     String currentDimension = "minecraft:overworld";
@@ -325,9 +327,14 @@ final class PackSessionLifecycle {
             preparePackSessionReplacement(true);
             this.packPath = request.path();
             this.currentDimension = previousDimension;
-            pass.resources.createResources();
+            this.changingPack = true;
+            try {
+                pass.resources.createResources();
+            } finally {
+                this.changingPack = false;
+            }
             if (request.path() != null && packSourceLoadFailed()) {
-                throw new IllegalStateException("shaderpack source could not be loaded");
+                throw new IllegalStateException("shaderpack source could not be loaded (" + sourceFailure() + ")");
             }
             this.pendingPackDimension = null;
             this.loggedPendingPackDimension = null;
@@ -399,15 +406,19 @@ final class PackSessionLifecycle {
     }
 
     boolean packSourceLoadFailed() {
+        return sourceFailure() != null;
+    }
+
+    /** Why the pack's source did not load, its first such deviation; null when it loaded. */
+    String sourceFailure() {
         if (pass.packSource == null) {
-            return true;
+            return "PACK_SOURCE_MISSING";
         }
-        return pass.packSource.deviations().stream().anyMatch(deviation ->
+        return pass.packSource.deviations().stream().filter(deviation ->
                 deviation.equals("PACK_PATH_INVALID")
                         || deviation.equals("NO_SHADERS_DIRECTORY")
                         || deviation.equals("PACK_SHADERS_NOT_FOUND")
-                        || deviation.equals("PACK_ARCHIVE_INVALID")
-                        || deviation.startsWith("PACK_ARCHIVE_"));
+                        || deviation.startsWith("PACK_ARCHIVE_")).findFirst().orElse(null);
     }
 
     /**
@@ -593,6 +604,11 @@ final class PackSessionLifecycle {
                 ? PackSource.loadResult(dir, this.currentDimension, PendingOptions.drain(dir)) : pass.packSource;
         pass.packSource = result;
         PackFailureNotices.beginLoad(packLabel(dir), result.shadersDir());
+        // A saved pack that no longer loads says so as it starts; a pack change's rollback says so itself.
+        if (fresh && !this.changingPack && packSourceLoadFailed()) {
+            reportPackChangeFailure(dir, new IllegalStateException("shaderpack source could not be loaded ("
+                    + sourceFailure() + ")"), "Rendering vanilla.");
+        }
         PackProbe.Analysis analysis = PackProbe.analyze(dir, result);
         StagedOptions options = result.options();
         if (fresh) {
