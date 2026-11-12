@@ -34,7 +34,7 @@ final class PackFailureReport {
     private static final DateTimeFormatter FILE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH.mm.ss");
     private static final DateTimeFormatter TEXT_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     /** The reports the folder keeps, the newest. */
-    static final int KEPT_REPORTS = 20;
+    static final int KEPT_REPORTS = 50;
     /** A pack file's hash by path, size and time: a large pack is read once, not on each failure. */
     private static final Map<String, String> HASHES = new ConcurrentHashMap<>();
 
@@ -110,11 +110,17 @@ final class PackFailureReport {
     private static final Pattern USER_FOLDER = Pattern.compile(
             "(?i)((?:[A-Z]:[\\\\/]+(?:Users|Documents and Settings)|(?<![A-Za-z0-9])/(?:home|Users))[\\\\/]+)"
                     + "[^\\\\/\"'\\r\\n]+");
+    /**
+     * The same folder in a deviation, whose argument keeps only word characters: C_Users_name_...
+     * (PackPlanBuilder.failureReason). The name runs to the next underscore.
+     */
+    private static final Pattern SANITIZED_USER_FOLDER = Pattern.compile(
+            "(?i)(?<![A-Za-z0-9])([A-Z]_+(?:Users|Documents_and_Settings)_+)[A-Za-z0-9.~-]+");
 
     /**
-     * {@code text} with no user in it: each of {@code homes} (in either slash) reads as {@code ~},
-     * any other user folder as {@code <user>} (USER_FOLDER), and each of {@code names}, as a whole
-     * word in any case, as {@code <user>}.
+     * {@code text} with no user in it: each of {@code homes} (in either slash, or as a deviation
+     * spells it) reads as {@code ~}, any other user folder as {@code <user>} (USER_FOLDER,
+     * SANITIZED_USER_FOLDER), and each of {@code names}, as a whole word in any case, as {@code <user>}.
      */
     static String redact(String text, List<String> homes, List<String> names) {
         String redacted = text;
@@ -124,6 +130,7 @@ final class PackFailureReport {
             folders.add(home);
             folders.add(home.replace('\\', '/'));
             folders.add(home.replace('/', '\\'));
+            folders.add(home.replaceAll("[^A-Za-z0-9_.-]+", "_"));
         }
         folders.sort(Comparator.comparingInt(String::length).reversed());
         for (String folder : folders) {
@@ -131,6 +138,7 @@ final class PackFailureReport {
                     .replaceAll(Matcher.quoteReplacement("~"));
         }
         redacted = USER_FOLDER.matcher(redacted).replaceAll("$1<user>");
+        redacted = SANITIZED_USER_FOLDER.matcher(redacted).replaceAll("$1<user>");
         for (String name : names) {
             // A name of one or two letters would blot out words; it names no one in a shader log.
             if (name == null || name.strip().length() < 3) continue;
@@ -152,18 +160,32 @@ final class PackFailureReport {
         Path file = folder.resolve(stem + ".txt");
         for (int count = 2; Files.exists(file); count++) file = folder.resolve(stem + "-" + count + ".txt");
         Files.writeString(file, text, StandardCharsets.UTF_8);
-        prune(folder);
+        try {
+            prune(folder);
+        } catch (IOException | RuntimeException kept) {
+            // A report open elsewhere stays; the one just written is no less written.
+        }
         return file;
     }
 
-    /** Deletes all but the newest {@link #KEPT_REPORTS} reports; their names sort by time. */
+    /** Deletes all but the newest {@link #KEPT_REPORTS} reports, oldest written first. */
     private static void prune(Path folder) throws IOException {
         List<Path> reports;
         try (Stream<Path> files = Files.list(folder)) {
             reports = files.filter(file -> file.getFileName().toString().endsWith(".txt"))
-                    .sorted(Comparator.comparing(file -> file.getFileName().toString())).toList();
+                    .sorted(Comparator.comparingLong(PackFailureReport::writtenAt)
+                            .thenComparing(file -> file.getFileName().toString()))
+                    .toList();
         }
         for (int index = 0; index < reports.size() - KEPT_REPORTS; index++) Files.deleteIfExists(reports.get(index));
+    }
+
+    private static long writtenAt(Path file) {
+        try {
+            return Files.getLastModifiedTime(file).toMillis();
+        } catch (IOException unreadable) {
+            return Long.MAX_VALUE;
+        }
     }
 
     /** {@code name} with only the characters every file system takes. */

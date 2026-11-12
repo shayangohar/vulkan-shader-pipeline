@@ -62,6 +62,16 @@ final class PackFailureReportTest {
                 PackFailureReport.redact(text, List.of(), List.of()));
     }
 
+    /** A deviation keeps a path's word characters only (PackPlanBuilder.failureReason). */
+    @Test
+    void aPathADeviationSpelledNamesNoOne() {
+        String text = "PROGRAM_PLANNING_FAILED:UncheckedIOException_C_Users_Alex_Documents_pack_x.glsl; "
+                + "PROGRAM_REPORT_FAILED:X_D_Users_bob.smith_y";
+        assertEquals("PROGRAM_PLANNING_FAILED:UncheckedIOException_~_Documents_pack_x.glsl; "
+                + "PROGRAM_REPORT_FAILED:X_D_Users_<user>_y",
+                PackFailureReport.redact(text, List.of("C:\\Users\\Alex"), List.of()));
+    }
+
     @Test
     void reportsGetTheirOwnFilesAndTheFolderKeepsTheNewest(@TempDir Path game) throws IOException {
         Path first = PackFailureReport.write(game, "RedHat v34.3.1.zip", "one", WHEN);
