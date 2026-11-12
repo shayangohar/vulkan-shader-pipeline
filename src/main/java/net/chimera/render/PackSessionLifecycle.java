@@ -370,7 +370,7 @@ final class PackSessionLifecycle {
         PackFailureNotices.record(new PackFailureNotices.Failure(pack, "pack", "load",
                 PackFailureNotices.Outcome.LOAD_FAILED, PackFailureNotices.shortLine(reason, 100) + ". " + recovery,
                 "Chimera could not load " + pack + ". " + recovery + "\n"
-                        + ChimeraMainPass.runtimeFailureReason("pack-change", failure)));
+                        + ChimeraMainPass.runtimeFailureReason("pack-change", failure), failure));
         PackFailureNotices.publish();
     }
 
@@ -495,7 +495,7 @@ final class PackSessionLifecycle {
         PackFailureNotices.record(new PackFailureNotices.Failure(pack, "dimension " + dimension, "dimension change",
                 outcome, PackFailureNotices.shortLine(reason, 100) + ". " + recovery,
                 "Chimera could not load " + pack + " for " + dimension + ". " + recovery + "\n"
-                        + ChimeraMainPass.runtimeFailureReason("dimension-change", failure)));
+                        + ChimeraMainPass.runtimeFailureReason("dimension-change", failure), failure));
         PackFailureNotices.publish();
     }
 
@@ -535,7 +535,11 @@ final class PackSessionLifecycle {
         }
         Path dir = this.packPath;
         if (dir == null || pass.packFrameUnsupported != null) {
-            if (dir == null) LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
+            if (dir == null) {
+                LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
+                // The status command and F3 stop listing the last pack's failures.
+                PackFailureNotices.beginLoad(null, null);
+            }
             resetHostDirectives();
             PackUniformProvider.installRuntimeSettings(null);
             PackUniformProvider.installDirectives(null);

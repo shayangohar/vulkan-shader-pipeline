@@ -52,9 +52,18 @@ public final class PackFailureNotices {
             this(pack, subject, phase, outcome, reason, info, null);
         }
 
-        /** One program's skip, or one fallback, whatever phase found it first. */
+        /** One program's skip, or one fallback, whatever phase found it: a load records it once. */
         String key() {
             return pack + '\n' + subject + '\n' + outcome;
+        }
+
+        /** The skip told: a later load tells the same program's skip again only for a new reason. */
+        String toldKey() {
+            return key() + '\n' + reason;
+        }
+
+        private Failure withInfo(String more) {
+            return new Failure(pack, subject, phase, outcome, reason, info + more, cause);
         }
     }
 
@@ -80,7 +89,7 @@ public final class PackFailureNotices {
     private static final Object LOCK = new Object();
     /** Recorded and not yet published. */
     private static final List<Failure> pending = new ArrayList<>();
-    /** Published this game: a failure is told once. */
+    /** Skips told this game, by program and reason (Failure.toldKey): a skip is told once. */
     private static final Set<String> announced = new HashSet<>();
     /** The current pack's failures, for the status command. */
     private static final List<Failure> current = new ArrayList<>();
@@ -100,7 +109,7 @@ public final class PackFailureNotices {
 
     /**
      * A load of {@code pack} begins, from {@code shadersDir}: the status command lists this load's
-     * failures from now on. A failure told before is not told again.
+     * failures from now on. A skip told before is not told again; a whole-pack failure is.
      */
     public static void beginLoad(String pack, Path shadersDir) {
         synchronized (LOCK) {
@@ -124,14 +133,36 @@ public final class PackFailureNotices {
         }
     }
 
-    /** Records a failure; the next publish tells it unless it was told before. */
+    /**
+     * Records a failure for the next publish to tell. Within a load the first record of a program's
+     * skip wins: a build failure, with its compiler's message, before the load's report says the
+     * program did not run. A skip told before, for the same reason, is not told again. A whole-pack
+     * failure, which the player sees, is told each time, and takes in the skips not yet told:
+     * "skipped X" beside "fell back to vanilla" would contradict it.
+     */
     public static void record(Failure failure) {
         synchronized (LOCK) {
             String key = failure.key();
-            if (current.stream().noneMatch(known -> known.key().equals(key))) current.add(failure);
-            if (!announced.contains(key) && pending.stream().noneMatch(known -> known.key().equals(key))) {
-                pending.add(failure);
+            if (current.stream().anyMatch(known -> known.key().equals(key))
+                    || pending.stream().anyMatch(known -> known.key().equals(key))) {
+                return;
             }
+            if (failure.outcome() == Outcome.SKIPPED) {
+                current.add(failure);
+                if (!announced.contains(failure.toldKey())) pending.add(failure);
+                return;
+            }
+            List<Failure> skips = pending.stream().filter(skip -> skip.outcome() == Outcome.SKIPPED
+                    && skip.pack().equals(failure.pack())).toList();
+            pending.removeAll(skips);
+            skips.forEach(skip -> announced.add(skip.toldKey()));
+            StringBuilder more = new StringBuilder();
+            if (!skips.isEmpty()) more.append("\n\nSkipped before it:");
+            skips.forEach(skip -> more.append("\n- ").append(skip.subject()).append(": ")
+                    .append(skip.info().replace("\n", "\n  ")));
+            Failure told = failure.withInfo(more.toString());
+            current.add(told);
+            pending.add(told);
         }
     }
 
@@ -146,7 +177,7 @@ public final class PackFailureNotices {
             if (pending.isEmpty()) return;
             told = List.copyOf(pending);
             pending.clear();
-            told.forEach(failure -> announced.add(failure.key()));
+            told.forEach(failure -> announced.add(failure.toldKey()));
         }
         Reporter writer = reporter;
         List<Line> lines = new ArrayList<>();
@@ -223,7 +254,7 @@ public final class PackFailureNotices {
         String info = failure.info() + (report == null ? "" : "\nReport: chimera/reports/" + report.getFileName());
         String text = switch (failure.outcome()) {
             case SKIPPED -> "[Chimera] " + failure.pack() + ": Chimera skipped " + failure.subject() + " ("
-                    + failure.reason() + "); the rest of the pack runs. ";
+                    + failure.reason() + "). ";
             case VANILLA -> "[Chimera] " + failure.pack() + " fell back to vanilla"
                     + (failure.subject().equals("pack") ? "" : " after " + failure.subject() + " failed") + ": "
                     + failure.reason() + " ";

@@ -192,6 +192,15 @@ public final class PackPipelines {
 
     /** All build families share the same fallback boundary. Contract defects remain fatal. */
     static void handleBuildFailure(String program, Exception failure) {
+        handleBuildFailure(program, program, failure);
+    }
+
+    /**
+     * The same for one of {@code program}'s pipelines, such as a sky format or an entity layout,
+     * named {@code pipeline} in the log and Copy Info. The notice names the program: the load's
+     * skip of it is then the same failure, told once (PackFailureNotices).
+     */
+    static void handleBuildFailure(String program, String pipeline, Exception failure) {
         if (failure instanceof PreparationFailure typed
                 && !(typed.phase.equals("shader-compilation") && typed.reason.equals("SHADER_COMPILATION_FAILED"))) {
             throw typed;
@@ -202,7 +211,7 @@ public final class PackPipelines {
                 ? "UNEXPECTED_BUILD_FAILURE" : failure.getMessage();
         Throwable cause = failure.getCause() == null ? failure : failure.getCause();
         LOGGER.warn("[chimera] pack {}: build failed phase={} exception={} reason={}",
-                program, phase, cause.getClass().getName(), reason, cause);
+                pipeline, phase, cause.getClass().getName(), reason, cause);
         HostPipelineLayout.ShaderCompilationFailure compile =
                 cause instanceof HostPipelineLayout.ShaderCompilationFailure shaderc ? shaderc : null;
         String pack = PackFailureNotices.currentPack();
@@ -210,8 +219,8 @@ public final class PackPipelines {
                 compile.source(), PackFailureNotices.currentShadersDir());
         PackFailureNotices.record(new PackFailureNotices.Failure(pack, program, phase,
                 PackFailureNotices.Outcome.SKIPPED, compile == null ? reason : compileError(compile.getMessage()),
-                "Chimera skipped " + program + " in " + pack + ": it did not build (" + phase + ", " + reason + ").\n"
-                        + detail));
+                "Chimera skipped " + program + " in " + pack + ": its pipeline " + pipeline + " did not build ("
+                        + phase + ", " + reason + ").\n" + detail, cause));
     }
 
     /**
@@ -475,7 +484,7 @@ public final class PackPipelines {
                     fragmentSource, imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
-            handleBuildFailure(pipelineName, e);
+            handleBuildFailure(plan.name(), pipelineName, e);
             return null;
         }
     }

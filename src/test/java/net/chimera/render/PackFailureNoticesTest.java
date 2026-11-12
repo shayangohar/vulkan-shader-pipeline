@@ -37,8 +37,8 @@ final class PackFailureNoticesTest {
         PackFailureNotices.publish();
         List<PackFailureNotices.Line> held = PackFailureNotices.held();
         assertEquals(1, held.size());
-        assertEquals("[Chimera] RedHat v34.3.1: Chimera skipped final (compile error: 'lenscolor' : redefinition);"
-                + " the rest of the pack runs. ", held.get(0).text());
+        assertEquals("[Chimera] RedHat v34.3.1: Chimera skipped final (compile error: 'lenscolor' : redefinition). ",
+                held.get(0).text());
         assertFalse(held.get(0).severe(), "a skip is a warning; the pack still runs");
         assertTrue(held.get(0).info().contains("'lenscolor' : redefinition"), held.get(0).info());
 
@@ -52,28 +52,45 @@ final class PackFailureNoticesTest {
     }
 
     @Test
-    void aFallbackToVanillaIsItsOwnFailure() {
+    void aFallbackToVanillaTakesInTheSkipsItsLoadHasNotTold() {
         PackFailureNotices.beginLoad("Insanity", null);
-        PackFailureNotices.record(skipped("Insanity", "composite3", "runtime"));
-        PackFailureNotices.record(new PackFailureNotices.Failure("Insanity", "composite3", "runtime",
-                PackFailureNotices.Outcome.VANILLA, "the device failed (VK_ERROR_DEVICE_LOST)", "info"));
+        PackFailureNotices.record(skipped("Insanity", "gbuffers_entities", "shader-compilation"));
+        PackFailureNotices.record(new PackFailureNotices.Failure("Insanity", "pack", "load",
+                PackFailureNotices.Outcome.VANILLA, "it is not supported yet (entity could not load).", "info"));
         PackFailureNotices.publish();
         List<PackFailureNotices.Line> held = PackFailureNotices.held();
-        assertEquals(2, held.size());
-        assertEquals("[Chimera] Insanity fell back to vanilla after composite3 failed: the device failed"
-                + " (VK_ERROR_DEVICE_LOST) ", held.get(1).text());
-        assertTrue(held.get(1).severe());
+        assertEquals(1, held.size(), "no \"skipped\" line beside the fallback");
+        assertEquals("[Chimera] Insanity fell back to vanilla: it is not supported yet (entity could not load). ",
+                held.get(0).text());
+        assertTrue(held.get(0).severe());
+        assertTrue(held.get(0).info().contains("Skipped before it:\n- gbuffers_entities: pack_gbuffers_entities.fsh"),
+                held.get(0).info());
+        assertEquals(" (fallback)", PackFailureNotices.label("Insanity"));
+        assertEquals(2, PackFailureNotices.statusLines().size(), "the status still lists the skip");
+    }
 
-        // The pack's own fallback names no program; a failed load names what runs instead.
-        PackFailureNotices.record(new PackFailureNotices.Failure("Insanity", "pack", "load",
-                PackFailureNotices.Outcome.VANILLA, "it needs features Chimera does not support (X).", "info"));
+    @Test
+    void aWholePackFailureIsToldEachTimeItHappens() {
+        for (int load = 0; load < 2; load++) {
+            PackFailureNotices.beginLoad("Previous", null);
+            PackFailureNotices.record(new PackFailureNotices.Failure("Broken.zip", "pack", "load",
+                    PackFailureNotices.Outcome.LOAD_FAILED, "PACK_ARCHIVE_INVALID. Previous pack restored.", "info"));
+            PackFailureNotices.publish();
+        }
+        assertEquals(2, PackFailureNotices.held().size(), "each failed apply says so, as Iris's does");
+        assertEquals("[Chimera] Failed to load Broken.zip: PACK_ARCHIVE_INVALID. Previous pack restored. ",
+                PackFailureNotices.held().get(0).text());
+
+        PackFailureNotices.beginLoad("Insanity", null);
+        PackFailureNotices.record(new PackFailureNotices.Failure("Insanity", "composite3", "runtime",
+                PackFailureNotices.Outcome.VANILLA, "the device failed (VK_ERROR_DEVICE_LOST)", "info"));
         PackFailureNotices.record(new PackFailureNotices.Failure("Other", "dimension minecraft:the_nether",
                 "dimension change", PackFailureNotices.Outcome.LOAD_FAILED, "boom. The overworld variant still runs.",
                 "info"));
         PackFailureNotices.publish();
-        held = PackFailureNotices.held();
-        assertEquals("[Chimera] Insanity fell back to vanilla: it needs features Chimera does not support (X). ",
-                held.get(2).text());
+        List<PackFailureNotices.Line> held = PackFailureNotices.held();
+        assertEquals("[Chimera] Insanity fell back to vanilla after composite3 failed: the device failed"
+                + " (VK_ERROR_DEVICE_LOST) ", held.get(2).text());
         assertEquals("[Chimera] Failed to load Other (dimension minecraft:the_nether): boom. The overworld variant "
                 + "still runs. ", held.get(3).text());
     }
@@ -102,6 +119,20 @@ final class PackFailureNoticesTest {
         PackFailureNotices.publish();
         assertEquals(1, PackFailureNotices.current().size());
         assertEquals(1, PackFailureNotices.held().size(), "told once a game");
+
+        // Within a load the first record wins: the build failure, not the load's report of it.
+        PackFailureNotices.record(new PackFailureNotices.Failure("A", "final", "load",
+                PackFailureNotices.Outcome.SKIPPED, "PACK_PIPELINE_BUILD_FAILED:final", "row"));
+        PackFailureNotices.publish();
+        assertEquals(1, PackFailureNotices.held().size());
+        assertEquals("compile error: 'lenscolor' : redefinition", PackFailureNotices.current().get(0).reason());
+
+        // A later load whose final fails for a new reason tells that one.
+        PackFailureNotices.beginLoad("A", null);
+        PackFailureNotices.record(new PackFailureNotices.Failure("A", "final", "shader-compilation",
+                PackFailureNotices.Outcome.SKIPPED, "compile error: 'bloom' : undeclared identifier", "info"));
+        PackFailureNotices.publish();
+        assertEquals(2, PackFailureNotices.held().size(), "a new failure of the same program is told");
     }
 
     @Test
