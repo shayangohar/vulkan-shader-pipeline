@@ -228,6 +228,7 @@ final class PackSessionLifecycle {
         pass.pipelines.clear();
         pass.postChain.packPostExecution.clear();
         pass.postChain.packPostBoundaryLogged.clear();
+        pass.postChain.stageFailures.clear();
         pass.postChain.packFinalExecution = null;
         pass.shadowPass.shadowCastersFailed = false;
         pass.shadowPass.composites.resetSession();

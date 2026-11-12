@@ -24,6 +24,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Which pack post targets a pass may sample, and which persist across frames. */
@@ -125,6 +126,26 @@ final class PackPostTargetsTest {
         assertTrue(bound >= 0, "prepare binds standIn(first attachment): " + prepare);
         assertTrue(bound < prepare.indexOf("Renderer.setViewport"), "the stand-in is bound before setViewport");
         assertTrue(calls(targets, "cleanUp").contains("Map.clear"), "cleanUp drops the stand-ins");
+    }
+
+    /**
+     * A post stage that throws aborts only its own step: the frame stays open, so the passes after
+     * it still record and the frame still commits (TASK-922). Closing the frame stays the window's
+     * abort, which turns the pack off.
+     */
+    @Test
+    void aFailedStepLeavesTheFrameOpen() throws IOException {
+        ClassNode targets = MixinBytecode.nativeClass("net/chimera/render/PackPostTargets");
+        assertFalse(calls(targets, "abortStep").contains("PackTemporalState.abort"),
+                "a failed step must not close the frame");
+        List<String> abort = calls(targets, "abort");
+        assertTrue(abort.contains("PackPostTargets.abortStep") && abort.contains("PackTemporalState.abort"),
+                "the window's abort ends the step and closes the frame: " + abort);
+        ClassNode chain = MixinBytecode.nativeClass("net/chimera/render/PackPostChain");
+        List<String> stage = calls(chain, "runPostStage");
+        assertTrue(stage.contains("PackPostTargets.abortStep") && !stage.contains("PackPostTargets.abort"),
+                "a stage aborts its own step only: " + stage);
+        assertTrue(stage.contains("PostStageFailures.isolate"), "a stage's failure is isolated: " + stage);
     }
 
     /** The methods {@code method} calls, in bytecode order, as SimpleOwner.name. */

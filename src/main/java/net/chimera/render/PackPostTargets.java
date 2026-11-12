@@ -676,14 +676,26 @@ public final class PackPostTargets {
         return this.temporal.commit();
     }
 
-    /** Aborts pending writes without changing committed logical state. */
+    /** Aborts pending writes and closes the frame without changing committed logical state. */
     public void abort(VkCommandBuffer commandBuffer) {
+        try {
+            abortStep(commandBuffer);
+        } finally {
+            this.temporal.abort();
+        }
+    }
+
+    /**
+     * Aborts the current step's pending writes and leaves the frame open. The step never
+     * finished, so the next step's advance passes it through as one that did not run: its draw
+     * buffers carry their read sides, as an identity pass would (PostTargetSides.advanceTo).
+     */
+    public void abortStep(VkCommandBuffer commandBuffer) {
         if (this.rendering) vkCmdEndRenderingKHR(commandBuffer);
         try (MemoryStack stack = MemoryStack.stackPush()) {
             this.storage.end(commandBuffer);
             transitionWrittenTargetsForSampling(stack, commandBuffer);
         } finally {
-            this.temporal.abort();
             this.currentFlipStep = null;
             clearPendingState();
             finishRendererState();

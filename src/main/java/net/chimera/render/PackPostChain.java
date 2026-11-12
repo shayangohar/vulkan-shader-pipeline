@@ -52,6 +52,8 @@ final class PackPostChain {
 
     /** Identity-boundary diagnostics are emitted once per pack session. */
     final Set<String> packPostBoundaryLogged = new HashSet<>();
+    /** The stages that threw while recording this pack session, which now run as identity. */
+    final PostStageFailures stageFailures = new PostStageFailures();
     PackPostExecution packFinalExecution;
 
     /** Debug NaN detector over pack targets; idle unless enabled. */
@@ -234,7 +236,7 @@ final class PackPostChain {
             for (PackPostExecution stage : this.packPostExecution) {
                 if (!scheduledIn(stage, window)) continue;
                 if (stage.post() == null && computeOnly(stage.name())) {
-                    runComputeOnlyStage(commandBuffer, hdrColor, stage);
+                    if (!this.stageFailures.skipped(stage.name())) runComputeOnlyStage(commandBuffer, hdrColor, stage);
                     continue;
                 }
                 if (!stageRunnable(stage)) continue;
@@ -268,6 +270,10 @@ final class PackPostChain {
             markPostStageIdentityBoundary(stage, "not installed");
             return false;
         }
+        if (this.stageFailures.skipped(stage.name())) {
+            markPostStageIdentityBoundary(stage, "threw earlier this session");
+            return false;
+        }
         TargetStep graphStep = postGraphStep(stage);
         if (graphStep == null || !graphStep.executable()) {
             markPostGraphIdentityBoundary(stage, graphStep);
@@ -287,13 +293,29 @@ final class PackPostChain {
      * now, then the barrier Iris's renderAll records after them, and nothing drawn or flipped.
      */
     private void runComputeOnlyStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
-        pass.packPostTargets.beginStep(commandBuffer, stage.name());
-        pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(commandBuffer),
-                hdrColor.width, hdrColor.height);
-        if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
+        try {
+            pass.packPostTargets.beginStep(commandBuffer, stage.name());
+            pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(commandBuffer),
+                    hdrColor.width, hdrColor.height);
+            if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
+        } catch (RuntimeException failure) {
+            // Isolated as a drawing stage is (runPostStage): it opened no rendering to abort.
+            String reason = ChimeraMainPass.runtimeFailureReason("post-stage:" + stage.name(), failure);
+            if (pass.conformanceReport != null) {
+                pass.conformanceReport.markRuntime(stage.name(), ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                        "POST_RUNTIME_STAGE_FAILED:" + stage.name() + ":" + reason);
+            }
+            if (!this.stageFailures.isolate(stage.name(), failure)) throw failure;
+            pass.logPackRuntimeFailure("post-stage:" + stage.name(), failure);
+        }
     }
 
-    /** Draws one post stage into its graph targets; a failure aborts the targets it opened and rethrows. */
+    /**
+     * Draws one post stage into its graph targets. A stage that throws aborts its own step, which
+     * then passes through as one that did not run, and runs as identity for the rest of the
+     * session while the chain goes on (TASK-922). A device-level failure, or the stage that makes
+     * too many (PostStageFailures), is rethrown and turns the pack off.
+     */
     private void runPostStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
         PackPipelines.PackPost post = stage.post();
         ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
@@ -319,10 +341,11 @@ final class PackPostChain {
             checkNanTripwireOutputs(commandBuffer, stage);
         } catch (RuntimeException stageFailure) {
             if (attempted) {
-                pass.packPostTargets.abort(commandBuffer);
+                pass.packPostTargets.abortStep(commandBuffer);
             }
             markPostStageFailure(post, stageFailure);
-            throw stageFailure;
+            if (!this.stageFailures.isolate(post.name(), stageFailure)) throw stageFailure;
+            pass.logPackRuntimeFailure("post-stage:" + post.name(), stageFailure);
         } finally {
             if (previous != null) previous.close();
         }
@@ -365,6 +388,7 @@ final class PackPostChain {
             pass.resolveWorldToOutput(commandBuffer, finalColor);
             pass.packFinalApplied = true;
         } catch (RuntimeException failure) {
+            String finalName = pass.pipelines.finalPost.name();
             markPostStageFailure(pass.pipelines.finalPost, failure);
             try {
                 Renderer.getInstance().endRenderPass(commandBuffer);
@@ -374,11 +398,20 @@ final class PackPostChain {
             }
             pass.packFinalApplied = true;
             pass.logPackRuntimeFailure("final", failure);
+            // As any other stage: identity from now on, or the pack off (PostStageFailures).
+            if (!this.stageFailures.isolate(finalName, failure)) {
+                disablePackPostChain("POST_RUNTIME_FAILED:"
+                        + ChimeraMainPass.runtimeFailureReason("post-stage:" + finalName, failure));
+            }
         }
     }
 
     /** True when final's graph step is executable and its inputs are live; otherwise marks its boundary. */
     private boolean finalStageRunnable() {
+        if (this.packFinalExecution != null && this.stageFailures.skipped(this.packFinalExecution.name())) {
+            markPostStageIdentityBoundary(this.packFinalExecution, "threw earlier this session");
+            return false;
+        }
         TargetStep finalGraphStep = postGraphStep(this.packFinalExecution);
         boolean finalGraphExecutable = finalGraphStep != null && finalGraphStep.executable();
         boolean finalInputsAvailable = finalGraphExecutable
@@ -864,6 +897,7 @@ final class PackPostChain {
         pass.pipelines.postStages.clear();
         this.packPostExecution.clear();
         this.packPostBoundaryLogged.clear();
+        this.stageFailures.clear();
         pass.pipelines.finalPost = null;
         this.packFinalExecution = null;
         pass.pipelines.compositePipeline = null;
