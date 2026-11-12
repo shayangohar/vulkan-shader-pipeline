@@ -76,9 +76,11 @@ public record InstalledLanes(
     }
 
     /**
-     * Whether the set gives any lane a program: the families a session draws with, the hand, the
-     * particles, the host-layout lanes and the shadow casters. The text, moving-block and
-     * block-translucent variants and the shadow pass's block lanes come only with one of them.
+     * Whether the bridge turns on for this set (ChimeraEntityBridge.isInstalled): one of the entity,
+     * block, spider-eyes, damaged-block, beacon-beam, hand, particle, host-layout or shadow_entities
+     * lanes has a program. The text, moving-block and block-translucent variants and shadow_block
+     * do not count: a session whose only lane programs are among them leaves the bridge off, as it
+     * did before the lanes were one set.
      */
     public boolean any() {
         return this.entity != null || this.translucentEntity != null || this.spiderEyes != null || this.block != null
