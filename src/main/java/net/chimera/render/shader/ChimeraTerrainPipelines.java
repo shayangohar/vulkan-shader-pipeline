@@ -46,11 +46,10 @@ public final class ChimeraTerrainPipelines {
     private static GraphicsPipeline translucentOverride;
     /** True for one translucent draw whose pack inputs are not live this frame. */
     private static boolean translucentOverrideSuspended;
-    /** True while the installed pack removes Minecraft's directional face shading; chunk builders read it. */
-    private static volatile boolean directionalShadingDisabled;
-    /** True while the installed pack takes block brightness in the vertex colour's alpha; chunk builders read it. */
-    private static volatile boolean separateAo;
-    /** The installed pack's terrain shading, whose ambient occlusion level chunk builders read. */
+    /**
+     * The installed pack's terrain shading, which chunk builders read: its directional shading,
+     * separateAo, ambient occlusion level and light-block voxels, replaced as one value.
+     */
     private static volatile TerrainShadingDirectives shading = TerrainShadingDirectives.VANILLA;
     /** The rebuilds a handoff asked for (rebuildingOnce), by reason; null outside one. Render thread only. */
     private static Set<String> heldRebuilds;
@@ -67,7 +66,7 @@ public final class ChimeraTerrainPipelines {
      * ClientLevel.getShade answers unshaded for block and fluid meshing.
      */
     public static boolean directionalShadingDisabled() {
-        return directionalShadingDisabled;
+        return shading.disablesDirectionalShading();
     }
 
     /**
@@ -76,7 +75,7 @@ public final class ChimeraTerrainPipelines {
      * never do: VulkanMod's own terrain shader reads alpha as opacity.
      */
     public static boolean separateAoActive() {
-        return separateAo && extendedMode;
+        return shading.separateAo() && extendedMode;
     }
 
     /**
@@ -106,18 +105,18 @@ public final class ChimeraTerrainPipelines {
      */
     public static void setTerrainShading(TerrainShadingDirectives directives) {
         TerrainShadingDirectives next = directives == null ? TerrainShadingDirectives.VANILLA : directives;
-        boolean shadingDisabled = next.disablesDirectionalShading();
-        if (directionalShadingDisabled == shadingDisabled && separateAo == next.separateAo()
-                && shading.ambientOcclusionLevel() == next.ambientOcclusionLevel()
-                && shading.voxelizeLightBlocks() == next.voxelizeLightBlocks()) {
+        TerrainShadingDirectives current = shading;
+        if (current.disablesDirectionalShading() == next.disablesDirectionalShading()
+                && current.separateAo() == next.separateAo()
+                && current.ambientOcclusionLevel() == next.ambientOcclusionLevel()
+                && current.voxelizeLightBlocks() == next.voxelizeLightBlocks()) {
             return;
         }
-        directionalShadingDisabled = shadingDisabled;
-        separateAo = next.separateAo();
         shading = next;
         ChimeraMod.LOGGER.info("[chimera] terrain shading: directional shading {}, ambient occlusion {} at level {}"
-                        + ", light-block voxels {}", shadingDisabled ? "off (pack lights faces)" : "vanilla",
-                separateAo ? "in vertex alpha (separateAo)" : "in vertex RGB", next.ambientOcclusionLevel(),
+                        + ", light-block voxels {}",
+                next.disablesDirectionalShading() ? "off (pack lights faces)" : "vanilla",
+                next.separateAo() ? "in vertex alpha (separateAo)" : "in vertex RGB", next.ambientOcclusionLevel(),
                 next.voxelizeLightBlocks());
         if (initialized && extendedMode) {
             // Build the matching fixed pipeline here rather than on first draw.
@@ -371,6 +370,7 @@ public final class ChimeraTerrainPipelines {
     /** The fixed pipeline for the session's vertex layout and separateAo, built on first use. */
     private static GraphicsPipeline fixedPipeline() {
         boolean modern = materialPlan.modern();
+        boolean separateAo = shading.separateAo();
         int variant = (modern ? 2 : 0) | (separateAo ? 1 : 0);
         GraphicsPipeline pipeline = fixedPipelines[variant];
         if (pipeline == null) {
