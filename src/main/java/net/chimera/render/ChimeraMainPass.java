@@ -1,6 +1,5 @@
 package net.chimera.render;
 
-import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.mixin.ChimeraRendererAccessor;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraPostPipelines;
@@ -904,19 +903,17 @@ public final class ChimeraMainPass implements MainPass {
     }
 
     static int deviceMaxColorAttachments() {
-        if (DeviceManager.device == null) {
+        if (DeviceManager.deviceProperties == null) {
             return PackTargetGraphPlan.LOGICAL_ATTACHMENT_LIMIT;
         }
-        return ((ChimeraDeviceAccessor) DeviceManager.device)
-                .chimera$properties().limits().maxColorAttachments();
+        return DeviceManager.deviceProperties.limits().maxColorAttachments();
     }
 
     static int deviceMaxImageDimension() {
-        if (DeviceManager.device == null) {
+        if (DeviceManager.deviceProperties == null) {
             return Integer.MAX_VALUE;
         }
-        return ((ChimeraDeviceAccessor) DeviceManager.device)
-                .chimera$properties().limits().maxImageDimension2D();
+        return DeviceManager.deviceProperties.limits().maxImageDimension2D();
     }
 
     int packGeometryTargetFormat() {

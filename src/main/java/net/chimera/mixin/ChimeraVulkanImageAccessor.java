@@ -17,8 +17,4 @@ public interface ChimeraVulkanImageAccessor {
     /** The view descriptors sample the image through; VulkanImage.free destroys it. */
     @Accessor("mainImageView")
     void chimera$setMainImageView(long view);
-
-    /** The Vulkan usage flags the image was created with. */
-    @Accessor("usage")
-    int chimera$usage();
 }

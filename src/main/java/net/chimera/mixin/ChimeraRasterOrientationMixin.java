@@ -38,7 +38,7 @@ public abstract class ChimeraRasterOrientationMixin {
                                           Operation<Void> original) {
         if (ChimeraRasterOrientation.boundPassGlOriented()) {
             VkRect2D scissor = scissors.get(0);
-            int height = ((ChimeraRendererAccessor) Renderer.getInstance()).chimera$boundFramebuffer().getHeight();
+            int height = Renderer.getBoundFramebufferHeight();
             scissor.offset().y(height - scissor.offset().y() - scissor.extent().height());
         }
         original.call(commandBuffer, first, scissors);

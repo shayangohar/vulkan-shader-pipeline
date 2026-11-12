@@ -2,7 +2,6 @@ package net.chimera.shaderpack;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.render.PackStorageBufferOwner;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.HostPipelineLayout;
@@ -845,9 +844,8 @@ public final class PackPipelines {
     }
 
     private static int deviceMaxColorAttachments() {
-        if (DeviceManager.device == null) return 8;
-        return ((ChimeraDeviceAccessor) DeviceManager.device)
-                .chimera$properties().limits().maxColorAttachments();
+        if (DeviceManager.deviceProperties == null) return 8;
+        return DeviceManager.deviceProperties.limits().maxColorAttachments();
     }
 
     /** Builds the strict legacy shadow program on the extended terrain inputs. */

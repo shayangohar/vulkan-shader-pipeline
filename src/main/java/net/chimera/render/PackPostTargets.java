@@ -1,6 +1,5 @@
 package net.chimera.render;
 
-import net.chimera.mixin.ChimeraDeviceAccessor;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackFlipPlan;
@@ -867,9 +866,8 @@ public final class PackPostTargets {
     }
 
     private static int deviceMaxColorAttachments() {
-        if (DeviceManager.device == null) return PackTargetGraphPlan.LOGICAL_ATTACHMENT_LIMIT;
-        return ((ChimeraDeviceAccessor) DeviceManager.device)
-                .chimera$properties().limits().maxColorAttachments();
+        if (DeviceManager.deviceProperties == null) return PackTargetGraphPlan.LOGICAL_ATTACHMENT_LIMIT;
+        return DeviceManager.deviceProperties.limits().maxColorAttachments();
     }
 
     private static long imageId(VulkanImage image) {

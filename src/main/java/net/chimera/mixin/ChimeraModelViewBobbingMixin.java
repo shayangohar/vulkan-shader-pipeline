@@ -37,12 +37,6 @@ public abstract class ChimeraModelViewBobbingMixin {
     @Shadow @Final private Camera mainCamera;
     @Shadow private int confusionAnimationTick;
 
-    @Shadow
-    protected abstract void bobHurt(PoseStack poses, float tick);
-
-    @Shadow
-    protected abstract void bobView(PoseStack poses, float tick);
-
     @Unique private boolean chimera$packView;
 
     @Inject(method = "renderLevel", at = @At("HEAD"), require = 1)
@@ -79,8 +73,9 @@ public abstract class ChimeraModelViewBobbingMixin {
         if (!chimera$packView) return original.call(modelView, rotation);
         PoseStack poses = new PoseStack();
         float tick = mainCamera.getPartialTickTime();
-        bobHurt(poses, tick);
-        if (minecraft.options.bobView().get()) bobView(poses, tick);
+        var game = (ChimeraGameRendererHandAccess) this;
+        game.chimera$bobHurt(poses, tick);
+        if (minecraft.options.bobView().get()) game.chimera$bobView(poses, tick);
         modelView.set(poses.last().pose());
         chimera$applyNausea(modelView, delta.getGameTimeDeltaPartialTick(true));
         return modelView.rotate(rotation);

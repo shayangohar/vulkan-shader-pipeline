@@ -14,15 +14,12 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 import java.util.Set;
 
 /**
- * The level renderer's entity drawing and global block entities, for the shadow casters, its tick
- * count, which Iris's cloudTime reads, its culling frustums, which the section setup before the
- * sky takes, and its blindness and darkness check.
+ * The level renderer's entity drawing and global block entities, for the shadow casters, its
+ * culling frustums, which the section setup before the sky takes, and its blindness and darkness
+ * check.
  */
 @Mixin(LevelRenderer.class)
 public interface ChimeraLevelRendererAccessor {
-    @Accessor("ticks")
-    int chimera$ticks();
-
     /** The frustum the debug key froze, or null. */
     @Accessor("capturedFrustum")
     Frustum chimera$capturedFrustum();
