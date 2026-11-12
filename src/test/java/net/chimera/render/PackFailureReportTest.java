@@ -50,13 +50,32 @@ final class PackFailureReportTest {
         assertFalse(redacted.toLowerCase().contains("users\\alex"));
     }
 
+    /** A user folder that is not the home folder as Java names it still names no one. */
     @Test
-    void reportsGetTheirOwnFiles(@TempDir Path game) throws IOException {
+    void anyUserFolderNamesNoOne() {
+        String text = "C:\\Users\\ALEXAN~1\\AppData\\Local\\Temp\\chimera-pack-1\\shaders; "
+                + "{\"path\":\"D:\\\\Users\\\\alex.work\\\\x\"}; /home/alex/.minecraft; /Users/Alex Smith/x; "
+                + "C:/Documents and Settings/alex/y; shaders/Users/lib.glsl";
+        assertEquals("C:\\Users\\<user>\\AppData\\Local\\Temp\\chimera-pack-1\\shaders; "
+                + "{\"path\":\"D:\\\\Users\\\\<user>\\\\x\"}; /home/<user>/.minecraft; /Users/<user>/x; "
+                + "C:/Documents and Settings/<user>/y; shaders/Users/lib.glsl",
+                PackFailureReport.redact(text, List.of(), List.of()));
+    }
+
+    @Test
+    void reportsGetTheirOwnFilesAndTheFolderKeepsTheNewest(@TempDir Path game) throws IOException {
         Path first = PackFailureReport.write(game, "RedHat v34.3.1.zip", "one", WHEN);
         Path second = PackFailureReport.write(game, "RedHat v34.3.1.zip", "two", WHEN);
         assertEquals(game.resolve("chimera/reports/2026-11-12_19.05.03-RedHat_v34.3.1.zip.txt"), first);
         assertEquals("2026-11-12_19.05.03-RedHat_v34.3.1.zip-2.txt", second.getFileName().toString());
         assertEquals("one", Files.readString(first));
+        for (int minute = 0; minute < PackFailureReport.KEPT_REPORTS; minute++) {
+            PackFailureReport.write(game, "Pack", "later", WHEN.plusMinutes(minute + 1));
+        }
+        try (var reports = Files.list(game.resolve("chimera/reports"))) {
+            assertEquals(PackFailureReport.KEPT_REPORTS, reports.count());
+        }
+        assertFalse(Files.exists(first), "the oldest go first");
     }
 
     @Test

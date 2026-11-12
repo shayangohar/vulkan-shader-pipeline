@@ -22,6 +22,7 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * A failure's report file, {@code <gameDir>/chimera/reports/<time>-<pack>.txt} (TASK-922): what
@@ -32,6 +33,8 @@ import java.util.regex.Pattern;
 final class PackFailureReport {
     private static final DateTimeFormatter FILE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH.mm.ss");
     private static final DateTimeFormatter TEXT_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    /** The reports the folder keeps, the newest. */
+    static final int KEPT_REPORTS = 20;
     /** A pack file's hash by path, size and time: a large pack is read once, not on each failure. */
     private static final Map<String, String> HASHES = new ConcurrentHashMap<>();
 
@@ -99,8 +102,19 @@ final class PackFailureReport {
     }
 
     /**
+     * A user's own folder in any path left: {@code X:\Users\<name>} or {@code Documents and
+     * Settings}, with any slashes (JSON escapes them twice), or {@code /home/<name>} and
+     * {@code /Users/<name>}. It catches a short 8.3 name (JOHNSM~1, in the temporary folder) and a
+     * profile folder named unlike the user. A name runs to the next slash, spaces and all.
+     */
+    private static final Pattern USER_FOLDER = Pattern.compile(
+            "(?i)((?:[A-Z]:[\\\\/]+(?:Users|Documents and Settings)|(?<![A-Za-z0-9])/(?:home|Users))[\\\\/]+)"
+                    + "[^\\\\/\"'\\r\\n]+");
+
+    /**
      * {@code text} with no user in it: each of {@code homes} (in either slash) reads as {@code ~},
-     * and each of {@code names}, as a whole word in any case, as {@code <user>}.
+     * any other user folder as {@code <user>} (USER_FOLDER), and each of {@code names}, as a whole
+     * word in any case, as {@code <user>}.
      */
     static String redact(String text, List<String> homes, List<String> names) {
         String redacted = text;
@@ -116,6 +130,7 @@ final class PackFailureReport {
             redacted = Pattern.compile(Pattern.quote(folder), Pattern.CASE_INSENSITIVE).matcher(redacted)
                     .replaceAll(Matcher.quoteReplacement("~"));
         }
+        redacted = USER_FOLDER.matcher(redacted).replaceAll("$1<user>");
         for (String name : names) {
             // A name of one or two letters would blot out words; it names no one in a shader log.
             if (name == null || name.strip().length() < 3) continue;
@@ -125,7 +140,11 @@ final class PackFailureReport {
         return redacted;
     }
 
-    /** Writes {@code text} as a new report under {@code gameDir}; returns its path. */
+    /**
+     * Writes {@code text} as a new report under {@code gameDir} and returns its path. The folder
+     * keeps the newest {@link #KEPT_REPORTS}: each report carries a conformance report of hundreds
+     * of kilobytes, and a skip is told again each game.
+     */
     static Path write(Path gameDir, String pack, String text, LocalDateTime when) throws IOException {
         Path folder = gameDir.resolve("chimera").resolve("reports");
         Files.createDirectories(folder);
@@ -133,7 +152,18 @@ final class PackFailureReport {
         Path file = folder.resolve(stem + ".txt");
         for (int count = 2; Files.exists(file); count++) file = folder.resolve(stem + "-" + count + ".txt");
         Files.writeString(file, text, StandardCharsets.UTF_8);
+        prune(folder);
         return file;
+    }
+
+    /** Deletes all but the newest {@link #KEPT_REPORTS} reports; their names sort by time. */
+    private static void prune(Path folder) throws IOException {
+        List<Path> reports;
+        try (Stream<Path> files = Files.list(folder)) {
+            reports = files.filter(file -> file.getFileName().toString().endsWith(".txt"))
+                    .sorted(Comparator.comparing(file -> file.getFileName().toString())).toList();
+        }
+        for (int index = 0; index < reports.size() - KEPT_REPORTS; index++) Files.deleteIfExists(reports.get(index));
     }
 
     /** {@code name} with only the characters every file system takes. */

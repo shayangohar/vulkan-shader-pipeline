@@ -28,11 +28,15 @@ final class PackFailureReporter implements PackFailureNotices.Reporter {
         this.pass = pass;
     }
 
+    /**
+     * Writes {@code failure}'s report; null when it cannot. It runs inside failure handlers, a post
+     * window's among them, so nothing it does may throw out of it.
+     */
     @Override
     public Path write(PackFailureNotices.Failure failure) {
-        LocalDateTime now = LocalDateTime.now();
-        String text = redact(PackFailureReport.text(failure, failure.cause(), environment(), pack(failure), now));
         try {
+            LocalDateTime now = LocalDateTime.now();
+            String text = redact(PackFailureReport.text(failure, failure.cause(), environment(), pack(failure), now));
             return PackFailureReport.write(Minecraft.getInstance().gameDirectory.toPath(), failure.pack(), text, now);
         } catch (IOException | RuntimeException unwritable) {
             LOGGER.warn("[chimera] cannot write the failure report for {}: {}", failure.subject(),

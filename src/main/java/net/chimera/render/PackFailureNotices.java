@@ -7,6 +7,8 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -86,6 +88,7 @@ public final class PackFailureNotices {
     static final int LINES_PER_PUBLISH = 3;
     private static final int REASON_LENGTH = 160;
 
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private static final Object LOCK = new Object();
     /** Recorded and not yet published. */
     private static final List<Failure> pending = new ArrayList<>();
@@ -184,8 +187,13 @@ public final class PackFailureNotices {
         int shown = told.size() <= LINES_PER_PUBLISH ? told.size() : LINES_PER_PUBLISH - 1;
         for (int index = 0; index < told.size(); index++) {
             Failure failure = told.get(index);
-            Path report = writer == null ? null : writer.write(failure);
-            if (index < shown) lines.add(line(failure, report, writer));
+            try {
+                Path report = writer == null ? null : writer.write(failure);
+                if (index < shown) lines.add(line(failure, report, writer));
+            } catch (RuntimeException untold) {
+                // Publishing runs inside failure handlers: telling must never fail the handler.
+                LOGGER.warn("[chimera] cannot tell the failure of {}: {}", failure.subject(), untold.toString());
+            }
         }
         if (shown < told.size()) {
             lines.add(new Line("[Chimera] " + told.get(shown).pack() + ": " + (told.size() - shown)

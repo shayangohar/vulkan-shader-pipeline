@@ -163,6 +163,27 @@ final class PackFailureNoticesTest {
     }
 
     @Test
+    void aReporterThatThrowsDoesNotFailTheHandlerThatTells() {
+        PackFailureNotices.setReporter(new PackFailureNotices.Reporter() {
+            @Override
+            public Path write(PackFailureNotices.Failure failure) {
+                throw new IllegalStateException("no device yet");
+            }
+
+            @Override
+            public String redact(String text) {
+                return text;
+            }
+        });
+        PackFailureNotices.beginLoad("Pack", null);
+        PackFailureNotices.record(skipped("Pack", "composite", "runtime"));
+        PackFailureNotices.record(skipped("Pack", "final", "runtime"));
+        PackFailureNotices.publish();
+        assertTrue(PackFailureNotices.held().isEmpty(), "both lines are dropped, and logged, not thrown");
+        assertEquals(2, PackFailureNotices.current().size(), "the status still lists them");
+    }
+
+    @Test
     void theLabelSaysFallbackOrHowManyWereSkipped() {
         PackFailureNotices.beginLoad("Pack", null);
         assertEquals("", PackFailureNotices.label("Pack"));
