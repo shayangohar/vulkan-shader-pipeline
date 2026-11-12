@@ -29,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -78,7 +79,8 @@ public final class PackPostTargets {
     private PostTargetSides sides;
     /** colortex0's clear colour this frame: its colortex0ClearColor, else the fog colour, as Iris clears it. */
     private float[] colortex0Clear;
-    private Framebuffer pipelineFramebuffer;
+    /** VulkanMod's stand-ins for a post pass's attachments, one per target extent (standIn). */
+    private final Map<Long, Framebuffer> standIns = new HashMap<>();
     private boolean configured;
     private boolean rendering;
     private final PackTemporalState temporal = new PackTemporalState();
@@ -131,7 +133,7 @@ public final class PackPostTargets {
             throw new IllegalStateException("target graph does not contain colortex0");
         }
         this.sides = new PostTargetSides(graph.flips(), allocated, cleared);
-        this.pipelineFramebuffer = Framebuffer.builder(this.images[0][0], null).build();
+        addStandIns(this.standIns, this.images);
         this.configured = true;
         trace("configure done target0=" + imageId(this.images[0][0])
                 + " target0Alt=" + imageId(this.images[1][0]));
@@ -532,7 +534,7 @@ public final class PackPostTargets {
             // The pass draws unblended unless its blend.<program> says otherwise (CompositeRenderer).
             MrtPipelineContext.begin(plan.outputFormatsArray(), deviceLimit,
                     post.blendPlan().attachments(plan.targetSlots()));
-            Renderer.getInstance().setBoundFramebuffer(this.pipelineFramebuffer);
+            Renderer.getInstance().setBoundFramebuffer(standIn(this.standIns, attachments.first()));
             Renderer.getInstance().setBoundRenderPass(ChimeraRenderingPass.of(plan.outputFormatsArray(), 0, false));
             Renderer.setViewport(0, 0, renderWidth, renderHeight, stack);
             VkRect2D.Buffer scissor = VkRect2D.calloc(1, stack);
@@ -569,7 +571,34 @@ public final class PackPostTargets {
     }
 
     /** One post draw's color attachments and its render extent, the first attachment's size. */
-    private record PostAttachments(VkRenderingAttachmentInfo.Buffer buffer, int width, int height) {}
+    private record PostAttachments(VkRenderingAttachmentInfo.Buffer buffer, VulkanImage first, int width, int height) {}
+
+    /** Gives each extent among the session's target images a stand-in built on one of them. */
+    static void addStandIns(Map<Long, Framebuffer> standIns, VulkanImage[][] images) {
+        for (VulkanImage[] side : images) {
+            for (VulkanImage image : side) {
+                if (image == null) continue;
+                standIns.computeIfAbsent(extent(image), key -> Framebuffer.builder(image, null).build());
+            }
+        }
+    }
+
+    /**
+     * The framebuffer VulkanMod takes a post pass's size from: one of its first attachment's extent.
+     * Reforged 0.3.5 sets the viewport's y from the bound framebuffer's height (Renderer.setViewport),
+     * where 0.3.0 took it from the viewport's own height. Under colortex0's full-size stand-in, a
+     * pass drawing into a size.buffer target drew below its image: Pegasus's one-third-size sky pass
+     * left colortex6 at its clear colour and the sky black. Only the HDR image, which the window
+     * replaces, can lack a stand-in; that pass gets one of its own.
+     */
+    static Framebuffer standIn(Map<Long, Framebuffer> standIns, VulkanImage first) {
+        Framebuffer standIn = standIns.get(extent(first));
+        return standIn != null ? standIn : Framebuffer.builder(first, null).build();
+    }
+
+    private static long extent(VulkanImage image) {
+        return ((long) image.width << 32) | (image.height & 0xFFFFFFFFL);
+    }
 
     /** Moves the plan's attachment targets to attachment layout and describes them in slot order. */
     private PostAttachments colorAttachments(MemoryStack stack, VkCommandBuffer commandBuffer,
@@ -579,6 +608,7 @@ public final class PackPostTargets {
                 VkRenderingAttachmentInfo.calloc(attachmentTargets.size(), stack);
         int renderWidth = step.width();
         int renderHeight = step.height();
+        VulkanImage first = null;
         for (int i = 0; i < attachmentTargets.size(); i++) {
             int target = attachmentTargets.get(i);
             VulkanImage destination = this.pendingImages[target];
@@ -594,11 +624,12 @@ public final class PackPostTargets {
             attachment.loadOp(VK_ATTACHMENT_LOAD_OP_LOAD);
             attachment.storeOp(VK_ATTACHMENT_STORE_OP_STORE);
             if (i == 0) {
+                first = destination;
                 renderWidth = destination.width;
                 renderHeight = destination.height;
             }
         }
-        return new PostAttachments(attachments, renderWidth, renderHeight);
+        return new PostAttachments(attachments, first, renderWidth, renderHeight);
     }
 
     /**
@@ -757,8 +788,8 @@ public final class PackPostTargets {
                 + " target0Alt=" + imageId(this.images[1][0])
                 + " configured=" + this.configured);
         if (this.rendering) throw new IllegalStateException("cannot clean up active pack post rendering");
-        if (this.pipelineFramebuffer != null) this.pipelineFramebuffer.cleanUp(false);
-        this.pipelineFramebuffer = null;
+        for (Framebuffer standIn : this.standIns.values()) standIn.cleanUp(false);
+        this.standIns.clear();
         for (int side = 0; side < images.length; side++) {
             for (int target = 0; target < TARGET_COUNT; target++) {
                 if (this.images[side][target] != null) {

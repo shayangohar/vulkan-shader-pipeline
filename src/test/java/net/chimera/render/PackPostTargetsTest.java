@@ -1,15 +1,25 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.MixinBytecode;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PostTargetPlan;
+import net.vulkanmod.vulkan.framebuffer.Framebuffer;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.MethodInsnNode;
+import org.objectweb.asm.tree.MethodNode;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -80,6 +90,54 @@ final class PackPostTargetsTest {
         }
         targets.generateMipmaps(null, "final");
         assertTrue(targets.samplesMips(sky), "still mip-sampled at final");
+    }
+
+    /**
+     * Reforged 0.3.5 sets a viewport's y from the bound framebuffer's height. Pegasus draws its sky
+     * into colortex6 at a third of the screen and composite2 into colortex9 at a tenth; bound to
+     * colortex0's full-size stand-in, both passes drew below their images and the sky came out black.
+     */
+    @Test
+    void aPostPassBindsAStandInOfItsOwnSize() throws IOException {
+        VulkanImage[][] images = new VulkanImage[2][16];
+        images[0][0] = MaterialMapFixtures.markerImage(2560, 1440);
+        images[1][0] = MaterialMapFixtures.markerImage(2560, 1440);
+        images[0][6] = MaterialMapFixtures.markerImage(844, 475);
+        images[0][9] = MaterialMapFixtures.markerImage(256, 144);
+        Map<Long, Framebuffer> standIns = new HashMap<>();
+        PackPostTargets.addStandIns(standIns, images);
+        assertEquals(3, standIns.size(), "one stand-in per extent");
+        for (VulkanImage first : new VulkanImage[] {images[1][0], images[0][6], images[0][9]}) {
+            Framebuffer bound = PackPostTargets.standIn(standIns, first);
+            assertEquals(first.width, bound.getWidth());
+            assertEquals(first.height, bound.getHeight(), "the viewport's y comes from this height");
+        }
+        VulkanImage hdr = MaterialMapFixtures.markerImage(1920, 1080);
+        assertEquals(1080, PackPostTargets.standIn(standIns, hdr).getHeight(), "an HDR image no target matches");
+        assertEquals(3, standIns.size(), "the window replaces the HDR image, so its stand-in is not kept");
+
+        // prepare binds the first attachment's stand-in before setViewport reads its height, and
+        // cleanUp drops the stand-ins with the images they were built on.
+        ClassNode targets = MixinBytecode.nativeClass("net/chimera/render/PackPostTargets");
+        List<String> prepare = calls(targets, "prepare");
+        int bound = Collections.indexOfSubList(prepare, List.of("PackPostTargets$PostAttachments.first",
+                "PackPostTargets.standIn", "Renderer.setBoundFramebuffer"));
+        assertTrue(bound >= 0, "prepare binds standIn(first attachment): " + prepare);
+        assertTrue(bound < prepare.indexOf("Renderer.setViewport"), "the stand-in is bound before setViewport");
+        assertTrue(calls(targets, "cleanUp").contains("Map.clear"), "cleanUp drops the stand-ins");
+    }
+
+    /** The methods {@code method} calls, in bytecode order, as SimpleOwner.name. */
+    private static List<String> calls(ClassNode owner, String method) {
+        MethodNode node = owner.methods.stream().filter(candidate -> candidate.name.equals(method)).findFirst()
+                .orElseThrow(() -> new AssertionError(owner.name + "." + method + " is missing"));
+        List<String> calls = new ArrayList<>();
+        for (AbstractInsnNode instruction : node.instructions) {
+            if (instruction instanceof MethodInsnNode call) {
+                calls.add(call.owner.substring(call.owner.lastIndexOf('/') + 1) + "." + call.name);
+            }
+        }
+        return calls;
     }
 
     @Test

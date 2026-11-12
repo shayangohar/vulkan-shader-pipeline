@@ -246,10 +246,15 @@ final class MaterialMapFixtures {
     }
 
     static VulkanImage markerImage() {
+        return markerImage(1, 1);
+    }
+
+    /** An image object of this size with no Vulkan image behind it. */
+    static VulkanImage markerImage(int width, int height) {
         try {
             var constructor = VulkanImage.class.getDeclaredConstructor(VulkanImage.Builder.class);
             constructor.setAccessible(true);
-            return constructor.newInstance(VulkanImage.builder(1, 1));
+            return constructor.newInstance(VulkanImage.builder(width, height));
         } catch (ReflectiveOperationException failure) {
             throw new RuntimeException(failure);
         }
