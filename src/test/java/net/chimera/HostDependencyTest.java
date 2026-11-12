@@ -19,20 +19,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Chimera's mixins into VulkanMod Reforged must all apply (defaultRequire 1), so a Reforged they were
  * not built against crashes the launch at the first missed hook: 0.3.0 has no Renderer.applyScissor,
- * which ChimeraRasterOrientationMixin wraps on 0.3.5. The manifest bounds the dependency to the tested
- * line, and NeoForge refuses any other host on its dependency screen. The range is read from the
+ * which ChimeraRasterOrientationMixin wraps on 0.3.5. The manifest names the one build Chimera was
+ * tested on, and NeoForge refuses any other host on its dependency screen. The range is read from the
  * manifest and checked with the loader's own parser.
  */
 final class HostDependencyTest {
     private static final Path MANIFEST = Path.of("src/main/resources/META-INF/neoforge.mods.toml");
 
     @Test
-    void vulkanModRangeAdmitsOnlyTheTestedReforgedLine() throws IOException {
+    void vulkanModRangeAdmitsOnlyTheTestedReforgedBuild() throws IOException {
         VersionRange range = MavenVersionAdapter.createFromVersionSpec(vulkanModRange());
         assertTrue(range.containsVersion(new DefaultArtifactVersion("0.3.5-ALPHA+1.21.1")), range.toString());
-        // Earlier and later Reforged releases, and the separate NeoForge port that shares the mod id.
+        // Earlier and later Reforged releases, other 0.3.5 builds (Maven orders these inside a
+        // [0.3.5-ALPHA,0.3.6) range), and the separate NeoForge port that shares the mod id.
         for (String other : List.of("0.3.0-ALPHA+1.21.1", "0.3.1-ALPHA+1.21.1", "0.3.6-ALPHA+1.21.1",
-                "0.5.5-dev+6-unstable", "0.2.0-ALPHA")) {
+                "0.3.5.1-ALPHA+1.21.1", "0.3.5-BETA+1.21.1", "0.3.5+1.21.1", "0.3.5-ALPHA",
+                "0.3.5-ALPHA+1.21.11", "0.5.5-dev+6-unstable", "0.2.0-ALPHA")) {
             assertFalse(range.containsVersion(new DefaultArtifactVersion(other)), other + " in " + range);
         }
     }
