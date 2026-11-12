@@ -10,8 +10,15 @@ import java.util.TreeMap;
 import java.util.function.BiFunction;
 import java.util.function.Supplier;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /** Builds the one load-time source, interface, and translation plan. */
 public final class PackPlanBuilder {
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
+    /** The deviation of a program whose planning threw; its argument is the failure (failureReason). */
+    public static final String PLANNING_FAILED = "PROGRAM_PLANNING_FAILED";
+
     private PackPlanBuilder() {}
 
     public static PackPlan build(List<PackProgram> programs, PackConfig.PackConfigData config) {
@@ -73,7 +80,41 @@ public final class PackPlanBuilder {
                     Map.of(), Map.of(), null, null, null, null,
                     List.of("PROGRAM_SOURCE_MISSING"), false);
         }
-        return new ProgramBuild(program, config, resolution, advancedResources).plan();
+        try {
+            return new ProgramBuild(program, config, resolution, advancedResources).plan();
+        } catch (RuntimeException failure) {
+            return planningFailed(program, config, failure);
+        }
+    }
+
+    /**
+     * The plan of a program whose planning threw: it does not run, and the rest of the pack plans
+     * on (KNOW-142). The throw is a Chimera defect, so the corpus gate fails on this deviation
+     * (PackCompileTest). The plan keeps the targets its fragment declares where they still parse,
+     * as a program refused for any other reason does.
+     */
+    static PackProgramPlan planningFailed(PackProgram program, PackConfig.PackConfigData config,
+                                          RuntimeException failure) {
+        String name = program.name();
+        LOGGER.warn("[chimera] pack {}: planning failed, program skipped", name, failure);
+        PostTargetPlan targets;
+        try {
+            targets = PostTargetPlan.forFullscreenProgram(name, program.executableFragmentSource(), config);
+        } catch (RuntimeException unparsed) {
+            targets = null;
+        }
+        return new PackProgramPlan(program, Map.of(),
+                UniformRegistry.planProgram("", null, FamilyAdapterRegistry.stageFor(name), null, true),
+                Map.of(), Map.of(), targets, null, null, null,
+                List.of(PLANNING_FAILED + ":" + failureReason(failure)), false);
+    }
+
+    /** A thrown failure as a deviation argument: its type, then its message's word characters. */
+    static String failureReason(RuntimeException failure) {
+        String message = failure.getMessage();
+        String reason = failure.getClass().getSimpleName()
+                + (message == null || message.isBlank() ? "" : "_" + VertexBridgeDeviations.safeReason(failure));
+        return reason.length() <= 160 ? reason : reason.substring(0, 160);
     }
 
     /**

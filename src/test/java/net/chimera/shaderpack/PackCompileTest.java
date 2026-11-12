@@ -91,6 +91,14 @@ final class PackCompileTest {
             }
             if (compiler.compiles(program)) compiled++;
         }
+        // The catch-all fallbacks keep one program's Chimera defect from failing the pack; the gate
+        // keeps that defect loud (PackPlanBuilder.planningFailed, ProgramReportRules.reportRow).
+        for (ConformanceReport.ProgramReport row : analysis.report().programs()) {
+            row.deviations().stream()
+                    .filter(deviation -> deviation.startsWith(PackPlanBuilder.PLANNING_FAILED)
+                            || deviation.startsWith(ProgramReportRules.REPORT_FAILED))
+                    .forEach(deviation -> failures.add(row.name() + ": " + deviation));
+        }
         List<String> passComputes = new ArrayList<>();
         compiled += compilePassComputes(pack, shadersDir, analysis.plan(), failures, passComputes, snapshot);
         return new Result(compiled, List.copyOf(failures), List.copyOf(passComputes));

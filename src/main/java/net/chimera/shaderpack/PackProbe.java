@@ -144,7 +144,7 @@ public final class PackProbe {
             inventoryAliases(packPlan);
             PassComputePlan passComputes = PassComputePlan.build(packPlan, shadersDir);
             PackPlan planned = packPlan;
-            PackWorkers.map(List.copyOf(inventories.values()), inventory -> ProgramReportRules.toProgram(inventory,
+            PackWorkers.map(List.copyOf(inventories.values()), inventory -> ProgramReportRules.reportRow(inventory,
                     packConfig, planned.program(inventory.name), resourcePlan, planned, passComputes))
                     .forEach(report::addProgram);
             return new Analysis(report, packPlan, packConfig, settingsPlan, resolution, passComputes);
@@ -595,7 +595,7 @@ public final class PackProbe {
         final Set<String> preparationDeviations = new HashSet<>();
         String variantFolder = "";
 
-        private Inventory(String name) {
+        Inventory(String name) {
             this.name = name;
         }
     }

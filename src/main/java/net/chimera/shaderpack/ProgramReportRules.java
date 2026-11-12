@@ -10,6 +10,9 @@ import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.stream.Collectors;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import static net.chimera.shaderpack.GlslLexer.stripComments;
 
 /**
@@ -17,7 +20,40 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
  * targets deviate from, and the support status those deviations add up to.
  */
 final class ProgramReportRules {
+    private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
+
     private ProgramReportRules() {}
+
+    /** The deviation of a program whose report rules threw; its argument is the failure. */
+    static final String REPORT_FAILED = "PROGRAM_REPORT_FAILED";
+
+    /**
+     * A program's report row. When the rules throw, the row still names the program and why, and
+     * the rest of the report is built (KNOW-142). Without the rules' verdict the runtime cannot know
+     * whether they would refuse the program, so the row skips it. The corpus gate fails on this
+     * deviation (PackCompileTest).
+     */
+    static ConformanceReport.ProgramReport reportRow(
+            PackProbe.Inventory inventory,
+            PackConfig.PackConfigData packConfig,
+            PackProgramPlan programPlan,
+            PackResourcePlan resourcePlan,
+            PackPlan packPlan,
+            PassComputePlan passComputes
+    ) {
+        try {
+            return toProgram(inventory, packConfig, programPlan, resourcePlan, packPlan, passComputes);
+        } catch (RuntimeException failure) {
+            LOGGER.warn("[chimera] pack {}: report rules failed, program skipped", inventory.name, failure);
+            TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
+            if (programPlan != null) deviations.addAll(programPlan.deviations());
+            deviations.add(REPORT_FAILED + ":" + PackPlanBuilder.failureReason(failure));
+            return new ConformanceReport.ProgramReport(inventory.name, PackProbe.familyOf(inventory.name),
+                    "LEGACY_GLSL", PackProbe.sorted(inventory.stages), inventory.sourceHashes, List.of(), List.of(),
+                    List.of(), ConformanceReport.SupportStatus.IDENTITY_FALLBACK,
+                    ConformanceReport.RuntimeDisposition.NOT_ATTEMPTED, List.copyOf(deviations));
+        }
+    }
 
     static ConformanceReport.ProgramReport toProgram(
             PackProbe.Inventory inventory,
