@@ -13,8 +13,8 @@ import org.spongepowered.asm.mixin.injection.ModifyArg;
  * shadow render type (translucent, no depth write, no depth bias) depth-fought
  * the receiver as the camera angle changed. This adds separation to the decal
  * Y only; X, Z, UVs, alpha, and depth state are untouched. Iris does not lift
- * the decal. While a pack's own shadow pass runs, the decal is not drawn at all
- * (ChimeraEntityRenderDispatcherMixin), as in Iris.</p>
+ * the decal. While a pack's shadow map replaces entity shadows, the decal is
+ * not drawn at all (ChimeraEntityRenderDispatcherMixin), as in Iris.</p>
  */
 @Mixin(EntityRenderDispatcher.class)
 public abstract class ChimeraShadowDecalMixin {

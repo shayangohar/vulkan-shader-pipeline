@@ -62,8 +62,6 @@ public abstract class ChimeraSkyRendererMixin {
 
     @Shadow
     private ClientLevel level;
-    @Shadow
-    private int ticks;
 
     @WrapMethod(method = "renderSky")
     private void chimera$skyWindow(Matrix4f frustum, Matrix4f projection, float partialTick, Camera camera,
@@ -181,11 +179,12 @@ public abstract class ChimeraSkyRendererMixin {
         }
         var previous = PackUniformProvider.setRenderingPhase(PackRenderingPhase.CLOUDS);
         try {
+            int ticks = ((LevelRenderer) (Object) this).getTicks();
             if (!ChimeraSkyBridge.drawsPackClouds() || this.level == null) {
                 original.call(pose, frustum, projection, partialTick, cameraX, cameraY, cameraZ);
-            } else if (!this.level.effects().renderClouds(this.level, this.ticks, partialTick, pose, cameraX, cameraY,
+            } else if (!this.level.effects().renderClouds(this.level, ticks, partialTick, pose, cameraX, cameraY,
                     cameraZ, frustum, projection)) {
-                ChimeraCloudRenderer.shared().draw(this.level, this.ticks, pose, frustum, projection, partialTick,
+                ChimeraCloudRenderer.shared().draw(this.level, ticks, pose, frustum, projection, partialTick,
                         cameraX, cameraY, cameraZ);
             }
         } finally {
