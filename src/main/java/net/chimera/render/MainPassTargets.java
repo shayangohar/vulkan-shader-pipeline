@@ -62,6 +62,19 @@ final class MainPassTargets {
         return pass.packPostTargets.carriesColortex0() ? hdrAuxClearDepthRenderPass : hdrRenderPass;
     }
 
+    /**
+     * The pass that resumes {@code bound} after Reforged 0.3.5 splits it (MainPass.resumeRenderPass):
+     * Renderer.flushCmds for a readback and RenderTargetBlit for a blit end the bound pass and begin
+     * it again. A world or output pass that clears resumes with its load twin, so what was drawn
+     * before the split stays, as DefaultMainPass resumes its own passes. Any other pass resumes
+     * as it is.
+     */
+    RenderPass resumePass(RenderPass bound) {
+        if (bound == hdrRenderPass || bound == hdrAuxClearDepthRenderPass) return hdrAuxRenderPass;
+        if (bound == compositeRenderPass || bound == compositeAuxClearDepthRenderPass) return compositeAuxRenderPass;
+        return bound;
+    }
+
     void createOutputFramebuffer(int width, int height) {
         // Beryl's stable MainPass output uses VK_FORMAT_R8G8B8A8_UNORM (37).
         this.compositeFramebuffer = framebuffer(width, height, 37);

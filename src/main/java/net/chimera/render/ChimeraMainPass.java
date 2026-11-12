@@ -799,6 +799,11 @@ public final class ChimeraMainPass implements MainPass {
                 : this.targets.compositeDepthGlId;
     }
 
+    @Override
+    public RenderPass resumeRenderPass(RenderPass renderPass) {
+        return this.targets.resumePass(renderPass);
+    }
+
     /** Records a depth clear to apply when the current target reopens. */
     public void requestPendingDepthClear() {
         this.pendingDepthClear = true;
