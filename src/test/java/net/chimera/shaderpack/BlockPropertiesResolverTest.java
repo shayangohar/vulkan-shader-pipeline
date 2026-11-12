@@ -305,6 +305,167 @@ final class BlockPropertiesResolverTest {
         assertEquals("''' /* c */ STONE", entries.get("block.8"));
     }
 
+    /**
+     * JCPP reports a conditional it cannot read and reads on (KNOW-1148): an #if or #elif Chimera
+     * cannot evaluate, and an empty #if, read false; an empty #ifdef takes block.8, the line after
+     * it (anIfdefWithoutANameLeavesItsBranchOn); a second #else and an #elif after #else are
+     * ignored; a stray #endif is ignored and a stray #else turns the rest off. The file
+     * used to read nothing (CONDITION_UNSUPPORTED). The entries are JCPP's for this file.
+     */
+    @Test
+    void aConditionalJcppCannotReadIsReportedAndSkipped(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                #if F(1)
+                block.1=a
+                #endif
+                block.2=b
+                #if 1
+                block.3=c
+                #else
+                block.4=d
+                #else
+                block.5=e
+                #endif
+                #if 0
+                #else
+                block.6=f
+                #elif 1
+                block.7=g
+                #endif
+                #ifdef
+                block.8=h
+                #endif
+                #if
+                block.9=i
+                #endif
+                #if 0
+                block.10=j
+                #elif G(2)
+                block.11=k
+                #else
+                block.12=l
+                #endif
+                #endif
+                block.13=m
+                #else
+                block.14=n
+                #if 1
+                block.15=o
+                #endif
+                #endif
+                block.16=p
+                """);
+        IdMapProperties.Loaded file = IdMapProperties.read(root, "block.properties", Map.of());
+        assertEquals("CONDITION_UNSUPPORTED", file.failure());
+        assertEquals(List.of("block.2", "block.3", "block.6", "block.7", "block.12", "block.13"),
+                List.copyOf(file.entries().keySet()));
+
+        Files.writeString(root.resolve("item.properties"), "#if F(1)\nitem.1=stick\n#endif\nitem.2=torch\n");
+        PackItemIdResolver.ParseResult items = PackItemIdResolver.parse(root, Map.of());
+        assertEquals(2, items.resolver().resolve("minecraft:torch"), "the item map reads on too");
+        assertTrue(items.deviations().contains("ITEM_PROPERTIES_CONDITION_UNSUPPORTED"), items.deviations().toString());
+    }
+
+    /**
+     * A {@code #} right after a comment's close on its line starts a directive in JCPP; only a
+     * {@code #} line survives Iris's line pass with its sign, so it takes a directive name's line
+     * inside a comment. The comment text before it stays. The entries are JCPP's for this file.
+     */
+    @Test
+    void aDirectiveMayFollowACommentsClose(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                /*
+                #if 0 */ #define STONE granite
+                block.1 = STONE
+                /* c */ #define DIRT dirt
+                block.2 = DIRT
+                """);
+        Map<String, String> entries = IdMapProperties.read(root, "block.properties", Map.of()).entries();
+        assertEquals("granite", entries.get("block.1"));
+        assertEquals("DIRT", entries.get("block.2"), "a line that does not start with # loses its sign first");
+        assertEquals("c */ define DIRT dirt", entries.get("/*"));
+
+        // A comment that opened after other text keeps the line it closes on from starting a directive.
+        Files.writeString(root.resolve("block.properties"), """
+                #if 0
+                block.0=a /* c
+                #define A */ #else
+                block.1=b
+                #endif
+                block.2=c
+                """);
+        assertEquals(List.of("block.2"),
+                List.copyOf(IdMapProperties.read(root, "block.properties", Map.of()).entries().keySet()));
+    }
+
+    /**
+     * JCPP reads an #ifdef or #ifndef whose argument starts with no identifier as an error that
+     * leaves its branch on; with no argument (a comment aside) it also takes the next line,
+     * whatever it is, an #endif included. In a skipped branch it does neither. The entries are
+     * JCPP's for this file.
+     */
+    @Test
+    void anIfdefWithoutANameLeavesItsBranchOn(@TempDir Path root) throws IOException {
+        Files.writeString(root.resolve("block.properties"), """
+                #ifdef 123
+                block.1=a
+                #else
+                block.2=b
+                #endif
+                #ifdef
+                block.3=c
+                #else
+                block.4=d
+                #endif
+                #ifndef
+                block.5=e
+                #else
+                block.6=f
+                #endif
+                #if 0
+                #ifdef
+                block.7=g
+                #endif
+                #endif
+                block.8=h
+                #ifdef /* c */
+                block.9=i
+                #endif
+                #ifdef // c
+                block.10=j
+                #endif
+                #ifdef
+                #endif
+                block.11=k
+                #ifndef 7up
+                block.12=l
+                #endif
+                block.13=m
+                """);
+        IdMapProperties.Loaded file = IdMapProperties.read(root, "block.properties", Map.of());
+        assertEquals("CONDITION_UNSUPPORTED", file.failure());
+        assertEquals(List.of("block.1", "block.8", "block.11", "block.12", "block.13"),
+                List.copyOf(file.entries().keySet()));
+
+        // The taken line is the first with text after Iris's line pass, which empties # comments;
+        // a name is a Java identifier to JCPP, so #ifndef $X tests an undefined $X.
+        Files.writeString(root.resolve("block.properties"), """
+                #ifdef
+                # comment
+                ## another
+                block.14=n
+                #endif
+                block.15=o
+                #ifndef $X
+                block.16=p
+                #else
+                block.17=q
+                #endif
+                """);
+        assertEquals(List.of("block.15", "block.16"),
+                List.copyOf(IdMapProperties.read(root, "block.properties", Map.of()).entries().keySet()));
+    }
+
     /** IdMap.parseRenderTypeMap puts layer keys in key order: a block two keys name takes the later. */
     @Test
     void aBlockTwoLayerKeysNameTakesTheLaterKey(@TempDir Path root) throws IOException {

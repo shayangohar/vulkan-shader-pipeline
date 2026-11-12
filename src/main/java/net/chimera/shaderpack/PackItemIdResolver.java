@@ -44,13 +44,17 @@ public final class PackItemIdResolver {
         if (!file.present()) {
             return new ParseResult(empty(), false, List.of());
         }
-        if (file.failure() != null) {
+        boolean conditionReadFalse = "CONDITION_UNSUPPORTED".equals(file.failure());
+        if (file.failure() != null && !conditionReadFalse) {
             return new ParseResult(empty(), true, List.of("ITEM_PROPERTIES_" + file.failure()));
         }
+        List<String> deviations = new ArrayList<>();
+        // A conditional Chimera could not evaluate read false; the rest of the file still maps.
+        if (conditionReadFalse) deviations.add("ITEM_PROPERTIES_CONDITION_UNSUPPORTED");
         List<String> invalidKeys = new ArrayList<>();
         Map<String, Integer> ids = IdMapProperties.ids(file.entries(), "item.", invalidKeys);
-        return new ParseResult(new PackItemIdResolver(ids), true,
-                invalidKeys.stream().map(key -> "ITEM_ID_KEY_INVALID:" + key).toList());
+        invalidKeys.forEach(key -> deviations.add("ITEM_ID_KEY_INVALID:" + key));
+        return new ParseResult(new PackItemIdResolver(ids), true, List.copyOf(deviations));
     }
 
     /** The pack id of an item name such as {@code minecraft:torch}, or {@link #UNMAPPED}. */

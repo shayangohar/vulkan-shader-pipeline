@@ -31,7 +31,9 @@ final class IdMapProperties {
     /**
      * One file's entries in the order their keys first appear, each with its last value, as
      * OrderBackedProperties keeps them. {@code failure} names why there are none when the file exists
-     * but could not be read, its conditions could not be evaluated, or its escapes are malformed.
+     * but could not be read or its escapes are malformed, or (CONDITION_UNSUPPORTED) that a
+     * conditional Chimera could not evaluate read false, the rest of the file read on as JCPP reads
+     * it (PropertiesPreprocessor.applyConditional).
      */
     record Loaded(boolean present, String sourceHash, Map<String, String> entries, String failure) {}
 
@@ -51,13 +53,11 @@ final class IdMapProperties {
         // Iris reads id maps as ISO-8859-1, which never fails on a stray byte.
         PropertiesPreprocessor.Preprocessed preprocessed =
                 PropertiesPreprocessor.preprocess(new String(bytes, StandardCharsets.ISO_8859_1), macros);
-        if (preprocessed.failed()) {
-            return new Loaded(true, hash, Map.of(), "CONDITION_UNSUPPORTED");
-        }
         String text = CONTINUED_PAST_EMPTY_LINES.matcher(preprocessed.text()).replaceAll(" ");
         text = RUN_ON_BLOCK_KEY.matcher(text).replaceAll("\nblock.");
         try {
-            return new Loaded(true, hash, PropertiesPreprocessor.load(text), null);
+            return new Loaded(true, hash, PropertiesPreprocessor.load(text),
+                    preprocessed.failed() ? "CONDITION_UNSUPPORTED" : null);
         } catch (IOException | IllegalArgumentException e) {
             return new Loaded(true, hash, Map.of(), "MALFORMED");
         }

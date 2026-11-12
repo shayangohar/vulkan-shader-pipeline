@@ -589,7 +589,8 @@ record PackSettingsPlan(
         private final List<String> deviations;
         private final Set<String> toggleOptions;
         private PackConditionals.State conditions;
-        private boolean invalidCondition;
+        // An #ifdef with no name takes the next line with text, as JCPP reads it.
+        private boolean takeNextLine;
 
         PropertiesParse(Path propertyFile, Map<String, Option> options, Map<String, String> defaults,
                         Map<String, Profile> profiles, Map<String, String> values,
@@ -614,11 +615,14 @@ record PackSettingsPlan(
         void run(Map<String, String> initialMacros) {
             conditions = new PackConditionals.State(initialMacros);
             try {
-                // Iris reads shaders.properties as ISO-8859-1, which never fails on a stray byte.
-                List<String> physical = Files.readAllLines(propertyFile, StandardCharsets.ISO_8859_1);
+                // Iris reads shaders.properties as ISO-8859-1, which never fails on a stray byte, and
+                // JCPP carries a block comment across lines (PropertiesPreprocessor.commentLines).
+                List<PropertiesPreprocessor.Line> lines = PropertiesPreprocessor.commentLines(
+                        Files.readAllLines(propertyFile, StandardCharsets.ISO_8859_1));
                 PropertyLineJoiner joiner = new PropertyLineJoiner();
-                for (int index = 0; index <= physical.size(); index++) {
-                    String raw = index < physical.size() ? physical.get(index) : null;
+                for (int index = 0; index <= lines.size(); index++) {
+                    PropertiesPreprocessor.Line next = index < lines.size() ? lines.get(index) : null;
+                    String raw = next == null ? null : next.text();
                     String line;
                     if (raw != null && PropertyLineJoiner.endsContinuation(raw) && joiner.pending()) {
                         // The # line ends the open continuation: handle that line first,
@@ -627,7 +631,7 @@ record PackSettingsPlan(
                         index--;
                     } else if (raw == null) {
                         line = joiner.finish();
-                    } else if (applyCondition(raw) || invalidCondition || !conditions.active()) {
+                    } else if (skips(next)) {
                         continue;
                     } else {
                         line = PropertyLineJoiner.endsContinuation(raw) ? raw : joiner.accept(raw);
@@ -636,33 +640,46 @@ record PackSettingsPlan(
                         accept(line);
                     }
                 }
-                if (!invalidCondition) {
-                    try {
-                        conditions.finish();
-                    } catch (RuntimeException failure) {
-                        deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
-                    }
+                try {
+                    conditions.finish();
+                } catch (RuntimeException failure) {
+                    deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
                 }
             } catch (IOException e) {
                 deviations.add("SHADERS_PROPERTIES_READ_FAILED");
             }
         }
 
-        /** Applies an #if, #ifdef, #else or #endif line; false when the line is not one. */
+        /**
+         * Whether a line adds nothing to the settings: a {@code #} line inside a block comment
+         * (comment text to JCPP, then a properties comment), a conditional, which it applies, a line
+         * of an inactive branch, or the line an #ifdef with no name takes.
+         */
+        private boolean skips(PropertiesPreprocessor.Line next) {
+            if (takeNextLine) {
+                // The first line Iris's line pass leaves text on is taken; the emptied ones go anyway.
+                takeNextLine = PropertiesPreprocessor.emptiedByLinePass(next.text());
+                return true;
+            }
+            if (next.inComment() && PropertyLineJoiner.endsContinuation(next.text())) return true;
+            return applyCondition(next.text()) || !conditions.active();
+        }
+
+        /**
+         * Applies an #if, #ifdef, #else or #endif line as JCPP does, reading on past one Chimera
+         * cannot evaluate (PropertiesPreprocessor.applyConditional); false when the line is not one.
+         */
         private boolean applyCondition(String raw) {
             Matcher directive = CONDITION.matcher(raw);
             if (!directive.matches()) {
                 return false;
             }
-            if (!invalidCondition) {
-                try {
-                    conditions.apply(directive.group(1), directive.group(2).trim());
-                } catch (RuntimeException failure) {
-                    deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
-                    conditions = new PackConditionals.State(stageIndependentDefaults(defaults));
-                    invalidCondition = true;
-                }
+            PropertiesPreprocessor.Conditional applied = PropertiesPreprocessor.applyConditional(
+                    conditions, directive.group(1), directive.group(2).trim());
+            if (applied != PropertiesPreprocessor.Conditional.APPLIED) {
+                deviations.add("PREPROCESSOR_CONDITION_UNSUPPORTED");
             }
+            takeNextLine = applied == PropertiesPreprocessor.Conditional.TAKES_NEXT_LINE;
             return true;
         }
 
@@ -811,8 +828,8 @@ record PackSettingsPlan(
      * closes a multi-line {@code moon_phase_brightness} with {@code ") \"} right before its
      * {@code #else}, and Bliss's {@code screen} list ends at the commented-out one under it. (The
      * id maps differ: IdMap rejoins across those lines, see {@link IdMapProperties}.) Callers
-     * evaluate conditions on physical lines, end an open continuation at each {@code #} line, and
-     * feed only active other lines to {@link #accept}.
+     * evaluate conditions on the lines JCPP sees (PropertiesPreprocessor.commentLines), end an
+     * open continuation at each {@code #} line, and feed only active other lines to {@link #accept}.
      */
     static final class PropertyLineJoiner {
         private final StringBuilder pending = new StringBuilder();

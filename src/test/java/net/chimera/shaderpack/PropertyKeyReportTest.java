@@ -5,11 +5,13 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * shaders.properties keys as the report names them: a key Iris 1.21.1's ShaderProperties reads
@@ -67,6 +69,111 @@ final class PropertyKeyReportTest {
         assertEquals("A B", values.get("screen").replaceAll("\\s+", " ").trim());
         assertEquals("1", values.get("screen.A.columns"));
         assertEquals("false", values.get("vignette"));
+    }
+
+    /**
+     * JCPP lexes shaders.properties as a whole, so a block comment runs across lines (KNOW-1148):
+     * a directive inside one is comment text, in a skipped branch too, and a directive line that
+     * leaves one open takes the lines up to its close and goes on after it (#if 0 || 1). A comment's
+     * other lines stay properties, as JCPP keeps them and Properties.load reads them. The custom
+     * values read are JCPP's for this file.
+     */
+    @Test
+    void aBlockCommentRunsAcrossShadersPropertiesLines(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                uniform.float.a = 1.0
+                /*
+                #if 0
+                */
+                uniform.float.b = 2.0
+                #if 0 /* open
+                uniform.float.hidden = 3.0
+                */ || 1
+                uniform.float.c = 4.0
+                #endif
+                #ifdef MISSING
+                /*
+                #endif
+                */
+                uniform.float.d = 5.0
+                #endif
+                uniform.float.e = 6.0
+                """);
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        for (String read : List.of("a", "b", "c", "e")) {
+            assertTrue(settings.indexOf(read) >= 0, read + " is read");
+        }
+        assertEquals(-1, settings.indexOf("hidden"), "the #if line's comment took it");
+        assertEquals(-1, settings.indexOf("d"), "the #endif in a comment ended no branch");
+
+        // A # after the close of a comment that began its line starts a directive there too.
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                uniform.float.k1 = 1.0
+                /*
+                #define A */ #if 0
+                uniform.float.k2 = 2.0
+                #endif
+                uniform.float.k3 = 3.0
+                """);
+        PackRuntimeSettings closed = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(closed.indexOf("k1") >= 0 && closed.indexOf("k3") >= 0);
+        assertEquals(-1, closed.indexOf("k2"), "the #if 0 after the comment's close applies");
+    }
+
+    /**
+     * JCPP reports a conditional it cannot read and reads on (KNOW-1148): shaders.properties and
+     * dimension.properties used to stop at one. An #if Chimera cannot evaluate reads false, and a
+     * stray #else turns the rest off; JCPP gives these results.
+     */
+    @Test
+    void aConditionalJcppCannotReadIsSkippedAndTheFileReadsOn(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("composite.fsh"), """
+                #version 120
+                void main() { gl_FragColor = vec4(1.0); }
+                """);
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #if F(1)
+                uniform.float.skipped = 1.0
+                #endif
+                uniform.float.after = 2.0
+                #else
+                uniform.float.off = 3.0
+                """);
+        PackRuntimeSettings settings = PackProbe.analyze(root).plan().runtimeSettings();
+        assertTrue(settings.indexOf("after") >= 0, "the file reads on past the #if");
+        assertEquals(-1, settings.indexOf("skipped"));
+        assertEquals(-1, settings.indexOf("off"), "a stray #else turns the rest off");
+
+        // An #ifdef with no name keeps its branch on and takes the next line; blank lines are gone first.
+        Files.writeString(shaders.resolve("shaders.properties"), """
+                #ifdef
+
+                # a comment, emptied by Iris's line pass
+                uniform.float.taken = 1.0
+                uniform.float.kept = 2.0
+                #endif
+                """);
+        PackRuntimeSettings ifdef = PackProbe.analyze(root).plan().runtimeSettings();
+        assertEquals(-1, ifdef.indexOf("taken"));
+        assertTrue(ifdef.indexOf("kept") >= 0);
+
+        Files.writeString(shaders.resolve("dimension.properties"), """
+                dimension.world0 = *
+                #if F(1)
+                dimension.world_never = minecraft:overworld
+                #endif
+                dimension.world-1 = minecraft:the_nether
+                """);
+        List<String> deviations = new ArrayList<>();
+        assertEquals(Map.of("*", "world0", "minecraft:the_nether", "world-1"),
+                DimensionProperties.read(shaders, Map.of(), deviations).worlds());
+        assertEquals(List.of("PREPROCESSOR_CONDITION_UNSUPPORTED"), deviations);
     }
 
     /**
