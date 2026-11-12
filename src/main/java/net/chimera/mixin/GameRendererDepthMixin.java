@@ -38,11 +38,12 @@ public abstract class GameRendererDepthMixin {
         if (!ChimeraHandRenderer.diverted()) original.call(renderer, tick, poses, buffers, player, light);
     }
 
+    /** The hand and the shadow casters go with the game renderer. */
     @Inject(method = "close", at = @At("HEAD"), require = 1)
-    private void chimera$destroyHand(CallbackInfo callback) { ChimeraHandRenderer.destroy(); }
-
-    @Inject(method = "close", at = @At("HEAD"), require = 1)
-    private void chimera$destroyShadowCasters(CallbackInfo callback) { ChimeraShadowCasters.destroy(); }
+    private void chimera$destroyRenderers(CallbackInfo callback) {
+        ChimeraHandRenderer.destroy();
+        ChimeraShadowCasters.destroy();
+    }
 
     @WrapOperation(method = "renderLevel", at = @At(value = "INVOKE",
             target = "Lcom/mojang/blaze3d/systems/RenderSystem;clear(IZ)V"), require = 1)
