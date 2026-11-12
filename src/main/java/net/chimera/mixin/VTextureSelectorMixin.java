@@ -11,7 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 /** Adds only the unused selector names required by Chimera's bounded targets. */
-@Mixin(VTextureSelector.class)
+@Mixin(value = VTextureSelector.class, remap = false)
 public abstract class VTextureSelectorMixin {
     /** Canonical image identity for every Chimera-owned extended selector. */
     @Unique

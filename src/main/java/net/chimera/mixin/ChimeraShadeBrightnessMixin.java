@@ -12,7 +12,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 /**
  * Applies the pack's ambientOcclusionLevel where Iris does: every block's shade brightness, which
  * vanilla's and VulkanMod's ambient occlusion (LightDataAccess) both read. At level 1, the value
- * without a pack, the brightness is unchanged.
+ * without a pack, the brightness is unchanged. Priority 990 is Iris's for the same hook
+ * (MixinBlockStateBehavior): it applies before Better Foliage, whose redirect of the call then
+ * still succeeds.
  */
 @Mixin(value = BlockBehaviour.BlockStateBase.class, priority = 990)
 public abstract class ChimeraShadeBrightnessMixin {

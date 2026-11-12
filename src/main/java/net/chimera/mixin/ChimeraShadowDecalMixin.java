@@ -6,15 +6,15 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
 
 /**
- * Lifts the vanilla entity ground-shadow decal off its receiver.
+ * Lifts the vanilla entity ground-shadow decal off its receiver, with or without a pack.
  *
  * <p>EntityRenderDispatcher.renderBlockShadow builds the shadow.png quad at
  * exactly the receiving voxel shape's minimum Y, with no lift. The entity
- * shadow render type (translucent, no depth write, no depth bias) therefore
- * depth-fights the receiver as the camera angle changes. This adds
- * separation to the decal Y only; X, Z, UVs, alpha, and depth state are
- * untouched, and the oval itself is preserved as the fallback until entity
- * casters exist.</p>
+ * shadow render type (translucent, no depth write, no depth bias) depth-fought
+ * the receiver as the camera angle changed. This adds separation to the decal
+ * Y only; X, Z, UVs, alpha, and depth state are untouched. Iris does not lift
+ * the decal. While a pack's own shadow pass runs, the decal is not drawn at all
+ * (ChimeraEntityRenderDispatcherMixin), as in Iris.</p>
  */
 @Mixin(EntityRenderDispatcher.class)
 public abstract class ChimeraShadowDecalMixin {
