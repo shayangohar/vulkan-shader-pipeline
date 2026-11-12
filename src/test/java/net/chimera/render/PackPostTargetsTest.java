@@ -145,7 +145,8 @@ final class PackPostTargetsTest {
         List<String> stage = calls(chain, "runPostStage");
         assertTrue(stage.contains("PackPostTargets.abortStep") && !stage.contains("PackPostTargets.abort"),
                 "a stage aborts its own step only: " + stage);
-        assertTrue(stage.contains("PostStageFailures.isolate"), "a stage's failure is isolated: " + stage);
+        assertTrue(stage.contains("PackPostChain.isolateOrRethrow"), "a stage's failure is isolated: " + stage);
+        assertTrue(calls(chain, "isolateOrRethrow").contains("PostStageFailures.isolate"));
     }
 
     /** The methods {@code method} calls, in bytecode order, as SimpleOwner.name. */

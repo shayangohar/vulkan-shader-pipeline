@@ -18,6 +18,7 @@ import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.pass.MainPass;
 
 import java.nio.file.Path;
+import java.util.List;
 
 /**
  * Owns the main-pass takeover lifecycle:
@@ -181,7 +182,9 @@ public final class ChimeraRenderer {
         if (!ready || chimeraPass == null) {
             return "Chimera pack: renderer not ready";
         }
-        return chimeraPass.packStatus() + ", renderer=" + (installed ? "chimera" : "vanilla");
+        String status = chimeraPass.packStatus() + ", renderer=" + (installed ? "chimera" : "vanilla");
+        List<String> failures = PackFailureNotices.statusLines();
+        return failures.isEmpty() ? status : status + "\nFailures this load:\n" + String.join("\n", failures);
     }
 
     /** Applies pending pack work before VulkanMod begins a new main command buffer. */

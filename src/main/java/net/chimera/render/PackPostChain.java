@@ -54,6 +54,8 @@ final class PackPostChain {
     final Set<String> packPostBoundaryLogged = new HashSet<>();
     /** The stages that threw while recording this pack session, which now run as identity. */
     final PostStageFailures stageFailures = new PostStageFailures();
+    /** The stage whose failure a window's abort is about to turn into the pack's fallback; null for none. */
+    private String escalatedStage;
     PackPostExecution packFinalExecution;
 
     /** Debug NaN detector over pack targets; idle unless enabled. */
@@ -305,9 +307,27 @@ final class PackPostChain {
                 pass.conformanceReport.markRuntime(stage.name(), ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "POST_RUNTIME_STAGE_FAILED:" + stage.name() + ":" + reason);
             }
-            if (!this.stageFailures.isolate(stage.name(), failure)) throw failure;
-            pass.logPackRuntimeFailure("post-stage:" + stage.name(), failure);
+            isolateOrRethrow(stage.name(), failure);
         }
+    }
+
+    /**
+     * Isolates {@code stage}'s failure and tells it in chat, or rethrows it when the pack must fall
+     * back to vanilla instead (PostStageFailures); the window's abort then tells that.
+     */
+    private void isolateOrRethrow(String stage, RuntimeException failure) {
+        if (!this.stageFailures.isolate(stage, failure)) {
+            this.escalatedStage = stage;
+            throw failure;
+        }
+        pass.logPackRuntimeFailure("post-stage:" + stage, failure);
+        String pack = PackFailureNotices.currentPack();
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, stage, "runtime",
+                PackFailureNotices.Outcome.SKIPPED, failure.getClass().getSimpleName() + ": " + failure.getMessage(),
+                "Chimera skipped " + stage + " in " + pack + ": it threw while recording a frame, and now runs as an"
+                        + " identity pass.\n" + ChimeraMainPass.runtimeFailureReason("post-stage:" + stage, failure),
+                failure));
+        PackFailureNotices.publish();
     }
 
     /**
@@ -344,8 +364,7 @@ final class PackPostChain {
                 pass.packPostTargets.abortStep(commandBuffer);
             }
             markPostStageFailure(post, stageFailure);
-            if (!this.stageFailures.isolate(post.name(), stageFailure)) throw stageFailure;
-            pass.logPackRuntimeFailure("post-stage:" + post.name(), stageFailure);
+            isolateOrRethrow(post.name(), stageFailure);
         } finally {
             if (previous != null) previous.close();
         }
@@ -363,8 +382,24 @@ final class PackPostChain {
             pass.logPackRuntimeFailure("post-abort:" + window, abortFailure);
         }
         String reason = ChimeraMainPass.runtimeFailureReason("post-window:" + window, failure);
-        disablePackPostChain("POST_RUNTIME_FAILED:" + reason);
+        String stage = this.escalatedStage != null ? this.escalatedStage : "the " + window + " post window";
+        this.escalatedStage = null;
+        fallBackToVanilla("POST_RUNTIME_FAILED:" + reason, stage, failure);
         pass.logPackRuntimeFailure("post-window:" + window, failure);
+    }
+
+    /** Turns the pack off for the session after {@code subject} failed, and says so in chat. */
+    private void fallBackToVanilla(String deviation, String subject, RuntimeException failure) {
+        disablePackPostChain(deviation);
+        String pack = PackFailureNotices.currentPack();
+        String why = PostStageFailures.deviceLevel(failure) ? "the device failed"
+                : this.stageFailures.count() >= PostStageFailures.VANILLA_AT
+                ? PostStageFailures.VANILLA_AT + " passes failed" : "it threw while recording a frame";
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, subject, "runtime",
+                PackFailureNotices.Outcome.VANILLA, why + " (" + failure.getClass().getSimpleName() + ": "
+                        + failure.getMessage() + ")",
+                "Chimera turned " + pack + " off after " + subject + " failed: " + why + ".\n" + deviation, failure));
+        PackFailureNotices.publish();
     }
 
     /** Runs the pack final stage after world post passes and before host hand. */
@@ -397,11 +432,14 @@ final class PackPostChain {
                 pass.logPackRuntimeFailure("final-identity-resolve", fallbackFailure);
             }
             pass.packFinalApplied = true;
-            pass.logPackRuntimeFailure("final", failure);
             // As any other stage: identity from now on, or the pack off (PostStageFailures).
-            if (!this.stageFailures.isolate(finalName, failure)) {
-                disablePackPostChain("POST_RUNTIME_FAILED:"
-                        + ChimeraMainPass.runtimeFailureReason("post-stage:" + finalName, failure));
+            try {
+                isolateOrRethrow(finalName, failure);
+            } catch (RuntimeException escalated) {
+                this.escalatedStage = null;
+                fallBackToVanilla("POST_RUNTIME_FAILED:"
+                        + ChimeraMainPass.runtimeFailureReason("post-stage:" + finalName, failure), finalName, failure);
+                pass.logPackRuntimeFailure("final", failure);
             }
         }
     }
@@ -493,6 +531,15 @@ final class PackPostChain {
             pass.conformanceReport.addDeviation(code);
             pass.conformanceReport.markRuntime(stage.name(),
                     ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, code);
+        }
+        if (step != null) {
+            // An installed pass whose targets Chimera cannot lay out: Iris would have run it.
+            String pack = PackFailureNotices.currentPack();
+            PackFailureNotices.record(new PackFailureNotices.Failure(pack, stage.name(), "target graph",
+                    PackFailureNotices.Outcome.SKIPPED, graphRejectionCode(stage.name(), step),
+                    "Chimera skipped " + stage.name() + " in " + pack + ": its render targets could not be laid out.\n"
+                            + String.join(", ", step.deviations())));
+            PackFailureNotices.publish();
         }
         markPostStageIdentityBoundary(
                 stage.name(),

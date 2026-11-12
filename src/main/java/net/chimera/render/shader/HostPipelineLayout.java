@@ -60,10 +60,18 @@ public final class HostPipelineLayout {
         UniformSource HOST_ONLY = (name, type) -> null;
     }
 
-    /** A pipeline stage's GLSL that did not compile. */
+    /** A pipeline stage's GLSL that did not compile, with the source shaderc's message counts lines of. */
     public static final class ShaderCompilationFailure extends RuntimeException {
-        ShaderCompilationFailure(RuntimeException cause) {
+        private final transient String source;
+
+        ShaderCompilationFailure(RuntimeException cause, String source) {
             super(cause.getMessage(), cause);
+            this.source = source;
+        }
+
+        /** The stage's GLSL as compiled: the translation, which the message's line numbers count. */
+        public String source() {
+            return this.source;
         }
     }
 
@@ -300,7 +308,7 @@ public final class HostPipelineLayout {
         try {
             compiled = GlslCompiler.compile(stage.name(), stage.source(), stage.kind(), GlslCompiler::optimize);
         } catch (IllegalStateException failure) {
-            throw new ShaderCompilationFailure(failure);
+            throw new ShaderCompilationFailure(failure, stage.source());
         }
         try {
             ByteBuffer module = packModule ? SpirvTrigPrecision.apply(SpirvLocalInitializer.apply(compiled)) : compiled;

@@ -8,8 +8,7 @@ import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackFeatureFlags;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PostTargetPlan;
-import net.minecraft.client.Minecraft;
-import net.minecraft.network.chat.Component;
+import net.chimera.shaderpack.SkippedPrograms;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -149,12 +148,36 @@ final class PackPipelineLoad {
         }
     }
 
-    /** Marks every program never attempted as a fallback and logs the session's conformance report. */
+    /**
+     * Marks every program never attempted as a fallback, logs the session's conformance report, and
+     * tells in chat of each program skipped where Iris would have run it (SkippedPrograms).
+     */
     private void reportConformance() {
         if (pass.conformanceReport != null) {
             pass.conformanceReport.markUnattemptedAsFallback();
             LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
             pass.sessions.logConformanceSummary();
+            recordSkippedPrograms(pass.conformanceReport);
+        }
+        PackFailureNotices.publish();
+    }
+
+    /**
+     * Records each program the load skipped where Iris would have run it. A program that did not
+     * build was recorded with its compiler's message first, and keeps that record.
+     */
+    static void recordSkippedPrograms(ConformanceReport report) {
+        String pack = PackFailureNotices.currentPack();
+        for (ConformanceReport.ProgramReport row : report.programs()) {
+            if (row.runtime() != ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK
+                    || SkippedPrograms.expected(row)) {
+                continue;
+            }
+            List<String> refusals = SkippedPrograms.refusals(row.deviations());
+            PackFailureNotices.record(new PackFailureNotices.Failure(pack, row.name(), "load",
+                    PackFailureNotices.Outcome.SKIPPED, SkippedPrograms.reason(row.deviations()),
+                    "Chimera skipped " + row.name() + " in " + pack + " when it loaded the pack.\nWhy: "
+                            + (refusals.isEmpty() ? "not installed" : String.join(", ", refusals))));
         }
     }
 
@@ -207,12 +230,11 @@ final class PackPipelineLoad {
                 reason, PackSessionLifecycle.packLabel(pass.sessions.packPath));
         // Nothing built this session has been submitted yet, so release it directly.
         pass.sessions.cleanUpPackVariant();
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.gui != null) {
-            minecraft.gui.getChat().addMessage(Component.literal("[Chimera] "
-                    + PackSessionLifecycle.packLabel(pass.sessions.packPath) + " " + chatReason
-                    + ". Rendering vanilla. See latest.log."));
-        }
+        String pack = PackSessionLifecycle.packLabel(pass.sessions.packPath);
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, "pack", "load",
+                PackFailureNotices.Outcome.VANILLA, "it " + chatReason + ".",
+                "Chimera renders vanilla for " + pack + ": it " + chatReason + ".\nDeviation: " + deviation));
+        PackFailureNotices.publish();
     }
 
     /**

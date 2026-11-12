@@ -22,6 +22,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -467,6 +468,18 @@ final class PackCompileTest {
         return rejected;
     }
 
+    /**
+     * The rejections a load tells in chat (SkippedPrograms), each with its reason, for review; the
+     * runtime adds those it finds itself, such as a build failure.
+     */
+    static List<String> toldSkips(PackProbe.Analysis analysis, Collection<String> rejected) {
+        return rejected.stream()
+                .map(program -> analysis.report().program(program))
+                .filter(row -> row != null && !SkippedPrograms.expected(row))
+                .map(row -> row.name() + "=" + SkippedPrograms.reason(row.deviations()))
+                .toList();
+    }
+
     /** The report deviations that say why a program was rejected, for gate messages and the option sweep. */
     static List<String> rejectionReasons(PackProbe.Analysis analysis, String program) {
         var report = analysis.report().program(program);
@@ -517,6 +530,7 @@ final class PackCompileTest {
             System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected,"
                     + " pass computes %s%n", key, result.compiled(), result.failures().size(), rejected.size(),
                     result.passComputes());
+            System.out.printf("[chimera] pack skips told %s: %s%n", key, toldSkips(analysis, rejected));
             if (result.compiled() == 0) failures.add(key + ": no program compiled");
             result.failures().forEach(failure -> failures.add(key + " " + failure));
             if (update) {

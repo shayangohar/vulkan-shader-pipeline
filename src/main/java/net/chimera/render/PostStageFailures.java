@@ -34,6 +34,11 @@ final class PostStageFailures {
         return this.skipped.size() < VANILLA_AT;
     }
 
+    /** How many distinct stages have failed this session. */
+    int count() {
+        return this.skipped.size();
+    }
+
     void clear() {
         this.skipped.clear();
     }

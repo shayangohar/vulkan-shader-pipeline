@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import net.chimera.render.PackFailureNotices;
 import net.chimera.render.PackStorageBufferOwner;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.HostPipelineLayout;
@@ -202,6 +203,27 @@ public final class PackPipelines {
         Throwable cause = failure.getCause() == null ? failure : failure.getCause();
         LOGGER.warn("[chimera] pack {}: build failed phase={} exception={} reason={}",
                 program, phase, cause.getClass().getName(), reason, cause);
+        HostPipelineLayout.ShaderCompilationFailure compile =
+                cause instanceof HostPipelineLayout.ShaderCompilationFailure shaderc ? shaderc : null;
+        String pack = PackFailureNotices.currentPack();
+        String detail = compile == null ? cause.toString() : CompileErrorLocation.describe(compile.getMessage(),
+                compile.source(), PackFailureNotices.currentShadersDir());
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, program, phase,
+                PackFailureNotices.Outcome.SKIPPED, compile == null ? reason : compileError(compile.getMessage()),
+                "Chimera skipped " + program + " in " + pack + ": it did not build (" + phase + ", " + reason + ").\n"
+                        + detail));
+    }
+
+    /**
+     * A compiler report's first error, without the translated file and line it names. Warnings come
+     * before errors in shaderc's report.
+     */
+    static String compileError(String report) {
+        String text = report == null ? "" : report.strip();
+        String first = text.lines().filter(line -> line.contains(": error: ")).findFirst()
+                .orElse(text.lines().findFirst().orElse(""));
+        int error = first.indexOf(": error: ");
+        return "compile error: " + (error < 0 ? first : first.substring(error + ": error: ".length()));
     }
     /**
      * A successfully built pack post pipeline plus the slots its samplers occupy, the frame

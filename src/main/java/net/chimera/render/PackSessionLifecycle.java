@@ -33,7 +33,6 @@ import net.chimera.shaderpack.TerrainMaterialPlan;
 import net.chimera.shaderpack.TerrainShadingDirectives;
 import net.chimera.shaderpack.options.PendingOptions;
 import net.minecraft.client.Minecraft;
-import net.minecraft.network.chat.Component;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.Vulkan;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
@@ -360,18 +359,17 @@ final class PackSessionLifecycle {
         }
     }
 
+    /** Says in chat that {@code requested} did not load and what runs instead (PackFailureNotices). */
     static void reportPackChangeFailure(Path requested, RuntimeException failure, String recovery) {
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.gui != null) {
-            String reason = failure.getMessage();
-            if (reason == null || reason.isBlank()) reason = failure.getClass().getSimpleName();
-            // Full exception details stay in latest.log, not a multi-line shader dump in chat.
-            reason = reason.lines().findFirst().orElse("unknown error");
-            if (reason.length() > 160) reason = reason.substring(0, 160) + "…";
-            minecraft.gui.getChat().addMessage(Component.literal(
-                    "[Chimera] Failed to load " + packLabel(requested) + ": " + reason
-                            + ". " + recovery + " See latest.log."));
-        }
+        String reason = failure.getMessage();
+        if (reason == null || reason.isBlank()) reason = failure.getClass().getSimpleName();
+        // The line keeps the message's first line; Copy Info and latest.log keep the rest.
+        String pack = packLabel(requested);
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, "pack", "load",
+                PackFailureNotices.Outcome.LOAD_FAILED, PackFailureNotices.shortLine(reason, 100) + ". " + recovery,
+                "Chimera could not load " + pack + ". " + recovery + "\n"
+                        + ChimeraMainPass.runtimeFailureReason("pack-change", failure)));
+        PackFailureNotices.publish();
     }
 
     /** Clears all pack-owned objects and closes the current source after the idle wait. */
@@ -469,6 +467,8 @@ final class PackSessionLifecycle {
                     LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
                 }
                 LOGGER.info("[chimera] pack dimension variant restored: {}", previous);
+                reportDimensionFailure(requested, rebuildFailure, PackFailureNotices.Outcome.LOAD_FAILED,
+                        "The " + previous + " variant still runs.");
                 return true;
             } catch (RuntimeException restoreFailure) {
                 LOGGER.warn("[chimera] pack dimension restore failed; host seams remain active: {}",
@@ -478,9 +478,23 @@ final class PackSessionLifecycle {
                 markPackVariantFallback();
                 ChimeraRenderer.fallbackToHostRenderer();
                 resetHostDirectives();
+                reportDimensionFailure(requested, rebuildFailure, PackFailureNotices.Outcome.VANILLA,
+                        "Restoring " + previous + " failed too.");
                 return false;
             }
         }
+    }
+
+    /** Says in chat that the pack's variant for {@code dimension} did not load, and what runs instead. */
+    private void reportDimensionFailure(String dimension, RuntimeException failure,
+                                        PackFailureNotices.Outcome outcome, String recovery) {
+        String pack = packLabel(this.packPath);
+        String reason = failure.getMessage() == null ? failure.getClass().getSimpleName() : failure.getMessage();
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, "dimension " + dimension, "dimension change",
+                outcome, PackFailureNotices.shortLine(reason, 100) + ". " + recovery,
+                "Chimera could not load " + pack + " for " + dimension + ". " + recovery + "\n"
+                        + ChimeraMainPass.runtimeFailureReason("dimension-change", failure)));
+        PackFailureNotices.publish();
     }
 
     void clearPackOverrides() {
@@ -572,6 +586,7 @@ final class PackSessionLifecycle {
         PackSource.LoadResult result = fresh
                 ? PackSource.loadResult(dir, this.currentDimension, PendingOptions.drain(dir)) : pass.packSource;
         pass.packSource = result;
+        PackFailureNotices.beginLoad(packLabel(dir), result.shadersDir());
         PackProbe.Analysis analysis = PackProbe.analyze(dir, result);
         StagedOptions options = result.options();
         if (fresh) {
