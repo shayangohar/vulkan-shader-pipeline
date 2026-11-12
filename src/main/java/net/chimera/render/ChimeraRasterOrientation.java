@@ -20,6 +20,11 @@ import static org.lwjgl.vulkan.VK10.VK_FRONT_FACE_CLOCKWISE;
  * scissor and the mirrored front face. Fullscreen passes keep VulkanMod's
  * viewport; they copy memory rows between images that already share an
  * orientation. One flip moves the world into the host-oriented output.
+ *
+ * Reforged 0.3.5 tracks a viewport it inverts itself (Renderer.isRasterRowsBottomUp)
+ * and mirrors the scissor and front face for it. Chimera unflips below that, at
+ * vkCmdSetViewport and vkCmdSetScissor, so VulkanMod sees its usual top-down rows
+ * in these passes and Chimera mirrors the face (ChimeraPipelineFrontFaceMixin).
  */
 public final class ChimeraRasterOrientation {
     private static final Set<RenderPass> GL_ORIENTED =

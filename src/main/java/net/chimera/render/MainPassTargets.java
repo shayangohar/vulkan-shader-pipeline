@@ -83,9 +83,9 @@ final class MainPassTargets {
     }
 
     /**
-     * A framebuffer as Reforged's builder makes one, except that its colour image also allows
-     * transfers: the post chain copies colortex0 into and out of the HDR image, and screenshots copy
-     * the output. Reforged's builder drops the transfer usage upstream VulkanMod gave colour images.
+     * A framebuffer as Reforged's builder makes one, with transfer usage on its colour image: the
+     * post chain copies colortex0 into and out of the HDR image, and screenshots copy the output.
+     * Reforged 0.3.0's builder dropped that usage; 0.3.5's gives it again, and Chimera asks for it.
      */
     private static Framebuffer framebuffer(int width, int height, int colorFormat) {
         VulkanImage color = VulkanImage.builder(width, height)

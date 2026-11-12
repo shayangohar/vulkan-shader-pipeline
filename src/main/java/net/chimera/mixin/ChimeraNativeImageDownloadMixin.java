@@ -12,12 +12,14 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * VulkanMod Reforged's NativeImage.downloadTexture (MNativeImage, an overwrite) ignores the level
- * and copies the bound texture's whole first level into the image. F3 + S dumps each texture
- * atlas one mip level at a time (TextureUtil.writeAsPNG), into an image of that level's size, so
- * level 1 wrote four times past its end and the JVM crashed in MemoryUtil.memCopy. Any other
- * level, or an image of another size than the texture, reads that level at the image's size, as
- * glGetTexImage does; VulkanMod keeps the download it serves right.
+ * NativeImage.downloadTexture reads the level asked for, only as much of it as the image holds.
+ * Reforged 0.3.0's overwrite (MNativeImage) ignored the level and copied the bound texture's whole
+ * first level into the image: F3 + S dumps each texture atlas one mip level at a time
+ * (TextureUtil.writeAsPNG), into an image of that level's size, so level 1 wrote four times past its
+ * end and the JVM crashed in MemoryUtil.memCopy. Reforged 0.3.5 reads the level asked for, but
+ * copies all of it whatever the image holds, and throws for a level the texture lacks. Any level
+ * but 0, or an image of another size than the texture, therefore reads here; VulkanMod keeps the
+ * download it serves right.
  */
 @Mixin(NativeImage.class)
 public abstract class ChimeraNativeImageDownloadMixin {
