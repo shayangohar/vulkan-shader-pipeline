@@ -8,6 +8,7 @@ import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkCommandBuffer;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -137,18 +138,23 @@ public final class PackStorageBufferOwner implements AutoCloseable {
     /**
      * Recreates each relative buffer for the main target's new size and zero-fills it, as Iris's
      * ShaderStorageBufferHolder.hasResizedScreen does: contents do not survive a resize. Recorded
-     * outside a render pass. A buffer that cannot take the new size keeps its old one ({@link #refit}).
+     * outside a render pass. A buffer that cannot take the new size keeps its old one ({@link #refit}),
+     * and is returned, for the caller to turn the pack off: its programs would index past its end.
+     * Returns null when every buffer fits.
      */
-    public void fitRelativeBuffers(VkCommandBuffer commandBuffer, int width, int height) {
-        if (commandBuffer == null || closed || (width == screenWidth && height == screenHeight)) return;
+    public String fitRelativeBuffers(VkCommandBuffer commandBuffer, int width, int height) {
+        if (commandBuffer == null || closed || (width == screenWidth && height == screenHeight)) return null;
         screenWidth = width;
         screenHeight = height;
         boolean filled = false;
+        List<String> unfit = new ArrayList<>();
         for (Map.Entry<Integer, PackStorageBuffer> entry : buffers.entrySet()) {
             PackAdvancedResourcePlan.BufferSpec spec = plan.buffers().get(entry.getKey());
             if (spec == null || !spec.relative()) continue;
             String size = width + "x" + height;
-            if (!refit(entry.getKey(), spec.bytes(width, height), maxRange(), size, entry.getValue()::recreate)) {
+            long bytes = spec.bytes(width, height);
+            if (!refit(entry.getKey(), bytes, maxRange(), size, entry.getValue()::recreate)) {
+                unfit.add("storage buffer " + entry.getKey() + " (" + bytes + " bytes at " + size + ")");
                 continue;
             }
             // Before the session's first fill (initialize), that fill covers the new buffer.
@@ -158,14 +164,15 @@ public final class PackStorageBufferOwner implements AutoCloseable {
             }
         }
         if (filled) PackVulkanBarriers.afterStorageBufferTransfer(commandBuffer);
+        return unfit.isEmpty() ? null : String.join(", ", unfit) + " could not grow";
     }
 
     /**
      * Recreates one relative buffer at {@code bytes} through {@code recreate}, and says whether it
      * did. A size past the device's range, or one the device cannot allocate, keeps the old buffer
-     * and is logged: the pack never reads a freed buffer. After a failed grow it indexes at the new
-     * size, past the old buffer's end; with no robustBufferAccess those accesses are undefined, as
-     * for a size past the range. The alternative was a crash; a graceful fallback is TASK-922's.
+     * and is logged: the pack never reads a freed buffer. A program would index at the new size,
+     * past the old buffer's end, which is undefined with no robustBufferAccess; so the caller turns
+     * the pack off (fitRelativeBuffers, TASK-922).
      */
     static boolean refit(int index, long bytes, long maxRange, String size, IntConsumer recreate) {
         if (bytes > maxRange) {

@@ -388,13 +388,17 @@ final class PackPostChain {
         pass.logPackRuntimeFailure("post-window:" + window, failure);
     }
 
-    /** Turns the pack off for the session after {@code subject} failed, and says so in chat. */
+    /** Turns the pack off for the session after post stage {@code subject} failed, and says so in chat. */
     private void fallBackToVanilla(String deviation, String subject, RuntimeException failure) {
+        turnPackOff(deviation, subject, PostStageFailures.deviceLevel(failure) ? "the device failed"
+                : this.stageFailures.count() >= PostStageFailures.VANILLA_AT
+                ? PostStageFailures.VANILLA_AT + " passes failed" : "it threw while recording a frame", failure);
+    }
+
+    /** Turns the pack off for the session because {@code subject} failed ({@code why}), and says so in chat. */
+    void turnPackOff(String deviation, String subject, String why, RuntimeException failure) {
         disablePackPostChain(deviation);
         String pack = PackFailureNotices.currentPack();
-        String why = PostStageFailures.deviceLevel(failure) ? "the device failed"
-                : this.stageFailures.count() >= PostStageFailures.VANILLA_AT
-                ? PostStageFailures.VANILLA_AT + " passes failed" : "it threw while recording a frame";
         PackFailureNotices.record(new PackFailureNotices.Failure(pack, subject, "runtime",
                 PackFailureNotices.Outcome.VANILLA, why + " (" + failure.getClass().getSimpleName() + ": "
                         + failure.getMessage() + ")",
@@ -785,6 +789,14 @@ final class PackPostChain {
                 pass.sessions.logConformance();
             }
             pass.logPackRuntimeFailure("post-resource-allocation", e);
+            // The world programs still draw; nothing runs after them, which the frame shows.
+            String pack = PackFailureNotices.currentPack();
+            PackFailureNotices.record(new PackFailureNotices.Failure(pack, "the post passes", "post targets",
+                    PackFailureNotices.Outcome.SKIPPED, "their render targets could not be made ("
+                            + e.getClass().getSimpleName() + ": " + e.getMessage() + ")",
+                    "Chimera skipped every post pass of " + pack + ": their render targets could not be made.\n"
+                            + ChimeraMainPass.runtimeFailureReason("post-resource-allocation", e), e));
+            PackFailureNotices.publish();
         }
     }
 

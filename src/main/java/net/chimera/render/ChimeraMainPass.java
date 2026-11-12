@@ -289,9 +289,12 @@ public final class ChimeraMainPass implements MainPass {
         Renderer.getInstance().endRenderPass();
         if (this.packStorageBufferOwner != null) {
             this.packStorageBufferOwner.beginExecutionFrame();
-            // Iris sizes relative buffers, as relative images, from the main render target.
-            this.packStorageBufferOwner.fitRelativeBuffers(Renderer.getCommandBuffer(),
+            // Iris sizes relative buffers, as relative images, from the main render target. One that
+            // cannot grow would be read past its end, so the pack goes off instead (TASK-922).
+            String unfit = this.packStorageBufferOwner.fitRelativeBuffers(Renderer.getCommandBuffer(),
                     this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight());
+            if (unfit != null) postChain.turnPackOff("STORAGE_BUFFER_REFIT_FAILED", "a storage buffer",
+                    "it cannot grow to the window's size", new IllegalStateException(unfit));
             boolean initialized = this.packStorageBufferOwner.initialize(Renderer.getCommandBuffer());
             if (initialized || !this.packStorageInitializationLogged) {
                 load.logPackStoragePath("storage-initialization");
