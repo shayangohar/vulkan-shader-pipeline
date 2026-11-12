@@ -28,6 +28,19 @@ final class HostFixesTest {
                 && calls(copy, "net/vulkanmod/vulkan/util/DrawUtil", "blitToScreen", "(Z)V"));
     }
 
+    /**
+     * Each entry of a pipeline's descriptor pool takes its descriptor's type, so a set holding a pack
+     * storage buffer or storage image fits its pool. 0.3.0 typed every buffer a dynamic uniform
+     * buffer and every image a combined image sampler.
+     */
+    @Test
+    void descriptorPoolEntriesTakeTheirDescriptorsType() throws IOException {
+        List<AbstractInsnNode> pool = hostMethod("net/vulkanmod/vulkan/shader/Pipeline$DescriptorSets",
+                "createDescriptorPool");
+        assertTrue(calls(pool, "net/vulkanmod/vulkan/shader/descriptor/UBO", "getType")
+                && calls(pool, "net/vulkanmod/vulkan/shader/descriptor/ImageDescriptor", "getType"));
+    }
+
     private static List<AbstractInsnNode> hostMethod(String owner, String method) throws IOException {
         return MixinBytecode.instructionsThrough(MixinBytecode.nativeClass(owner), method);
     }
