@@ -201,7 +201,7 @@ public final class ChimeraEntityBridge {
         disable();
         lanes = next == null ? InstalledLanes.NONE : next;
         lightningBoltEntityId = lanes.entityIds().uniformId("minecraft:lightning_bolt");
-        ChimeraMod.LOGGER.info("[chimera] family bridge: entity={}, entityTranslucent={}, spiderEyes={}, "
+        ChimeraMod.LOGGER.debug("[chimera] family bridge: entity={}, entityTranslucent={}, spiderEyes={}, "
                         + "block={}, damagedBlock={}, hand={}, handWater={}, particle={}, particleTranslucent={}",
                 status(lanes.entity()), status(lanes.translucentEntity()), status(lanes.spiderEyes()),
                 status(lanes.block()), status(lanes.damagedBlock()),
@@ -209,10 +209,10 @@ public final class ChimeraEntityBridge {
                 status(lanes.handWater() == null ? null : lanes.handWater().primary()), status(lanes.particle()),
                 status(lanes.translucentParticle()));
         if (!lanes.hostLayout().isEmpty()) {
-            ChimeraMod.LOGGER.info("[chimera] family bridge: host-layout lanes={}",
+            ChimeraMod.LOGGER.debug("[chimera] family bridge: host-layout lanes={}",
                     lanes.hostLayout().keySet().stream().map(family -> family.name().toLowerCase()).toList());
         }
-        ChimeraMod.LOGGER.info("[chimera] family bridge: shadow casters={}, moving blocks={}, block entities={}",
+        ChimeraMod.LOGGER.debug("[chimera] family bridge: shadow casters={}, moving blocks={}, block entities={}",
                 status(lanes.shadowEntities()), status(lanes.shadowMovingBlock()), status(lanes.shadowBlock()));
     }
 

@@ -35,6 +35,7 @@ public final class ChimeraRenderer {
     private static boolean installed;
     private static boolean screenMode;
     private static boolean screenOpen;
+    private static boolean screenOpenLogged;
     /** Keeps a normal Chimera install request alive across a safe rebuild. */
     private static boolean resumeAfterVariant;
     /**
@@ -425,7 +426,13 @@ public final class ChimeraRenderer {
             // its barriers, Renderer's endRenderPass is null-safe when nothing
             // is recording, and encoder draws targeting the main RT rebind our
             // aux pass - the blur chain composes with the live frame.
-            ChimeraMod.LOGGER.info("Screen open - chimera keeps rendering (shaded GUI backgrounds)");
+            // Once a game at INFO: it logged on every menu, 60 times in one session (TASK-922).
+            if (screenOpenLogged) {
+                ChimeraMod.LOGGER.debug("Screen open - chimera keeps rendering (shaded GUI backgrounds)");
+            } else {
+                screenOpenLogged = true;
+                ChimeraMod.LOGGER.info("Screen open - chimera keeps rendering (shaded GUI backgrounds)");
+            }
             return;
         }
 

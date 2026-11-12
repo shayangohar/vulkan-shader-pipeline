@@ -103,7 +103,7 @@ final class PackPipelineLoad {
     /** Hands the installed entity, block, hand, particle and caster pipelines to the family bridge. */
     private void installFamilyBridge() {
         ChimeraEntityBridge.install(pass.pipelines.lanes(pass.packPlan == null ? null : pass.packPlan.entityIds()));
-        LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
+        LOGGER.debug("[chimera] family bridge: targets entity={}, block={}",
                 familyTargets(pass.pipelines.entity), familyTargets(pass.pipelines.block));
     }
 
@@ -144,7 +144,8 @@ final class PackPipelineLoad {
             if (pass.conformanceReport != null) {
                 pass.conformanceReport.addDeviation("SHADOW_PROGRAM_MISSING");
             }
-            LOGGER.warn("[chimera] pack shadow: fallback=IDENTITY (SHADOW_PROGRAM_MISSING)");
+            // A pack without a shadow program has no shadow pass in Iris either: nothing changes.
+            LOGGER.debug("[chimera] pack shadow: fallback=IDENTITY (SHADOW_PROGRAM_MISSING)");
         }
     }
 
@@ -155,7 +156,7 @@ final class PackPipelineLoad {
     private void reportConformance() {
         if (pass.conformanceReport != null) {
             pass.conformanceReport.markUnattemptedAsFallback();
-            LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
+            pass.sessions.logConformance();
             pass.sessions.logConformanceSummary();
             recordSkippedPrograms(pass.conformanceReport);
         }
@@ -193,7 +194,7 @@ final class PackPipelineLoad {
     boolean enforceMaskCriticalFamilyContract() {
         List<String> missing = maskCriticalFamilyFallback();
         if (missing.isEmpty()) {
-            LOGGER.info("[chimera] family bridge: mask-critical contract holds "
+            LOGGER.debug("[chimera] family bridge: mask-critical contract holds "
                     + "(entity and block installed or not authored)");
             return true;
         }
@@ -223,7 +224,7 @@ final class PackPipelineLoad {
         pass.packFrameUnsupported = reason;
         if (pass.conformanceReport != null) {
             pass.conformanceReport.markFrameFallback(deviation, "PACK_FRAME_UNSUPPORTED");
-            LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
+            pass.sessions.logConformance();
             pass.sessions.logConformanceSummary();
         }
         LOGGER.warn("[chimera] pack frame unsupported: {}; vanilla rendering for {}",
@@ -265,7 +266,7 @@ final class PackPipelineLoad {
         String status = storageRequired
                 ? pass.packStorageBufferOwner.storagePathStatus("shadow", "composite")
                 : "storage=0,required=false,ready=true,missing=none";
-        LOGGER.info("[chimera] storage path: phase={},plannedBytes={},allocatedBytes={},initializedBytes={},{}",
+        LOGGER.debug("[chimera] storage path: phase={},plannedBytes={},allocatedBytes={},initializedBytes={},{}",
                 phase, pass.packStorageBufferOwner.plannedBytes(),
                 pass.packStorageBufferOwner.allocatedBytes(),
                 pass.packStorageBufferOwner.initializedBytes(), status);

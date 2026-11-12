@@ -599,7 +599,7 @@ final class PackShadowPass {
                 && program.shadowSamplerSymbols().contains(entry.sourceSymbol());
         long sampler = shadowSamplerFor(entry.resourceKey(), image, compareRequired);
         if (compareRequired && this.loggedShadowSamplerPrograms.add(program.name())) {
-            LOGGER.info("[chimera] pack shadow sampler: program={} symbol={} slot={} image={} "
+            LOGGER.debug("[chimera] pack shadow sampler: program={} symbol={} slot={} image={} "
                             + "sampler={} compareOp=LESS_OR_EQUAL",
                     program.name(), entry.sourceSymbol(), entry.slot(), image.getId(), sampler);
         }

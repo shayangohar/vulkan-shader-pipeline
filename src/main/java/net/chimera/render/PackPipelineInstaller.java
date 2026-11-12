@@ -16,6 +16,7 @@ import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PassComputePlan;
+import net.chimera.shaderpack.SkippedPrograms;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.TargetSpec;
@@ -258,7 +259,7 @@ final class PackPipelineInstaller {
         if (storage != null) {
             storage.markPipelineInstalled(name);
         }
-        LOGGER.info("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(shadow.samplerSlots()));
+        LOGGER.debug("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(shadow.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack shadow converted fragment:\n{}", shadow.convertedFragment());
         }
@@ -327,7 +328,7 @@ final class PackPipelineInstaller {
         if (storage != null) {
             storage.markPipelineInstalled(name);
         }
-        LOGGER.info("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(post.samplerSlots()));
+        LOGGER.debug("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(post.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack {} converted fragment:\n{}", name, post.convertedFragment());
         }
@@ -441,7 +442,7 @@ final class PackPipelineInstaller {
             return;
         }
         markFamilyPipelineInstalled(name, "SKY_PIPELINE_INSTALLED");
-        LOGGER.info("[chimera] pack {}: ok (sky installed, native layouts={})", name, sky.variants().size());
+        LOGGER.debug("[chimera] pack {}: ok (sky installed, native layouts={})", name, sky.variants().size());
     }
 
     /** The cloud program. */
@@ -804,14 +805,23 @@ final class PackPipelineInstaller {
         if (storage != null) {
             storage.markPipelineInstalled(name);
         }
-        LOGGER.info("[chimera] pack {}: ok ({})", name, deviation);
+        LOGGER.debug("[chimera] pack {}: ok ({})", name, deviation);
     }
 
+    /**
+     * Records a program that will not run. The log warns only of one that changes the frame: one
+     * the pack switched off, or Iris would not run either, logs at debug (SkippedPrograms).
+     */
     void markFamilyPipelineFallback(String name, String reason) {
         if (report != null) {
             report.markRuntime(name,
                     ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, reason);
         }
-        LOGGER.warn("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
+        ConformanceReport.ProgramReport row = report == null ? null : report.program(name);
+        if (row != null && SkippedPrograms.expected(row)) {
+            LOGGER.debug("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
+        } else {
+            LOGGER.warn("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
+        }
     }
 }

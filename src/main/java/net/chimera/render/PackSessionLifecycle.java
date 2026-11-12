@@ -40,6 +40,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -464,7 +466,7 @@ final class PackSessionLifecycle {
                 this.loggedPendingPackDimension = null;
                 if (pass.conformanceReport != null) {
                     pass.conformanceReport.addDeviation("PACK_VARIANT_REBUILD_FAILED");
-                    LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
+                    logConformance();
                 }
                 LOGGER.info("[chimera] pack dimension variant restored: {}", previous);
                 reportDimensionFailure(requested, rebuildFailure, PackFailureNotices.Outcome.LOAD_FAILED,
@@ -514,7 +516,7 @@ final class PackSessionLifecycle {
             return;
         }
         pass.conformanceReport.markFrameFallback("PACK_VARIANT_REBUILD_FAILED", "PACK_VARIANT_REBUILD_FAILED");
-        LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
+        logConformance();
     }
 
     /**
@@ -740,7 +742,7 @@ final class PackSessionLifecycle {
         }
         LOGGER.info("[chimera] pack '{}' from {}: programs={}", dir.getFileName(),
                 dir.toAbsolutePath(), pass.packPrograms.stream().map(PackProgram::name).toList());
-        LOGGER.info("[chimera] pack consts: {}, shadowSettings={}, drawBuffers={}",
+        LOGGER.debug("[chimera] pack consts: {}, shadowSettings={}, drawBuffers={}",
                 formatSummary(pass.packConfig.colortexFormats()),
                 pass.packConfig.shadowSettings(),
                 pass.packConfig.drawBufferCount());
@@ -762,6 +764,26 @@ final class PackSessionLifecycle {
                     .append(" (").append(PackConfig.formatName(entry.getValue())).append(')');
         });
         return summary.toString();
+    }
+
+    /**
+     * Writes the conformance report to {@code <gameDir>/chimera/conformance/<pack>.json}, replacing
+     * the last load's, and logs where (TASK-922): one line, not the ~450 KB of JSON a load logged.
+     * Only when the file cannot be written does the JSON go to debug.log.
+     */
+    void logConformance() {
+        if (pass.conformanceReport == null) return;
+        String json = pass.conformanceReport.toJson();
+        String name = PackFailureReport.fileSafe(packLabel(this.packPath)) + ".json";
+        try {
+            Path folder = Minecraft.getInstance().gameDirectory.toPath().resolve("chimera").resolve("conformance");
+            Files.createDirectories(folder);
+            Files.writeString(folder.resolve(name), json, StandardCharsets.UTF_8);
+            LOGGER.info("[chimera] conformance: chimera/conformance/{}", name);
+        } catch (IOException | RuntimeException unwritable) {
+            LOGGER.warn("[chimera] cannot write the conformance report {}: {}", name, unwritable.toString());
+            LOGGER.debug("[chimera] conformance {}", json);
+        }
     }
 
     void logConformanceSummary() {

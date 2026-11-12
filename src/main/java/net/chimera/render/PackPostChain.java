@@ -654,7 +654,7 @@ final class PackPostChain {
                             ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, reason);
                 }
             }
-            LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
+            pass.sessions.logConformance();
             pass.sessions.logConformanceSummary();
         }
     }
@@ -782,7 +782,7 @@ final class PackPostChain {
             discardPackPostPipelines();
             if (pass.conformanceReport != null) {
                 pass.conformanceReport.addDeviation("POST_RESOURCE_ALLOCATION_FAILED");
-                LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
+                pass.sessions.logConformance();
             }
             pass.logPackRuntimeFailure("post-resource-allocation", e);
         }
@@ -805,10 +805,10 @@ final class PackPostChain {
             windows.put(window, pass.packFrameSchedule.stages(window).stream()
                     .map(PackFrameSchedulePlan.PostStage::name).toList());
         }
-        LOGGER.info("[chimera] pack frame schedule: phases={}, windows={}, depth={}, deviations={}",
+        LOGGER.debug("[chimera] pack frame schedule: phases={}, windows={}, depth={}, deviations={}",
                 pass.packFrameSchedule.phases(), windows, pass.packTargetGraph.depth().names(),
                 pass.packFrameSchedule.deviations());
-        LOGGER.info("[chimera] pack target graph: targets={}, steps={}, depth={}, "
+        LOGGER.debug("[chimera] pack target graph: targets={}, steps={}, depth={}, "
                 + "maxAttachments={}, fingerprint={}",
                 pass.packTargetGraph.targets().size(), pass.packTargetGraph.steps().size(),
                 pass.packTargetGraph.depth().names(), pass.packTargetGraph.maxAttachments(),
