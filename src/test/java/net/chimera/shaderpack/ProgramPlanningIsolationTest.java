@@ -90,6 +90,15 @@ final class ProgramPlanningIsolationTest {
                 + PackPlanBuilder.PLANNING_FAILED)), gate.failures().toString());
     }
 
+    /** A source that recurses the planner too deep falls back alone, as a throw does. */
+    @Test
+    void aStackOverflowInPlanningFallsBackAlone() {
+        PackProgram program = new PackProgram("composite", "void main() {}", null);
+        PackProgramPlan plan = PackPlanBuilder.planningFailed(program, null, new StackOverflowError());
+        assertFalse(plan.executable());
+        assertEquals(List.of(PackPlanBuilder.PLANNING_FAILED + ":StackOverflowError"), plan.deviations());
+    }
+
     /**
      * A row whose report rules throw still names the program, and skips it: without the rules'
      * verdict nothing says the program may run. A source map the rules cannot sort (a null stage

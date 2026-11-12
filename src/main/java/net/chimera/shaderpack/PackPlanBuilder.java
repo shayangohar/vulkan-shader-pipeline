@@ -82,7 +82,7 @@ public final class PackPlanBuilder {
         }
         try {
             return new ProgramBuild(program, config, resolution, advancedResources).plan();
-        } catch (RuntimeException failure) {
+        } catch (RuntimeException | StackOverflowError failure) {
             return planningFailed(program, config, failure);
         }
     }
@@ -90,11 +90,12 @@ public final class PackPlanBuilder {
     /**
      * The plan of a program whose planning threw: it does not run, and the rest of the pack plans
      * on (KNOW-142). The throw is a Chimera defect, so the corpus gate fails on this deviation
-     * (PackCompileTest). The plan keeps the targets its fragment declares where they still parse,
-     * as a program refused for any other reason does.
+     * (PackCompileTest). A stack overflow, from a source that recursed too deep, unwinds clean and
+     * falls back the same way. The plan keeps the targets its fragment declares where they still
+     * parse, as a program refused for any other reason does.
      */
     static PackProgramPlan planningFailed(PackProgram program, PackConfig.PackConfigData config,
-                                          RuntimeException failure) {
+                                          Throwable failure) {
         String name = program.name();
         LOGGER.warn("[chimera] pack {}: planning failed, program skipped", name, failure);
         PostTargetPlan targets;
@@ -110,10 +111,10 @@ public final class PackPlanBuilder {
     }
 
     /** A thrown failure as a deviation argument: its type, then its message's word characters. */
-    static String failureReason(RuntimeException failure) {
+    static String failureReason(Throwable failure) {
         String message = failure.getMessage();
         String reason = failure.getClass().getSimpleName()
-                + (message == null || message.isBlank() ? "" : "_" + VertexBridgeDeviations.safeReason(failure));
+                + (message == null || message.isBlank() ? "" : "_" + message.replaceAll("[^A-Za-z0-9_.-]+", "_"));
         return reason.length() <= 160 ? reason : reason.substring(0, 160);
     }
 

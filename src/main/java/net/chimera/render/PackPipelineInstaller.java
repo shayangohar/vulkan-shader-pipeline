@@ -460,7 +460,7 @@ final class PackPipelineInstaller {
             return;
         }
         markFamilyPipelineInstalled(name, "CLOUD_PIPELINE_INSTALLED");
-        LOGGER.info("[chimera] pack gbuffers_clouds: ok (cloud pipeline installed, samplers={})",
+        LOGGER.debug("[chimera] pack gbuffers_clouds: ok (cloud pipeline installed, samplers={})",
                 Arrays.toString(cloud.samplerSlots()));
     }
 
