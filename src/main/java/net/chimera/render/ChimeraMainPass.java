@@ -122,7 +122,8 @@ public final class ChimeraMainPass implements MainPass {
         state.pipeline().restore();
         if (state.viewportWidth() > 0 && state.viewportHeight() > 0) {
             Renderer.setViewport(0, 0, state.viewportWidth(), state.viewportHeight());
-            Renderer.setScissor(0, 0, state.viewportWidth(), state.viewportHeight());
+            // The pack passes set Vulkan's scissor themselves; the host's box is GL state, reapplied.
+            Renderer.applyScissor();
         }
     }
 

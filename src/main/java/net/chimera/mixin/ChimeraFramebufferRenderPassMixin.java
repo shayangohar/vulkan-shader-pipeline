@@ -35,8 +35,9 @@ public abstract class ChimeraFramebufferRenderPassMixin {
         renderer.setBoundRenderPass(PackGeometryContext.beginRendering(commandBuffer, stack,
                 ChimeraRasterOrientation.isGlOriented(renderPass)));
         renderer.setBoundFramebuffer((Framebuffer) (Object) this);
+        // As the beginRenderPass this replaces: the scissor box is GL state, reapplied, not reset.
         Renderer.setViewport(0, 0, getWidth(), getHeight());
-        Renderer.setScissor(0, 0, getWidth(), getHeight());
+        Renderer.applyScissor();
         callback.cancel();
     }
 }
