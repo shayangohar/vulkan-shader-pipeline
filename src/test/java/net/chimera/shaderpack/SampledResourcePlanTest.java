@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -339,5 +340,28 @@ final class SampledResourcePlanTest {
                 "unsupported report baseline mismatch: " + unsupported.report().sha256());
         assertTrue(expected.contains(unsupported.plan().resources().fingerprint()),
                 "unsupported resource baseline mismatch: " + unsupported.plan().resources().fingerprint());
+    }
+
+    /**
+     * PackResourceOwner makes one image per resource key, so every loaded binding under a key must ask
+     * for the same texture: Spring's declared noise once read as the generated one (audit FD1). A
+     * binding that is not loaded does not count.
+     */
+    @Test
+    void aResourceKeyNamesOneTexture() {
+        PackResourceBinding composite = noise("composite", "tex/a.png", "nearest", PackResourceStatus.PACK_FILE);
+        PackResourceBinding deferred = noise("deferred", "tex/a.png", "nearest", PackResourceStatus.PACK_FILE);
+        assertEquals(Set.of(), PackResourcePlan.keyConflicts(List.of(composite, deferred)));
+        assertEquals(Set.of("noisetex"), PackResourcePlan.keyConflicts(
+                List.of(composite, noise("deferred", "tex/b.png", "nearest", PackResourceStatus.PACK_FILE))));
+        assertEquals(Set.of("noisetex"), PackResourcePlan.keyConflicts(
+                List.of(composite, noise("deferred", "tex/a.png", "linear", PackResourceStatus.PACK_FILE))));
+        assertEquals(Set.of(), PackResourcePlan.keyConflicts(
+                List.of(composite, noise("deferred", "tex/b.png", "nearest", PackResourceStatus.UNAVAILABLE))));
+    }
+
+    private static PackResourceBinding noise(String program, String source, String filter, PackResourceStatus status) {
+        return new PackResourceBinding(program, "noisetex", "noisetex", PackResourceKind.NOISE, source, 7, filter,
+                "repeat", status, List.of());
     }
 }

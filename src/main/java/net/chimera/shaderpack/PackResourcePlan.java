@@ -9,8 +9,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -30,6 +32,8 @@ public final class PackResourcePlan {
      * every DH depth name (DHCompat.getDepthTex and getDepthTexNoTranslucent return 0).
      */
     public static final String GENERATED_UNBOUND = "generated-unbound";
+    /** A resource key two different pack textures share (keyConflicts); the corpus gate fails on it. */
+    public static final String KEY_CONFLICT = "PACK_RESOURCE_KEY_CONFLICT";
     /** The resource dhDepthTex and its alias dhDepthTex0 read; dhDepthTex1 is Iris's other registration. */
     static final String DH_DEPTH = "dhDepthTex";
     private static final Pattern DH_DEPTH_NAME = Pattern.compile("dhDepthTex[01]?");
@@ -140,7 +144,33 @@ public final class PackResourcePlan {
             }
             bindings.put(programPlan.name(), List.copyOf(programBindings));
         }
+        for (String key : keyConflicts(bindings.values().stream().flatMap(List::stream).toList())) {
+            deviations.add(KEY_CONFLICT + ":" + key);
+        }
         return new PackResourcePlan(bindings, declarations, deviations);
+    }
+
+    /**
+     * The resource keys under which bindings ask for different textures. PackResourceOwner makes one
+     * image per key and serves it to every binding under it, so a second source, kind, filter or wrap
+     * under a key would hand a program a texture other than the one it declares: Spring's declared
+     * noise once read as the generated one (audit FD1). Each key names one texture by construction;
+     * this keeps it so (audit proposal 4).
+     */
+    static Set<String> keyConflicts(Collection<PackResourceBinding> bindings) {
+        Map<String, List<Object>> textures = new HashMap<>();
+        Set<String> conflicts = new TreeSet<>();
+        for (PackResourceBinding binding : bindings) {
+            if (binding.status() != PackResourceStatus.PACK_FILE && binding.status() != PackResourceStatus.GENERATED
+                    && binding.status() != PackResourceStatus.GAME_RESOURCE) {
+                continue;
+            }
+            List<Object> texture = List.of(binding.kind(), binding.status(), binding.source(), binding.filter(),
+                    binding.wrap());
+            List<Object> known = textures.putIfAbsent(binding.resourceKey(), texture);
+            if (known != null && !known.equals(texture)) conflicts.add(binding.resourceKey());
+        }
+        return conflicts;
     }
 
     /** A pack texture that a live sampler reads, but that no selector slot is left to serve. */

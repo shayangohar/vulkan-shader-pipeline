@@ -102,6 +102,10 @@ final class PackCompileTest {
                             || deviation.startsWith(ProgramReportRules.REPORT_FAILED))
                     .forEach(deviation -> failures.add(row.name() + ": " + deviation));
         }
+        // Two textures under one resource key would load as one image (PackResourcePlan.keyConflicts).
+        analysis.plan().resources().deviations().stream()
+                .filter(deviation -> deviation.startsWith(PackResourcePlan.KEY_CONFLICT))
+                .forEach(failures::add);
         List<String> passComputes = new ArrayList<>();
         compiled += compilePassComputes(pack, shadersDir, analysis.plan(), failures, passComputes, snapshot);
         return new Result(compiled, List.copyOf(failures), List.copyOf(passComputes));
