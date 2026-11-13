@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -10,6 +11,7 @@ import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -18,6 +20,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * rethrown, and on one or two processors without leaving the calling thread.
  */
 final class PackWorkersTest {
+    /**
+     * A worker's own work may map again, as a program's planning does inside the pack's: the inner
+     * map runs on the same pool, in input order, and nothing waits on itself.
+     */
+    @Test
+    void aWorkerMayMapAgain() {
+        List<List<Integer>> results = assertTimeoutPreemptively(Duration.ofSeconds(30), () -> PackWorkers.map(
+                List.of(0, 1, 2, 3), value -> PackWorkers.map(List.of(value, value + 10), inner -> inner * 2, 4), 4));
+        assertEquals(List.of(List.of(0, 20), List.of(2, 22), List.of(4, 24), List.of(6, 26)), results);
+    }
+
     @Test
     void keepsInputOrder() {
         List<Integer> inputs = IntStream.range(0, 200).boxed().toList();

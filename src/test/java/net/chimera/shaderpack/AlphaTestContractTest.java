@@ -185,6 +185,30 @@ final class AlphaTestContractTest {
     }
 
     /**
+     * The alpha test reads the colour the program wrote, so it runs before the NaN guard rewrites the
+     * outputs, as in Iris, which tests the written alpha (audit GD4). Planning injects the test first,
+     * then the converter appends the guard to main.
+     */
+    @Test
+    void theNanGuardRunsAfterTheAlphaTest(@TempDir Path root) throws Exception {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("gbuffers_entities.vsh"), """
+                #version 120
+                varying vec4 color;
+                void main() { color = gl_Color; gl_Position = ftransform(); }
+                """);
+        Files.writeString(shaders.resolve("gbuffers_entities.fsh"), """
+                #version 120
+                varying vec4 color;
+                void main() { gl_FragData[0] = color; }
+                """);
+        String fragment = PackProbe.analyze(root).plan().program("gbuffers_entities").convertedFragment();
+        int test = fragment.indexOf("discard");
+        int guard = fragment.indexOf(" = chimeraNoNan(");
+        assertTrue(test >= 0 && guard > test, "the alpha test must come before the NaN guard: " + fragment);
+    }
+
+    /**
      * Iris appends the alpha test only in compatibility mode (CommonTransformer, core false): a
      * core-profile fragment, here 330 with no profile, keeps its authored main and tests itself
      * against alphaTestRef, which still reads the draw's reference.
