@@ -73,11 +73,11 @@ public final class ChimeraRenderer {
 
         MainPass current = renderer.getMainPass();
         if (current == null) {
-            ChimeraMod.LOGGER.warn("VulkanMod Renderer ready but no main pass installed; chimera idle");
+            ChimeraMod.LOGGER.warn("[chimera] VulkanMod has no main pass; Chimera stays idle");
             return;
         }
         if (!ChimeraDevice.dynamicRendering()) {
-            ChimeraMod.LOGGER.error("The Vulkan device has no dynamic rendering; chimera idle, vanilla rendering");
+            ChimeraMod.LOGGER.debug("[chimera] no dynamic rendering; Chimera stays idle");
             return;
         }
 
@@ -346,7 +346,7 @@ public final class ChimeraRenderer {
             // still recording. Keep the request alive so the pre-command-buffer
             // hook retries it at the next safe boundary.
             resumeAfterVariant = true;
-            ChimeraMod.LOGGER.warn("Chimera install deferred; host main pass remains active");
+            ChimeraMod.LOGGER.debug("[chimera] install deferred to the next frame");
             return false;
         }
         Renderer.getInstance().setMainPass(chimeraPass);
@@ -416,7 +416,7 @@ public final class ChimeraRenderer {
         screenMode = false;
         resumeAfterVariant = false;
         chimeraEnabled = false;
-        ChimeraMod.LOGGER.warn("Chimera variant fallback - host main pass restored");
+        ChimeraMod.LOGGER.warn("[chimera] pack variant failed; rendering vanilla");
     }
 
     public static void enterScreenMode() {

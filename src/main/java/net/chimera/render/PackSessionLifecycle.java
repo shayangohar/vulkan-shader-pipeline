@@ -104,7 +104,7 @@ final class PackSessionLifecycle {
         Path pack = ShaderpackDirectory.resolve(
                 ShaderpackDirectory.root(), name).orElse(null);
         if (pack == null) {
-            LOGGER.warn("[chimera] saved shader pack is no longer in the shaderpacks folder: {}", name);
+            LOGGER.warn("[chimera] saved shader pack not found: {}", name);
         }
         return pack;
     }
@@ -361,7 +361,7 @@ final class PackSessionLifecycle {
                 reportPackChangeFailure(request.path(), rebuildFailure, "Previous pack restored.");
                 return true;
             } catch (RuntimeException restoreFailure) {
-                LOGGER.warn("[chimera] pack rollback failed; host seams remain active: {}",
+                LOGGER.warn("[chimera] pack rollback failed; rendering vanilla: {}",
                         ChimeraMainPass.runtimeFailureReason("pack-rollback", restoreFailure));
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;
@@ -490,7 +490,7 @@ final class PackSessionLifecycle {
                         "The " + previous + " variant still runs.");
                 return true;
             } catch (RuntimeException restoreFailure) {
-                LOGGER.warn("[chimera] pack dimension restore failed; host seams remain active: {}",
+                LOGGER.warn("[chimera] pack dimension restore failed; rendering vanilla: {}",
                         ChimeraMainPass.runtimeFailureReason("dimension-restore", restoreFailure));
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;

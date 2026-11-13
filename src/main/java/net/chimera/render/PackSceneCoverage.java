@@ -113,8 +113,7 @@ final class PackSceneCoverage {
         pass.packTranslucentSuspended = true;
         if (!pass.packTranslucentSuspendLogged) {
             pass.packTranslucentSuspendLogged = true;
-            LOGGER.warn("[chimera] pack gbuffers_water: inputs unavailable this frame, "
-                    + "fixed translucent pipeline used");
+            LOGGER.warn("[chimera] gbuffers_water inputs unavailable; fixed translucent pipeline this frame");
         }
         return true;
     }
