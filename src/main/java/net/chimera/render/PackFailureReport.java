@@ -15,9 +15,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.Properties;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -219,19 +217,6 @@ final class PackFailureReport {
             return HexFormat.of().formatHex(digest.digest());
         } catch (IOException | NoSuchAlgorithmException unreadable) {
             return "unreadable (" + unreadable.getClass().getSimpleName() + ")";
-        }
-    }
-
-    /** The commit this jar was built from (build.gradle stamps chimera-build.properties); unknown in a dev run. */
-    static String commit() {
-        try (InputStream in = PackFailureReport.class.getResourceAsStream("/chimera-build.properties")) {
-            if (in == null) return "unknown";
-            Properties properties = new Properties();
-            properties.load(in);
-            String commit = properties.getProperty("commit", "").strip();
-            return commit.isEmpty() || commit.startsWith("$") ? "unknown" : commit.toLowerCase(Locale.ROOT);
-        } catch (IOException unreadable) {
-            return "unknown";
         }
     }
 }

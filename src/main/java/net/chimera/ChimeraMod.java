@@ -20,15 +20,21 @@ import net.neoforged.neoforge.common.NeoForge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Locale;
+import java.util.Properties;
+
 @Mod(value = ChimeraMod.MOD_ID, dist = Dist.CLIENT)
 public final class ChimeraMod {
     public static final String MOD_ID = "chimera";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     private static String version = "dev";
+    private static final String COMMIT = readCommit();
 
     public ChimeraMod(IEventBus modBus, ModContainer container) {
         version = container.getModInfo().getVersion().toString();
-        LOGGER.info("Chimera {} initializing - shaderpack pipeline for VulkanMod", version);
+        LOGGER.info("[chimera] Chimera {} (commit {})", version, COMMIT);
         NeoForge.EVENT_BUS.addListener(RegisterClientCommandsEvent.class,
                 event -> ChimeraCommands.register(event.getDispatcher()));
         // A pack failure found before a player is in a world waits for one, as Iris's notice does.
@@ -41,11 +47,27 @@ public final class ChimeraMod {
                 event -> event.registerReloadListener(ChimeraMaterialReloadListener.live()));
         // The mod list's Config button opens the shader pack selector, as Iris's does.
         container.registerExtensionPoint(IConfigScreenFactory.class, (mod, parent) -> new ShaderPackScreen(parent));
-        LOGGER.info("Press O (or use /chimera pack) to choose a shader pack in-game");
     }
 
     /** This mod's version, once NeoForge has constructed the mod. */
     public static String version() {
         return version;
+    }
+
+    /** The commit this jar was built from (build.gradle stamps chimera-build.properties); unknown in a dev run. */
+    public static String commit() {
+        return COMMIT;
+    }
+
+    private static String readCommit() {
+        try (InputStream in = ChimeraMod.class.getResourceAsStream("/chimera-build.properties")) {
+            if (in == null) return "unknown";
+            Properties properties = new Properties();
+            properties.load(in);
+            String commit = properties.getProperty("commit", "").strip();
+            return commit.isEmpty() || commit.startsWith("$") ? "unknown" : commit.toLowerCase(Locale.ROOT);
+        } catch (IOException unreadable) {
+            return "unknown";
+        }
     }
 }

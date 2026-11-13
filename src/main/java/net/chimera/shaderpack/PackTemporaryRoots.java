@@ -89,7 +89,7 @@ public final class PackTemporaryRoots {
         } catch (IOException failure) {
             LOGGER.warn("[chimera] pack: cannot list {}: {}", directory, failure.getMessage());
         }
-        if (removed > 0) LOGGER.info("[chimera] removed {} pack folders earlier games left in {}", removed, directory);
+        if (removed > 0) LOGGER.debug("[chimera] removed {} stale pack folders in {}", removed, directory);
         return removed;
     }
 

@@ -187,8 +187,8 @@ public abstract class ChimeraDeviceFeaturesMixin {
         }
         PackDevice packDevice = ChimeraDevice.describe(DeviceManager.physicalDevice, chimera$features, names);
         PackDevice.set(packDevice);
-        LOGGER.info("[chimera] device extensions added for shader packs: {}", added);
-        LOGGER.info("[chimera] pack device {} (vendor 0x{}, driver {}): features {}, subgroup stages 0x{}"
+        LOGGER.debug("[chimera] device extensions added: {}", added);
+        LOGGER.debug("[chimera] pack device {} (vendor 0x{}, driver {}): features {}, subgroup stages 0x{}"
                         + " operations 0x{}", packDevice.name(), Integer.toHexString(packDevice.vendorId()),
                 packDevice.driverId(), packDevice.features(), Integer.toHexString(packDevice.subgroupStages()),
                 Integer.toHexString(packDevice.subgroupOperations()));

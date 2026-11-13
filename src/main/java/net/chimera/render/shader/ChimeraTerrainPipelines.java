@@ -167,7 +167,7 @@ public final class ChimeraTerrainPipelines {
                 "chimera_terrain", false);
         initialized = true;
 
-        ChimeraMod.LOGGER.info("chimera terrain pipeline ready: stride={}B attributes={}",
+        ChimeraMod.LOGGER.debug("[chimera] terrain pipeline ready: stride={}B attributes={}",
                 ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN.getVertexSize(),
                 ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN.getElementAttributeNames());
     }
