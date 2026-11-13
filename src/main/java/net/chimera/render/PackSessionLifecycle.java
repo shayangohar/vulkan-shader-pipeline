@@ -118,8 +118,8 @@ final class PackSessionLifecycle {
                 || hasPendingPackChange()) {
             return false;
         }
-        pass.resources.ensureOutputResources();
-        return pass.resources.outputResourcesReady && pass.targets.outputResourcesLive();
+        pass.targets.ensureOutputResources();
+        return pass.targets.outputResourcesReady && pass.targets.outputResourcesLive();
     }
 
     /** Called before Renderer begins a fresh main command buffer. */
@@ -313,7 +313,7 @@ final class PackSessionLifecycle {
             this.currentDimension = previousDimension;
             this.changingPack = true;
             try {
-                pass.resources.createResources();
+                pass.targets.createResources();
             } finally {
                 this.changingPack = false;
             }
@@ -335,7 +335,7 @@ final class PackSessionLifecycle {
                 // Still the pack change: its message says what runs, not a second one for the rollback.
                 this.changingPack = true;
                 try {
-                    pass.resources.createResources();
+                    pass.targets.createResources();
                 } finally {
                     this.changingPack = false;
                 }
@@ -454,7 +454,7 @@ final class PackSessionLifecycle {
             waitForImmediateDestruction("dimension variant " + requested, this::cleanUpPackVariant);
             pass.packFrameUnsupported = null;
             pass.packSource.selectDimension(requested);
-            pass.resources.createResources();
+            pass.targets.createResources();
             this.pendingPackDimension = null;
             this.loggedPendingPackDimension = null;
             LOGGER.debug("[chimera] pack dimension variant installed: {} ({})",
@@ -470,7 +470,7 @@ final class PackSessionLifecycle {
                 pass.targets.cleanUpFramebuffersAndPasses();
                 pass.cleanUpPipelines();
                 pass.packSource.selectDimension(previous);
-                pass.resources.createResources();
+                pass.targets.createResources();
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;
                 if (pass.conformanceReport != null) {

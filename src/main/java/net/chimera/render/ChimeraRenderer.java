@@ -236,7 +236,7 @@ public final class ChimeraRenderer {
         // Material companions are independent of shader-pack state: atlas
         // uploads arrive whether or not a pack is installed.
         chimeraPass.pumpMaterialMapBuilds();
-        chimeraPass.resources.refreshWorldResourcesIfDue();
+        chimeraPass.targets.refreshWorldResourcesIfDue();
         ChimeraTerrainPipelines.rebuildingOnce(ChimeraRenderer::changePackAtFrameBoundary);
         // After any pack change above, so a replaced pack's teardown and install upload the atlas once.
         PackAtlasMipmaps.reconcile();
