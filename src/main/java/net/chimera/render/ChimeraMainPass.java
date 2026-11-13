@@ -77,11 +77,10 @@ public final class ChimeraMainPass implements MainPass {
     final PackSessionLifecycle sessions = new PackSessionLifecycle(this);
     final PackPostChain postChain = new PackPostChain(this);
     final MainPassTargets targets = new MainPassTargets(this);
-    final PackPipelineSet pipelines = new PackPipelineSet();
+    final PackPipelineSet pipelines = new PackPipelineSet(this);
     final PackShadowPass shadowPass = new PackShadowPass(this);
     final PackSceneCoverage coverage = new PackSceneCoverage(this);
     final PackImageBindings images = new PackImageBindings(this);
-    final PackPipelineLoad load = new PackPipelineLoad(this);
     final OpaqueDepthCapture depth = new OpaqueDepthCapture(this);
     final MaterialMapRuntime materials = new MaterialMapRuntime(this);
     final PackFamilyWindows windows = new PackFamilyWindows(this);
@@ -289,7 +288,7 @@ public final class ChimeraMainPass implements MainPass {
             }
             boolean initialized = this.packStorageBufferOwner.initialize(Renderer.getCommandBuffer());
             if (initialized || !this.session.packStorageInitializationLogged) {
-                load.logPackStoragePath("storage-initialization");
+                pipelines.logPackStoragePath("storage-initialization");
                 this.session.packStorageInitializationLogged = true;
             }
             this.packStorageBufferOwner.prepareForUse(Renderer.getCommandBuffer());
