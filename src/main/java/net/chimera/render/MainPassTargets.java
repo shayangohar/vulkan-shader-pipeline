@@ -104,7 +104,7 @@ final class MainPassTargets {
         pass.currentFramebuffer = this.compositeFramebuffer;
         pass.earlyOutputPass = true;
         pass.postChain.configurePackPostTargets(width, height);
-        pass.pipelines.loadPackPipelines();
+        pass.load.loadPackPipelines();
         if (pass.shadowPass.usePackShadowRuntime() && pass.shadowPass.shadowMap.isInitialized()) {
             pass.shadowPass.packShadowDepth.install();
         }

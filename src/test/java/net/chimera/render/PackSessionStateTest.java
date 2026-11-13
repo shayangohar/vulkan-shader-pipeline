@@ -49,10 +49,10 @@ final class PackSessionStateTest {
                 .filter(name -> name.equals("configurePackPostTargets") || name.equals("loadPackPipelines"))
                 .toList());
         assertTrue(order.startsWith("configurePackPostTargets,loadPackPipelines"), order);
-        var pipelines = MixinBytecode.nativeClass("net/chimera/render/PackPipelineSet");
+        var load = MixinBytecode.nativeClass("net/chimera/render/PackPipelineLoad");
         AbstractInsnNode previous = null;
         boolean cleared = false;
-        for (AbstractInsnNode instruction : MixinBytecode.instructionsThrough(pipelines, "resetSessionPipelines")) {
+        for (AbstractInsnNode instruction : MixinBytecode.instructionsThrough(load, "resetSessionPipelines")) {
             cleared |= instruction instanceof FieldInsnNode put && put.getOpcode() == Opcodes.PUTFIELD
                     && put.owner.equals(STATE) && put.name.equals("packPostChainRejected")
                     && previous != null && previous.getOpcode() == Opcodes.ICONST_0;
