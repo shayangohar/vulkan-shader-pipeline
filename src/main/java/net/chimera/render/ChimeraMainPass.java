@@ -832,7 +832,11 @@ public final class ChimeraMainPass implements MainPass {
     @Override
     public void cleanUp() {
         stopRenderWorkForCleanup();
-        sessions.waitForImmediateDestruction("final pack cleanup");
+        sessions.waitForImmediateDestruction("final pack cleanup", this::releaseAfterIdle);
+    }
+
+    /** The final teardown, after the device went idle: every retired handle goes at once. */
+    private void releaseAfterIdle() {
         this.horizonRenderer.close();
         ChimeraCloudRenderer.shared().close();
         sessions.cleanUpPackVariant();

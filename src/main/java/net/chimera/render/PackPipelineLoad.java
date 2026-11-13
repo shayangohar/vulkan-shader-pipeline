@@ -222,7 +222,8 @@ final class PackPipelineLoad {
         }
         LOGGER.warn("[chimera] pack frame unsupported: {}; vanilla rendering for {}",
                 reason, PackSessionLifecycle.packLabel(pass.sessions.packPath));
-        // Nothing built this session has been submitted yet, so release it directly.
+        // Nothing built this session has drawn yet, but a raw texture's upload may still be running:
+        // its handles wait for their frames (HandleRetirement), outside any idle teardown.
         pass.sessions.cleanUpPackVariant();
         String pack = PackSessionLifecycle.packLabel(pass.sessions.packPath);
         PackFailureNotices.record(new PackFailureNotices.Failure(pack, "pack", "load",

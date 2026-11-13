@@ -371,7 +371,11 @@ final class PackSessionLifecycle {
         PackFailureNotices.publish();
     }
 
-    /** Clears all pack-owned objects and closes the current source after the idle wait. */
+    /**
+     * Clears all pack-owned objects and closes the current source: after an idle wait for a pack
+     * change, or with no wait for its rollback, whose failed load may have submitted uploads the
+     * idle wait never saw (their handles then wait for their frames, HandleRetirement).
+     */
     void preparePackSessionReplacement(boolean waitForIdle) {
         pass.packFrameUnsupported = null;
         clearPackOverrides();
@@ -379,8 +383,13 @@ final class PackSessionLifecycle {
         pass.pendingDepthClear = false;
         pass.shadowPass.shadowPending = false;
         if (waitForIdle) {
-            waitForImmediateDestruction("pack replacement");
+            waitForImmediateDestruction("pack replacement", this::tearDownPackSession);
+        } else {
+            tearDownPackSession();
         }
+    }
+
+    private void tearDownPackSession() {
         cleanUpPackVariant();
         pass.targets.cleanUpFramebuffersAndPasses();
         pass.cleanUpPipelines();
@@ -442,8 +451,7 @@ final class PackSessionLifecycle {
             pass.levelPhase = false;
             pass.pendingDepthClear = false;
             pass.shadowPass.shadowPending = false;
-            waitForImmediateDestruction("dimension variant " + requested);
-            cleanUpPackVariant();
+            waitForImmediateDestruction("dimension variant " + requested, this::cleanUpPackVariant);
             pass.packFrameUnsupported = null;
             pass.packSource.selectDimension(requested);
             pass.resources.createResources();
@@ -507,11 +515,11 @@ final class PackSessionLifecycle {
         ChimeraSkyBridge.setEnabled(false);
     }
 
-    /** Idles the device; until the next frame records, retired handles go at once (HandleRetirement). */
-    void waitForImmediateDestruction(String reason) {
+    /** Idles the device, then runs {@code teardown}, whose retired handles go at once (HandleRetirement). */
+    void waitForImmediateDestruction(String reason, Runnable teardown) {
         LOGGER.debug("[chimera] GPU idle: {}", reason);
         Vulkan.waitIdle();
-        HandleRetirement.idleUntilRecording();
+        HandleRetirement.whileIdle(teardown);
     }
 
     void markPackVariantFallback() {
