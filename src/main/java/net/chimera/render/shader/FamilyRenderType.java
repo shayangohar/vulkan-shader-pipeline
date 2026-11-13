@@ -59,7 +59,7 @@ public final class FamilyRenderType extends RenderType {
         super.setupRenderState();
         ShaderInstance shader = RenderSystem.getShader();
         if (!ChimeraEntityBridge.beginDraw(family, format(), shader == null ? null : shader.getName(), phase)) {
-            FamilyDrawTrace.noteDrawRefused(family, host);
+            ChimeraEntityBridge.noteDrawRefused(family, host);
         }
     }
 

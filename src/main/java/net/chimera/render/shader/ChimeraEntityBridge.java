@@ -18,6 +18,8 @@ import net.vulkanmod.vulkan.shader.GraphicsPipeline;
 import net.vulkanmod.vulkan.texture.VTextureSelector;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
+import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -96,65 +98,6 @@ public final class ChimeraEntityBridge {
         SHADOW_TEX,
         SHADOW_TEX_COLOR
     }
-
-    /**
-     * How Iris 1.21.1's MixinGameRenderer keys an entity-format shader, in an entity, in a block
-     * entity and in the shadow pass.
-     */
-    enum EntityShader {
-        /** ENTITIES_SOLID_DIFFUSE or ENTITIES_CUTOUT_DIFFUSE; BLOCK_ENTITY_DIFFUSE; SHADOW_BLOCK. */
-        MODEL,
-        /** ENTITIES_CUTOUT; BLOCK_ENTITY; SHADOW_ENTITIES_CUTOUT. */
-        OVERLAY,
-        /** ENTITIES_TRANSLUCENT; BE_TRANSLUCENT; SHADOW_BLOCK. */
-        TRANSLUCENT,
-        /** ENTITIES_EYES; BLOCK_ENTITY; SHADOW_ENTITIES_CUTOUT. */
-        EYES,
-        /** ENTITIES_EYES_TRANS; BLOCK_ENTITY; SHADOW_BLOCK. */
-        EMISSIVE,
-        /** ENTITIES_ALPHA (the dying dragon's dissolve) in either; Iris keeps no shadow key for it. */
-        ALPHA
-    }
-
-    /**
-     * Entity-format shaders by vanilla name; a render type routes by the shader it draws with, as
-     * Iris overrides shader getters, so NeoForge's and mods' render types on these shaders follow.
-     * Flat held and dropped items draw with item_entity_translucent_cull: drawn by the host they
-     * wrote no gbuffer data, and deferred lighting erased them to a ghost.
-     */
-    private static final Map<String, EntityShader> ENTITY_SHADERS = Map.ofEntries(
-            Map.entry("rendertype_entity_solid", EntityShader.MODEL),
-            Map.entry("rendertype_entity_cutout", EntityShader.MODEL),
-            Map.entry("rendertype_entity_cutout_no_cull", EntityShader.MODEL),
-            Map.entry("rendertype_entity_cutout_no_cull_z_offset", EntityShader.MODEL),
-            Map.entry("rendertype_entity_decal", EntityShader.MODEL),
-            Map.entry("rendertype_entity_smooth_cutout", EntityShader.MODEL),
-            Map.entry("rendertype_armor_cutout_no_cull", EntityShader.MODEL),
-            Map.entry("rendertype_energy_swirl", EntityShader.OVERLAY),
-            Map.entry("rendertype_entity_shadow", EntityShader.OVERLAY),
-            Map.entry("rendertype_entity_translucent", EntityShader.TRANSLUCENT),
-            Map.entry("rendertype_entity_translucent_cull", EntityShader.TRANSLUCENT),
-            Map.entry("rendertype_item_entity_translucent_cull", EntityShader.TRANSLUCENT),
-            Map.entry("rendertype_breeze_wind", EntityShader.TRANSLUCENT),
-            Map.entry("rendertype_entity_no_outline", EntityShader.TRANSLUCENT),
-            Map.entry("rendertype_eyes", EntityShader.EYES),
-            Map.entry("rendertype_entity_translucent_emissive", EntityShader.EMISSIVE),
-            Map.entry("rendertype_entity_alpha", EntityShader.ALPHA));
-    /** The block-breaking overlay's shader (RenderType.CRUMBLING, ModelBakery.DESTROY_TYPES). */
-    private static final String CRUMBLING_SHADER = "rendertype_crumbling";
-    /** The beam shader of RenderType.beaconBeam, which beacons and end gateways draw. */
-    private static final String BEACON_BEAM_SHADER = "rendertype_beacon_beam";
-    /** The chunk shaders Iris draws as MOVING_BLOCK when an entity or block entity draws with them. */
-    private static final Set<String> MOVING_BLOCK_SHADERS = Set.of("rendertype_solid", "rendertype_cutout_mipped",
-            "rendertype_cutout", "rendertype_translucent", "rendertype_translucent_moving_block",
-            "rendertype_tripwire");
-    /**
-     * The glyph shaders Iris routes through TEXT and TEXT_BE, and through TEXT_INTENSITY and
-     * TEXT_INTENSITY_BE for TrueType glyphs, whose one-channel page reads RRRR
-     * (IntensityTextureViews): world, sign and see-through text.
-     */
-    private static final Set<String> TEXT_SHADERS = Set.of("rendertype_text", "rendertype_text_see_through",
-            "position_color_tex_lightmap", "rendertype_text_intensity", "rendertype_text_intensity_see_through");
 
     /** The session's lane pipelines and entity ids, installed and dropped whole. */
     private static InstalledLanes lanes = InstalledLanes.NONE;
@@ -237,7 +180,7 @@ public final class ChimeraEntityBridge {
         lanes = InstalledLanes.NONE;
         lightningBoltEntityId = 0;
         FamilyBufferSource.releaseAll();
-        FamilyDrawTrace.reset();
+        resetDrawTrace();
     }
 
     public static boolean isInstalled() {
@@ -303,7 +246,7 @@ public final class ChimeraEntityBridge {
 
     /**
      * Opens the shadow pass's caster window around its entity and block-entity drawing (Iris
-     * ShadowRenderer.ACTIVE): every caster batch draws with its shadow family ({@link #shadowFamily}),
+     * ShadowRenderer.ACTIVE): every caster batch draws with its shadow family (IrisShaderKeys.shadowFamily),
      * every host-layout draw with its shadow lane, and anything else stays out of the shadow map.
      */
     public static boolean beginShadowCasters() {
@@ -491,7 +434,7 @@ public final class ChimeraEntityBridge {
         VertexFormat format = type.format();
         Family family;
         if (shadowCasterPass) {
-            family = shadowFamily(shaderOf(type), format, context());
+            family = IrisShaderKeys.shadowFamily(shaderOf(type), format, context());
         } else if (ChimeraHandRenderer.active()) {
             family = ChimeraHandRenderer.translucentPhase() ? Family.HAND_WATER : Family.HAND;
         } else {
@@ -535,59 +478,17 @@ public final class ChimeraEntityBridge {
     /**
      * The family a render type written in the world window batches with: the crumbling overlay and
      * beacon beams wherever they are written, as Iris widens every BLOCK buffer to TERRAIN, and
-     * otherwise the entity or block entity drawing it (worldFamily).
+     * otherwise the entity or block entity drawing it (IrisShaderKeys.worldFamily).
      */
     public static Family worldTypeFamily(String shader, VertexFormat format) {
-        if (format == DefaultVertexFormat.BLOCK && CRUMBLING_SHADER.equals(shader)) return Family.DAMAGED_BLOCK;
-        if (format == DefaultVertexFormat.BLOCK && BEACON_BEAM_SHADER.equals(shader)) return Family.BEACON_BEAM;
+        if (format == DefaultVertexFormat.BLOCK && IrisShaderKeys.CRUMBLING_SHADER.equals(shader)) {
+            return Family.DAMAGED_BLOCK;
+        }
+        if (format == DefaultVertexFormat.BLOCK && IrisShaderKeys.BEACON_BEAM_SHADER.equals(shader)) {
+            return Family.BEACON_BEAM;
+        }
         Family context = context();
-        return context == null ? null : worldFamily(shader, format, context);
-    }
-
-    /**
-     * The family Iris 1.21.1 draws a world render type with, by its shader and format, inside an
-     * entity ({@code context} ENTITY) or a block entity (BLOCK); null when Iris keeps it on another
-     * program. Text is TEXT (gbuffers_entities_translucent) in an entity and TEXT_BE
-     * (gbuffers_block_translucent) in a block entity.
-     */
-    public static Family worldFamily(String shader, VertexFormat format, Family context) {
-        if (shader == null) return null;
-        boolean blockEntity = context == Family.BLOCK;
-        if (format == DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP) {
-            if (!TEXT_SHADERS.contains(shader)) return null;
-            return blockEntity ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
-        }
-        if (format == DefaultVertexFormat.BLOCK) {
-            return MOVING_BLOCK_SHADERS.contains(shader) ? Family.MOVING_BLOCK : null;
-        }
-        EntityShader key = format == DefaultVertexFormat.NEW_ENTITY ? ENTITY_SHADERS.get(shader) : null;
-        return key == null ? null : entityFamily(key, blockEntity);
-    }
-
-    private static Family entityFamily(EntityShader key, boolean blockEntity) {
-        return switch (key) {
-            case MODEL, OVERLAY -> blockEntity ? Family.BLOCK : Family.ENTITY;
-            case TRANSLUCENT -> blockEntity ? Family.BLOCK_TRANSLUCENT : Family.ENTITY_TRANSLUCENT;
-            case EYES, EMISSIVE -> blockEntity ? Family.BLOCK : Family.SPIDER_EYES;
-            case ALPHA -> Family.ENTITY;
-        };
-    }
-
-    /**
-     * The family Iris 1.21.1 draws a shadow caster with, by its shader and format: a block entity's
-     * models SHADOW_BLOCK, falling blocks and moving pistons the shadow program on the block layout,
-     * and every other entity-format caster SHADOW_ENTITIES_CUTOUT. Null leaves it out of the shadow
-     * map.
-     */
-    public static Family shadowFamily(String shader, VertexFormat format, Family context) {
-        if (format == DefaultVertexFormat.BLOCK) {
-            return context != null && MOVING_BLOCK_SHADERS.contains(shader) ? Family.SHADOW_ENTITIES : null;
-        }
-        if (format != DefaultVertexFormat.NEW_ENTITY) return null;
-        EntityShader key = shader == null ? null : ENTITY_SHADERS.get(shader);
-        boolean blockModel = context == Family.BLOCK && key != null
-                && key != EntityShader.OVERLAY && key != EntityShader.EYES && key != EntityShader.ALPHA;
-        return blockModel ? Family.SHADOW_BLOCK : Family.SHADOW_ENTITIES;
+        return context == null ? null : IrisShaderKeys.worldFamily(shader, format, context);
     }
 
     /** The vertex format a family lane writes for a host format: Iris's attributes appended. */
@@ -650,7 +551,7 @@ public final class ChimeraEntityBridge {
      */
     public static boolean dropsHostDraw(String shader) {
         if (!isShadowCasterPass() || drawActive) return false;
-        FamilyDrawTrace.noteShadowDropped(shader);
+        noteShadowDropped(shader);
         return true;
     }
 
@@ -682,13 +583,13 @@ public final class ChimeraEntityBridge {
         activeFamily = family;
         activePipeline = selected;
         activeAlphaReference = lane != null ? lane.alphaReference()
-                : HostAlphaTest.reference(shader, family, shadowCasterPass);
+                : IrisShaderKeys.reference(shader, family, shadowCasterPass);
         activePhase = phase;
         for (int index = 0; index < VTextureSelector.SIZE; index++) {
             previousTextures[index] = VTextureSelector.getBoundTexture(index);
         }
         drawActive = true;
-        FamilyDrawTrace.noteDraw(family, shader, format);
+        noteDraw(family, shader, format);
         return true;
     }
 
@@ -825,4 +726,40 @@ public final class ChimeraEntityBridge {
         return value == null ? "fallback" : "installed";
     }
 
+
+    // One-time diagnostics for the family lanes: the first draw of each lane, a refused family batch
+    // and each host shader the shadow pass leaves out are logged once per pack session, so a log
+    // shows which path each lane took.
+    private static final EnumSet<Family> drawnLanes = EnumSet.noneOf(Family.class);
+    private static final EnumSet<Family> refusedLanes = EnumSet.noneOf(Family.class);
+    private static final Set<String> droppedShaders = new HashSet<>();
+
+    /** Forgets what was logged, so a newly installed pack logs each lane's path again. */
+    private static void resetDrawTrace() {
+        drawnLanes.clear();
+        refusedLanes.clear();
+        droppedShaders.clear();
+    }
+
+    private static void noteDraw(Family family, String shader, VertexFormat format) {
+        if (drawnLanes.add(family)) {
+            ChimeraMod.LOGGER.debug("[chimera] family bridge: lane={} drawing shader={} stride={}B",
+                    family.name().toLowerCase(), shader, format.getVertexSize());
+        }
+    }
+
+    /** A family batch whose lane had no pipeline when it drew; the pipeline seam skips it. */
+    static void noteDrawRefused(Family family, RenderType host) {
+        if (refusedLanes.add(family)) {
+            ChimeraMod.LOGGER.warn("[chimera] family bridge: lane={} refused its batch type={}",
+                    family.name().toLowerCase(), host.name);
+        }
+    }
+
+    /** A shadow-pass draw no shadow lane serves, left out of the shadow map as Iris draws none like it. */
+    private static void noteShadowDropped(String shader) {
+        if (droppedShaders.add(String.valueOf(shader))) {
+            ChimeraMod.LOGGER.debug("[chimera] family bridge: shadow pass left out shader={}", shader);
+        }
+    }
 }

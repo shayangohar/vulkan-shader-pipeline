@@ -145,7 +145,7 @@ public final class ChimeraSkyBridge {
      * pack gives an alphaTest reads its own reference instead (PackAlphaTestPlan).
      */
     public static float skyAlphaReference(boolean basicSky, VertexFormat format) {
-        return basicSky && format == DefaultVertexFormat.POSITION_COLOR ? HostAlphaTest.NON_ZERO_ALPHA : 0.0F;
+        return basicSky && format == DefaultVertexFormat.POSITION_COLOR ? IrisShaderKeys.NON_ZERO_ALPHA : 0.0F;
     }
 
     public static void endDraw() {
