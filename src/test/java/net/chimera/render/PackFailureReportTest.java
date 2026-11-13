@@ -38,6 +38,11 @@ final class PackFailureReportTest {
                 "{\"formatVersion\":1}")) {
             assertTrue(text.contains(expected), expected + " in\n" + text);
         }
+        for (String section : List.of("Failure", "Stack trace", "Versions", "System", "Pack", "Conformance report")) {
+            String heading = section + "\n" + "-".repeat(section.length()) + "\n";
+            assertTrue(text.startsWith(heading, text.indexOf("\n\n" + heading) + 2),
+                    "a blank line comes before " + section + " in\n" + text);
+        }
     }
 
     @Test

@@ -61,7 +61,7 @@ final class PackFailureReport {
                 .append(failure.info()).append("\n\n");
         if (cause != null) {
             section(text, "Stack trace");
-            text.append(stackTrace(cause)).append('\n');
+            text.append(stackTrace(cause)).append("\n\n");
         }
         section(text, "Versions");
         text.append("Chimera: ").append(environment.chimera()).append(" (commit ").append(environment.commit())
