@@ -419,7 +419,6 @@ final class MainPassTargets {
     // RenderSystem's texture units, which hold OpenGL names, so an image a draw samples through a unit
     // needs one, as VulkanMod names its own main images.
 
-
     /** A new OpenGL texture name for {@code image}. */
     private static int createGlAlias(VulkanImage image) {
         int id = GlTexture.genTextureId();

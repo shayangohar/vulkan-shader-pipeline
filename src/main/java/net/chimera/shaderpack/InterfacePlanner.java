@@ -557,7 +557,8 @@ public final class InterfacePlanner {
         return spec.accepts(type);
     }
 
-    // Source scanning: the declarations a stage makes and reads, judged as GLSL words.
+    // Source scanning and rewriting: the declarations a stage makes and reads, judged as GLSL words, and
+    // the declarations the generated uniform block replaces, removed.
 
     /** True when {@code name} appears as a whole word at least twice: a declaration and a use. */
     private static boolean isReferenced(String source, String name) {

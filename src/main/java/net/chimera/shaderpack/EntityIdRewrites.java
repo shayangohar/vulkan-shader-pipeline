@@ -12,8 +12,8 @@ import static net.chimera.shaderpack.GlslLexer.stripComments;
  * Iris's per-vertex entity identities (EntityPatcher): entityId, blockEntityId and
  * currentRenderedItemId, each one component of the EntityIds input. A converted vertex stage copies
  * each identity it or a later stage reads into a flat varying, and the later stages read the
- * identity back through it. The terrain, entity, geometry and fragment converters share these
- * rewrites.
+ * identity back through it. The vertex, geometry, between-stage and fragment converters, the core
+ * profile rewrite, the entity declarations and the uniform planning share these names and rewrites.
  */
 final class EntityIdRewrites {
     /**

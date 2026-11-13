@@ -570,6 +570,10 @@ record PackSettingsPlan(
         return comment < 0 ? value : value.substring(0, comment);
     }
 
+    /** The fullscreen and compute passes among Iris's texture stages, each covering its numbered programs. */
+    static final List<String> PASS_TEXTURE_STAGES = List.of(
+            "setup", "begin", "shadowcomp", "prepare", "deferred", "composite");
+
     /** Macros that name the stage or pass being compiled, never a pack-wide option. */
     private static final Set<String> STAGE_CONTEXT_MACROS = Set.of(
             "FSH", "VSH", "GSH", "CSH", "TCS", "TES", "VERTEX_SHADER", "FRAGMENT_SHADER", "GEOMETRY_SHADER",

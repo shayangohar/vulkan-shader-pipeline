@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 
 import static net.chimera.shaderpack.PackSettingsPlan.COMMENTED_DEFINE;
 import static net.chimera.shaderpack.PackSettingsPlan.DEFINE;
+import static net.chimera.shaderpack.PackSettingsPlan.PASS_TEXTURE_STAGES;
 import static net.chimera.shaderpack.PackSettingsPlan.isDimensionContextMacro;
 import static net.chimera.shaderpack.PackSettingsPlan.isStageContextMacro;
 import static net.chimera.shaderpack.PackSettingsPlan.stageIndependentDefaults;
@@ -369,9 +370,6 @@ final class ShadersPropertiesReader {
      */
     private static final List<String> RESOURCE_PREFIXES = List.of(
             "customTexture.", "texture.", "bufferObject.", "indirect.");
-    /** The fullscreen and compute passes among Iris's texture stages, each covering its numbered programs. */
-    static final List<String> PASS_TEXTURE_STAGES = List.of(
-            "setup", "begin", "shadowcomp", "prepare", "deferred", "composite");
     /** The stages a {@code texture.<stage>.<sampler>} may name (Iris TextureStage.parse). */
     static final Set<String> TEXTURE_STAGES = Stream.concat(PASS_TEXTURE_STAGES.stream(), Stream.of("gbuffers"))
             .collect(Collectors.toUnmodifiableSet());

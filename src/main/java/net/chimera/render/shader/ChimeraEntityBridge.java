@@ -721,7 +721,6 @@ public final class ChimeraEntityBridge {
         return value == null ? "fallback" : "installed";
     }
 
-
     // One-time diagnostics for the family lanes: the first draw of each lane, a refused family batch
     // and each host shader the shadow pass leaves out are logged once per pack session, so a log
     // shows which path each lane took.

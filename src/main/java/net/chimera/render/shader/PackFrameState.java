@@ -267,7 +267,7 @@ final class PackFrameState {
         return Map.copyOf(table);
     }
 
-    // The frame-value table: each served uniform name, its width and its component source.
+    // Builds and writes the frame-value table: each served uniform name, its width and its component source.
     private static void scalar(Map<String, FrameValue> table, DoubleSupplier value, String... names) {
         serve(table, new FrameValue(1, component -> value.getAsDouble()), names);
     }

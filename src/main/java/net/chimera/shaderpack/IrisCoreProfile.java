@@ -49,7 +49,8 @@ final class IrisCoreProfile {
         /**
          * A pack's own gbuffers_line: VANILLA in core mode whatever its stages' versions
          * (TransformPatcher's isLine). A compatibility stage still keeps its own variables of
-         * the core names it does not declare as uniforms (PackPlanBuilder.irisCoreMode).
+         * the core names it does not declare as uniforms (coreMode, asked per stage by
+         * PackPlanBuilder.prepareIrisCoreProfile).
          */
         LINES
     }

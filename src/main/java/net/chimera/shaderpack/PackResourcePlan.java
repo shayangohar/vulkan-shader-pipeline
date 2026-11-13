@@ -761,7 +761,7 @@ public final class PackResourcePlan {
      */
     static String textureStage(String program) {
         if (program == null) return null;
-        for (String stage : ShadersPropertiesReader.PASS_TEXTURE_STAGES) {
+        for (String stage : PackSettingsPlan.PASS_TEXTURE_STAGES) {
             if (program.startsWith(stage) && program.substring(stage.length()).matches("\\d*")) {
                 return stage;
             }

@@ -696,6 +696,122 @@ public final class PackPipelines {
                 ChimeraVertexFormats.EXTENDED_ENTITY, advancedResources, storageOwner);
     }
 
+    private static PackTerrain buildTerrainLikePlan(
+            PackProgramPlan plan,
+            String fixedVertexSource,
+            TerrainMaterialPlan materialPlan,
+            boolean coverage,
+            int targetFormat,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null || !plan.executable() || plan.convertedFragment() == null) {
+            return null;
+        }
+        try {
+            UniformRegistry.Stage stage = plan.name().equals("gbuffers_water")
+                    ? UniformRegistry.Stage.TRANSLUCENT : UniformRegistry.Stage.GEOMETRY;
+            UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan().effective(stage);
+            int[] slots = interleaveLightmap(interfacePlan.samplers().stream()
+                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
+            OrdinaryDescriptorContract ordinary = ordinaryContract(plan, advancedResources);
+            ProgramBindingLayout layout = advancedResources.bindingLayout(plan.name());
+            if (layout == null) {
+                throw new IllegalStateException("advanced terrain image declaration rejected");
+            }
+            String fragment = coverage
+                    ? FragmentConverter.withCoverageOutput(plan.convertedFragment())
+                    : plan.convertedFragment();
+            fragment = PackDescriptorContracts.bindPackShader(fragment, plan.name(), advancedResources, layout,
+                    interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);
+            if (fragment == null) {
+                throw new IllegalStateException("advanced terrain image declaration rejected");
+            }
+            String vertex = plan.convertedVertex() == null
+                    ? fixedVertexSource : plan.convertedVertex();
+            vertex = PackDescriptorContracts.bindPackShader(vertex, plan.name(), advancedResources, layout,
+                    interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
+            if (vertex == null) {
+                throw new IllegalStateException("advanced terrain vertex image declaration rejected");
+            }
+            BetweenStages between = bindBetween(plan, plan.betweenStages(), advancedResources, layout,
+                    plan.interfacePlan(), stage);
+            PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
+                    plan.name(), advancedResources);
+            PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertex, between,
+                    fragment, storageOwner);
+            ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
+            // An authored route takes its own attachments; otherwise a coverage build writes the
+            // pack colour plus a coverage depth.
+            GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
+            boolean dynamicAttachments = outputPlan != null && outputPlan.requiresDynamicAttachments();
+            int[] attachmentFormats = dynamicAttachments ? outputPlan.outputFormatsArray()
+                    : coverage ? new int[] {targetFormat, VK10.VK_FORMAT_R32_SFLOAT} : null;
+            PackBlendPlan.Mode[] attachmentBlends = routedBlends(plan.blendPlan(), outputPlan, attachmentFormats);
+            GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
+                    ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, between, fragment,
+                    imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
+            return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
+        } catch (Exception e) {
+            handleBuildFailure(plan.name(), e);
+            return null;
+        }
+    }
+
+    private static int deviceMaxColorAttachments() {
+        if (DeviceManager.deviceProperties == null) return 8;
+        return DeviceManager.deviceProperties.limits().maxColorAttachments();
+    }
+
+    /**
+     * The fixed terrain vertex reads its LightMap at descriptor index 1
+     * (layout(binding = 4), registry slot 2). Force registry slot 2 into the
+     * pack's emitted sampler array at that position: without it the vertex's
+     * lightmap fetch lands on the wrong descriptor (with the simplex fixture,
+     * the shadow map) - torch/sky light never reaches geometry and the shadow
+     * content renders as blotchy per-vertex darkening.
+     */
+    static int[] interleaveLightmap(int[] slots) {
+        int[] withoutLightmap = Arrays.stream(slots)
+                .filter(slot -> slot != 2)
+                .distinct()
+                .toArray();
+        boolean hasAtlas = Arrays.stream(withoutLightmap).anyMatch(slot -> slot == 0);
+        int[] withAtlas = hasAtlas
+                ? withoutLightmap
+                : prepend(0, withoutLightmap);
+        int[] out = new int[withAtlas.length + 1];
+        System.arraycopy(withAtlas, 0, out, 0, 1);
+        out[1] = 2;
+        System.arraycopy(withAtlas, 1, out, 2, withAtlas.length - 1);
+        return out;
+    }
+
+    /** Keep the host's atlas/lightmap positions when a shadow shader asks for lightmap. */
+    static int[] shadowSamplerSlots(int[] declaredSlots) {
+        boolean hasLightmap = Arrays.stream(declaredSlots).anyMatch(slot -> slot == 2);
+        TreeSet<Integer> slots = new TreeSet<>();
+        for (int slot : declaredSlots) slots.add(slot);
+        if (hasLightmap) slots.add(0);
+        return slots.stream().mapToInt(Integer::intValue).toArray();
+    }
+
+    /** Preserve the registry slots used by the host entity draw. */
+    public static int[] entitySamplerSlots(int[] declaredSlots) {
+        return Arrays.stream(declaredSlots).distinct().sorted().toArray();
+    }
+
+    /** The colour targets a post pass's frame inputs name, legacy aliases included (gaux3 is 6), ascending. */
+    static List<Integer> colorInputTargets(List<String> frameInputs) {
+        return frameInputs.stream().map(PackResourcePlan::targetIndex).filter(Objects::nonNull)
+                .filter(target -> target <= PostTargetPlan.MAX_TARGET).distinct().sorted().toList();
+    }
+
+    private static int[] prepend(int value, int[] values) {
+        int[] result = new int[values.length + 1];
+        result[0] = value;
+        System.arraycopy(values, 0, result, 1, values.length);
+        return result;
+    }
 
     // The host geometry families a pack program can replace: entities, block entities, hands and their
     // glint, particles, and the host-layout lanes.
@@ -914,121 +1030,5 @@ public final class PackPipelines {
         return built == null ? null
                 : new PackParticle(built.pipeline(), built.samplerSlots(), built.vertexSource(),
                 built.fragmentSource(), built.outputPlan(), built.imageBindings());
-    }
-    private static PackTerrain buildTerrainLikePlan(
-            PackProgramPlan plan,
-            String fixedVertexSource,
-            TerrainMaterialPlan materialPlan,
-            boolean coverage,
-            int targetFormat,
-            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
-    ) {
-        if (plan == null || !plan.executable() || plan.convertedFragment() == null) {
-            return null;
-        }
-        try {
-            UniformRegistry.Stage stage = plan.name().equals("gbuffers_water")
-                    ? UniformRegistry.Stage.TRANSLUCENT : UniformRegistry.Stage.GEOMETRY;
-            UniformRegistry.ProgramInterface interfacePlan = plan.interfacePlan().effective(stage);
-            int[] slots = interleaveLightmap(interfacePlan.samplers().stream()
-                    .mapToInt(UniformRegistry.SamplerBinding::slot).toArray());
-            OrdinaryDescriptorContract ordinary = ordinaryContract(plan, advancedResources);
-            ProgramBindingLayout layout = advancedResources.bindingLayout(plan.name());
-            if (layout == null) {
-                throw new IllegalStateException("advanced terrain image declaration rejected");
-            }
-            String fragment = coverage
-                    ? FragmentConverter.withCoverageOutput(plan.convertedFragment())
-                    : plan.convertedFragment();
-            fragment = PackDescriptorContracts.bindPackShader(fragment, plan.name(), advancedResources, layout,
-                    interfacePlan, stage, VK_SHADER_STAGE_FRAGMENT_BIT);
-            if (fragment == null) {
-                throw new IllegalStateException("advanced terrain image declaration rejected");
-            }
-            String vertex = plan.convertedVertex() == null
-                    ? fixedVertexSource : plan.convertedVertex();
-            vertex = PackDescriptorContracts.bindPackShader(vertex, plan.name(), advancedResources, layout,
-                    interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
-            if (vertex == null) {
-                throw new IllegalStateException("advanced terrain vertex image declaration rejected");
-            }
-            BetweenStages between = bindBetween(plan, plan.betweenStages(), advancedResources, layout,
-                    plan.interfacePlan(), stage);
-            PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
-                    plan.name(), advancedResources);
-            PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertex, between,
-                    fragment, storageOwner);
-            ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
-            // An authored route takes its own attachments; otherwise a coverage build writes the
-            // pack colour plus a coverage depth.
-            GeometryOutputPlan outputPlan = plan.geometryOutputPlan();
-            boolean dynamicAttachments = outputPlan != null && outputPlan.requiresDynamicAttachments();
-            int[] attachmentFormats = dynamicAttachments ? outputPlan.outputFormatsArray()
-                    : coverage ? new int[] {targetFormat, VK10.VK_FORMAT_R32_SFLOAT} : null;
-            PackBlendPlan.Mode[] attachmentBlends = routedBlends(plan.blendPlan(), outputPlan, attachmentFormats);
-            GraphicsPipeline pipeline = createRouted("pack_" + plan.name(),
-                    ChimeraVertexFormats.terrainFormat(materialPlan), descriptors, vertex, between, fragment,
-                    imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
-            return new PackTerrain(pipeline, slots, fragment, outputPlan, imageBindings);
-        } catch (Exception e) {
-            handleBuildFailure(plan.name(), e);
-            return null;
-        }
-    }
-
-    private static int deviceMaxColorAttachments() {
-        if (DeviceManager.deviceProperties == null) return 8;
-        return DeviceManager.deviceProperties.limits().maxColorAttachments();
-    }
-
-    /**
-     * The fixed terrain vertex reads its LightMap at descriptor index 1
-     * (layout(binding = 4), registry slot 2). Force registry slot 2 into the
-     * pack's emitted sampler array at that position: without it the vertex's
-     * lightmap fetch lands on the wrong descriptor (with the simplex fixture,
-     * the shadow map) - torch/sky light never reaches geometry and the shadow
-     * content renders as blotchy per-vertex darkening.
-     */
-    static int[] interleaveLightmap(int[] slots) {
-        int[] withoutLightmap = Arrays.stream(slots)
-                .filter(slot -> slot != 2)
-                .distinct()
-                .toArray();
-        boolean hasAtlas = Arrays.stream(withoutLightmap).anyMatch(slot -> slot == 0);
-        int[] withAtlas = hasAtlas
-                ? withoutLightmap
-                : prepend(0, withoutLightmap);
-        int[] out = new int[withAtlas.length + 1];
-        System.arraycopy(withAtlas, 0, out, 0, 1);
-        out[1] = 2;
-        System.arraycopy(withAtlas, 1, out, 2, withAtlas.length - 1);
-        return out;
-    }
-
-    /** Keep the host's atlas/lightmap positions when a shadow shader asks for lightmap. */
-    static int[] shadowSamplerSlots(int[] declaredSlots) {
-        boolean hasLightmap = Arrays.stream(declaredSlots).anyMatch(slot -> slot == 2);
-        TreeSet<Integer> slots = new TreeSet<>();
-        for (int slot : declaredSlots) slots.add(slot);
-        if (hasLightmap) slots.add(0);
-        return slots.stream().mapToInt(Integer::intValue).toArray();
-    }
-
-    /** Preserve the registry slots used by the host entity draw. */
-    public static int[] entitySamplerSlots(int[] declaredSlots) {
-        return Arrays.stream(declaredSlots).distinct().sorted().toArray();
-    }
-
-    /** The colour targets a post pass's frame inputs name, legacy aliases included (gaux3 is 6), ascending. */
-    static List<Integer> colorInputTargets(List<String> frameInputs) {
-        return frameInputs.stream().map(PackResourcePlan::targetIndex).filter(Objects::nonNull)
-                .filter(target -> target <= PostTargetPlan.MAX_TARGET).distinct().sorted().toList();
-    }
-
-    private static int[] prepend(int value, int[] values) {
-        int[] result = new int[values.length + 1];
-        result[0] = value;
-        System.arraycopy(values, 0, result, 1, values.length);
-        return result;
     }
 }
