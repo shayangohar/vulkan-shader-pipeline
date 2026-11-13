@@ -122,9 +122,9 @@ public final class PackSource {
 
         /**
          * Puts the mipmap level this load began with back in the macros, so every dimension it analyses
-         * and the id maps read after it (PackSessionLifecycle) take one level. Only a fresh load reads
-         * the game's level (audit FD10), so the two agree today; the pin keeps them so whoever sets the
-         * level next (audit proposal 4).
+         * and the id maps read right after it (PackSessionLifecycle) take one level. Only a fresh load
+         * reads the game's level (audit FD10), so the two agree today; each analysis puts the load's
+         * level back, so a level set since cannot reach the load's analyses (audit proposal 4).
          */
         void pinLoadInputs() {
             PackEngineDefines.setMipmapLevel(mipmapLevel);

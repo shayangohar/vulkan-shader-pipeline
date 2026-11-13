@@ -267,14 +267,15 @@ final class PackSourceEdgesTest {
     void aLoadAnalysesEveryDimensionAtTheMipmapLevelItBeganWith(@TempDir Path root) throws IOException {
         Path shaders = Files.createDirectories(root.resolve("shaders"));
         Files.writeString(shaders.resolve("final.fsh"), "#version 120\nvoid main() { gl_FragColor = vec4(1.0); }\n");
-        PackEngineDefines.setMipmapLevel(4);
+        // Not the default level (4), so a pin that ignored the game's level would fail.
+        PackEngineDefines.setMipmapLevel(2);
         try (PackSource.LoadResult loaded = PackSource.loadResult(root)) {
             PackProbe.analyze(root, loaded);
             PackEngineDefines.setMipmapLevel(0);
             loaded.selectDimension("minecraft:the_nether");
             PackProbe.analyze(root, loaded);
-            assertEquals("4", loaded.analyzed().macros().get("MC_MIPMAP_LEVEL"));
-            assertEquals("4", PackEngineDefines.standard().get("MC_MIPMAP_LEVEL"));
+            assertEquals("2", loaded.analyzed().macros().get("MC_MIPMAP_LEVEL"));
+            assertEquals("2", PackEngineDefines.standard().get("MC_MIPMAP_LEVEL"));
         }
     }
 
@@ -297,6 +298,10 @@ final class PackSourceEdgesTest {
             assertSame(overworld.plan(), again.plan());
             assertNotSame(overworld.report(), again.report());
             assertFalse(again.report().deviations().contains("RUNTIME_MARK"), again.report().deviations().toString());
+            // A reuse's own marks stay its own too: the next reuse gets another copy.
+            again.report().addDeviation("SECOND_MARK");
+            PackProbe.Analysis third = PackProbe.analyze(root, loaded);
+            assertFalse(third.report().deviations().contains("SECOND_MARK"), third.report().deviations().toString());
         }
     }
 

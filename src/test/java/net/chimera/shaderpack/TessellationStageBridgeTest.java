@@ -12,7 +12,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -22,15 +22,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 final class TessellationStageBridgeTest {
     /**
-     * A plan holds its between stages as one BetweenStages, which refuses a lone tessellation stage,
-     * so no plan can carry one (audit FD2, proposal 4); a plan without them has none.
+     * A plan holds its between stages as one BetweenStages, checked once when it is made (it refuses
+     * a lone tessellation stage, audit FD2), and reads each stage through it; a plan without them
+     * has none (proposal 4).
      */
     @Test
-    void aPlanCannotCarryALoneTessellationStage() {
+    void aPlanHoldsItsBetweenStagesAsOne() {
         PackProgram program = new PackProgram("gbuffers_terrain", "", null);
-        assertThrows(IllegalArgumentException.class, () -> new PackProgramPlan(program, Map.of(), null, Map.of(),
-                Map.of(), null, null, null, null, List.of(), true, null, null, null, null, null, null,
-                new BetweenStages("void main() {}", null, null)));
+        BetweenStages pair = new BetweenStages("control", "evaluation", "geometry");
+        PackProgramPlan tessellated = new PackProgramPlan(program, Map.of(), null, Map.of(), Map.of(), null, null,
+                null, null, List.of(), true, null, null, null, null, null, null, pair);
+        assertSame(pair, tessellated.betweenStages());
+        assertEquals(List.of("control", "evaluation", "geometry"), List.of(tessellated.convertedTessControl(),
+                tessellated.convertedTessEvaluation(), tessellated.convertedGeometry()));
         PackProgramPlan plain = new PackProgramPlan(program, Map.of(), null, Map.of(), Map.of(), null, null, null,
                 null, List.of(), true);
         assertEquals(BetweenStages.NONE, plain.betweenStages());

@@ -420,8 +420,9 @@ public final class PostTargetPlan {
 
     /**
      * Whether {@link #targetSlots()} index the shadowcolor targets rather than the colortex ones: a
-     * shadowcomp pass's route, or a shadow-pass program's (drawsShadowTargets). A reader that applies
-     * colortex formats or deviations asks the plan, not the program's name (audit FD3, proposal 4).
+     * shadowcomp pass's route, or a shadow-pass program's. It is decided once, from the name of the
+     * program the route is parsed for (drawsShadowTargets), so a reader that applies colortex formats
+     * or deviations asks the route rather than deciding again (audit FD3, proposal 4).
      */
     public boolean shadowTargets() {
         return shadowTargets;

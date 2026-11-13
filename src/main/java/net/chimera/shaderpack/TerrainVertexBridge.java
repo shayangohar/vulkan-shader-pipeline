@@ -403,29 +403,6 @@ final class TerrainVertexBridge {
                 GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, null, true, false);
     }
 
-
-    /** Converts legacy and simple compatibility shadow vertices with one plan. */
-    public static LegacyGlslConverter.TerrainVertexConversion convertShadowVertex(
-            String source,
-            Path sourceFile,
-            String fragmentSource,
-            UniformRegistry.ProgramInterface interfacePlan
-    ) {
-        return convertShadowVertex(source, sourceFile, fragmentSource, interfacePlan, false);
-    }
-
-    /** Converts a shadow vertex with an admitted storage-buffer declaration. */
-    public static LegacyGlslConverter.TerrainVertexConversion convertShadowVertex(
-            String source,
-            Path sourceFile,
-            String fragmentSource,
-            UniformRegistry.ProgramInterface interfacePlan,
-            boolean allowStorageBuffers
-    ) {
-        return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
-                GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, interfacePlan, true, allowStorageBuffers);
-    }
-
     static LegacyGlslConverter.TerrainVertexConversion convertLegacyVertex(
             String source,
             Path sourceFile,
