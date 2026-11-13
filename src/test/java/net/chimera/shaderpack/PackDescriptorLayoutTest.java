@@ -77,7 +77,7 @@ final class PackDescriptorLayoutTest {
                     color = vec4(texelFetch(usam_lut, 0, 0).r, texelFetch(usam_ids, ivec2(0), 0).r, 0.0, 1.0);
                 }
                 """;
-        UniformRegistry.ProgramInterface plan = UniformRegistry.planProgram(fragment, null, null,
+        UniformRegistry.ProgramInterface plan = InterfacePlanner.planProgram(fragment, null, null,
                 UniformRegistry.Stage.SHADOW, null, true, Map.of(), Map.of("usam_lut", 16, "usam_ids", 17))
                 .project("fragment", UniformRegistry.Stage.SHADOW);
         List<PackAdvancedResourcePlan.DescriptorBinding> samplers = List.of(

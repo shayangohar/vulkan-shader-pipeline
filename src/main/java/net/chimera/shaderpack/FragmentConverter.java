@@ -78,7 +78,7 @@ public final class FragmentConverter {
                         LegacyGlslConverter.TerrainVaryingLayout terrainLayout) {
             return of(source, sourceFile, geometryStage, geometrySamplerSlots)
                     .withTerrainLayout(terrainLayout)
-                    .withInterfacePlan(UniformRegistry.plan(source, LegacyGlslConverter.stageOf(geometryStage)));
+                    .withInterfacePlan(InterfacePlanner.plan(source, LegacyGlslConverter.stageOf(geometryStage)));
         }
 
         public FragmentConversionRequest withTerrainLayout(LegacyGlslConverter.TerrainVaryingLayout terrainLayout) {
@@ -234,7 +234,7 @@ public final class FragmentConverter {
         private void rewriteDeclarations() {
             src = LegacyGlslConverter.removePackMetadataConstants(src);
             src = LegacyGlslConverter.withoutKnownLegacyExtensions(src);
-            src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
+            src = InterfacePlanner.removeUniformDeclarations(src, interfacePlan);
             if (stage.perVertexEntityIdentity()) {
                 src = EntityDeclarations.removeEntityIdDeclarations(src, interfacePlan);
                 src = EntityIdRewrites.replaceEntityIdReferences(src, request.terrainLayout());

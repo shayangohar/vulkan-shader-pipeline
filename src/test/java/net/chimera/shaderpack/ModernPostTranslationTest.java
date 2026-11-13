@@ -92,7 +92,7 @@ final class ModernPostTranslationTest {
                         + vec4(upVec + sunVec, 0.0);
                 }
                 """;
-        UniformRegistry.ProgramInterface plan = UniformRegistry.planProgram(fragment, vertex,
+        UniformRegistry.ProgramInterface plan = InterfacePlanner.planProgram(fragment, vertex,
                 UniformRegistry.Stage.POST, null, true).effective(UniformRegistry.Stage.POST);
         GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
         GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
@@ -153,7 +153,7 @@ final class ModernPostTranslationTest {
                 """;
         for (String authored : new String[] {declarations, ""}) {
             String vertex = "#version 130\n" + authored + body;
-            UniformRegistry.ProgramInterface plan = UniformRegistry.planProgram(fragment, vertex,
+            UniformRegistry.ProgramInterface plan = InterfacePlanner.planProgram(fragment, vertex,
                     UniformRegistry.Stage.POST, null, true).effective(UniformRegistry.Stage.POST);
             GlslInterfaceScanner.StageInterface vs = GlslInterfaceScanner.scan(vertex, true);
             GlslInterfaceScanner.StageInterface fs = GlslInterfaceScanner.scan(fragment, false);
@@ -179,12 +179,12 @@ final class ModernPostTranslationTest {
                         + texture2D(colortex8, vec2(0.5));
                 }
                 """;
-        UniformRegistry.ProgramInterface plan = UniformRegistry.planPrepared(source, UniformRegistry.Stage.POST);
+        UniformRegistry.ProgramInterface plan = InterfacePlanner.planPrepared(source, UniformRegistry.Stage.POST);
         assertTrue(plan.executable() && plan.samplers().stream().map(UniformRegistry.SamplerBinding::slot)
                         .distinct().count() == 4, "Distinct post resources collide: " + plan.deviations());
         assertTrue(Integer.valueOf(8).equals(PackResourcePlan.targetIndex("colortex8")),
                 "Higher target lost its canonical identity");
-        UniformRegistry.ProgramInterfacePlan missing = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan missing = InterfacePlanner.planProgram(
                 "uniform sampler2D absent; void main() { gl_FragColor = texture2D(absent, vec2(0.5)); }",
                 "uniform sampler2D absent; void main() { gl_Position = vec4(0.0); }",
                 UniformRegistry.Stage.POST, null, true);
@@ -205,7 +205,7 @@ final class ModernPostTranslationTest {
                 """;
         String converted = FragmentConverter.FragmentConversionRequest
                 .of(source, null, true, new int[0])
-                .withInterfacePlan(UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW))
+                .withInterfacePlan(InterfacePlanner.planPrepared(source, UniformRegistry.Stage.SHADOW))
                 .convert();
         assertTrue(converted != null && converted.contains(
                         "chimeraShadowColor1 = vec4(0.2, 0.3, 0.4, 0.5)")
@@ -213,14 +213,14 @@ final class ModernPostTranslationTest {
                 "Authored shadow drawbuffer routing or tint expression was lost");
         String third = FragmentConverter.FragmentConversionRequest
                 .of(source.replace("DRAWBUFFERS:10", "DRAWBUFFERS:20"), null, true, new int[0])
-                .withInterfacePlan(UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW))
+                .withInterfacePlan(InterfacePlanner.planPrepared(source, UniformRegistry.Stage.SHADOW))
                 .convert();
         assertTrue(third != null && third.contains("layout(location = 2) out vec4 chimeraShadowColor2;"),
                 "shadowcolor2 is the shadow pass's third attachment (HIGHER_SHADOWCOLOR)");
         assertTrue(FragmentConverter.FragmentConversionRequest
                         .of(source.replace("DRAWBUFFERS:10", "DRAWBUFFERS:80"),
                                 null, true, new int[0])
-                        .withInterfacePlan(UniformRegistry.planPrepared(source, UniformRegistry.Stage.SHADOW))
+                        .withInterfacePlan(InterfacePlanner.planPrepared(source, UniformRegistry.Stage.SHADOW))
                         .convert() == null,
                 "A shadow output beyond Iris's eight targets was silently dropped");
     }

@@ -78,7 +78,7 @@ final class ProgramReportRules {
         boolean hasFragment = inventory.stages.contains("fragment");
         boolean modern = !modernTerrainPlan(name, programPlan) && !validatedConversion(inventory, programPlan, packPlan)
                 && usesUnsupportedModernGlsl(stripped, fullscreen, FamilyAdapterRegistry.isEntityLike(name));
-        List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
+        List<String> samplers = InterfacePlanner.scanDeclaredSamplerNames(stripped);
         // The report has historically exposed all uniform declarations,
         // including samplers. Keep that public inventory stable while the
         // shared interface plan continues to separate samplers for bindings.
@@ -146,7 +146,7 @@ final class ProgramReportRules {
     /** Every declared uniform and sampler name, sorted. */
     static List<String> declaredNames(String stripped, List<String> samplers) {
         TreeSet<String> names = new TreeSet<>(samplers);
-        names.addAll(UniformRegistry.scanUniformDeclarations(stripped).stream()
+        names.addAll(InterfacePlanner.scanUniformDeclarations(stripped).stream()
                 .map(UniformRegistry.UniformDeclaration::name).toList());
         return List.copyOf(names);
     }
@@ -308,10 +308,10 @@ final class ProgramReportRules {
             return programPlan.interfacePlan().effective(stage);
         }
         if (postName) {
-            return relaxed ? UniformRegistry.planPreparedPost(fragment, targetResult.plan())
-                    : UniformRegistry.planPost(fragment, targetResult.plan());
+            return relaxed ? InterfacePlanner.planPreparedPost(fragment, targetResult.plan())
+                    : InterfacePlanner.planPost(fragment, targetResult.plan());
         }
-        return relaxed ? UniformRegistry.planPrepared(fragment, stage) : UniformRegistry.plan(fragment, stage);
+        return relaxed ? InterfacePlanner.planPrepared(fragment, stage) : InterfacePlanner.plan(fragment, stage);
     }
 
     static void addTargetRouteDeviations(
@@ -591,7 +591,7 @@ final class ProgramReportRules {
                 : ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK;
         String source = inventory.sources.getOrDefault("compute", "");
         String stripped = stripComments(source);
-        List<String> samplers = UniformRegistry.scanDeclaredSamplerNames(stripped);
+        List<String> samplers = InterfacePlanner.scanDeclaredSamplerNames(stripped);
         return new ConformanceReport.ProgramReport(
                 inventory.name,
                 "compute",

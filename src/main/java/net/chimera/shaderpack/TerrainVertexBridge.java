@@ -168,7 +168,7 @@ final class TerrainVertexBridge {
                 ? EntityIdRewrites.entityIdTypes(stripComments(vertex), fragment) : Map.of();
         vertex = interfacePlan == null
                 ? stripShadowUniformDeclarations(vertex)
-                : UniformRegistry.removeUniformDeclarations(vertex, interfacePlan);
+                : InterfacePlanner.removeUniformDeclarations(vertex, interfacePlan);
         if (entityInputs) {
             vertex = EntityDeclarations.removeEntityIdDeclarations(vertex, interfacePlan);
         }
@@ -471,7 +471,7 @@ final class TerrainVertexBridge {
             return false;
         }
         if (!hasModernTerrainVersion(source)) return false;
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterface interfacePlan = InterfacePlanner.planProgram(
                 fragmentSource, source, UniformRegistry.Stage.GEOMETRY, null, false)
                 .project("vertex", UniformRegistry.Stage.GEOMETRY);
         return convertModernTerrainVertex(source, null, fragmentSource, interfacePlan) != null;

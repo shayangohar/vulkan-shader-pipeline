@@ -43,7 +43,7 @@ final class OptionSweepFixesTest {
      */
     @Test
     void aSamplerIrisServesNothingStillRefusesTheProgram() {
-        UniformRegistry.ProgramInterface plan = UniformRegistry.plan("""
+        UniformRegistry.ProgramInterface plan = InterfacePlanner.plan("""
                 uniform sampler2D colortex0;
                 uniform sampler3D texLpv1;
                 void main() { gl_FragColor = texture2D(colortex0, vec2(0.0)) + texture3D(texLpv1, vec3(0.0)); }

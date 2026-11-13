@@ -273,7 +273,7 @@ final class WorldEntityAdapterTest {
                     gl_FragColor = vec4(float(entityId) + float(frameCounter) + entityUv.x);
                 }
                 """;
-        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan plan = InterfacePlanner.planProgram(
                 fragment, vertex, UniformRegistry.Stage.ENTITY, null, false);
         LegacyGlslConverter.TerrainVertexConversion convertedVertex =
                 EntityVertexBridge.convertEntityVertex(vertex, null, fragment,
@@ -349,7 +349,7 @@ final class WorldEntityAdapterTest {
                     gl_FragColor = vec4(portal, float(blockEntityId), 0.0, 1.0);
                 }
                 """;
-        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan plan = InterfacePlanner.planProgram(
                 fragment, vertex, UniformRegistry.Stage.BLOCK, null, false);
         assertTrue(plan.executable(), "blockEntityId was not treated as vertex data");
         LegacyGlslConverter.TerrainVertexConversion convertedVertex =
@@ -419,7 +419,7 @@ final class WorldEntityAdapterTest {
                 flat varying int material;
                 void main() { gl_FragColor = vec4(float(material)); }
                 """;
-        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan plan = InterfacePlanner.planProgram(
                 fragment, vertex, UniformRegistry.Stage.ENTITY, null, false);
         assertTrue(plan.executable(), "currentRenderedItemId was not treated as vertex data: "
                 + plan.effective(UniformRegistry.Stage.ENTITY).deviations());

@@ -144,7 +144,7 @@ final class PostVertexBridge {
                         }
                         return interfaceDeclaration(location, declaration, "out");
                     });
-            converted = UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
+            converted = InterfacePlanner.removeUniformDeclarations(converted, interfacePlan);
             converted = LegacyGlslConverter.withoutKnownLegacyExtensions(converted);
             converted = LegacyGlslConverter.removePackMetadataConstants(converted);
             converted = LegacyGlslConverter.convertTextureCalls(converted);

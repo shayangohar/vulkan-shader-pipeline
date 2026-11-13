@@ -117,7 +117,7 @@ final class GraphicsImageScan {
                     GlslTokenRewriter.identifierCount(source, symbol) > 1);
         }
         Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
-        imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(source));
+        imageSamplers.addAll(InterfacePlanner.scanDeclaredSamplerNames(source));
         for (String sampler : imageSamplers) {
             addReader(program, stage, sampler, usage.referencedSamplers().contains(sampler)
                     || GlslTokenRewriter.identifierCount(source, sampler) > 1,

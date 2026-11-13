@@ -514,14 +514,14 @@ final class AdvancedImagePlanTest {
 
     @Test
     void advancedSamplerSourceRules() {
-        UniformRegistry.ProgramInterface shadowedSampler = UniformRegistry.planPrepared(
+        UniformRegistry.ProgramInterface shadowedSampler = InterfacePlanner.planPrepared(
                 "uniform sampler2D specular;"
                         + "float readValue() { float specular = 1.0; return specular; }",
                 UniformRegistry.Stage.GEOMETRY);
         assertTrue(shadowedSampler.deviations().stream().noneMatch(value ->
                         value.equals("SAMPLER_NOT_MAPPED:specular")),
                 "local sampler shadowing was treated as a resource use");
-        UniformRegistry.ProgramInterface helperSampler = UniformRegistry.planPrepared(
+        UniformRegistry.ProgramInterface helperSampler = InterfacePlanner.planPrepared(
                 "uniform sampler2D customSampler;"
                         + "vec4 sampleIt(sampler2D value, vec2 uv) { return texture2D(value, uv); }"
                         + "vec4 readValue(vec2 uv) { return sampleIt(customSampler, uv); }",

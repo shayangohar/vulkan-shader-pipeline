@@ -747,7 +747,7 @@ final class PackFrontEndTest {
      */
     @Test
     void irisUniforms() {
-        UniformRegistry.ProgramInterface served = UniformRegistry.plan(String.join("\n",
+        UniformRegistry.ProgramInterface served = InterfacePlanner.plan(String.join("\n",
                 "uniform float currentPlayerHealth;", "uniform bool hideGUI;", "uniform int isRightHanded;",
                 "uniform mat4 dhProjection;", "uniform float dhFarPlane;", "uniform int dhRenderDistance;",
                 "uniform ivec3 currentDate;", "uniform vec3 playerBodyVector;",
@@ -759,7 +759,7 @@ final class PackFrontEndTest {
         assertTrue(served.deviations().stream().noneMatch(d -> d.startsWith("UNIFORM_UNSET_ZERO")),
                 "served names must not fall back to zero: " + served.deviations());
 
-        UniformRegistry.ProgramInterface unset = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface unset = InterfacePlanner.plan(
                 "uniform float vxRenderDistance; void main() { gl_FragColor = vec4(vxRenderDistance); }",
                 UniformRegistry.Stage.POST);
         assertTrue(unset.executable() && unset.deviations().contains("UNIFORM_UNSET_ZERO:vxRenderDistance"),
@@ -793,12 +793,12 @@ final class PackFrontEndTest {
                 && PackResourcePlan.programResource("watershadow", true).equals("shadowtex0")
                 && PackResourcePlan.programResource("shadowcolor", false).equals("shadowcolor0"),
                 "shadow alias table");
-        UniformRegistry.ProgramInterface water = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface water = InterfacePlanner.plan(
                 "uniform sampler2DShadow shadow; void main() { gl_FragColor = vec4(shadow2D(shadow, vec3(0.0)).r); }",
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(water.executable() && slotOf(water, "shadow") == 5, "water reads shadow as shadowtex0: "
                 + water.deviations());
-        UniformRegistry.ProgramInterface both = UniformRegistry.plan(String.join("\n",
+        UniformRegistry.ProgramInterface both = InterfacePlanner.plan(String.join("\n",
                 "uniform sampler2D shadow;", "uniform sampler2D watershadow;",
                 "void main() { gl_FragColor = texture2D(shadow, vec2(0.0)) + texture2D(watershadow, vec2(0.0)); }"),
                 UniformRegistry.Stage.POST);
@@ -921,8 +921,8 @@ final class PackFrontEndTest {
                 /* uniform float inBlockComment; */
                 void main() { gl_FragColor = vec4(frameTimeCounter); }
                 """;
-        String stripped = UniformRegistry.removeUniformDeclarations(commented,
-                UniformRegistry.plan(commented, UniformRegistry.Stage.POST));
+        String stripped = InterfacePlanner.removeUniformDeclarations(commented,
+                InterfacePlanner.plan(commented, UniformRegistry.Stage.POST));
         assertTrue(!stripped.contains("uniform float frameTimeCounter;")
                         && stripped.contains("corresponding uniform in the shaders.properties file")
                         && stripped.contains("/* uniform float inBlockComment; */"),
@@ -1009,7 +1009,7 @@ final class PackFrontEndTest {
                 """;
         for (UniformRegistry.Stage world : List.of(UniformRegistry.Stage.GEOMETRY, UniformRegistry.Stage.ENTITY,
                 UniformRegistry.Stage.BLOCK)) {
-            UniformRegistry.ProgramInterface reader = UniformRegistry.plan(worldReader, world);
+            UniformRegistry.ProgramInterface reader = InterfacePlanner.plan(worldReader, world);
             assertTrue(slotOf(reader, "gaux4") == SelectorNamespace.colorTargetSlot(7)
                             && reader.samplers().stream().noneMatch(value -> value.name().equals("colortex2")),
                     world + " colour target reads: " + reader.samplers() + " " + reader.deviations());
@@ -1019,7 +1019,7 @@ final class PackFrontEndTest {
     @Test
     void implicitModelView() {
         // The terrain bridge rewrites gl_ModelViewMatrix to gbufferModelView; the plan must serve it.
-        UniformRegistry.ProgramInterface legacyMatrix = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface legacyMatrix = InterfacePlanner.plan(
                 "void main() { gl_Position = gl_ModelViewMatrix * gl_Vertex; }", UniformRegistry.Stage.GEOMETRY);
         assertTrue(legacyMatrix.uniforms().stream().anyMatch(value -> value.name().equals("gbufferModelView")),
                 "implicit gbufferModelView: " + legacyMatrix.uniforms());

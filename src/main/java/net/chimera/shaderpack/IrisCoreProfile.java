@@ -269,7 +269,7 @@ final class IrisCoreProfile {
         src = renameMain(src);
         String globals = GlslVertexPreambles.LINE_WIDEN_GLOBALS;
         Set<String> declared = new HashSet<>();
-        UniformRegistry.scanUniformDeclarations(stripComments(src)).forEach(value -> declared.add(value.name()));
+        InterfacePlanner.scanUniformDeclarations(stripComments(src)).forEach(value -> declared.add(value.name()));
         if (!declared.contains("viewWidth")) globals += "uniform float viewWidth;\n";
         if (!declared.contains("viewHeight")) globals += "uniform float viewHeight;\n";
         return insertAfterHeader(src, globals) + GlslVertexPreambles.LINE_WIDEN_MAIN;

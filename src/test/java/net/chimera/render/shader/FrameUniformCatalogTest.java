@@ -4,6 +4,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.chimera.shaderpack.ConformanceReport;
+import net.chimera.shaderpack.InterfacePlanner;
 import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.UniformRegistry;
@@ -58,7 +59,7 @@ final class FrameUniformCatalogTest {
         assertTrue(UniformRegistry.descriptor("cameraPosition", "vec3") != null,
                 "typed catalog rejected the declared type");
 
-        UniformRegistry.ProgramInterface conflict = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface conflict = InterfacePlanner.plan(
                 "uniform vec3 cameraPosition; uniform float cameraPosition;"
                         + "void main() { float x = cameraPosition.x; }",
                 UniformRegistry.Stage.POST);

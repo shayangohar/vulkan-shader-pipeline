@@ -96,7 +96,7 @@ final class GeometryStageBridge {
         String converted = TerrainVertexBridge.withoutUnreachableFunctions(
                 LegacyGlslConverter.withoutVersionLines(source));
         converted = interfacePlan == null ? TerrainVertexBridge.stripShadowUniformDeclarations(converted)
-                : UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
+                : InterfacePlanner.removeUniformDeclarations(converted, interfacePlan);
         if (drawMatrices) converted = EntityDeclarations.removeEntityIdDeclarations(converted, interfacePlan);
         requireSupported(converted, allowStorageBuffers);
         if (drawMatrices) requireServedMatrices(converted);
@@ -138,7 +138,7 @@ final class GeometryStageBridge {
         String converted = TerrainVertexBridge.withoutUnreachableFunctions(
                 LegacyGlslConverter.withoutVersionLines(source));
         converted = interfacePlan == null ? TerrainVertexBridge.stripShadowUniformDeclarations(converted)
-                : UniformRegistry.removeUniformDeclarations(converted, interfacePlan);
+                : InterfacePlanner.removeUniformDeclarations(converted, interfacePlan);
         requireSupported(converted, allowStorageBuffers);
         converted = located(converted, inputLayout, outputLayout);
         converted = WorldBetweenStages.builtins(converted, interfacePlan, hand);

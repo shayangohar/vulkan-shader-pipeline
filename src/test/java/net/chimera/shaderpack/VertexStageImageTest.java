@@ -44,7 +44,7 @@ final class VertexStageImageTest {
     }
 
     private static LegacyGlslConverter.TerrainVertexConversion convert(Set<String> images) {
-        UniformRegistry.ProgramInterface vertex = UniformRegistry.plan(VERTEX, UniformRegistry.Stage.PARTICLE);
+        UniformRegistry.ProgramInterface vertex = InterfacePlanner.plan(VERTEX, UniformRegistry.Stage.PARTICLE);
         return EntityVertexBridge.convertParticleVertexChecked(VERTEX, null, FRAGMENT, Map.of(), false, List.of(),
                 new EntityVertexBridge.VertexSamplerPlan(vertex, new int[0], images));
     }

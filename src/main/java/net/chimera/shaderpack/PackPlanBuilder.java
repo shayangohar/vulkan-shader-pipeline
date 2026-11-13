@@ -77,7 +77,7 @@ public final class PackPlanBuilder {
     ) {
         if (program == null) {
             return new PackProgramPlan(null, Map.of(),
-                    UniformRegistry.planProgram("", null, UniformRegistry.Stage.POST, null, true),
+                    InterfacePlanner.planProgram("", null, UniformRegistry.Stage.POST, null, true),
                     Map.of(), Map.of(), null, null, null, null,
                     List.of("PROGRAM_SOURCE_MISSING"), false);
         }
@@ -107,7 +107,7 @@ public final class PackPlanBuilder {
             targets = null;
         }
         return new PackProgramPlan(program, Map.of(),
-                UniformRegistry.planProgram("", null, FamilyAdapterRegistry.stageFor(name), null, true),
+                InterfacePlanner.planProgram("", null, FamilyAdapterRegistry.stageFor(name), null, true),
                 Map.of(), Map.of(), targets, null, null, null,
                 List.of(PLANNING_FAILED + ":" + failureReason(failure)), false);
     }
@@ -514,7 +514,7 @@ public final class PackPlanBuilder {
         private void planInterface() {
             PackSettingsPlan settings = config == null ? null : config.settings();
             Map<String, String> between = runningBetweenStages();
-            interfacePlan = UniformRegistry.planProgram(
+            interfacePlan = InterfacePlanner.planProgram(
                     fragment, vertex, between, stage, targetPlan, !program.variantFolder().isBlank(),
                     settings == null ? Map.of() : settings.runtimeSettings().customDescriptors(),
                     settings == null ? Map.of() : settings.customSamplerSlots());
@@ -553,10 +553,10 @@ public final class PackPlanBuilder {
 
         /** Whether any stage reads {@code sampler}; GL leaves one nothing reads inactive, bound or not. */
         private boolean readsSampler(String sampler) {
-            return fragment != null && !UniformRegistry.isSamplerUnused(fragment, sampler)
-                    || vertex != null && !UniformRegistry.isSamplerUnused(vertex, sampler)
+            return fragment != null && !InterfacePlanner.isSamplerUnused(fragment, sampler)
+                    || vertex != null && !InterfacePlanner.isSamplerUnused(vertex, sampler)
                     || runningBetweenStages().values().stream()
-                            .anyMatch(source -> !UniformRegistry.isSamplerUnused(source, sampler));
+                            .anyMatch(source -> !InterfacePlanner.isSamplerUnused(source, sampler));
         }
 
         private Map<String, Integer> varyingLocations() {
