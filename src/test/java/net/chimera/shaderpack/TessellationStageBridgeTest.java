@@ -12,6 +12,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -20,6 +21,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * vertex through and sets its levels, the evaluation stage interpolates and projects.
  */
 final class TessellationStageBridgeTest {
+    /**
+     * A plan holds its between stages as one BetweenStages, which refuses a lone tessellation stage,
+     * so no plan can carry one (audit FD2, proposal 4); a plan without them has none.
+     */
+    @Test
+    void aPlanCannotCarryALoneTessellationStage() {
+        PackProgram program = new PackProgram("gbuffers_terrain", "", null);
+        assertThrows(IllegalArgumentException.class, () -> new PackProgramPlan(program, Map.of(), null, Map.of(),
+                Map.of(), null, null, null, null, List.of(), true, null, null, null, null, null, null,
+                new BetweenStages("void main() {}", null, null)));
+        PackProgramPlan plain = new PackProgramPlan(program, Map.of(), null, Map.of(), Map.of(), null, null, null,
+                null, List.of(), true);
+        assertEquals(BetweenStages.NONE, plain.betweenStages());
+        assertNull(plain.convertedTessControl());
+    }
+
     private static final String CONTROL = """
             #version 430 compatibility
             layout (vertices=3) out;

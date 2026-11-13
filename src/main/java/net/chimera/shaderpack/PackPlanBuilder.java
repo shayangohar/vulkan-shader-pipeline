@@ -239,8 +239,9 @@ public final class PackPlanBuilder {
                     varyingLocations(), targetPlan, convertedFragment, convertedVertex,
                     vertexLayout, deviations, executable,
                     familyAdapter, terrainMaterial, geometryOutputPlan, alphaTestPlan, blendPlan, shadowAttachments(),
-                    convertedGeometry, convertedTessellation == null ? null : convertedTessellation.control(),
-                    convertedTessellation == null ? null : convertedTessellation.evaluation());
+                    new BetweenStages(convertedTessellation == null ? null : convertedTessellation.control(),
+                            convertedTessellation == null ? null : convertedTessellation.evaluation(),
+                            convertedGeometry));
         }
 
         /** The shadowcolor targets the shadow pass draws: Iris's two, or up to eight with HIGHER_SHADOWCOLOR. */
