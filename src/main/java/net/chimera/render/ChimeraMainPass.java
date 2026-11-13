@@ -138,11 +138,8 @@ public final class ChimeraMainPass implements MainPass {
     PackTargetGraphPlan packTargetGraph;
     /** Immutable world/post order for the active pack variant. */
     PackFrameSchedulePlan packFrameSchedule = PackFrameSchedulePlan.empty();
-    boolean packPostChainActive;
-    /** Target images may be needed by geometry even when no post pass is installed. */
-    boolean packTargetResourcesReady;
-    /** Set only when the target graph itself cannot be configured. */
-    boolean packPostChainRejected;
+    /** This pack session's flags, once-only logs and plans; cleanUpPackVariant replaces it whole. */
+    PackSessionState session = new PackSessionState();
     /**
      * Mask-critical families this pack session could not install, or null.
      * While set, the session loads as if no pack were selected, so resizes and
@@ -172,15 +169,10 @@ public final class ChimeraMainPass implements MainPass {
     PackCenterDepth packCenterDepth;
     /** Owns exact-size pack storage buffers for the active session. */
     PackStorageBufferOwner packStorageBufferOwner;
-    boolean packStorageInitializationLogged;
-    /** Suppresses the secondary frame-not-started flood until the next pack session. */
-    boolean packTargetFrameNotStartedLogged;
     /** The pack's computes that run before their deferred, composite or prepare pass. */
     PackPassComputes packPassComputes;
     /** Static pack inventory plus the actual compile/install disposition. */
     ConformanceReport conformanceReport;
-    /** Pack pipelines are retained until the renderer session is torn down. */
-    boolean packPipelinesLoaded;
     /**
      * HDR buffer format: a loaded pack's colortex0 format (PostTargetPlan.DEFAULT_FORMAT, RGBA8 as
      * under Iris, when it declares none); 97 (RGBA16F) for Chimera's own frame without a pack.
@@ -194,7 +186,6 @@ public final class ChimeraMainPass implements MainPass {
                                 Set<String> shadowSamplerSymbols) {}
     /** The current translucent layer draw uses the fixed pipeline: pack inputs were not live. */
     boolean packTranslucentSuspended;
-    boolean packTranslucentSuspendLogged;
     /** Which of Minecraft's screen overlays this pack session keeps (Iris vignette and underwaterOverlay). */
     ScreenOverlayDirectives screenOverlays;
     /** Which parts of Minecraft's sky this pack session keeps (Iris sun, moon, stars and sky). */
@@ -293,12 +284,14 @@ public final class ChimeraMainPass implements MainPass {
             // cannot grow would be read past its end, so the pack goes off instead (TASK-922).
             String unfit = this.packStorageBufferOwner.fitRelativeBuffers(Renderer.getCommandBuffer(),
                     this.targets.hdrFramebuffer.getWidth(), this.targets.hdrFramebuffer.getHeight());
-            if (unfit != null && !this.packPostChainRejected) postChain.turnPackOff("STORAGE_BUFFER_REFIT_FAILED",
-                    "a storage buffer", "it cannot grow to the window's size", new IllegalStateException(unfit));
+            if (unfit != null && !this.session.packPostChainRejected) {
+                postChain.turnPackOff("STORAGE_BUFFER_REFIT_FAILED",
+                        "a storage buffer", "it cannot grow to the window's size", new IllegalStateException(unfit));
+            }
             boolean initialized = this.packStorageBufferOwner.initialize(Renderer.getCommandBuffer());
-            if (initialized || !this.packStorageInitializationLogged) {
+            if (initialized || !this.session.packStorageInitializationLogged) {
                 load.logPackStoragePath("storage-initialization");
-                this.packStorageInitializationLogged = true;
+                this.session.packStorageInitializationLogged = true;
             }
             this.packStorageBufferOwner.prepareForUse(Renderer.getCommandBuffer());
         }
@@ -337,7 +330,7 @@ public final class ChimeraMainPass implements MainPass {
             this.levelPhase = true;
             this.pendingDepthClear = false;
         }
-        if (this.packPostChainActive && postChain.hasOpeningWork()) {
+        if (this.session.packPostChainActive && postChain.hasOpeningWork()) {
             postChain.runOpeningWindows(commandBuffer);
         }
     }
@@ -350,7 +343,7 @@ public final class ChimeraMainPass implements MainPass {
      * change keeps it too, where Iris's one image never changes.
      */
     private void clearWorldTarget(float[] fogColor) {
-        if (!this.packPostChainActive || !this.packPostTargets.isConfigured()) {
+        if (!this.session.packPostChainActive || !this.packPostTargets.isConfigured()) {
             Renderer.clearAttachments(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
             return;
         }
@@ -369,7 +362,7 @@ public final class ChimeraMainPass implements MainPass {
      * only: under Iris it lands on the vanilla target, never colortex0 (ChimeraLevelRendererMixin).
      */
     public boolean packOwnsColortex0() {
-        return this.levelPhase && this.packPostChainActive && this.packPostTargets.isConfigured();
+        return this.levelPhase && this.session.packPostChainActive && this.packPostTargets.isConfigured();
     }
 
     /**
@@ -408,7 +401,7 @@ public final class ChimeraMainPass implements MainPass {
                 coverage.seedPackScene(commandBuffer, hdrColor);
             }
 
-            if (this.packPostChainActive && this.packPostTargets.isConfigured()) {
+            if (this.session.packPostChainActive && this.packPostTargets.isConfigured()) {
                 postChain.runWorldPostWindows(commandBuffer, hdrColor);
                 resolvePackWorldToOutput(commandBuffer, hdrColor);
                 this.packWorldResolved = true;
@@ -511,8 +504,8 @@ public final class ChimeraMainPass implements MainPass {
             // The level-render return seam is the authoritative final seam.
             // If it was not reached, preserve the already-resolved host image
             // and let the normal host hand and GUI path continue.
-            if (this.postChain.packFinalExecution != null) {
-                postChain.markPostStageIdentityBoundary(this.postChain.packFinalExecution,
+            if (this.session.packFinalExecution != null) {
+                postChain.markPostStageIdentityBoundary(this.session.packFinalExecution,
                         "level boundary not reached");
             }
             this.packFinalApplied = true;
@@ -671,7 +664,7 @@ public final class ChimeraMainPass implements MainPass {
 
     /** Divert the whole hand only when both halves can participate in the live pack frame. */
     public boolean hasPackHandSchedule() {
-        return this.levelPhase && this.packPostChainActive && this.packTargetResourcesReady
+        return this.levelPhase && this.session.packPostChainActive && this.session.packTargetResourcesReady
                 && this.pipelines.hand != null && this.pipelines.handWater != null;
     }
 
@@ -683,8 +676,8 @@ public final class ChimeraMainPass implements MainPass {
 
     boolean shouldLogPackRuntimeFailure(String reason) {
         if (!reason.contains("PACK_TARGET_FRAME_NOT_STARTED")) return true;
-        if (this.packTargetFrameNotStartedLogged) return false;
-        this.packTargetFrameNotStartedLogged = true;
+        if (this.session.packTargetFrameNotStartedLogged) return false;
+        this.session.packTargetFrameNotStartedLogged = true;
         return true;
     }
 
@@ -929,7 +922,7 @@ public final class ChimeraMainPass implements MainPass {
         this.compositePipeline = ChimeraPostPipelines.create("chimera_composite");
     }
 
-    public boolean packRuntimeRejected() { return this.packPostChainRejected; }
+    public boolean packRuntimeRejected() { return this.session.packPostChainRejected; }
 
     /** True while a shader pack session is loaded (identity mode has none). */
     public boolean packLoaded() { return this.packPlan != null; }

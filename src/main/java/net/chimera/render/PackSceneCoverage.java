@@ -73,7 +73,7 @@ final class PackSceneCoverage {
             default -> null;
         };
         if (terrain == null || !terrain.requiresDynamicAttachments()
-                || !pass.packTargetResourcesReady || pass.shadowPass.shadowPassActive
+                || !pass.session.packTargetResourcesReady || pass.shadowPass.shadowPassActive
                 || pass.targets.hdrFramebuffer == null || pass.targets.hdrFramebuffer.getDepthAttachment() == null) {
             return;
         }
@@ -111,8 +111,8 @@ final class PackSceneCoverage {
         // binds a stale or missing image.
         ChimeraTerrainPipelines.suspendTranslucentOverride(true);
         pass.packTranslucentSuspended = true;
-        if (!pass.packTranslucentSuspendLogged) {
-            pass.packTranslucentSuspendLogged = true;
+        if (!pass.session.packTranslucentSuspendLogged) {
+            pass.session.packTranslucentSuspendLogged = true;
             LOGGER.warn("[chimera] gbuffers_water inputs unavailable; fixed translucent pipeline this frame");
         }
         return true;

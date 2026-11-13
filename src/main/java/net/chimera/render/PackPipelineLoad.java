@@ -41,7 +41,7 @@ final class PackPipelineLoad {
      * never break the frame.
      */
     void loadPackPipelines() {
-        if (pass.packPipelinesLoaded) {
+        if (pass.session.packPipelinesLoaded) {
             // Pack pipelines are pass-agnostic (VulkanMod builds pipeline
             // variants from the state at bind, render pass included), so a
             // retained object stays correct across createResources' pass
@@ -84,20 +84,15 @@ final class PackPipelineLoad {
         logPackStoragePath("pipelines-installed");
     }
 
-    /** Clears the previous session's pipelines and per-session runtime flags, and marks this load. */
+    /**
+     * Clears the previous session's pipelines and marks this load. The session's flags and logs
+     * start clear: cleanUpPackVariant replaced them (PackSessionState) before any load.
+     */
     private void resetSessionPipelines() {
         pass.pipelines.clear();
-        pass.postChain.packPostExecution.clear();
-        pass.postChain.packPostBoundaryLogged.clear();
-        pass.postChain.stageFailures.clear();
-        pass.postChain.packFinalExecution = null;
-        pass.packPostChainRejected = false;
         pass.windows.restorePackResourceWindow();
         pass.packTranslucentSuspended = false;
-        pass.packTranslucentSuspendLogged = false;
-        pass.shadowPass.shadowCastersFailed = false;
-        pass.shadowPass.shadowCutoutDispositionLogged = false;
-        pass.packPipelinesLoaded = true;
+        pass.session.packPipelinesLoaded = true;
     }
 
     /** Hands the installed entity, block, hand, particle and caster pipelines to the family bridge. */

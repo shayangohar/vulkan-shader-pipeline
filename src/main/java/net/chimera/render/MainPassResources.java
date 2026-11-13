@@ -47,7 +47,7 @@ final class MainPassResources {
     }
 
     void createResources() {
-        pass.packPostChainActive = false;
+        pass.session.packPostChainActive = false;
         pass.packPostTargets.cleanUp();
         pass.packDepthTargets.cleanUp();
         pass.targets.cleanUpFramebuffersAndPasses();

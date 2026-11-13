@@ -41,21 +41,9 @@ final class PackShadowPass {
     /** Iris's AlphaTests.ONE_TENTH_ALPHA, its cutout shadow pass's test; here the opaque layers'. */
     static final float SHADOW_CUTOUT_ALPHA = 0.1F;
 
-    /** Set once the caster pass failed; the shadow map keeps its terrain for the rest of the session. */
-    boolean shadowCastersFailed;
-
-    /** Iris's shadow culling for this pack session (shadow.culling and the shadow distances). */
-    ShadowCullingPlan shadowCulling;
-
-    /** Who observes the pack's shadow pass, and so whether it draws (Iris's ShadowRenderer rule). */
-    ShadowPassUse shadowUse = ShadowPassUse.ALWAYS;
-
     ChimeraShadowMap shadowMap = new ChimeraShadowMap();
     final PackShadowDepth packShadowDepth = new PackShadowDepth();
     final PackShadowComposites composites;
-
-    /** Programs whose routed shadow sampler was already reported once. */
-    final Set<String> loggedShadowSamplerPrograms = new HashSet<>();
 
     /**
      * While true, rebindMainTarget() opens the SHADOW render pass instead of
@@ -81,13 +69,6 @@ final class PackShadowPass {
 
     /** False when the shadow resource could not be safely prepared this frame. */
     boolean shadowFrameReady;
-    boolean shadowSegmentObserved;
-
-    /** Prevents an invalid shadow resource from producing per-frame warnings. */
-    boolean shadowTransitionFallbackLogged;
-
-    /** Runtime report/log marker for the host's unique opaque/cutout policy. */
-    boolean shadowCutoutDispositionLogged;
 
     PackShadowPass(ChimeraMainPass pass) {
         this.pass = pass;
@@ -374,8 +355,8 @@ final class PackShadowPass {
         if (pass.conformanceReport != null) {
             pass.conformanceReport.addDeviation("SHADOW_MAP_WRITE_FAILED");
         }
-        if (!this.shadowTransitionFallbackLogged) {
-            this.shadowTransitionFallbackLogged = true;
+        if (!pass.session.shadowTransitionFallbackLogged) {
+            pass.session.shadowTransitionFallbackLogged = true;
             LOGGER.warn("[chimera] shadow map write failed; clearing to all-lit fallback: {}",
                     failure.toString());
         }
@@ -405,7 +386,7 @@ final class PackShadowPass {
      */
     void renderShadowCasters(double cameraX, double cameraY, double cameraZ) {
         ChimeraShadowCasters.clearCounts();
-        if (pass.pipelines.shadowEntities == null || this.shadowCastersFailed
+        if (pass.pipelines.shadowEntities == null || pass.session.shadowCastersFailed
                 || pass.packPlan == null || pass.packConfig == null) {
             return;
         }
@@ -416,7 +397,7 @@ final class PackShadowPass {
             ChimeraShadowCasters.render(cameraX, cameraY, cameraZ, this.shadowMap.getLightView(),
                     this.shadowMap.getPackLightProjection(), directives, shadowCullingFrustum(true));
         } catch (RuntimeException failure) {
-            this.shadowCastersFailed = true;
+            pass.session.shadowCastersFailed = true;
             if (pass.conformanceReport != null) {
                 pass.conformanceReport.addDeviation("SHADOW_ENTITY_DRAW_FAILED");
             }
@@ -445,10 +426,10 @@ final class PackShadowPass {
      * shadow light, with the render distance Iris reads each frame.
      */
     ShadowCullingFrustum shadowCullingFrustum(boolean entities) {
-        if (this.shadowCulling == null) return ShadowCullingFrustum.none();
+        ShadowCullingPlan culling = pass.session.shadowCulling;
+        if (culling == null) return ShadowCullingFrustum.none();
         int renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
-        ShadowCullingPlan.Culler culler = entities
-                ? this.shadowCulling.entities(renderDistance) : this.shadowCulling.terrain(renderDistance);
+        ShadowCullingPlan.Culler culler = entities ? culling.entities(renderDistance) : culling.terrain(renderDistance);
         return new ShadowCullingFrustum(culler, PackUniformProvider.currentCameraViewProjection(new Matrix4f()),
                 PackUniformProvider.currentSunLightVector());
     }
@@ -466,8 +447,8 @@ final class PackShadowPass {
         if (!this.shadowMap.isInitialized() || !this.shadowFrameReady || !shadowAttachmentsLive()) {
             return;
         }
-        if (!this.shadowSegmentObserved) {
-            this.shadowSegmentObserved = true;
+        if (!pass.session.shadowSegmentObserved) {
+            pass.session.shadowSegmentObserved = true;
             LOGGER.debug("[chimera] shadow segment active; advanced compute dispatch is eligible");
         }
         var mc = Minecraft.getInstance();
@@ -599,7 +580,7 @@ final class PackShadowPass {
         boolean compareRequired = entry.kind() == ProgramImageBindingManifest.Kind.SHADOW_DEPTH
                 && program.shadowSamplerSymbols().contains(entry.sourceSymbol());
         long sampler = shadowSamplerFor(entry.resourceKey(), image, compareRequired);
-        if (compareRequired && this.loggedShadowSamplerPrograms.add(program.name())) {
+        if (compareRequired && pass.session.loggedShadowSamplerPrograms.add(program.name())) {
             LOGGER.debug("[chimera] pack shadow sampler: program={} symbol={} slot={} image={} "
                             + "sampler={} compareOp=LESS_OR_EQUAL",
                     program.name(), entry.sourceSymbol(), entry.slot(), image.getId(), sampler);
@@ -644,7 +625,7 @@ final class PackShadowPass {
      * compatible depth semantics, so retain VulkanMod's fixed shadow path.
      */
     boolean usePackShadowRuntime() {
-        return !pass.packPostChainRejected && pass.pipelines.shadowPipeline != null
+        return !pass.session.packPostChainRejected && pass.pipelines.shadowPipeline != null
                 && pass.pipelines.terrainPipeline != null;
     }
 
@@ -654,12 +635,12 @@ final class PackShadowPass {
      * shadowRenderer != null); a pass that only writes pack images keeps them (ShadowPassUse).
      */
     public boolean packShadowPassActive() {
-        return usePackShadowRuntime() && this.shadowUse.replacesEntityShadows();
+        return usePackShadowRuntime() && pass.session.shadowUse.replacesEntityShadows();
     }
 
     /** Whether this frame draws a shadow map: the host's fixed path always, the pack's when observed. */
     private boolean shadowPassObserved() {
-        return !usePackShadowRuntime() || this.shadowUse.runs();
+        return !usePackShadowRuntime() || pass.session.shadowUse.runs();
     }
 
     /** Makes newly created shadow images valid shader inputs exactly once. */
@@ -702,17 +683,17 @@ final class PackShadowPass {
         if (pass.conformanceReport != null) {
             pass.conformanceReport.addDeviation("SHADOW_RESOURCE_TRANSITION_SKIPPED");
         }
-        if (!this.shadowTransitionFallbackLogged) {
-            this.shadowTransitionFallbackLogged = true;
+        if (!pass.session.shadowTransitionFallbackLogged) {
+            pass.session.shadowTransitionFallbackLogged = true;
             LOGGER.warn("[chimera] shadow sampling fallback=IDENTITY (transition skipped: {})", detail);
         }
     }
 
     void recordShadowCutoutDisposition(boolean merged) {
-        if (this.shadowCutoutDispositionLogged || !usePackShadowRuntime()) {
+        if (pass.session.shadowCutoutDispositionLogged || !usePackShadowRuntime()) {
             return;
         }
-        this.shadowCutoutDispositionLogged = true;
+        pass.session.shadowCutoutDispositionLogged = true;
         if (merged && pass.conformanceReport != null) {
             pass.conformanceReport.addDeviation("SHADOW_CUTOUT_MERGED");
         }
