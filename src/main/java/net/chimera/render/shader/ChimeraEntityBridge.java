@@ -20,7 +20,6 @@ import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import java.util.EnumSet;
 import java.util.HashSet;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Predicate;
