@@ -86,12 +86,17 @@ final class PackPipelineLoad {
 
     /**
      * Clears the previous session's pipelines and marks this load. The session's flags and logs
-     * start clear: cleanUpPackVariant replaced them (PackSessionState) before any load.
+     * start clear: cleanUpPackVariant replaced them (PackSessionState) before any load. All but one:
+     * createResources configures the post targets before it loads the pipelines, so a target
+     * allocation that failed just now has already marked the chain rejected. The load clears that
+     * mark, so the world programs, entity bridge and pack shadows still run without post, as
+     * PackPostChain's failure notice says; a later failure, mid-session, keeps the mark.
      */
     private void resetSessionPipelines() {
         pass.pipelines.clear();
         pass.windows.restorePackResourceWindow();
         pass.packTranslucentSuspended = false;
+        pass.session.packPostChainRejected = false;
         pass.session.packPipelinesLoaded = true;
     }
 
