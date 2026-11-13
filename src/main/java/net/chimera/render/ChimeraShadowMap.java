@@ -716,9 +716,11 @@ public class ChimeraShadowMap {
         return this.initialized;
     }
 
-    /** Iris's F3 shadow map text (ShadowRenderer.debugStringOverall): the half plane and the resolution. */
+    /** F3's shadow map size and distance (Iris's half plane, ShadowRenderer.debugStringOverall): "2048px, 128 m". */
     String debugInfo() {
-        return "half plane = " + this.shadowDistance + " meters @ " + this.shadowMapSize + "x" + this.shadowMapSize;
+        float distance = this.shadowDistance;
+        return this.shadowMapSize + "px, " + (distance == (int) distance ? String.valueOf((int) distance)
+                : String.valueOf(distance)) + " m";
     }
 
     public boolean needsInitialSamplingLayout() {

@@ -48,6 +48,23 @@ public final class ChimeraShadowCasters implements AutoCloseable {
     private final SequencedMap<RenderType, ByteBufferBuilder> fixed = ChimeraHandRenderer.fixedBuffers();
     private final FamilyBufferSource buffers =
             new FamilyBufferSource(MultiBufferSource.immediateWithBuffers(fixed, vertices));
+    /** The last frame's casters drawn, for F3, as Iris counts its renderedShadowEntities and BlockEntities. */
+    private int entitiesDrawn;
+    private int blockEntitiesDrawn;
+
+    /** F3's shadow caster counts, in Iris's E and BE form. */
+    static String counts() {
+        return instance == null ? "E: 0, BE: 0"
+                : "E: " + instance.entitiesDrawn + ", BE: " + instance.blockEntitiesDrawn;
+    }
+
+    /** Zeroes the counts at each shadow frame, so a frame that draws no casters shows none. */
+    static void clearCounts() {
+        if (instance != null) {
+            instance.entitiesDrawn = 0;
+            instance.blockEntitiesDrawn = 0;
+        }
+    }
 
     /**
      * Draws this frame's casters into the open shadow map. The light matrices are
@@ -151,6 +168,7 @@ public final class ChimeraShadowCasters implements AutoCloseable {
         }
         float partialTick = delta.getGameTimeDeltaPartialTick(!level.tickRateManager().isEntityFrozen(entity));
         renderer.chimera$renderEntity(entity, cameraX, cameraY, cameraZ, partialTick, poses, buffers);
+        this.entitiesDrawn++;
     }
 
     /**
@@ -186,6 +204,7 @@ public final class ChimeraShadowCasters implements AutoCloseable {
         poses.translate(position.getX() - cameraX, position.getY() - cameraY, position.getZ() - cameraZ);
         dispatcher.render(blockEntity, partialTick, poses, buffers);
         poses.popPose();
+        this.blockEntitiesDrawn++;
     }
 
     @Override

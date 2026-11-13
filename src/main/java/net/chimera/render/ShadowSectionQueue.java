@@ -37,11 +37,19 @@ public final class ShadowSectionQueue {
     /** Kept sections holding block entities, which the caster pass draws. */
     private final List<RenderSection> blockEntitySections = new ArrayList<>();
     private boolean active;
+    /** The last fill's sections that cast (geometry or block entities), and how many of them it kept. */
+    private int consideredSections;
+    private int keptSections;
 
     private ShadowSectionQueue() {}
 
     public static boolean active() {
         return INSTANCE.active;
+    }
+
+    /** F3's shadow section count, as Iris's "Shadow info" shows its own: kept/considered. */
+    static String sectionCounts() {
+        return INSTANCE.keptSections + "/" + INSTANCE.consideredSections;
     }
 
     /**
@@ -94,6 +102,8 @@ public final class ShadowSectionQueue {
                          ShadowCullingFrustum culling, double cameraX, double cameraY, double cameraZ) {
         this.active = false;
         this.blockEntitySections.clear();
+        this.consideredSections = 0;
+        this.keptSections = 0;
         if (grid == null || grid.sections == null || areaCount <= 0) return false;
         resetQueues(areaCount);
 
@@ -103,8 +113,10 @@ public final class ShadowSectionQueue {
             if (section == null || (section.isCompletelyEmpty() && !section.containsBlockEntities())) continue;
             ChunkArea area = section.getChunkArea();
             if (area == null || area.index < 0 || area.index >= areaCount) continue;
+            this.consideredSections++;
             if (!kept(volume, culling, (float) (section.xOffset - cameraX), (float) (section.yOffset - cameraY),
                     (float) (section.zOffset - cameraZ))) continue;
+            this.keptSections++;
             if (section.containsBlockEntities()) this.blockEntitySections.add(section);
             if (section.isCompletelyEmpty()) continue;
             enqueue(area, section);

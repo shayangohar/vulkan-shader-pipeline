@@ -208,15 +208,19 @@ public final class ChimeraRenderer {
     }
 
     /**
-     * F3's lines below the game information, as Iris's shadow lines (IrisRenderingPipeline and
-     * ShadowRenderer.addDebugText): the shadow map's half plane and resolution, or that the pack
-     * uses none. Nothing while the world is not pack-rendered.
+     * F3's line below the game information, Iris's shadow lines in one (IrisRenderingPipeline and
+     * ShadowRenderer.addDebugText): the map's size and distance, the sections kept of those that
+     * cast (C), and the entities (E) and block entities (BE) drawn; or that the pack uses no shadow
+     * map. Nothing while the world is not pack-rendered.
      */
     public static List<String> shadowDebugLines() {
         if (!packProjectionActive()) return List.of();
         PackShadowPass shadows = chimeraPass.shadowPass;
-        return List.of("", "[Chimera] Shadow Maps: " + (shadows.shadowUse.runs() && shadows.shadowMap.isInitialized()
-                ? shadows.shadowMap.debugInfo() : "not used by shader pack"));
+        if (!shadows.shadowUse.runs() || !shadows.shadowMap.isInitialized()) {
+            return List.of("", "[Chimera] Shadows: not used by pack");
+        }
+        return List.of("", "[Chimera] Shadows: " + shadows.shadowMap.debugInfo() + ", C: "
+                + ShadowSectionQueue.sectionCounts() + ", " + ChimeraShadowCasters.counts());
     }
 
     /** Applies pending pack work before VulkanMod begins a new main command buffer. */
