@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -32,6 +33,19 @@ public record StagedOptions(ShaderPackOptions pack, OptionValues applied, Map<St
     /** The profile the applied values match, or {@code Custom} when none does, as Iris names it. */
     public String profileName() {
         return pack.profiles().scan(applied).current().map(PackProfiles.Profile::name).orElse("Custom");
+    }
+
+    /**
+     * Iris's profile line, for the log and F3: {@code Profile: HIGH (+1 option changed by user)},
+     * counting the changes beyond those the profile makes (ShaderPack.profileInfo).
+     */
+    public String profileInfo() {
+        Optional<PackProfiles.Profile> profile = pack.profiles().scan(applied).current();
+        int byProfile = profile.map(match -> OptionValues.of(applied.options(), match.values()).changedCount())
+                .orElse(0);
+        int byUser = applied.changedCount() - byProfile;
+        return "Profile: " + profile.map(PackProfiles.Profile::name).orElse("Custom") + " (+" + byUser + " option"
+                + (byUser == 1 ? "" : "s") + " changed by user)";
     }
 
     /**

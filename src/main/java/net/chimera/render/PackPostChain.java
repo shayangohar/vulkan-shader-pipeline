@@ -659,7 +659,6 @@ final class PackPostChain {
                 }
             }
             pass.sessions.logConformance();
-            pass.sessions.logConformanceSummary();
         }
     }
 
@@ -756,10 +755,10 @@ final class PackPostChain {
                 } finally {
                     MrtPipelineContext.end();
                 }
-                LOGGER.info("[chimera] scene seed: planned families={} deviations={}",
+                LOGGER.debug("[chimera] scene seed: planned families={} deviations={}",
                         pass.coverage.packCoveragePlan.families(), pass.coverage.packCoveragePlan.deviations());
             } else if (!pass.coverage.packCoveragePlan.deviations().isEmpty()) {
-                LOGGER.info("[chimera] scene seed: fallback deviations={}",
+                LOGGER.debug("[chimera] scene seed: fallback deviations={}",
                         pass.coverage.packCoveragePlan.deviations());
             }
             pass.packFrameSchedule = PackFrameSchedulePlan.build(

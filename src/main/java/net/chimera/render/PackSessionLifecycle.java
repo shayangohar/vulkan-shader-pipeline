@@ -7,6 +7,7 @@ import net.chimera.render.shader.ChimeraSkyBridge;
 import net.chimera.render.shader.ChimeraTerrainPipelines;
 import net.chimera.render.shader.PackUniformProvider;
 import net.chimera.render.shader.RenderedItemIds;
+import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.HandLightDirectives;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackConfig;
@@ -146,7 +147,7 @@ final class PackSessionLifecycle {
             return false;
         }
         this.loggedPendingPackChange = null;
-        LOGGER.info("[chimera] pack change queued: {}{}",
+        LOGGER.debug("[chimera] pack change queued: {}{}",
                 packLabel(path), forceReload ? " (reload)" : "");
         return true;
     }
@@ -212,7 +213,7 @@ final class PackSessionLifecycle {
         if (pass.packPassComputes != null) pass.packPassComputes.close();
         pass.packPassComputes = null;
         if (pass.packStorageBufferOwner != null) {
-            LOGGER.info("[chimera] storage buffers: cleanup planned={} allocated={} initialized={} failed={}",
+            LOGGER.debug("[chimera] storage buffers: cleanup planned={} allocated={} initialized={} failed={}",
                     pass.packStorageBufferOwner.plannedBytes(),
                     pass.packStorageBufferOwner.allocatedBytes(),
                     pass.packStorageBufferOwner.initializedBytes(),
@@ -298,8 +299,7 @@ final class PackSessionLifecycle {
         this.pendingPackDimension = dimension;
         if (!dimension.equals(this.loggedPendingPackDimension)) {
             this.loggedPendingPackDimension = dimension;
-            LOGGER.info("[chimera] pack dimension variant pending: {} ({})",
-                    dimension, "PACK_VARIANT_REBUILD_DEFERRED");
+            LOGGER.debug("[chimera] pack dimension variant pending: {}", dimension);
         }
     }
 
@@ -322,7 +322,7 @@ final class PackSessionLifecycle {
         String previousDimension = this.currentDimension;
         this.packChangeQueue.clear();
         this.loggedPendingPackChange = null;
-        LOGGER.info("[chimera] pack change safe boundary: {}", packLabel(request.path()));
+        LOGGER.debug("[chimera] pack change at frame boundary: {}", packLabel(request.path()));
         try {
             preparePackSessionReplacement(true);
             this.packPath = request.path();
@@ -338,7 +338,7 @@ final class PackSessionLifecycle {
             }
             this.pendingPackDimension = null;
             this.loggedPendingPackDimension = null;
-            LOGGER.info("[chimera] pack change installed: {}", packLabel(this.packPath));
+            LOGGER.debug("[chimera] pack change installed: {}", packLabel(this.packPath));
             return true;
         } catch (RuntimeException rebuildFailure) {
             LOGGER.warn("[chimera] pack change failed: {}, restoring {}: {}",
@@ -357,7 +357,7 @@ final class PackSessionLifecycle {
                 }
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;
-                LOGGER.info("[chimera] pack change rolled back: {}", packLabel(previousPath));
+                LOGGER.debug("[chimera] pack change rolled back: {}", packLabel(previousPath));
                 reportPackChangeFailure(request.path(), rebuildFailure, "Previous pack restored.");
                 return true;
             } catch (RuntimeException restoreFailure) {
@@ -452,7 +452,7 @@ final class PackSessionLifecycle {
         }
 
         String previous = pass.packSource.selectedDimension();
-        LOGGER.info("[chimera] pack dimension variant safe boundary: {}", requested);
+        LOGGER.debug("[chimera] pack dimension variant at frame boundary: {}", requested);
         try {
             clearPackOverrides();
             pass.levelPhase = false;
@@ -465,7 +465,7 @@ final class PackSessionLifecycle {
             pass.resources.createResources();
             this.pendingPackDimension = null;
             this.loggedPendingPackDimension = null;
-            LOGGER.info("[chimera] pack dimension variant installed: {} ({})",
+            LOGGER.debug("[chimera] pack dimension variant installed: {} ({})",
                     requested, pass.packSource.selectedVariantFolder().isBlank()
                             ? "root" : pass.packSource.selectedVariantFolder());
             return true;
@@ -485,7 +485,7 @@ final class PackSessionLifecycle {
                     pass.conformanceReport.addDeviation("PACK_VARIANT_REBUILD_FAILED");
                     logConformance();
                 }
-                LOGGER.info("[chimera] pack dimension variant restored: {}", previous);
+                LOGGER.debug("[chimera] pack dimension variant restored: {}", previous);
                 reportDimensionFailure(requested, rebuildFailure, PackFailureNotices.Outcome.LOAD_FAILED,
                         "The " + previous + " variant still runs.");
                 return true;
@@ -524,7 +524,7 @@ final class PackSessionLifecycle {
     }
 
     void waitForImmediateDestruction(String reason) {
-        LOGGER.info("[chimera] pack GPU idle boundary: {} ({})", reason, "PACK_VARIANT_GPU_IDLE");
+        LOGGER.debug("[chimera] GPU idle: {}", reason);
         Vulkan.waitIdle();
     }
 
@@ -553,7 +553,7 @@ final class PackSessionLifecycle {
         Path dir = this.packPath;
         if (dir == null || pass.packFrameUnsupported != null) {
             if (dir == null) {
-                LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
+                LOGGER.debug("[chimera] no shader pack selected");
                 // No pack, no report. The last pack's would be written as this load's conformance
                 // file and its skipped programs told again under no pack.
                 pass.conformanceReport = null;
@@ -569,18 +569,18 @@ final class PackSessionLifecycle {
         PackSource.LoadResult result = loadPackPlan(dir);
         installTerrainDirectives();
         pass.screenOverlays = pass.packPlan.screenOverlays();
-        LOGGER.info("[chimera] pack screen overlays: vignette={}, underwaterOverlay={}{}",
+        LOGGER.debug("[chimera] pack screen overlays: vignette={}, underwaterOverlay={}{}",
                 pass.screenOverlays.vignette(), pass.screenOverlays.underwaterOverlay(),
                 pass.screenOverlays.deviations().isEmpty() ? "" : " " + pass.screenOverlays.deviations());
         pass.skyDirectives = pass.packPlan.skyDirectives();
-        LOGGER.info("[chimera] pack sky: sun={}, moon={}, stars={}, sky={}{}", pass.skyDirectives.sun(),
+        LOGGER.debug("[chimera] pack sky: sun={}, moon={}, stars={}, sky={}{}", pass.skyDirectives.sun(),
                 pass.skyDirectives.moon(), pass.skyDirectives.stars(), pass.skyDirectives.sky(),
                 pass.skyDirectives.deviations().isEmpty() ? "" : " " + pass.skyDirectives.deviations());
         pass.weatherDirectives = pass.packPlan.weatherDirectives();
-        LOGGER.info("[chimera] pack weather: rain.depth={}{}", pass.weatherDirectives.rainDepth(),
+        LOGGER.debug("[chimera] pack weather: rain.depth={}{}", pass.weatherDirectives.rainDepth(),
                 pass.weatherDirectives.deviations().isEmpty() ? "" : " " + pass.weatherDirectives.deviations());
         ParticleDirectives particles = pass.packPlan.particleDirectives();
-        LOGGER.info("[chimera] pack particle ordering: {}, separateEntityDraws={}{}", particles.ordering(),
+        LOGGER.debug("[chimera] pack particle ordering: {}, separateEntityDraws={}{}", particles.ordering(),
                 particles.separateEntityDraws(), particles.deviations().isEmpty() ? "" : " " + particles.deviations());
         installRuntimeSettings();
         pass.packNeedsHdrDepth = pass.conformanceReport.programs().stream()
@@ -627,11 +627,7 @@ final class PackSessionLifecycle {
                 LOGGER.warn("[chimera] cannot write the option file of {}: {}", dir, failure.getMessage());
             }
         }
-        Path optionFile = PackOptionSources.optionFile(dir);
-        LOGGER.info("[chimera] pack options: file={}, profile={}, applied={}, undeclared={}, disabledPrograms={}{}",
-                optionFile == null ? "none" : optionFile, options.profileName(), options.applied().changes(),
-                options.undeclared(), options.disabledPrograms(),
-                options.pack().problems().isEmpty() ? "" : " " + options.pack().problems());
+        if (fresh) logPackOptions(dir, options);
         pass.conformanceReport = analysis.report();
         this.passComputes = analysis.passComputes();
         pass.packPrograms = analysis.plan() == null ? result.programs()
@@ -644,24 +640,39 @@ final class PackSessionLifecycle {
         return result;
     }
 
+    /**
+     * Logs a loaded pack as Iris does at INFO: its profile line, with the changed values so two
+     * instances' logs compare, then its name. The option file and its problems go to debug.log.
+     */
+    private static void logPackOptions(Path dir, StagedOptions options) {
+        Map<String, String> changed = options.applied().changes();
+        LOGGER.info("[chimera] {}{}{}", options.profileInfo(), changed.isEmpty() ? "" : " " + changed,
+                options.undeclared().isEmpty() ? "" : ", undeclared " + options.undeclared());
+        LOGGER.info("[chimera] Using shaderpack: {}", packLabel(dir));
+        Path optionFile = PackOptionSources.optionFile(dir);
+        LOGGER.debug("[chimera] pack options: file={}, disabledPrograms={}{}",
+                optionFile == null ? "none" : optionFile, options.disabledPrograms(),
+                options.pack().problems().isEmpty() ? "" : " " + options.pack().problems());
+    }
+
     /** Hands the plan's shadow culling, terrain material and terrain shading to the host. */
     private void installTerrainDirectives() {
         pass.shadowPass.shadowCulling = pass.packPlan.shadowCulling();
         int renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
-        LOGGER.info("[chimera] shadow culling: state={}, terrain={}, entities={} (render distance {}){}",
+        LOGGER.debug("[chimera] shadow culling: state={}, terrain={}, entities={} (render distance {}){}",
                 pass.shadowPass.shadowCulling.state(), pass.shadowPass.shadowCulling.terrain(renderDistance).describe(),
                 pass.shadowPass.shadowCulling.entities(renderDistance).describe(), renderDistance,
                 pass.shadowPass.shadowCulling.deviations().isEmpty() ? "" : " "
                         + pass.shadowPass.shadowCulling.deviations());
         ShadowPassUse shadowUse = ShadowPassUse.of(pass.packPlan, this.passComputes);
         pass.shadowPass.shadowUse = shadowUse;
-        LOGGER.info("[chimera] shadow pass: runs={}, entityShadowsReplaced={} (shadow.enabled={}, readers={}, "
+        LOGGER.debug("[chimera] shadow pass: runs={}, entityShadowsReplaced={} (shadow.enabled={}, readers={}, "
                 + "writers={}){}", shadowUse.runs(), shadowUse.replacesEntityShadows(), shadowUse.enabled(),
                 shadowUse.readers(), shadowUse.writers(),
                 shadowUse.deviations().isEmpty() ? "" : " " + shadowUse.deviations());
         ChimeraTerrainPipelines.setMaterialPlan(pass.packPlan.terrainMaterial());
         TerrainShadingDirectives shading = pass.packPlan.terrainShading();
-        LOGGER.info("[chimera] pack terrain shading: oldLighting={}, separateAo={}, voxelizeLightBlocks={}{}",
+        LOGGER.debug("[chimera] pack terrain shading: oldLighting={}, separateAo={}, voxelizeLightBlocks={}{}",
                 shading.oldLighting(), shading.separateAo(), shading.voxelizeLightBlocks(),
                 shading.deviations().isEmpty() ? "" : " " + shading.deviations());
         ChimeraTerrainPipelines.setTerrainShading(shading);
@@ -673,7 +684,7 @@ final class PackSessionLifecycle {
         PackUniformProvider.installRuntimeSettings(pass.packPlan.runtimeSettings());
         PackUniformProvider.installDirectives(pass.packPlan.config() == null ? null
                 : pass.packPlan.config().directives());
-        LOGGER.info("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, "
+        LOGGER.debug("[chimera] pack resolution: dimension={}, folder={}, profile=defaults, aliases={}, disabled={}, "
                 + "missing={}, settingsFingerprint={}, resolutionFingerprint={}",
                 pass.packPlan.selectedDimension(),
                 pass.packPlan.selectedSourceFolder(),
@@ -682,7 +693,7 @@ final class PackSessionLifecycle {
                 pass.packPlan.missingProgramCount(),
                 pass.packPlan.settingsFingerprint(),
                 pass.packPlan.resolutionFingerprint());
-        LOGGER.info("[chimera] uniform runtime settings: custom={}, directives={}",
+        LOGGER.debug("[chimera] uniform runtime settings: custom={}, directives={}",
                 pass.packPlan.runtimeSettings().customDescriptors().size(),
                 pass.packPlan.config() == null ? PackDirectives.DEFAULTS : pass.packPlan.config().directives());
     }
@@ -696,7 +707,7 @@ final class PackSessionLifecycle {
         ChimeraTerrainPipelines.setMaterialResolver(material.resolver());
         PackItemIdResolver.ParseResult items = PackItemIdResolver.parse(shadersDir, macros);
         HandLightDirectives handLight = pass.packPlan.handLight();
-        LOGGER.info("[chimera] pack held items: item ids={}, oldHandLight={}{}",
+        LOGGER.debug("[chimera] pack held items: item ids={}, oldHandLight={}{}",
                 items.resolver().mappings().size(), handLight.oldHandLight(),
                 items.deviations().isEmpty() && handLight.deviations().isEmpty() ? ""
                         : " " + items.deviations() + handLight.deviations());
@@ -732,11 +743,11 @@ final class PackSessionLifecycle {
 
     /** Logs the session's resource, advanced image, storage buffer and compute plans. */
     private void logResourcePlans() {
-        LOGGER.info("[chimera] pack resources: fingerprint={}, declarations={}, deviations={}",
+        LOGGER.debug("[chimera] pack resources: fingerprint={}, declarations={}, deviations={}",
                 pass.packPlan.resources().fingerprint(),
                 pass.packPlan.resources().declarations().size(),
                 pass.packPlan.resources().deviations().size());
-        LOGGER.info("[chimera] advanced resources: fingerprint={}, images={}, capabilityPossible={}, "
+        LOGGER.debug("[chimera] advanced resources: fingerprint={}, images={}, capabilityPossible={}, "
                 + "planned={}, allocated={}, initialized={}, failed={}",
                 pass.packPlan.advancedResources().fingerprint(),
                 pass.packPlan.advancedResources().images().size(),
@@ -745,7 +756,7 @@ final class PackSessionLifecycle {
                 pass.packAdvancedImageOwner.allocatedImageCount(),
                 pass.packAdvancedImageOwner.initializedImageCount(),
                 pass.packAdvancedImageOwner.failures().size());
-        LOGGER.info("[chimera] storage buffers: declarations={}, bindings={}, dependent={}, allocated={}, failures={}",
+        LOGGER.debug("[chimera] storage buffers: declarations={}, bindings={}, dependent={}, allocated={}, failures={}",
                 pass.packPlan.advancedResources().buffers().size(),
                 pass.packPlan.advancedResources().storageBuffers().values().stream()
                         .mapToInt(List::size).sum(),
@@ -755,7 +766,7 @@ final class PackSessionLifecycle {
                         + "/initialized=" + pass.packStorageBufferOwner.initializedBytes(),
                 pass.packStorageBufferOwner.failures()
                         + "/failedBytes=" + pass.packStorageBufferOwner.failedBytes());
-        LOGGER.info("[chimera] advanced graphics producers: {}",
+        LOGGER.debug("[chimera] advanced graphics producers: {}",
                 pass.packPlan.advancedResources().graphicsImages().entrySet().stream()
                         .map(entry -> entry.getKey() + "=" + entry.getValue().stream()
                                 .map(PackAdvancedResourcePlan.GraphicsImageBinding::symbol)
@@ -769,7 +780,7 @@ final class PackSessionLifecycle {
             LOGGER.warn("[chimera] pack '{}' from {}: no programs found", dir.getFileName(), dir.toAbsolutePath());
             return;
         }
-        LOGGER.info("[chimera] pack '{}' from {}: programs={}", dir.getFileName(),
+        LOGGER.debug("[chimera] pack '{}' from {}: programs={}", dir.getFileName(),
                 dir.toAbsolutePath(), pass.packPrograms.stream().map(PackProgram::name).toList());
         LOGGER.debug("[chimera] pack consts: {}, shadowSettings={}, drawBuffers={}",
                 formatSummary(pass.packConfig.colortexFormats()),
@@ -797,28 +808,32 @@ final class PackSessionLifecycle {
 
     /**
      * Writes the conformance report to {@code <gameDir>/chimera/conformance/<pack>.json}, replacing
-     * the last load's, and logs where (TASK-922): one line, not the ~450 KB of JSON a load logged.
-     * Only when the file cannot be written does the JSON go to debug.log.
+     * the last load's, and logs one line for it, as Iris logs each dimension's pipeline: the
+     * dimension, the program counts, the file and the report's hash (12 digits tell two runs
+     * apart). Only when the file cannot be written does the JSON go to debug.log.
      */
     void logConformance() {
         if (pass.conformanceReport == null) return;
         String json = pass.conformanceReport.toJson();
         String name = PackFailureReport.fileSafe(packLabel(this.packPath)) + ".json";
+        String file = "chimera/conformance/" + name;
         try {
             Path folder = Minecraft.getInstance().gameDirectory.toPath().resolve("chimera").resolve("conformance");
             Files.createDirectories(folder);
             Files.writeString(folder.resolve(name), json, StandardCharsets.UTF_8);
-            LOGGER.info("[chimera] conformance: chimera/conformance/{}", name);
         } catch (IOException | RuntimeException unwritable) {
-            LOGGER.warn("[chimera] cannot write the conformance report {}: {}", name, unwritable.toString());
+            LOGGER.warn("[chimera] cannot write {}: {}", file, unwritable.toString());
             LOGGER.debug("[chimera] conformance {}", json);
+            file = "not written";
         }
+        LOGGER.info("[chimera] {}: {}, report {} ({})", dimensionLabel(), pass.conformanceReport.runtimeSummary(),
+                file, ConformanceReport.sha256(json.getBytes(StandardCharsets.UTF_8)).substring(0, 12));
     }
 
-    void logConformanceSummary() {
-        if (pass.conformanceReport != null) {
-            LOGGER.info("[chimera] conformance summary: reportSha256={} {}",
-                    pass.conformanceReport.sha256(), pass.conformanceReport.runtimeSummary());
-        }
+    /** The dimension this load runs, with the pack's folder for it when it has one. */
+    private String dimensionLabel() {
+        if (pass.packPlan == null) return String.valueOf(this.currentDimension);
+        String folder = pass.packPlan.selectedSourceFolder();
+        return pass.packPlan.selectedDimension() + (folder == null || folder.isBlank() ? "" : " (" + folder + ")");
     }
 }

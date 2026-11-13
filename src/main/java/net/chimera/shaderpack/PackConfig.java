@@ -468,7 +468,7 @@ public final class PackConfig {
         }
         Integer previous = putFormat(slot, token, code, collected);
         if (previous != null && !previous.equals(code)) {
-            LOGGER.info("[chimera] pack {}: colortex{}Format override {} -> {}", program, slot, previous, code);
+            LOGGER.debug("[chimera] pack {}: colortex{}Format override {} -> {}", program, slot, previous, code);
         }
     }
 

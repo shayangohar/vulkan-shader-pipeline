@@ -436,7 +436,7 @@ public final class PackUniformProvider {
                 .filter(descriptor -> descriptor.availability() == UniformRegistry.Availability.LIVE)
                 .count();
         long defaulted = UniformRegistry.catalog().size() - live;
-        ChimeraMod.LOGGER.info("[chimera] uniform catalog active: live={}, defaulted={}",
+        ChimeraMod.LOGGER.debug("[chimera] uniform catalog active: live={}, defaulted={}",
                 live, defaulted);
     }
 

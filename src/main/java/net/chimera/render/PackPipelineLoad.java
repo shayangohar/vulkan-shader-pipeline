@@ -65,7 +65,7 @@ final class PackPipelineLoad {
         }
         new PackPipelineInstaller(pass).installPrograms();
         installFamilyBridge();
-        LOGGER.info("[chimera] pack stages: {}", CompiledStages.endLoad());
+        LOGGER.debug("[chimera] pack stages: {}", CompiledStages.endLoad());
         if (!enforceMaskCriticalFamilyContract()) {
             return;
         }
@@ -76,7 +76,7 @@ final class PackPipelineLoad {
                 PackPipelines.PackPost::name, PostTargetPlan.programComparator()));
         pass.postChain.buildPackPostExecutionPlan();
         if (pass.coverage.packCoveragePlan.enabled()) {
-            LOGGER.info("[chimera] scene seed: direct HDR composition active; coverage merge deferred families={}",
+            LOGGER.debug("[chimera] scene seed: direct HDR; coverage merge deferred for {}",
                     pass.coverage.packCoveragePlan.families());
         }
         reportShadowFallbacks();
@@ -157,7 +157,6 @@ final class PackPipelineLoad {
         if (pass.conformanceReport != null) {
             pass.conformanceReport.markUnattemptedAsFallback();
             pass.sessions.logConformance();
-            pass.sessions.logConformanceSummary();
             recordSkippedPrograms(pass.conformanceReport);
         }
         PackFailureNotices.publish();
@@ -225,7 +224,6 @@ final class PackPipelineLoad {
         if (pass.conformanceReport != null) {
             pass.conformanceReport.markFrameFallback(deviation, "PACK_FRAME_UNSUPPORTED");
             pass.sessions.logConformance();
-            pass.sessions.logConformanceSummary();
         }
         LOGGER.warn("[chimera] pack frame unsupported: {}; vanilla rendering for {}",
                 reason, PackSessionLifecycle.packLabel(pass.sessions.packPath));

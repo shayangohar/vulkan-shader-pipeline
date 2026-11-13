@@ -97,7 +97,7 @@ final class PackPassComputes implements AutoCloseable {
                     compute.source(), descriptorTypes(compute), ComputeValueBlock.bufferSize(compute.values()));
             if (kernel != null) {
                 loaded.add(new Loaded(compute, kernel));
-                LOGGER.info("[chimera] pack compute {}: ok (before {}, bindings={}, values={})", compute.name(),
+                LOGGER.debug("[chimera] pack compute {}: ok (before {}, bindings={}, values={})", compute.name(),
                         compute.pass(), compute.bindings().stream().map(PassComputePlan.Binding::symbol).toList(),
                         compute.values().size());
             } else {

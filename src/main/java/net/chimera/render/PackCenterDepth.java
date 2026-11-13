@@ -85,7 +85,7 @@ final class PackCenterDepth implements AutoCloseable {
             image.free();
             throw failure;
         }
-        LOGGER.info("[chimera] centerDepthSmooth: halfLife={}, kernel={}", halfLife, kernel != null ? "ok" : "failed");
+        LOGGER.debug("[chimera] centerDepthSmooth: halfLife={}, kernel={}", halfLife, kernel != null ? "ok" : "failed");
         return new PackCenterDepth(image, kernel);
     }
 

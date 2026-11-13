@@ -368,12 +368,12 @@ final class PackPipelineInstaller {
             report.markRuntime(name,
                     ConformanceReport.RuntimeDisposition.INSTALLED, null);
         }
-        LOGGER.info("[chimera] pack gbuffers_terrain: ok (geometry, samplers={})",
+        LOGGER.debug("[chimera] pack gbuffers_terrain: ok (geometry, samplers={})",
                 Arrays.toString(terrain.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack gbuffers_terrain converted fragment:\n{}", terrain.convertedFragment());
         }
-        LOGGER.info("[chimera] pack gbuffers_terrain: outputs={} dynamicAttachments={}",
+        LOGGER.debug("[chimera] pack gbuffers_terrain: outputs={} dynamicAttachments={}",
                 terrain.outputPlan() == null ? List.of(0) : terrain.outputPlan().targetSlots(),
                 terrain.requiresDynamicAttachments());
     }
@@ -407,13 +407,13 @@ final class PackPipelineInstaller {
             report.markRuntime(name,
                     ConformanceReport.RuntimeDisposition.INSTALLED, null);
         }
-        LOGGER.info("[chimera] pack gbuffers_water: ok (translucent, samplers={})",
+        LOGGER.debug("[chimera] pack gbuffers_water: ok (translucent, samplers={})",
                 Arrays.toString(water.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack gbuffers_water converted fragment:\n{}",
                     water.convertedFragment());
         }
-        LOGGER.info("[chimera] pack gbuffers_water: outputs={} dynamicAttachments={}",
+        LOGGER.debug("[chimera] pack gbuffers_water: outputs={} dynamicAttachments={}",
                 water.outputPlan() == null ? List.of(0) : water.outputPlan().targetSlots(),
                 water.requiresDynamicAttachments());
     }
@@ -498,7 +498,7 @@ final class PackPipelineInstaller {
                     ConformanceReport.RuntimeDisposition.INSTALLED,
                     "ENTITY_BATCH_ORIGIN_SPLIT");
         }
-        LOGGER.info("[chimera] pack gbuffers_entities: ok (entity pipeline installed, "
+        LOGGER.debug("[chimera] pack gbuffers_entities: ok (entity pipeline installed, "
                 + "stride={}, samplers={})",
                 ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                 Arrays.toString(entity.samplerSlots()));
@@ -577,7 +577,7 @@ final class PackPipelineInstaller {
                     ConformanceReport.RuntimeDisposition.INSTALLED,
                     "ENTITY_STATE_FIXED_TO_HOST");
         }
-        LOGGER.info("[chimera] pack gbuffers_block: ok (block adapter installed, "
+        LOGGER.debug("[chimera] pack gbuffers_block: ok (block adapter installed, "
                 + "stride={}, samplers={})",
                 ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                 Arrays.toString(block.samplerSlots()));
@@ -687,7 +687,7 @@ final class PackPipelineInstaller {
                     ConformanceReport.RuntimeDisposition.INSTALLED,
                     "PARTICLE_STATE_FIXED_TO_HOST");
         }
-        LOGGER.info("[chimera] pack gbuffers_particles: ok (particle adapter installed, "
+        LOGGER.debug("[chimera] pack gbuffers_particles: ok (particle adapter installed, "
                 + "stride={}, samplers={})",
                 DefaultVertexFormat.PARTICLE.getVertexSize(),
                 Arrays.toString(particle.samplerSlots()));
@@ -754,7 +754,7 @@ final class PackPipelineInstaller {
             variant.pipeline().cleanUp();
             return null;
         }
-        LOGGER.info("[chimera] pack {}: {} layout variant installed (stride={})", name, layout,
+        LOGGER.debug("[chimera] pack {}: {} layout variant installed (stride={})", name, layout,
                 ChimeraVertexFormats.extendedLayout(host).getVertexSize());
         return variant;
     }
@@ -790,7 +790,7 @@ final class PackPipelineInstaller {
             }
             pipelines.hostLayout.put(lane.family(), built);
             if (lane.pass() == HostLayoutLane.Pass.HAND) {
-                LOGGER.info("[chimera] pack {}: {} variant installed", name, lane.name().toLowerCase());
+                LOGGER.debug("[chimera] pack {}: {} variant installed", name, lane.name().toLowerCase());
             } else {
                 markFamilyPipelineInstalled(name, lane + "_PIPELINE_INSTALLED");
             }

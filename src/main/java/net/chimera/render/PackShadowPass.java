@@ -467,7 +467,7 @@ final class PackShadowPass {
         }
         if (!this.shadowSegmentObserved) {
             this.shadowSegmentObserved = true;
-            LOGGER.info("[chimera] shadow segment active; advanced compute dispatch is eligible");
+            LOGGER.debug("[chimera] shadow segment active; advanced compute dispatch is eligible");
         }
         var mc = Minecraft.getInstance();
         if (mc.player == null || mc.level == null) {
@@ -715,7 +715,7 @@ final class PackShadowPass {
         if (merged && pass.conformanceReport != null) {
             pass.conformanceReport.addDeviation("SHADOW_CUTOUT_MERGED");
         }
-        LOGGER.info("[chimera] pack shadow cutout path: {}",
+        LOGGER.debug("[chimera] pack shadow cutout path: {}",
                 merged ? "merged by uniqueOpaqueLayer" : "separate");
     }
 }
