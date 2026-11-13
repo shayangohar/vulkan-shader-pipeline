@@ -76,11 +76,6 @@ public final class SpirvDeviceRequirements {
         return of(words);
     }
 
-    /** The device extensions {@code spirv} needs, sorted; none when it cannot be read. */
-    public static SortedSet<String> extensions(ByteBuffer spirv) {
-        return of(spirv).extensions();
-    }
-
     static Requirements of(int[] words) {
         SortedSet<String> extensions = new TreeSet<>();
         SortedSet<Integer> capabilities = new TreeSet<>();

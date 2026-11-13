@@ -190,12 +190,6 @@ final class PackDescriptorContracts {
         return source != null && source.contains(declaration) ? stage : 0;
     }
 
-    static ProgramImageBindingManifest legacyImageBindings(PackDescriptorLayout layout,
-            UniformRegistry.ProgramInterface iface) {
-        return ProgramImageBindingManifest.from(null,
-                new OrdinaryDescriptorContract(layout, ordinaryResources(layout, iface)));
-    }
-
     static List<PackResourceBinding> ordinaryResources(PackDescriptorLayout layout,
             UniformRegistry.ProgramInterface iface) {
         List<PackResourceBinding> resources = new ArrayList<>();

@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -689,7 +690,8 @@ final class FixturePackTest {
         assertTrue(shadowProgram.vertexSource() != null, "shadow vertex source is missing");
         verifyShadowConversion(shadowProgram);
 
-        PackDescriptorLayout shadowLayout = PackPipelines.shadowLayout();
+        PackDescriptorLayout shadowLayout =
+                PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson("chimera_shadow.json"));
         assertTrue(shadowLayout.pushConstants() != null && shadowLayout.pushConstants().fields().stream()
                         .anyMatch(field -> field.name().equals("ChunkOffset")),
                 "shadow chunk offset push constant was not preserved");

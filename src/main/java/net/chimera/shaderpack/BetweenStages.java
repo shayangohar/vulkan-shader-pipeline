@@ -23,11 +23,6 @@ public record BetweenStages(String tessControl, String tessEvaluation, String ge
         }
     }
 
-    /** A geometry stage alone, or none when {@code geometry} is null. */
-    public static BetweenStages geometry(String geometry) {
-        return new BetweenStages(null, null, geometry);
-    }
-
     public boolean tessellated() {
         return tessControl != null;
     }

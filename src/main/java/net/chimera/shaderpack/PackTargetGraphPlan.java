@@ -305,7 +305,7 @@ public final class PackTargetGraphPlan {
         List<Integer> stepWrites = new ArrayList<>(writes);
         stepWrites.addAll(unwritten);
         recordFlips(inputs.config(), post, preliminary, stepDeviations);
-        return new TargetStep(post.programName(), reads, stepWrites, post.outputFormats(), mipmapTargets,
+        return new TargetStep(post.programName(), reads, stepWrites, mipmapTargets,
                 extent.width(), extent.height(), post.isFinal(), executable, stepDeviations, unwritten);
     }
 
