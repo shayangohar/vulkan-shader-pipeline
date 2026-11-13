@@ -20,7 +20,12 @@ import java.util.stream.IntStream;
 public final class PackWorkers {
     /** Past eight a load gains little: a few large programs set its length, and each worker holds parse trees. */
     static final int MAX_WORKERS = 8;
-    private static final int WORKERS = workersFor(Runtime.getRuntime().availableProcessors());
+    /**
+     * In game, from the processors. A test JVM, one of many forks, gets its share from the build
+     * ({@code chimera.packWorkers}), so the forks together do not oversubscribe the machine.
+     */
+    private static final int WORKERS = Integer.getInteger("chimera.packWorkers",
+            workersFor(Runtime.getRuntime().availableProcessors()));
     private static volatile ForkJoinPool pool;
 
     private PackWorkers() {}

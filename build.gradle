@@ -98,10 +98,20 @@ tasks.register('packReport', JavaExec) {
 //   -Pchimera.snapshot.spirvOnly=true                            compare converted output by SPIR-V alone
 def chimeraProperties = providers.gradlePropertiesPrefixedBy('chimera.')
 
+// The processors this build may use: all of them while nothing else wants them, the governor's
+// share while a game holds the foreground (tools/gradle-governor.ps1 sets the daemon's affinity,
+// and a JVM counts only the processors it may run on). Two stay free for the desktop.
+def testProcessors = Runtime.runtime.availableProcessors()
+def testForks = Math.max(1, testProcessors - 2)
+
 tasks.withType(Test).configureEach {
     // One JVM per class: plans read process-wide shader options and keep static caches.
     forkEvery = 1
-    maxParallelForks = Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))
+    maxParallelForks = testForks
+    // A pack load's own workers in each fork (PackWorkers): a quarter of the processors, two to eight,
+    // so the forks together oversubscribe little and a corpus shard still spreads its programs once
+    // the other forks are done.
+    systemProperty 'chimera.packWorkers', Math.max(2, Math.min(8, testProcessors.intdiv(4)))
     // LWJGL's default 64 KB thread stack, as in game under VulkanMod Reforged: no stackSize override.
     jvmArgs '-ea'
     // LWJGL extracts its natives here rather than into the working directory.
