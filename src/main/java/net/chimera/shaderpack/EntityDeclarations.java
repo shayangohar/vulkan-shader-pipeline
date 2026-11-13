@@ -60,7 +60,7 @@ final class EntityDeclarations {
     }
 
     private static boolean readsIdentity(String declarator) {
-        return EntityVertexBridge.ENTITY_ID_NAMES.stream()
+        return EntityIdRewrites.ENTITY_ID_NAMES.stream()
                 .anyMatch(name -> GlslTokenRewriter.containsIdentifier(declarator, name));
     }
 
@@ -81,7 +81,7 @@ final class EntityDeclarations {
                 String name = declaration.names().get(index);
                 boolean executable = interfacePlan != null && interfacePlan.executableUniforms().stream()
                         .anyMatch(uniform -> uniform.name().equals(name));
-                if (!EntityVertexBridge.ENTITY_ID_NAMES.contains(name) && !executable) {
+                if (!EntityIdRewrites.ENTITY_ID_NAMES.contains(name) && !executable) {
                     remaining.add(declaration.declarators().get(index));
                 }
             }

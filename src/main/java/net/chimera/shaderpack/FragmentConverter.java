@@ -237,7 +237,7 @@ public final class FragmentConverter {
             src = UniformRegistry.removeUniformDeclarations(src, interfacePlan);
             if (stage.perVertexEntityIdentity()) {
                 src = EntityDeclarations.removeEntityIdDeclarations(src, interfacePlan);
-                src = EntityVertexBridge.replaceEntityIdReferences(src, request.terrainLayout());
+                src = EntityIdRewrites.replaceEntityIdReferences(src, request.terrainLayout());
             }
             if (geometryStage && modern && request.geometryOutputPlan() == null && !stage.shadowPass()) {
                 src = convertModernGeometryOutputs(src);
@@ -766,8 +766,8 @@ public final class FragmentConverter {
     static String chimeraFragmentVaryings(LegacyGlslConverter.TerrainVaryingLayout layout) {
         if (layout == null) return "";
         String declarations = "";
-        for (String name : EntityVertexBridge.ENTITY_ID_NAMES) {
-            String varying = EntityVertexBridge.entityIdVarying(name);
+        for (String name : EntityIdRewrites.ENTITY_ID_NAMES) {
+            String varying = EntityIdRewrites.entityIdVarying(name);
             if (layout.locations().containsKey(varying)) {
                 declarations += "layout(location = " + layout.location(varying)
                         + ") flat in uint " + varying + ";\n";

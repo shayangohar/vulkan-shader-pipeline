@@ -165,7 +165,7 @@ final class TerrainVertexBridge {
         WorldClipRange clip = WorldClipRange.forVertex(stripComments(vertex), shadowStage, laterStageConverts);
         // On the entity layout both stages read the entity identities from EntityIds.
         Map<String, String> entityIdTypes = entityInputs
-                ? EntityVertexBridge.entityIdTypes(stripComments(vertex), fragment) : Map.of();
+                ? EntityIdRewrites.entityIdTypes(stripComments(vertex), fragment) : Map.of();
         vertex = interfacePlan == null
                 ? stripShadowUniformDeclarations(vertex)
                 : UniformRegistry.removeUniformDeclarations(vertex, interfacePlan);
@@ -185,8 +185,8 @@ final class TerrainVertexBridge {
         if (shadowStage) {
             inputReplacements.putAll(shadowInputReplacements(vertex, entityInputs));
         }
-        inputReplacements.putAll(EntityVertexBridge.entityIdReplacements(entityIdTypes.keySet(), layout));
-        converted = EntityVertexBridge.replaceInputs(converted, inputReplacements);
+        inputReplacements.putAll(EntityIdRewrites.entityIdReplacements(entityIdTypes.keySet(), layout));
+        converted = EntityIdRewrites.replaceInputs(converted, inputReplacements);
         // Iris gives entity programs the draw's texture matrix (iris_TextureMat).
         converted = converted.replaceAll(
                 "\\bgl_TextureMatrix\\s*\\[\\s*0\\s*\\]", entityInputs ? "TextureMat" : "mat4(1.0)");
@@ -206,8 +206,8 @@ final class TerrainVertexBridge {
         if (shadowStage) {
             converted = qualifyPlannedShadowUniforms(converted, interfacePlan);
         }
-        converted = EntityVertexBridge.injectEntityIdPrologues(converted, entityIdTypes.keySet());
-        String chimeraVaryings = EntityVertexBridge.entityIdOutputDeclarations(entityIdTypes.keySet(), layout);
+        converted = EntityIdRewrites.injectEntityIdPrologues(converted, entityIdTypes.keySet());
+        String chimeraVaryings = EntityIdRewrites.entityIdOutputDeclarations(entityIdTypes.keySet(), layout);
         String body = clip.vertexBody(converted, shadowStage, laterStageConverts);
         return new LegacyGlslConverter.TerrainVertexConversion("#version 460\n"
                 + stagePreamble(vertexPreamble, source, shadowStage, entityInputs)
@@ -356,8 +356,8 @@ final class TerrainVertexBridge {
         if (!entityIdTypes.isEmpty()) {
             vertexTypes = new TreeMap<>(vertexTypes);
             for (Map.Entry<String, String> id : entityIdTypes.entrySet()) {
-                locations.put(EntityVertexBridge.entityIdVarying(id.getKey()), location++);
-                vertexTypes.put(EntityVertexBridge.entityIdVarying(id.getKey()), id.getValue());
+                locations.put(EntityIdRewrites.entityIdVarying(id.getKey()), location++);
+                vertexTypes.put(EntityIdRewrites.entityIdVarying(id.getKey()), id.getValue());
             }
         }
         return new LegacyGlslConverter.TerrainVaryingLayout(vertexTypes, locations, vertexVaryings.qualifiers());

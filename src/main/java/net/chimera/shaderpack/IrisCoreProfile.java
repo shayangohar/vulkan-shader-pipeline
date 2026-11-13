@@ -310,7 +310,7 @@ final class IrisCoreProfile {
         for (EntityDeclarations.IdentityDeclaration declaration
                 : EntityDeclarations.identityDeclarations(stripComments(source))) {
             for (String name : declaration.names()) {
-                if (EntityVertexBridge.ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.type());
+                if (EntityIdRewrites.ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.type());
             }
         }
         if (types.isEmpty()) return source;

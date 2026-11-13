@@ -691,7 +691,7 @@ public final class UniformRegistry {
 
     /** Iris EntityPatcher names served per vertex from EntityIds, not from the pack UBO. */
     static boolean isEntityIdentity(String name) {
-        return EntityVertexBridge.ENTITY_ID_NAMES.contains(name);
+        return EntityIdRewrites.ENTITY_ID_NAMES.contains(name);
     }
 
     /** Accounts for stage-local legacy shadow matrix aliases during planning. */

@@ -59,9 +59,9 @@ final class GeometryStageBridge {
                         + declaration.name() + arraySuffix(declaration) + ";\n" : null);
         String stripped = GlslLexer.stripComments(view);
         StringBuilder passedOn = new StringBuilder();
-        for (String name : EntityVertexBridge.ENTITY_ID_NAMES) {
-            String type = EntityVertexBridge.entityIdentifierType(name, "", fragment);
-            if (type != null && EntityVertexBridge.entityIdentifierType(name, stripped, null) == null) {
+        for (String name : EntityIdRewrites.ENTITY_ID_NAMES) {
+            String type = EntityIdRewrites.entityIdentifierType(name, "", fragment);
+            if (type != null && EntityIdRewrites.entityIdentifierType(name, stripped, null) == null) {
                 passedOn.append("uniform ").append(type).append(' ').append(name).append(";\n");
             }
         }
@@ -239,8 +239,8 @@ final class GeometryStageBridge {
     /** The entity identities the vertex stage passes on, each with the type the stages read it as. */
     private static Map<String, String> passedOnIdentities(LegacyGlslConverter.TerrainVaryingLayout inputs) {
         Map<String, String> identities = new LinkedHashMap<>();
-        for (String name : EntityVertexBridge.ENTITY_ID_NAMES) {
-            String varying = EntityVertexBridge.entityIdVarying(name);
+        for (String name : EntityIdRewrites.ENTITY_ID_NAMES) {
+            String varying = EntityIdRewrites.entityIdVarying(name);
             if (inputs.locations().containsKey(varying)) identities.put(name, inputs.types().get(varying));
         }
         return identities;
@@ -250,13 +250,13 @@ final class GeometryStageBridge {
     private static Map<String, String> firstVertexIdentities(Collection<String> names,
                                                              LegacyGlslConverter.TerrainVaryingLayout inputs) {
         Map<String, String> reads = new LinkedHashMap<>();
-        for (String name : names) reads.put(name, EntityVertexBridge.entityIdExpression(inputs, name, "[0]"));
+        for (String name : names) reads.put(name, EntityIdRewrites.entityIdExpression(inputs, name, "[0]"));
         return reads;
     }
 
     /** Each identity's output written from the first vertex's input. */
     private static List<String> passOnStatements(Collection<String> names) {
-        return names.stream().map(EntityVertexBridge::entityIdVarying)
+        return names.stream().map(EntityIdRewrites::entityIdVarying)
                 .map(varying -> varying + PASSED_ON_SUFFIX + " = " + varying + "[0];").toList();
     }
 
@@ -266,7 +266,7 @@ final class GeometryStageBridge {
                                                LegacyGlslConverter.TerrainVaryingLayout outputs) {
         StringBuilder declarations = new StringBuilder();
         for (String name : names) {
-            String varying = EntityVertexBridge.entityIdVarying(name);
+            String varying = EntityIdRewrites.entityIdVarying(name);
             declarations.append("layout(location = ").append(inputs.location(varying)).append(") flat in uint ")
                     .append(varying).append("[];\n")
                     .append("layout(location = ").append(outputs.location(varying)).append(") flat out uint ")
