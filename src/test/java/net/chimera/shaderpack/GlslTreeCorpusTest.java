@@ -1,43 +1,34 @@
 package net.chimera.shaderpack;
 
-import net.chimera.testing.TestPacks;
-import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
-
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.assertTrue;
-
 /**
- * Gate for the lossless tree (TASK-718): every prepared stage of the locked packs and
- * {@code chimera.pack.extra} parses, and prints back byte for byte. So does each converted shader,
+ * Gate for the lossless tree (TASK-718), run per pack by CorpusChecks: every prepared stage of the
+ * corpus packs parses, and prints back byte for byte. So does each converted shader,
  * which adds the Vulkan forms (uniform blocks, binding layouts) the prepared sources rarely use.
  */
-@Tag("packs")
 final class GlslTreeCorpusTest {
-    @Test
-    void everyStageParsesAndPrintsAsWritten() {
-        List<Path> packs = new ArrayList<>(List.of(TestPacks.complementary(), TestPacks.bsl()));
-        packs.addAll(TestPacks.extra());
-        List<String> failures = new ArrayList<>();
+    private GlslTreeCorpusTest() {}
+
+    /** One corpus pack's stages and converted shaders (CorpusChecks); returns how many it parsed. */
+    static int checkPack(Path pack, PackProbe.Analysis analysis, List<String> failures) {
+        List<String> mine = new ArrayList<>();
         int parsed = 0;
-        for (Path pack : packs) {
-            PackProbe.Analysis analysis = PackProbe.analyze(pack);
-            for (PackProgramPlan program : analysis.plan().programs()) {
-                String where = pack.getFileName() + " " + program.name() + " ";
-                for (Map.Entry<String, PreparedShaderSource> stage : program.stages().entrySet()) {
-                    parsed += check(where + stage.getKey(), stage.getValue().source(), failures);
-                }
-                parsed += check(where + "converted fragment", program.convertedFragment(), failures);
-                parsed += check(where + "converted vertex", program.convertedVertex(), failures);
+        for (PackProgramPlan program : analysis.plan().programs()) {
+            String where = pack.getFileName() + " " + program.name() + " ";
+            for (Map.Entry<String, PreparedShaderSource> stage : program.stages().entrySet()) {
+                parsed += check(where + stage.getKey(), stage.getValue().source(), mine);
             }
+            parsed += check(where + "converted fragment", program.convertedFragment(), mine);
+            parsed += check(where + "converted vertex", program.convertedVertex(), mine);
         }
-        System.out.printf("[chimera] glsl tree: %d sources parsed, %d failures%n", parsed, failures.size());
-        assertTrue(failures.isEmpty(), failures.size() + " sources do not round-trip:\n" + String.join("\n",
-                failures.subList(0, Math.min(40, failures.size()))));
+        System.out.printf("[chimera] glsl tree %s: %d sources parsed, %d failures%n", pack.getFileName(), parsed,
+                mine.size());
+        failures.addAll(mine.subList(0, Math.min(40, mine.size())));
+        return parsed;
     }
 
     private static int check(String where, String source, List<String> failures) {

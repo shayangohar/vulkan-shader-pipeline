@@ -6,8 +6,6 @@ import net.chimera.shaderpack.PackProbe;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.TargetSpec;
-import net.chimera.testing.TestPacks;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -580,48 +578,38 @@ final class FlipSidesTest {
     // ---------------------------------------------------------------- the corpus
 
     /**
-     * Every corpus pack, over several frames: as planned, with every third step skipped, and with
-     * every step storing to and mipping colortex0 and mipping its draw buffers, so the HDR image's
-     * write-backs run everywhere. Chimera's sides must match Iris's on every read, base and frame.
+     * One corpus pack (CorpusChecks, through FlipSidesCorpus), over several frames: as planned, with
+     * every third step skipped, and with every step storing to and mipping colortex0 and mipping its
+     * draw buffers, so the HDR image's write-backs run everywhere. Chimera's sides must match Iris's
+     * on every read, base and frame. Returns the pack's planned steps.
      */
-    @Test
-    @Tag("packs")
-    void everyCorpusPackReadsAndWritesTheSidesIrisDoes() throws Exception {
-        List<Path> packs = new ArrayList<>(TestPacks.extra());
-        packs.add(TestPacks.complementary());
-        packs.add(TestPacks.bsl());
-        List<String> failures = new ArrayList<>();
-        int steps = 0;
-        for (Path pack : packs) {
-            PackProbe.Analysis analysis = PackProbe.analyze(pack);
-            PackTargetGraphPlan graph = PackTargetGraphPlan.build(analysis.plan().activePrograms(), analysis.config(),
-                    analysis.plan().resources(), 1920, 1080, 8, 16384);
-            Set<Integer> world = worldTargets(analysis.plan().activePrograms());
-            List<PackFlipPlan.Step> planned = graph.flips().steps();
-            steps += planned.size();
-            Set<String> skipped = new TreeSet<>();
-            Map<String, Set<Integer>> stores = new HashMap<>();
-            Map<String, Set<Integer>> mips = new HashMap<>();
-            for (int index = 0; index < planned.size(); index++) {
-                PackFlipPlan.Step step = planned.get(index);
-                if (index % 3 == 2) skipped.add(step.program());
-                stores.put(step.program(), Set.of(0));
-                Set<Integer> mipped = new TreeSet<>(step.drawBuffers());
-                mipped.add(0);
-                mips.put(step.program(), mipped);
-            }
-            List<Frame> variants = List.of(Frame.plain(world), new Frame(skipped, world, Map.of(), Map.of()),
-                    new Frame(Set.of(), world, stores, mips));
-            for (Frame variant : variants) {
-                Harness harness = Harness.of(graph);
-                for (int frame = 0; frame < 3; frame++) harness.run(variant);
-                harness.mismatches.stream().limit(5).forEach(failure -> failures.add(pack.getFileName() + " "
-                        + (variant.skipped().isEmpty() ? variant.stores().isEmpty() ? "plain" : "stores" : "skips")
-                        + ": " + failure));
-            }
+    static int checkCorpusPack(Path pack, PackProbe.Analysis analysis, List<String> failures) {
+        PackTargetGraphPlan graph = PackTargetGraphPlan.build(analysis.plan().activePrograms(), analysis.config(),
+                analysis.plan().resources(), 1920, 1080, 8, 16384);
+        Set<Integer> world = worldTargets(analysis.plan().activePrograms());
+        List<PackFlipPlan.Step> planned = graph.flips().steps();
+        Set<String> skipped = new TreeSet<>();
+        Map<String, Set<Integer>> stores = new HashMap<>();
+        Map<String, Set<Integer>> mips = new HashMap<>();
+        for (int index = 0; index < planned.size(); index++) {
+            PackFlipPlan.Step step = planned.get(index);
+            if (index % 3 == 2) skipped.add(step.program());
+            stores.put(step.program(), Set.of(0));
+            Set<Integer> mipped = new TreeSet<>(step.drawBuffers());
+            mipped.add(0);
+            mips.put(step.program(), mipped);
         }
-        System.out.printf("[chimera] flip sides: %d packs, %d steps%n", packs.size(), steps);
-        assertTrue(steps > 0 && failures.isEmpty(), String.join("\n", failures));
+        List<Frame> variants = List.of(Frame.plain(world), new Frame(skipped, world, Map.of(), Map.of()),
+                new Frame(Set.of(), world, stores, mips));
+        for (Frame variant : variants) {
+            Harness harness = Harness.of(graph);
+            for (int frame = 0; frame < 3; frame++) harness.run(variant);
+            harness.mismatches.stream().limit(5).forEach(failure -> failures.add(pack.getFileName() + " "
+                    + (variant.skipped().isEmpty() ? variant.stores().isEmpty() ? "plain" : "stores" : "skips")
+                    + ": " + failure));
+        }
+        System.out.printf("[chimera] flip sides %s: %d steps%n", pack.getFileName(), planned.size());
+        return planned.size();
     }
 
     /** colortex0 and every target a world program writes. */
