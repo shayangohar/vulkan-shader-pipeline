@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -39,6 +40,9 @@ final class TessellationStageBridgeTest {
                 null, List.of(), true);
         assertEquals(BetweenStages.NONE, plain.betweenStages());
         assertNull(plain.convertedTessControl());
+        // The check itself: a lone control or evaluation stage cannot be made.
+        assertThrows(IllegalArgumentException.class, () -> new BetweenStages("control", null, null));
+        assertThrows(IllegalArgumentException.class, () -> new BetweenStages(null, "evaluation", null));
     }
 
     /**

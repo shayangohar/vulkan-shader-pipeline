@@ -117,7 +117,7 @@ final class PackShadowContractTest {
                         && vertexInterface.executableUniforms().stream()
                         .anyMatch(value -> value.name().equals("shadowProjection")),
                 "shadow matrix built-ins did not synthesize the matching live UBO fields");
-        // The shadow vertex bridge as the plan runs it: the shadow preamble, no storage buffers.
+        // The shadow vertex bridge with this interface, the shadow preamble and no storage buffers.
         LegacyGlslConverter.TerrainVertexConversion converted = TerrainVertexBridge.convertModernTerrainVertexInternal(
                 vertex, null, fragment, GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, vertexInterface, true,
                 false);

@@ -104,27 +104,6 @@ final class TerrainVertexBridge {
                 GlslVertexPreambles.MODERN_TERRAIN_VERTEX_PREAMBLE, interfacePlan, false, allowStorageBuffers);
     }
 
-    /** Converts the measured modern shadow vertex subset onto the shadow inputs. */
-    public static LegacyGlslConverter.TerrainVertexConversion convertModernShadowVertex(
-            String source,
-            Path sourceFile,
-            String fragmentSource
-    ) {
-        return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
-                GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, null, true, false);
-    }
-
-    /** Converts a shadow vertex with the shared cross-stage uniform plan. */
-    public static LegacyGlslConverter.TerrainVertexConversion convertModernShadowVertex(
-            String source,
-            Path sourceFile,
-            String fragmentSource,
-            UniformRegistry.ProgramInterface interfacePlan
-    ) {
-        return convertModernTerrainVertexInternal(source, sourceFile, fragmentSource,
-                GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, interfacePlan, true, false);
-    }
-
     static LegacyGlslConverter.TerrainVertexConversion convertModernTerrainVertexInternal(
             String source,
             Path sourceFile,
@@ -516,7 +495,7 @@ final class TerrainVertexBridge {
         if (!hasShadowTerrainVersion(source) || !usesExtendedShadowInputs(source)) {
             return false;
         }
-        return convertModernShadowVertex(source, null, fragmentSource) != null;
+        return convertShadowVertex(source, null, fragmentSource) != null;
     }
 
     /** Static probe helper for the strict shadow vertex bridge. */
