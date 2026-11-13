@@ -6,6 +6,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -20,6 +21,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * transmittance its lighting decodes; without it Kappa lit the End and water with the raw albedo.
  */
 final class ShadowcompProgramTest {
+    /**
+     * A route says which targets its indices name, so a reader applying colortex formats or
+     * deviations asks the route (audit FD3, proposal 4): shadowcomp passes and shadow-pass programs
+     * index shadowcolor targets, every other program colortex ones.
+     */
+    @Test
+    void aRouteKnowsWhetherItIndexesTheShadowTargets() {
+        assertFalse(PostTargetPlan.parse("composite", "/* DRAWBUFFERS:01 */").plan().shadowTargets());
+        assertFalse(PostTargetPlan.parse("gbuffers_terrain", "/* DRAWBUFFERS:01 */").plan().shadowTargets());
+        assertTrue(PostTargetPlan.parse("shadow_entities", "/* DRAWBUFFERS:01 */").plan().shadowTargets());
+        assertTrue(PostTargetPlan.parseShadow("shadow", "", Map.of()).plan().shadowTargets());
+        assertTrue(PostTargetPlan.parseShadowcomp("shadowcomp1", "", null).plan().shadowTargets());
+    }
+
     @Test
     void aShadowcompPassPlansOverTheShadowcolorTargets(@TempDir Path root) throws Exception {
         Path shaders = Files.createDirectories(root.resolve("shaders"));

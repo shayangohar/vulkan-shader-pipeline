@@ -92,7 +92,7 @@ public record PackPlan(
     private boolean writesUnsupportedFormat(PackProgramPlan program) {
         PostTargetPlan targets = program.targetPlan() != null ? program.targetPlan()
                 : program.geometryOutputPlan() != null ? program.geometryOutputPlan().targetPlan() : null;
-        if (targets == null || config == null || PostTargetPlan.drawsShadowTargets(program.name())) return false;
+        if (targets == null || config == null || targets.shadowTargets()) return false;
         return config.deviations().stream()
                 .filter(deviation -> deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:"))
                 .map(PackProbe::targetIndex)
