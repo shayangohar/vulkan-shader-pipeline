@@ -9,8 +9,10 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -30,6 +32,11 @@ public final class PackResourcePlan {
      * every DH depth name (DHCompat.getDepthTex and getDepthTexNoTranslucent return 0).
      */
     public static final String GENERATED_UNBOUND = "generated-unbound";
+    /**
+     * A resource key two different pack textures share (keyConflicts), a pack deviation in the report
+     * (PackProbe checks the programs' and pass computes' bindings together); the corpus gate fails on it.
+     */
+    public static final String KEY_CONFLICT = "PACK_RESOURCE_KEY_CONFLICT";
     /** The resource dhDepthTex and its alias dhDepthTex0 read; dhDepthTex1 is Iris's other registration. */
     static final String DH_DEPTH = "dhDepthTex";
     private static final Pattern DH_DEPTH_NAME = Pattern.compile("dhDepthTex[01]?");
@@ -122,10 +129,10 @@ public final class PackResourcePlan {
             Set<Integer> deactivatedOverrides = writtenEarlier.getOrDefault(programPlan.name(), Set.of());
             List<PackResourceBinding> programBindings = new ArrayList<>();
             boolean waterShadow = declaresWaterShadow(samplers);
+            PackProgramResolution resolved = plan.resolution().resolution(programPlan.name());
+            String sourceProgram = resolved == null || resolved.selectedProgram().isBlank()
+                    ? programPlan.name() : resolved.selectedProgram();
             for (UniformRegistry.SamplerBinding sampler : samplers) {
-                PackProgramResolution resolved = plan.resolution().resolution(programPlan.name());
-                String sourceProgram = resolved == null || resolved.selectedProgram().isBlank()
-                        ? programPlan.name() : resolved.selectedProgram();
                 PackResourceBinding binding = resolve(sourceProgram, sampler, waterShadow, declarations,
                         shadersDir, settings == null ? Map.of() : settings.propertyValues(), deactivatedOverrides,
                         false);
@@ -141,6 +148,29 @@ public final class PackResourcePlan {
             bindings.put(programPlan.name(), List.copyOf(programBindings));
         }
         return new PackResourcePlan(bindings, declarations, deviations);
+    }
+
+    /**
+     * The resource keys under which bindings ask for different textures. PackResourceOwner makes one
+     * image per key and serves it to every binding under it, so a second source, kind, filter or wrap
+     * under a key would hand a program a texture other than the one it declares: Spring's declared
+     * noise once read as the generated one (audit FD1). Each key names one texture by construction;
+     * this keeps it so (audit proposal 4).
+     */
+    static Set<String> keyConflicts(Collection<PackResourceBinding> bindings) {
+        Map<String, List<Object>> textures = new HashMap<>();
+        Set<String> conflicts = new TreeSet<>();
+        for (PackResourceBinding binding : bindings) {
+            if (binding.status() != PackResourceStatus.PACK_FILE && binding.status() != PackResourceStatus.GENERATED
+                    && binding.status() != PackResourceStatus.GAME_RESOURCE) {
+                continue;
+            }
+            List<Object> texture = List.of(binding.kind(), binding.status(), binding.source(), binding.filter(),
+                    binding.wrap());
+            List<Object> known = textures.putIfAbsent(binding.resourceKey(), texture);
+            if (known != null && !known.equals(texture)) conflicts.add(binding.resourceKey());
+        }
+        return conflicts;
     }
 
     /** A pack texture that a live sampler reads, but that no selector slot is left to serve. */
@@ -233,17 +263,11 @@ public final class PackResourcePlan {
         return declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE;
     }
 
+    /** The pack declaration that serves this sampler in a program, images aside, if any. */
     private static PackResourceDeclaration declaration(String program, String sampler, String samplerType,
                                                        Map<String, PackResourceDeclaration> declarations) {
-        return declarationFor(program, new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations,
-                Set.of(), new ArrayList<>());
-    }
-
-    /** The pack declaration that serves this sampler in a program, images aside, if any. */
-    private static PackResourceDeclaration declarationFor(String program, UniformRegistry.SamplerBinding sampler,
-                                                          Map<String, PackResourceDeclaration> declarations,
-                                                          Set<Integer> deactivatedOverrides, List<String> deviations) {
-        return choose(program, sampler, declarations, null, deactivatedOverrides, false, deviations).declaration();
+        return choose(program, new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations, null,
+                Set.of(), false, new ArrayList<>()).declaration();
     }
 
     /** The pack's binding of a sampler Iris binds: a declaration, an image, or neither (the built-in). */

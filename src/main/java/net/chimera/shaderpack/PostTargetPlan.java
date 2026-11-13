@@ -100,6 +100,7 @@ public final class PostTargetPlan {
     private final List<Integer> mipmappedTargets;
     private final List<String> deviations;
     private final boolean writesNoOutput;
+    private final boolean shadowTargets;
 
     private PostTargetPlan(
             String programName,
@@ -115,6 +116,7 @@ public final class PostTargetPlan {
     ) {
         this.writesNoOutput = writesNoOutput;
         this.programName = programName;
+        this.shadowTargets = drawsShadowTargets(programName);
         this.targetSlots = List.copyOf(targetSlots);
         this.outputLocations = List.copyOf(outputLocations);
         this.discardedOutputs = List.copyOf(discardedOutputs);
@@ -285,7 +287,7 @@ public final class PostTargetPlan {
      * Whether a program's target indices name shadowcolor targets rather than colortex ones: a
      * shadowcomp pass, or a program that draws in the shadow pass (shadow and the shadow lanes).
      */
-    public static boolean drawsShadowTargets(String name) {
+    private static boolean drawsShadowTargets(String name) {
         return PassComputePlan.isShadowcomp(name) || FamilyAdapterRegistry.isShadowFamily(name);
     }
 
@@ -416,7 +418,17 @@ public final class PostTargetPlan {
         return programName;
     }
 
-    /** Logical colortex slot for each fragment output location. */
+    /**
+     * Whether {@link #targetSlots()} index the shadowcolor targets rather than the colortex ones: a
+     * shadowcomp pass's route, or a shadow-pass program's. It is decided once, from the name of the
+     * program the route is parsed for (drawsShadowTargets), so a reader that applies colortex formats
+     * or deviations asks the route rather than deciding again (audit FD3, proposal 4).
+     */
+    public boolean shadowTargets() {
+        return shadowTargets;
+    }
+
+    /** Logical target slot for each fragment output location: a colortex one, or a shadowcolor one. */
     public List<Integer> targetSlots() {
         return targetSlots;
     }

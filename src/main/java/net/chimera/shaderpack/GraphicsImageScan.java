@@ -26,7 +26,6 @@ final class GraphicsImageScan {
     final List<String> customImageFeaturePrograms = new ArrayList<>();
     final Map<String, List<PackAdvancedResourcePlan.GraphicsImageBinding>> writers = new TreeMap<>();
     final Map<String, List<PackAdvancedResourcePlan.GraphicsImageBinding>> readers = new TreeMap<>();
-    final Set<String> producedImages = new TreeSet<>();
     private final PackPlan plan;
     private final Map<String, PackAdvancedResourcePlan.ImageSpec> images;
     private final List<String> deviations;
@@ -71,7 +70,6 @@ final class GraphicsImageScan {
                 writers.computeIfAbsent(program, ignored -> new ArrayList<>()).addAll(bindings));
         part.readers.forEach((program, bindings) ->
                 readers.computeIfAbsent(program, ignored -> new ArrayList<>()).addAll(bindings));
-        producedImages.addAll(part.producedImages);
         deviations.addAll(part.deviations);
     }
 
@@ -105,8 +103,7 @@ final class GraphicsImageScan {
         // declaration nothing reachable reads is already gone, with any dead code that read it
         // (ProgramStageSources.withoutInactiveImages); samplers stay. Give every declared pack
         // image and every declared or referenced pack image sampler a descriptor. Runtime
-        // eligibility remains based on the live uses in usesAdvancedResource, and only a live
-        // store makes a program the image's producer.
+        // eligibility remains based on the live uses in usesAdvancedResource.
         // The pattern opens with optional parts, so it is tried at every character; a stage
         // without an image declaration (most of them) cannot match at all.
         Matcher image = GRAPHICS_IMAGE_DECLARATION.matcher(source.contains("image") ? source : "");
@@ -117,7 +114,7 @@ final class GraphicsImageScan {
             if (usage.successful() && !usage.declaredImages().contains(symbol)) continue;
             String format = AdvancedImageDeclarations.declaredFormat(image.group(1));
             addWriter(program, stage, new Declared(image.group(2), symbol, format),
-                    usage.liveImages().contains(symbol), GlslTokenRewriter.identifierCount(source, symbol) > 1);
+                    GlslTokenRewriter.identifierCount(source, symbol) > 1);
         }
         Set<String> imageSamplers = new TreeSet<>(usage.referencedSamplers());
         imageSamplers.addAll(UniformRegistry.scanDeclaredSamplerNames(source));
@@ -139,7 +136,7 @@ final class GraphicsImageScan {
      * A storage image declaration of a pack image, bound to its sampler's selector. An image
      * Chimera does not create refuses the program only where the stage references it.
      */
-    private void addWriter(String program, String stage, Declared declared, boolean live, boolean referenced) {
+    private void addWriter(String program, String stage, Declared declared, boolean referenced) {
         String symbol = declared.symbol();
         PackAdvancedResourcePlan.ImageSpec spec = PackAdvancedResourcePlan.imageBySymbol(images, symbol);
         if (spec == null) {
@@ -162,7 +159,6 @@ final class GraphicsImageScan {
                 .add(new PackAdvancedResourcePlan.GraphicsImageBinding(program, symbol,
                         spec.name(), spec.sampler(), declared.glslType(), viewFormat, selectorSlot,
                         StorageBufferDeclarations.stageMask(stage)));
-        if (live) producedImages.add(spec.name());
     }
 
     /**

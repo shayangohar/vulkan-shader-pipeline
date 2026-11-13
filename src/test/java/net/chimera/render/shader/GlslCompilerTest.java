@@ -109,7 +109,7 @@ final class GlslCompilerTest {
         ByteBuffer module = GlslCompiler.compile("deferred1.csh", source, Shaderc.shaderc_glsl_compute_shader,
                 options -> {});
         try {
-            assertEquals(Set.of(), SpirvDeviceRequirements.extensions(module));
+            assertEquals(Set.of(), SpirvDeviceRequirements.of(module).extensions());
         } finally {
             MemoryUtil.memFree(module);
         }

@@ -24,11 +24,6 @@ public final class ChimeraSamplers {
         return SamplerManager.getTextureSampler(flatKey(linear, clamp));
     }
 
-    /** Linear filtering clamped to the edge, reading levels 0 to {@code maxLevel}, linearly between them. */
-    public static long linearMipmapped(int maxLevel) {
-        return mipmapped(maxLevel, true);
-    }
-
     /**
      * Levels 0 to {@code maxLevel} clamped to the edge: linearly within and between levels, or the
      * nearest texel of the nearest level (Iris's GL_NEAREST_MIPMAP_NEAREST for integer targets).

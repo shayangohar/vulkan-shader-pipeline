@@ -364,11 +364,11 @@ public final class FamilyBufferSource extends MultiBufferSource.BufferSource imp
     }
 
     /**
-     * Whether a family type may be freed: it holds no started batch, which a level source may keep
-     * for its deferred passes, and no flush has drawn it for IDLE_FLUSHES flushes.
+     * Whether a held type may be freed: it holds no batch, started or closed ({@code held}), which a
+     * level source may keep for its deferred passes, and no flush has drawn it for IDLE_FLUSHES flushes.
      */
-    static boolean idle(boolean started, long flushes, long lastDrawn) {
-        return !started && flushes - lastDrawn > IDLE_FLUSHES;
+    static boolean idle(boolean held, long flushes, long lastDrawn) {
+        return !held && flushes - lastDrawn > IDLE_FLUSHES;
     }
 
     /** Drops a type's held batches unseen: its lane's pack outputs could not open this frame. */

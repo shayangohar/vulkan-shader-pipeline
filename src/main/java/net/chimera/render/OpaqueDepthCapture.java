@@ -107,12 +107,9 @@ final class OpaqueDepthCapture {
     }
 
     /**
-     * Iris samples the centre depth at beginHand, before the hand and translucent terrain: the world
-     * depth here, since a pack hand draws into its own framebuffer. The layer then reopens its pass.
-     */
-    /**
      * Samples the centre depth at Iris's beginHand: after the level's entity batches, before the
-     * hand draws (IrisRenderingPipeline.beginHand, CenterDepthSampler.sampleCenterDepth).
+     * hand and translucent terrain draw (IrisRenderingPipeline.beginHand,
+     * CenterDepthSampler.sampleCenterDepth). It reads the world depth, then reopens the main target.
      */
     void sampleCenterDepthBeforeHand() {
         if (pass.packCenterDepth == null || pass.shadowPass.shadowPassActive || !pass.levelPhase

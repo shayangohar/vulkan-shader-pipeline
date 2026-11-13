@@ -347,10 +347,6 @@ final class IrisCoreProfile {
     }
 
     /**
-     * Inserts declarations after the #version and #extension lines that must lead the source, and
-     * the blank lines among them: after the last of the leading lines that end in a line break.
-     */
-    /**
      * A Sodium-patch vertex stage with Iris's {@code mc_chunkFade}: SodiumTransformer.injectVertInit
      * declares it in every terrain and shadow terrain vertex stage, core or not, as the fraction of
      * the section's fade-in, and 1.0 for a section not fading. VulkanMod fades no section in, so a
@@ -361,6 +357,10 @@ final class IrisCoreProfile {
         return insertAfterHeader(vertex, "float mc_chunkFade = 1.0;\n");
     }
 
+    /**
+     * Inserts declarations after the #version and #extension lines that must lead the source, and
+     * the blank lines among them: after the last of the leading lines that end in a line break.
+     */
     static String insertAfterHeader(String source, String declarations) {
         Map<Integer, GlslDirectives.Line> directives = new HashMap<>();
         for (GlslDirectives.Line line : GlslDirectives.lines(source)) directives.put(line.hash(), line);

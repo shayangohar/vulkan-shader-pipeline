@@ -97,7 +97,7 @@ final class SpirvDeviceRequirementsTest {
         ByteBuffer module = GlslCompiler.compile("test.csh", source, Shaderc.shaderc_glsl_compute_shader,
                 options -> {});
         try {
-            return SpirvDeviceRequirements.extensions(module);
+            return SpirvDeviceRequirements.of(module).extensions();
         } finally {
             MemoryUtil.memFree(module);
         }

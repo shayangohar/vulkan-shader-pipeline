@@ -42,11 +42,6 @@ public final class FamilyRenderType extends RenderType {
         return transparency;
     }
 
-    /** Whether a pack with separateEntityDraws draws this batch before its deferred passes. */
-    boolean drawsBeforeDeferred() {
-        return transparency.drawsBeforeDeferred();
-    }
-
     public Family family() {
         return family;
     }

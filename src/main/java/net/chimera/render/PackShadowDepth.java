@@ -49,15 +49,9 @@ public final class PackShadowDepth {
      * Sampler one shadow descriptor binds: the compare-enabled sampler when the
      * program's lookup needs a comparison, otherwise the depth image's own
      * sampler, so a program that reads the same image without a shadow sampler
-     * keeps the non-compare path its shader was written for.
-     */
-    public long samplerFor(VulkanImage boundImage, boolean compareRequired) {
-        return samplerFor(boundImage, compareRequired, true);
-    }
-
-    /**
-     * {@link #samplerFor(VulkanImage, boolean)} for a depth that filters linearly or, with the
-     * pack's shadowtexNNearest, nearest (Iris GlSampler.LINEAR_HW or NEAREST_HW).
+     * keeps the non-compare path its shader was written for. The compare sampler
+     * filters linearly or, with the pack's shadowtexNNearest, nearest (Iris
+     * GlSampler.LINEAR_HW or NEAREST_HW).
      */
     public long samplerFor(VulkanImage boundImage, boolean compareRequired, boolean linear) {
         if (!compareRequired || this.compareSampler == 0L) {

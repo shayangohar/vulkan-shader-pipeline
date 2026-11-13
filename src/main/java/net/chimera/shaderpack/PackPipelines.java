@@ -4,7 +4,6 @@ import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.chimera.render.PackFailureNotices;
 import net.chimera.render.PackStorageBufferOwner;
-import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.HostPipelineLayout;
 import net.chimera.render.shader.MrtPipelineContext;
 import net.chimera.render.shader.PackUniformProvider;
@@ -17,7 +16,6 @@ import org.lwjgl.vulkan.VK10;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -374,10 +372,6 @@ public final class PackPipelines {
         public PackSky forFormat(VertexFormat format) { return variants.get(format); }
     }
 
-    public static PackSkyFamily buildSky(PackProgramPlan plan) {
-        return buildSky(plan, PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackSkyFamily buildSky(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
@@ -397,10 +391,6 @@ public final class PackPipelines {
         } finally {
             if (!complete) variants.values().forEach(value -> value.pipeline().cleanUp());
         }
-    }
-
-    public static PackSky buildCloud(PackProgramPlan plan) {
-        return buildCloud(plan, PackAdvancedResourcePlan.empty(), null);
     }
 
     /** The cloud program over vanilla's cloud mesh. */
@@ -472,7 +462,7 @@ public final class PackPipelines {
                     convertedVertex, plan.name(), advancedResources, layout,
                     interfacePlan, stage, VK_SHADER_STAGE_VERTEX_BIT);
             PackAdvancedResourcePlan resources = advancedResources;
-            BetweenStages geometry = plan.betweenStages().map(each -> PackDescriptorContracts.bindPackShader(
+            BetweenStages between = plan.betweenStages().map(each -> PackDescriptorContracts.bindPackShader(
                     EntityVertexBridge.fragmentForFormat(each.source(), format), plan.name(), resources, layout,
                     interfacePlan, stage, each.stageBit()));
             String fragmentSource = PackDescriptorContracts.bindPackShader(
@@ -484,7 +474,7 @@ public final class PackPipelines {
             PackDescriptorLayout descriptors = PackDescriptorContracts.withAdvancedDescriptors(ordinary.layout(),
                     plan.name(), advancedResources);
             PackDescriptorContracts.verifyAdvancedLayout(descriptors, plan.name(), advancedResources, vertexSource,
-                    geometry, fragmentSource, storageOwner);
+                    between, fragmentSource, storageOwner);
             ProgramImageBindingManifest imageBindings = ProgramImageBindingManifest.from(layout, ordinary);
             GeometryOutputPlan outputPlan = stage.shadowPass() ? null : plan.geometryOutputPlan();
             int[] attachmentFormats = stage.shadowPass() ? shadowAttachmentFormats(plan)
@@ -493,7 +483,7 @@ public final class PackPipelines {
             PackBlendPlan.Mode[] attachmentBlends = stage.shadowPass()
                     ? plan.blendPlan().shadowAttachments(attachmentFormats.length)
                     : routedBlends(plan.blendPlan(), outputPlan, attachmentFormats);
-            GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, geometry,
+            GraphicsPipeline pipeline = createRouted(pipelineName, format, descriptors, vertexSource, between,
                     fragmentSource, imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
@@ -502,11 +492,13 @@ public final class PackPipelines {
         }
     }
 
-    /** Whether an executable plan has both converted stages and an interface planned for {@code stage}. */
+    /**
+     * Whether an executable plan has both converted stages and an interface, and a stage to build for.
+     * effective(stage) returns {@code stage} whenever it is given, so asking it again tested only that.
+     */
     private static boolean buildsGeometry(PackProgramPlan plan, UniformRegistry.Stage stage, String convertedVertex) {
         return plan != null && plan.executable() && plan.convertedVertex() != null && convertedVertex != null
-                && plan.convertedFragment() != null && plan.interfacePlan() != null
-                && plan.interfacePlan().effective(stage).stage() == stage;
+                && plan.convertedFragment() != null && plan.interfacePlan() != null && stage != null;
     }
 
     /**
@@ -573,11 +565,6 @@ public final class PackPipelines {
         return sodium || directive.enabled() ? directive : null;
     }
 
-    /** Builds a post pipeline from the already prepared and translated plan. */
-    public static PackPost buildPost(PackProgramPlan plan, String fixedVertexSource) {
-        return buildPost(plan, fixedVertexSource, PackResourcePlan.empty(), PackAdvancedResourcePlan.empty(), null);
-    }
-
     /** Builds a post pipeline with the session's resource and advanced-resource contracts. */
     public static PackPost buildPost(
             PackProgramPlan plan,
@@ -619,30 +606,6 @@ public final class PackPipelines {
     }
 
     /** Builds the extended terrain pipeline from the shared program plan. */
-    public static PackTerrain buildTerrain(PackProgramPlan plan, String fixedVertexSource) {
-        return buildTerrainLikePlan(plan, fixedVertexSource,
-                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial(), false, 0,
-                PackAdvancedResourcePlan.empty(), null);
-    }
-
-    /** Builds terrain with the pack-wide union format selected at load time. */
-    public static PackTerrain buildTerrain(
-            PackProgramPlan plan,
-            String fixedVertexSource,
-            TerrainMaterialPlan materialPlan
-    ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, false, 0,
-                PackAdvancedResourcePlan.empty(), null);
-    }
-
-    public static PackTerrain buildTerrain(
-            PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
-            boolean coverage, int targetFormat
-    ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat,
-                PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackTerrain buildTerrain(
             PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
             boolean coverage, int targetFormat, PackAdvancedResourcePlan advancedResources,
@@ -653,30 +616,6 @@ public final class PackPipelines {
     }
 
     /** Builds the translucent terrain pipeline from the shared program plan. */
-    public static PackTerrain buildTranslucent(PackProgramPlan plan, String fixedVertexSource) {
-        return buildTerrainLikePlan(plan, fixedVertexSource,
-                plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial(), false, 0,
-                PackAdvancedResourcePlan.empty(), null);
-    }
-
-    /** Builds water with the pack-wide union format selected at load time. */
-    public static PackTerrain buildTranslucent(
-            PackProgramPlan plan,
-            String fixedVertexSource,
-            TerrainMaterialPlan materialPlan
-    ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, false, 0,
-                PackAdvancedResourcePlan.empty(), null);
-    }
-
-    public static PackTerrain buildTranslucent(
-            PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
-            boolean coverage, int targetFormat
-    ) {
-        return buildTerrainLikePlan(plan, fixedVertexSource, materialPlan, coverage, targetFormat,
-                PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackTerrain buildTranslucent(
             PackProgramPlan plan, String fixedVertexSource, TerrainMaterialPlan materialPlan,
             boolean coverage, int targetFormat, PackAdvancedResourcePlan advancedResources,
@@ -686,23 +625,11 @@ public final class PackPipelines {
                 advancedResources, storageOwner);
     }
 
-    /** Builds the shadow pipeline from the shared program plan. */
-    public static PackShadow buildShadow(PackProgramPlan plan) {
-        return buildShadow(plan, plan == null ? TerrainMaterialPlan.legacy() : plan.terrainMaterial());
-    }
-
     /**
      * Builds the shadow pipeline using the pack-wide terrain format. Shadow
      * shaders remain on the legacy source contract, but their vertices must
      * match the active terrain builder when a modern terrain family is live.
      */
-    public static PackShadow buildShadow(
-            PackProgramPlan plan,
-            TerrainMaterialPlan materialPlan
-    ) {
-        return buildShadow(plan, materialPlan, PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackShadow buildShadow(
             PackProgramPlan plan,
             TerrainMaterialPlan materialPlan,
@@ -761,69 +688,11 @@ public final class PackPipelines {
     }
 
     /** Builds the guarded world entity pipeline on the append-only entity format. */
-    public static PackEntity buildEntity(PackProgramPlan plan) {
-        return PackFamilyPipelines.buildEntityLike(plan, UniformRegistry.Stage.ENTITY, "pack_gbuffers_entities",
-                ChimeraVertexFormats.EXTENDED_ENTITY, PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackEntity buildEntity(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
         return PackFamilyPipelines.buildEntityLike(plan, UniformRegistry.Stage.ENTITY, "pack_gbuffers_entities",
                 ChimeraVertexFormats.EXTENDED_ENTITY, advancedResources, storageOwner);
-    }
-
-    public static PackPost buildPost(PackProgram program, String fixedVertexSource) {
-        return buildPost(program, fixedVertexSource, Map.of());
-    }
-
-    /** Builds a post pipeline using the pack's deterministic target formats. */
-    public static PackPost buildPost(
-            PackProgram program,
-            String fixedVertexSource,
-            Map<Integer, Integer> targetFormats
-    ) {
-        try {
-            String fragmentSource = program.executableFragmentSource();
-            Path sourcePath = program.preparedFragmentSource() == null
-                    ? program.fragmentPath() : null;
-            PostTargetPlan targetPlan = PostTargetPlan.parse(
-                    program.name(), fragmentSource, targetFormats).plan();
-            UniformRegistry.ProgramInterface interfacePlan = program.preparedFragmentSource() == null
-                    ? UniformRegistry.planPost(fragmentSource, targetPlan)
-                    : UniformRegistry.planPreparedPost(fragmentSource, targetPlan);
-            if (!interfacePlan.executable()) {
-                throw new IllegalStateException("pack interface is unsupported: " + interfacePlan.deviations());
-            }
-            String converted = FragmentConverter.convertPostFragment(
-                    fragmentSource, sourcePath, interfacePlan, targetPlan);
-            if (converted == null) {
-                throw new IllegalStateException("legacy GLSL conversion failed");
-            }
-
-            int[] slots = interfacePlan.samplers().stream()
-                    .mapToInt(UniformRegistry.SamplerBinding::slot)
-                    .toArray();
-            List<String> samplerNames = interfacePlan.samplers().stream()
-                    .map(UniformRegistry.SamplerBinding::name)
-                    .toList();
-            List<String> frameInputs = samplerNames.stream().map(PackResourcePlan::canonicalResource).toList();
-            // One fragment block for the pack's uniforms at binding 0, its samplers after it.
-            var blocks = PackDescriptorContracts.packUniformBlock(interfacePlan, 0, VK_SHADER_STAGE_FRAGMENT_BIT);
-            PackDescriptorLayout layout = new PackDescriptorLayout(blocks,
-                    PackDescriptorContracts.samplerImages(blocks.size(), slots),
-                    PackDescriptorLayout.EMPTY_PUSH_CONSTANTS);
-            ProgramImageBindingManifest imageBindings = PackDescriptorContracts.legacyImageBindings(layout,
-                    interfacePlan);
-            GraphicsPipeline pipeline = createNative("pack_" + program.name(), CustomVertexFormat.NONE, layout,
-                    fixedVertexSource, converted, imageBindings);
-
-            return new PackPost(program.name(), pipeline, slots, samplerNames,
-                    frameInputs, converted, targetPlan, imageBindings, PackBlendPlan.empty());
-        } catch (Exception e) {
-            handleBuildFailure(program.name(), e);
-            return null;
-        }
     }
 
     private static PackTerrain buildTerrainLikePlan(
@@ -892,57 +761,6 @@ public final class PackPipelines {
         return DeviceManager.deviceProperties.limits().maxColorAttachments();
     }
 
-    /** Builds the strict legacy shadow program on the extended terrain inputs. */
-    public static PackShadow buildShadow(PackProgram program) {
-        try {
-            if (program.executableVertexSource() == null) {
-                throw new IllegalStateException("shadow program requires a vertex source");
-            }
-            String fragmentSource = program.executableFragmentSource();
-            String vertexSourceText = program.executableVertexSource();
-            boolean prepared = program.preparedFragmentSource() != null;
-            UniformRegistry.ProgramInterface interfacePlan = prepared
-                    ? UniformRegistry.planPrepared(fragmentSource, UniformRegistry.Stage.SHADOW)
-                    : UniformRegistry.plan(fragmentSource, UniformRegistry.Stage.SHADOW);
-            if (!interfacePlan.executable()) {
-                throw new IllegalStateException("pack shadow interface is unsupported: " + interfacePlan.deviations());
-            }
-            LegacyGlslConverter.TerrainVertexConversion vertex =
-                    TerrainVertexBridge.convertShadowVertex(
-                        vertexSourceText, prepared ? null : program.vertexPath(), fragmentSource,
-                        interfacePlan);
-            if (vertex == null) {
-                throw new IllegalStateException("legacy shadow vertex bridge rejected the source");
-            }
-
-            int[] declaredSlots = interfacePlan.samplers().stream()
-                    .mapToInt(UniformRegistry.SamplerBinding::slot)
-                    .toArray();
-            int[] slots = shadowSamplerSlots(declaredSlots);
-            String converted = FragmentConverter.FragmentConversionRequest
-                    .of(fragmentSource, prepared ? null : program.fragmentPath(), true, slots)
-                    .withTerrainLayout(vertex.layout())
-                    .withInterfacePlan(interfacePlan)
-                    .convert();
-            if (converted == null) {
-                throw new IllegalStateException("legacy shadow fragment conversion failed");
-            }
-
-            PackDescriptorLayout host = shadowLayout();
-            PackDescriptorLayout layout = host.withImages(
-                    PackDescriptorContracts.samplerImages(host.bindingAfterBlocks(), slots));
-            ProgramImageBindingManifest imageBindings = PackDescriptorContracts.legacyImageBindings(layout,
-                    interfacePlan);
-            GraphicsPipeline pipeline = createNative("pack_" + program.name(),
-                    ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN, layout, vertex.source(), converted,
-                    imageBindings);
-            return new PackShadow(pipeline, slots, converted, imageBindings);
-        } catch (Exception e) {
-            handleBuildFailure(program.name(), e);
-            return null;
-        }
-    }
-
     /**
      * The fixed terrain vertex reads its LightMap at descriptor index 1
      * (layout(binding = 4), registry slot 2). Force registry slot 2 into the
@@ -979,11 +797,6 @@ public final class PackPipelines {
     /** Preserve the registry slots used by the host entity draw. */
     public static int[] entitySamplerSlots(int[] declaredSlots) {
         return Arrays.stream(declaredSlots).distinct().sorted().toArray();
-    }
-
-    /** The fixed shadow pipeline's layout: its terrain blocks and push constants, with its own samplers. */
-    static PackDescriptorLayout shadowLayout() {
-        return PackDescriptorLayout.fromJson(ChimeraShaderLoader.loadJson("chimera_shadow.json"));
     }
 
     /** The colour targets a post pass's frame inputs name, legacy aliases included (gaux3 is 6), ascending. */

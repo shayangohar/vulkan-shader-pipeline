@@ -245,10 +245,6 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
         return spec == null ? null : images.get(spec.name());
     }
 
-    public boolean available(String name) {
-        return images.containsKey(name) && failures.get(name) == null;
-    }
-
     @Override
     public void close() {
         if (closed) return;

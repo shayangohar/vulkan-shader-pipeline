@@ -59,8 +59,15 @@ public final class PackSource {
         private String selectedVariantFolder = "";
         private boolean closed;
         /**
-         * The analyses of the dimensions this load selected (PackProbe.analyze). Its options and
-         * sources never change, so a dimension's analysis holds for as long as the load does.
+         * The game's mipmap level as this load began, which every analysis of the load prepares with
+         * (MC_MIPMAP_LEVEL): Iris reads it once per pack load (ShaderPack). The device's macros are the
+         * other input from outside the pack, and the device does not change while the game runs.
+         */
+        private final int mipmapLevel = PackEngineDefines.mipmapLevel();
+        /**
+         * The analyses of the dimensions this load selected (PackProbe.analyze). Its options, sources
+         * and pinned mipmap level never change, so a dimension's analysis holds for as long as the
+         * load does.
          */
         private final Map<String, AnalyzedDimension> analyzed = new LinkedHashMap<>(8, 0.75F, true) {
             @Override
@@ -111,6 +118,16 @@ public final class PackSource {
         /** The selected dimension's analysis, when this load made one; null otherwise. */
         AnalyzedDimension analyzed() {
             return analyzed.get(selectedDimension);
+        }
+
+        /**
+         * Puts the mipmap level this load began with back in the macros, so every dimension it analyses
+         * and the id maps read right after it (PackSessionLifecycle) take one level. Only a fresh load
+         * reads the game's level (audit FD10), so the two agree today; each analysis puts the load's
+         * level back, so a level set since cannot reach the load's analyses (audit proposal 4).
+         */
+        void pinLoadInputs() {
+            PackEngineDefines.setMipmapLevel(mipmapLevel);
         }
 
         /** Keeps the selected dimension's analysis, with the preparation it leaves the sources in. */

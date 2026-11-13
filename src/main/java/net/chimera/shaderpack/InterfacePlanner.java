@@ -385,18 +385,13 @@ final class InterfacePlanner {
         int shadow = SelectorNamespace.shadowSamplerSlot(lookup);
         if (shadow >= 0) return shadow;
         return stage == UniformRegistry.Stage.POST
-                ? postFallbackSlot(name) : UniformRegistry.gbufferColorInputSlot(name);
+                ? UniformRegistry.extendedPostColorSlot(name) : UniformRegistry.gbufferColorInputSlot(name);
     }
 
     /** A shadowcolorN sampler's slot in the shadow pass; null for any other name. */
     private static Integer shadowPassColorSlot(String lookup) {
         int slot = SelectorNamespace.shadowColorSlot(PackResourcePlan.shadowColorIndex(lookup));
         return slot >= 0 ? slot : null;
-    }
-
-    /** Post's fallback for a name its stage map lacks: an extended color target. */
-    private static Integer postFallbackSlot(String name) {
-        return UniformRegistry.extendedPostColorSlot(name);
     }
 
     static String unmappedSamplerDeviation(String name, UniformRegistry.Stage stage) {

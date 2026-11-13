@@ -17,6 +17,9 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -252,6 +255,53 @@ final class PackSourceEdgesTest {
             assertTrue(loaded.programs().isEmpty(), "unsafe ZIP was accepted");
             assertTrue(loaded.deviations().contains("PACK_ARCHIVE_UNSAFE_PATH"),
                     "unsafe ZIP deviation");
+        }
+    }
+
+    /**
+     * Iris reads MC_MIPMAP_LEVEL once per pack load. A load analyses every dimension at the level it
+     * began with, even if the level is set again while it lives, and leaves that level for the id
+     * maps read after it (audit FD10, proposal 4).
+     */
+    @Test
+    void aLoadAnalysesEveryDimensionAtTheMipmapLevelItBeganWith(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nvoid main() { gl_FragColor = vec4(1.0); }\n");
+        // Not the default level (4), so a pin that ignored the game's level would fail.
+        PackEngineDefines.setMipmapLevel(2);
+        try (PackSource.LoadResult loaded = PackSource.loadResult(root)) {
+            PackProbe.analyze(root, loaded);
+            PackEngineDefines.setMipmapLevel(0);
+            loaded.selectDimension("minecraft:the_nether");
+            PackProbe.analyze(root, loaded);
+            assertEquals("2", loaded.analyzed().macros().get("MC_MIPMAP_LEVEL"));
+            assertEquals("2", PackEngineDefines.standard().get("MC_MIPMAP_LEVEL"));
+        }
+    }
+
+    /**
+     * A load keeps each dimension's analysis: selecting a dimension again reuses its plan and hands
+     * out a fresh copy of its report, the one part the runtime marks, so an earlier use's marks do
+     * not carry over (PackProbe.analyze, LoadResult.keep).
+     */
+    @Test
+    void aLoadReusesEachDimensionsAnalysisWithItsOwnReport(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nvoid main() { gl_FragColor = vec4(1.0); }\n");
+        try (PackSource.LoadResult loaded = PackSource.loadResult(root)) {
+            PackProbe.Analysis overworld = PackProbe.analyze(root, loaded);
+            overworld.report().addDeviation("RUNTIME_MARK");
+            loaded.selectDimension("minecraft:the_nether");
+            PackProbe.analyze(root, loaded);
+            loaded.selectDimension("minecraft:overworld");
+            PackProbe.Analysis again = PackProbe.analyze(root, loaded);
+            assertSame(overworld.plan(), again.plan());
+            assertNotSame(overworld.report(), again.report());
+            assertFalse(again.report().deviations().contains("RUNTIME_MARK"), again.report().deviations().toString());
+            // A reuse's own marks stay its own too: the next reuse gets another copy.
+            again.report().addDeviation("SECOND_MARK");
+            PackProbe.Analysis third = PackProbe.analyze(root, loaded);
+            assertFalse(third.report().deviations().contains("SECOND_MARK"), third.report().deviations().toString());
         }
     }
 

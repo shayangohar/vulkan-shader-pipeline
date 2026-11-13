@@ -84,6 +84,7 @@ public final class PackProbe {
      * runtime marks.
      */
     public static Analysis analyze(Path packPath, PackSource.LoadResult loaded) {
+        loaded.pinLoadInputs();
         PackSource.AnalyzedDimension known = loaded.analyzed();
         if (known != null) {
             loaded.restore(known);
@@ -143,6 +144,12 @@ public final class PackProbe {
             ConformanceReport report = conformanceReport();
             inventoryAliases(packPlan);
             PassComputePlan passComputes = PassComputePlan.build(packPlan, shadersDir);
+            // PackResourceOwner makes one image per resource key for programs and pass computes alike.
+            List<PackResourceBinding> bindings = new ArrayList<>();
+            resourcePlan.bindings().values().forEach(bindings::addAll);
+            passComputes.computes().forEach(compute -> bindings.addAll(compute.textures()));
+            PackResourcePlan.keyConflicts(bindings)
+                    .forEach(key -> report.addDeviation(PackResourcePlan.KEY_CONFLICT + ":" + key));
             PackPlan planned = packPlan;
             PackWorkers.map(List.copyOf(inventories.values()), inventory -> ProgramReportRules.reportRow(inventory,
                     packConfig, planned.program(inventory.name), resourcePlan, planned, passComputes))
@@ -454,12 +461,16 @@ public final class PackProbe {
         return settings.withSamplerSlots(settings.customSamplerSlots(live));
     }
 
+    private static final Pattern INDEX_DEVIATION = Pattern.compile("POST_TARGET_INDEX_UNSUPPORTED:(\\d+)");
+    private static final Pattern TARGET_DEVIATION = Pattern.compile("POST_TARGET_[A-Z_]+:colortex(\\d+)");
+
+    /** The colortex a target deviation names, or null; the report reads it for every program's deviations. */
     static Integer targetIndex(String deviation) {
-        Matcher index = Pattern.compile("POST_TARGET_INDEX_UNSUPPORTED:(\\d+)").matcher(deviation);
+        Matcher index = INDEX_DEVIATION.matcher(deviation);
         if (index.matches()) {
             return Integer.parseInt(index.group(1));
         }
-        Matcher format = Pattern.compile("POST_TARGET_[A-Z_]+:colortex(\\d+)").matcher(deviation);
+        Matcher format = TARGET_DEVIATION.matcher(deviation);
         if (format.find()) {
             return Integer.parseInt(format.group(1));
         }

@@ -91,7 +91,7 @@ final class ProgramReportRules {
         if (resourcePlan != null) {
             deviations.addAll(reportedResourceDeviations(resourcePlan, name));
         }
-        deviations.addAll(relevantTargetDeviations(name, packConfig, targetResult));
+        deviations.addAll(relevantTargetDeviations(packConfig, targetResult));
         UniformRegistry.ProgramInterface interfacePlan =
                 interfacePlan(name, fragment, programPlan, targetResult, relaxed, postName);
         if (programPlan != null) {
@@ -204,8 +204,7 @@ final class ProgramReportRules {
     private static boolean runsUnsupportedStage(PackProbe.Inventory inventory, PackPlan packPlan,
                                                 PackProgramPlan programPlan) {
         boolean passCompute = PassComputePlan.isPassComputeProgram(inventory.name);
-        boolean tessellation = packPlan != null && packPlan.settings() != null
-                && packPlan.settings().readsTessellation();
+        boolean tessellation = packPlan != null && packPlan.settings().readsTessellation();
         Set<String> converted = programPlan == null ? Set.of() : programPlan.betweenStages().present().stream()
                 .map(BetweenStages.Stage::name).collect(Collectors.toSet());
         return inventory.stages.stream().anyMatch(stage -> PackProgram.runsBetweenStages(stage, tessellation)
@@ -717,17 +716,17 @@ final class ProgramReportRules {
                 && SEVERE_PREFIXES.stream().anyMatch(deviation::startsWith);
     }
 
-    /**
-     * Labels a program whose conversion failed: a version outside the one rule
-     * (GlslVersion), or syntax beyond the legacy subset. A validated conversion
-     * clears it, so the version number alone never rejects a program.
-     */
     /** Syntax the post and entity converters cannot take; their stage declarations convert. */
     private static final Set<String> CONVERTED_STAGE_SYNTAX = Set.of("layout", "buffer", "shared", "subroutine");
     /** Syntax beyond the legacy subset in the other families. */
     private static final Set<String> MODERN_STAGE_SYNTAX = Set.of("layout", "in", "out", "flat", "noperspective",
             "buffer");
 
+    /**
+     * Labels a program whose conversion failed: a version outside the one rule
+     * (GlslVersion), or syntax beyond the legacy subset. A validated conversion
+     * clears it, so the version number alone never rejects a program.
+     */
     static boolean usesUnsupportedModernGlsl(String source, boolean post, boolean entity) {
         if (!GlslVersion.supportedIfDeclared(source)) {
             return true;
@@ -744,15 +743,12 @@ final class ProgramReportRules {
      * The pack's target deviations that concern a target the program writes, and the integer targets
      * whose mip chain it asks for. The GL spec refuses glGenerateMipmap on a format it cannot filter,
      * so Iris's chain depends on the driver (incomplete, reading zero, or built); Chimera downsamples
-     * it nearest (PackTargetImages). A shadow-pass program or a shadowcomp pass writes shadowcolor
-     * targets, which colortex deviations never concern (audit FD3).
+     * it nearest (PackTargetImages). A route over the shadowcolor targets, a shadow-pass program's
+     * or a shadowcomp pass's, is one colortex deviations never concern (audit FD3).
      */
-    static List<String> relevantTargetDeviations(
-            String program,
-            PackConfig.PackConfigData config,
-            PostTargetPlan.ParseResult targetResult
-    ) {
-        if (targetResult == null || PostTargetPlan.drawsShadowTargets(program)) {
+    static List<String> relevantTargetDeviations(PackConfig.PackConfigData config,
+                                                 PostTargetPlan.ParseResult targetResult) {
+        if (targetResult == null || targetResult.plan().shadowTargets()) {
             return List.of();
         }
         List<String> result = new ArrayList<>();

@@ -21,9 +21,12 @@ import java.util.stream.Stream;
 /**
  * Iris's pass computes (ProgramSet.readComputeArray, CompositeRenderer): {@code <pass>.csh}, then
  * {@code <pass>_a.csh} to {@code _z.csh} up to the first missing or disabled one, in the selected
- * folder. They run at their prepare, deferred or composite pass's place: right before its program
- * draws, or alone where the pass has none ({@link #runsAlone}). {@code colorimgN}
- * and {@code colortexN} both bind the image that pass reads, and a dispatch covers
+ * folder. They run at their begin, prepare, deferred or composite pass's place: right before its
+ * program draws, or alone where the pass has none ({@link #runsAlone}). A shadowcomp pass's computes
+ * run after the shadow pass ({@link #isShadowcomp}). Setup computes, setup.csh and setup1..99.csh
+ * with no suffixes, run once the pipeline is made and after each resize ({@link #isSetup}).
+ * {@code colorimgN} and {@code colortexN} both bind the image that pass reads (a shadowcomp compute
+ * gets neither), and a dispatch covers
  * {@code workGroups}, the {@code workGroupsRender} share of the screen, or the screen over the
  * local size. A compute Chimera cannot bind keeps its reasons and does not run.
  */

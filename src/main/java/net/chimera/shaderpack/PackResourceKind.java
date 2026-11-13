@@ -14,7 +14,6 @@ public enum PackResourceKind {
      * sampler only where the program declares that sampler with the same type.
      */
     RAW_TEXTURE,
-    GAME_RESOURCE,
     ADVANCED_IMAGE,
     /** Resource-pack normal/specular map resolved at draw time from the bound albedo. */
     MATERIAL_MAP,

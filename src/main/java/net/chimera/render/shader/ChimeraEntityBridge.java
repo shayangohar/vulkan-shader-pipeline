@@ -31,7 +31,9 @@ import java.util.function.Supplier;
  * the crumbling overlay, beacon beams, the hand and shadow casters) widens the host vertex format with Iris's
  * attributes, so its geometry is batched apart from the host's in a {@link FamilyRenderType} the
  * moment it is written: the lane is chosen from the render type and the context drawing it
- * (EntityRenderDispatcher, BlockEntityRenderDispatcher, the hand, the shadow casters). A host-layout
+ * (EntityRenderDispatcher, BlockEntityRenderDispatcher, the hand, the shadow casters). The crumbling
+ * overlay and beacon beams take their lane from the render type alone, wherever they are written
+ * (worldTypeFamily). A host-layout
  * lane (particles and the {@link HostLayoutLane}s) keeps the host mesh and is chosen when it draws,
  * by shader name.</p>
  *

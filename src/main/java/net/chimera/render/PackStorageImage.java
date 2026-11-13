@@ -344,7 +344,7 @@ final class PackStorageImage extends VulkanImage {
         return views.getOrDefault(format, view);
     }
 
-    /** The image's own sampler: nearest for integer formats, linear otherwise, repeating, on one level. */
+    /** The image's own sampler: nearest for integer formats, linear otherwise, clamped to the edge, on one level. */
     @Override
     public long getSampler() { return sampler; }
 

@@ -117,8 +117,10 @@ final class PackShadowContractTest {
                         && vertexInterface.executableUniforms().stream()
                         .anyMatch(value -> value.name().equals("shadowProjection")),
                 "shadow matrix built-ins did not synthesize the matching live UBO fields");
-        LegacyGlslConverter.TerrainVertexConversion converted = TerrainVertexBridge.convertShadowVertex(
-                vertex, null, fragment, vertexInterface);
+        // The shadow vertex bridge with this interface, the shadow preamble and no storage buffers.
+        LegacyGlslConverter.TerrainVertexConversion converted = TerrainVertexBridge.convertModernTerrainVertexInternal(
+                vertex, null, fragment, GlslVertexPreambles.MODERN_SHADOW_VERTEX_PREAMBLE, vertexInterface, true,
+                false);
         assertTrue(converted != null, "shadow matrix built-in fixture did not convert");
         String source = converted.source();
         assertTrue(source.contains("chimeraShadowUniforms.shadowModelView"),

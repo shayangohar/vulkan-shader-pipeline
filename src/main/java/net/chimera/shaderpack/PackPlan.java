@@ -92,7 +92,7 @@ public record PackPlan(
     private boolean writesUnsupportedFormat(PackProgramPlan program) {
         PostTargetPlan targets = program.targetPlan() != null ? program.targetPlan()
                 : program.geometryOutputPlan() != null ? program.geometryOutputPlan().targetPlan() : null;
-        if (targets == null || config == null || PostTargetPlan.drawsShadowTargets(program.name())) return false;
+        if (targets == null || config == null || targets.shadowTargets()) return false;
         return config.deviations().stream()
                 .filter(deviation -> deviation.startsWith("POST_TARGET_FORMAT_UNSUPPORTED:"))
                 .map(PackProbe::targetIndex)
@@ -160,7 +160,7 @@ public record PackPlan(
     public boolean isProgramDisabled(String name) {
         PackProgramResolution value = resolution.resolution(name);
         if (value != null) return !value.enabled();
-        return settings != null && !settings.enabled(selectedSourceFolder(), name);
+        return !settings.enabled(selectedSourceFolder(), name);
     }
 
     /**

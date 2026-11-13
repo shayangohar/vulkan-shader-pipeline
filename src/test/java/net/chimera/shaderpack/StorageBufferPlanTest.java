@@ -700,10 +700,10 @@ final class StorageBufferPlanTest {
             assertEquals("DESCRIPTOR_LAYOUT_MISMATCH:voxel_img",
                     owner.verifyLayout("shadow", broken, fragment, descriptors),
                     "SSBO/image collision was not rejected by shader symbol");
-            assertTrue(!owner.layoutVerified("shadow") && !owner.storagePathReady("shadow", "shadow")
-                            && owner.storagePathStatus("shadow",
-                                    "shadow").contains("DESCRIPTOR_LAYOUT_MISMATCH:voxel_img"),
-                    "Rejected layout remained ready or lost its named reason");
+            String path = owner.storagePathStatus("shadow", "shadow");
+            assertTrue(!owner.layoutVerified("shadow") && path.contains(",ready=false,")
+                            && path.contains("DESCRIPTOR_LAYOUT_MISMATCH:voxel_img"),
+                    "Rejected layout remained ready or lost its named reason: " + path);
             assertEquals(null, owner.verifyLayout("shadow", vertex, fragment, descriptors),
                     "Corrected layout failed to recover");
             assertTrue(owner.layoutVerified("shadow"), "Corrected layout remains rejected");

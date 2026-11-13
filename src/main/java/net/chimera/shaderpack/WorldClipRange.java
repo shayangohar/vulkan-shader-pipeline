@@ -81,9 +81,10 @@ enum WorldClipRange {
     }
 
     /**
-     * The range a modern vertex stage runs in, from its source without comments. A shadow stage's
-     * is the host's: it converts its own clip depth (ShadowStageBuiltins). A world stage ahead of
-     * tessellation ({@code laterStageConverts}) runs in GL's, so the control stage reads GL's clip
+     * The range a modern vertex stage runs in, from its source without comments. A shadow stage gets
+     * {@link #HOST}, which leaves it to ShadowStageBuiltins: it reads the shadow matrices in GL's
+     * range, and ShadowStageBuiltins converts its clip depth. A world stage ahead of tessellation or a
+     * geometry stage ({@code laterStageConverts}) runs in GL's, so the next stage reads GL's clip
      * position, as under Iris.
      */
     static WorldClipRange forVertex(String stripped, boolean shadowStage, boolean laterStageConverts) {

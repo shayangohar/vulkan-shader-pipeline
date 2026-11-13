@@ -125,7 +125,7 @@ public record FamilyAdapterPlan(
         /**
          * Lanes whose program runs on a host vertex layout Iris also draws natively
          * (VanillaTransformer), the beam's widened as Iris widens BLOCK: converted by
-         * LegacyGlslConverter.convertHostLayoutVertexChecked in the main pass and
+         * HostLayoutVertexBridge.convertHostLayoutVertexChecked in the main pass and
          * convertShadowLaneVertexChecked in the shadow pass.
          */
         public boolean hostLayout() {

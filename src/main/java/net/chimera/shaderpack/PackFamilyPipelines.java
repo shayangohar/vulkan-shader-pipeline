@@ -17,10 +17,6 @@ public final class PackFamilyPipelines {
     private PackFamilyPipelines() {}
 
     /** Builds any world entity-family adapter with the family-specific host contract. */
-    public static PackPipelines.PackEntity buildEntityFamily(PackProgramPlan plan) {
-        return buildEntityFamily(plan, PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackPipelines.PackEntity buildEntityFamily(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
@@ -62,11 +58,6 @@ public final class PackFamilyPipelines {
     }
 
     /** Builds the block-entity adapter on the same append-only host format. */
-    public static PackPipelines.PackEntity buildBlock(PackProgramPlan plan) {
-        return buildEntityLike(plan, UniformRegistry.Stage.BLOCK, "pack_gbuffers_block",
-                ChimeraVertexFormats.EXTENDED_ENTITY, PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackPipelines.PackEntity buildBlock(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
@@ -104,10 +95,6 @@ public final class PackFamilyPipelines {
     }
 
     /** Builds the first-person hand adapter on the same append-only host format. */
-    public static PackPipelines.PackHand buildHand(PackProgramPlan plan) {
-        return buildHand(plan, PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackPipelines.PackHand buildHand(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
@@ -154,10 +141,6 @@ public final class PackFamilyPipelines {
     }
 
     /** Builds the particle family on the host DefaultVertexFormat.PARTICLE path. */
-    public static PackPipelines.PackParticle buildParticle(PackProgramPlan plan) {
-        return buildParticle(plan, PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackPipelines.PackParticle buildParticle(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
@@ -166,10 +149,6 @@ public final class PackFamilyPipelines {
     }
 
     /** Builds an independent opaque or translucent particle-family pipeline. */
-    public static PackPipelines.PackParticle buildParticleFamily(PackProgramPlan plan) {
-        return buildParticleFamily(plan, PackAdvancedResourcePlan.empty(), null);
-    }
-
     public static PackPipelines.PackParticle buildParticleFamily(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {

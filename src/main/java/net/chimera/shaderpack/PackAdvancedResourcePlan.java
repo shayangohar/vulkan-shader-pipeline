@@ -726,8 +726,9 @@ public final class PackAdvancedResourcePlan {
 
     /**
      * Whether the program declares an image or storage block that no binding here serves, as the
-     * report reads it (ADVANCED_RESOURCE_UNSUPPORTED): a final or gbuffers program storing to
-     * {@code colorimgN}, which Chimera binds only in the other post passes and pass computes.
+     * report reads it (ADVANCED_RESOURCE_UNSUPPORTED): one that neither the image scan nor the
+     * storage block scan counts as using one (addUnplannedDeclarations). A final or non-hand gbuffers
+     * program storing to {@code colorimgN} fails {@link #imagesServable} instead (ADVANCED_IMAGE_UNSERVED).
      */
     public boolean declaresUnplannedResource(String program) {
         return deviations.contains(UNPLANNED_DECLARATION + program);

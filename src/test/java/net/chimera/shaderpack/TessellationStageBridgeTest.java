@@ -12,6 +12,8 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -20,6 +22,50 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * vertex through and sets its levels, the evaluation stage interpolates and projects.
  */
 final class TessellationStageBridgeTest {
+    /**
+     * A plan holds its between stages as one BetweenStages, checked once when it is made (it refuses
+     * a lone tessellation stage, audit FD2), and reads each stage through it; a plan without them
+     * has none (proposal 4).
+     */
+    @Test
+    void aPlanHoldsItsBetweenStagesAsOne() {
+        PackProgram program = new PackProgram("gbuffers_terrain", "", null);
+        BetweenStages pair = new BetweenStages("control", "evaluation", "geometry");
+        PackProgramPlan tessellated = new PackProgramPlan(program, Map.of(), null, Map.of(), Map.of(), null, null,
+                null, null, List.of(), true, null, null, null, null, null, null, pair);
+        assertSame(pair, tessellated.betweenStages());
+        assertEquals(List.of("control", "evaluation", "geometry"), List.of(tessellated.convertedTessControl(),
+                tessellated.convertedTessEvaluation(), tessellated.convertedGeometry()));
+        PackProgramPlan plain = new PackProgramPlan(program, Map.of(), null, Map.of(), Map.of(), null, null, null,
+                null, List.of(), true);
+        assertEquals(BetweenStages.NONE, plain.betweenStages());
+        assertNull(plain.convertedTessControl());
+        // The check itself: a lone control or evaluation stage cannot be made.
+        assertThrows(IllegalArgumentException.class, () -> new BetweenStages("control", null, null));
+        assertThrows(IllegalArgumentException.class, () -> new BetweenStages(null, "evaluation", null));
+    }
+
+    /**
+     * Per-patch varyings are not carried between the tessellation stages, so the scan refuses a
+     * patch in or patch out, array or not. Read per vertex, an array one took the wrong shape.
+     */
+    @Test
+    void aPatchVaryingIsRefusedArrayOrNot() {
+        for (String declaration : List.of("patch out vec4 tilt;", "patch out vec4 tilts[2];")) {
+            String control = "#version 430 compatibility\nlayout (vertices=3) out;\nin vec2 uv[];\nout vec2 uvOut[];\n"
+                    + declaration + "\nvoid main() { uvOut[gl_InvocationID] = uv[gl_InvocationID]; }\n";
+            GlslInterfaceScanner.StageInterface scanned =
+                    GlslInterfaceScanner.scan(control, GlslInterfaceScanner.Stage.TESS_CONTROL);
+            assertTrue(scanned.deviations().contains("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED")
+                    && scanned.outputs().stream().noneMatch(output -> output.name().startsWith("tilt")),
+                    declaration + ": " + scanned);
+        }
+        String evaluation = "#version 430 compatibility\nlayout (triangles) in;\npatch in vec4 tilts[2];\n"
+                + "void main() { gl_Position = tilts[0]; }\n";
+        assertTrue(GlslInterfaceScanner.scan(evaluation, GlslInterfaceScanner.Stage.TESS_EVALUATION).deviations()
+                .contains("PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED"));
+    }
+
     private static final String CONTROL = """
             #version 430 compatibility
             layout (vertices=3) out;

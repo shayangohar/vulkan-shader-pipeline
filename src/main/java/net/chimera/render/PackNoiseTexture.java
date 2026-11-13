@@ -88,7 +88,15 @@ public final class PackNoiseTexture implements PackResourceOwner.LoadedTexture {
 
     private static PackNoiseTexture upload(NativeImage pixels, String name, String filter, String wrap)
             throws IOException {
-        DynamicTexture texture = new DynamicTexture(pixels);
+        DynamicTexture texture;
+        try {
+            texture = new DynamicTexture(pixels);
+        } catch (RuntimeException failure) {
+            // No texture holds the pixels to free them with (audit review D, image factory); closing
+            // a NativeImage twice frees it once.
+            pixels.close();
+            throw failure;
+        }
         try {
             VulkanImage image = ChimeraTextures.image(texture);
             if (image == null) {

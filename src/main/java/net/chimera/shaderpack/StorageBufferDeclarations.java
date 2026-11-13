@@ -10,8 +10,8 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 /**
- * Reads a pack's storage buffers: the bufferObject.N declarations, the storage blocks each program
- * declares, which declaration each block binds, and the budget the declarations must fit.
+ * Reads a pack's storage buffers: the bufferObject.N declarations and their sizes, the storage
+ * blocks each program declares, and which declaration each block binds.
  */
 final class StorageBufferDeclarations {
     /** Deviations that keep a block from binding even when its bufferObject declaration is supported. */

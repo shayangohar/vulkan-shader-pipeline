@@ -80,6 +80,11 @@ public final class PackEngineDefines {
         mipmapLevel = levels;
     }
 
+    /** The mipmap level the macros carry now; a pack load pins it (PackSource.LoadResult). */
+    static int mipmapLevel() {
+        return mipmapLevel;
+    }
+
     public static Map<String, String> forPack(Map<String, String> packDefines) {
         return with(packDefines, false);
     }

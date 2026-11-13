@@ -10,8 +10,9 @@ import java.util.TreeMap;
  * pipeline construction consume the same instance, so eligibility cannot
  * drift between reporting and execution. {@code shadowAttachmentFormats} is the shadow pass's
  * colour attachment contract, shadowcolor0 onward, that a shadow-stage pipeline declares; it is
- * empty for every other stage. {@code convertedGeometry} and the two converted tessellation stages
- * run between the program's vertex and fragment stages; each is null when it has none.
+ * empty for every other stage. {@code betweenStages} holds the converted geometry and tessellation
+ * stages, which run between the program's vertex and fragment stages; BetweenStages refuses a lone
+ * tessellation stage, so a plan cannot carry one (audit FD2, proposal 4).
  */
 public record PackProgramPlan(
         PackProgram program,
@@ -31,9 +32,7 @@ public record PackProgramPlan(
         PackAlphaTestPlan alphaTestPlan,
         PackBlendPlan blendPlan,
         List<Integer> shadowAttachmentFormats,
-        String convertedGeometry,
-        String convertedTessControl,
-        String convertedTessEvaluation
+        BetweenStages betweenStages
 ) {
     public PackProgramPlan {
         stages = immutableStages(stages);
@@ -53,6 +52,7 @@ public record PackProgramPlan(
                 : alphaTestPlan;
         blendPlan = blendPlan == null ? PackBlendPlan.empty() : blendPlan;
         shadowAttachmentFormats = shadowAttachmentFormats == null ? List.of() : List.copyOf(shadowAttachmentFormats);
+        betweenStages = betweenStages == null ? BetweenStages.NONE : betweenStages;
     }
 
     /** A plan with the default family adapter, terrain material, alpha test and blend for its program. */
@@ -71,12 +71,22 @@ public record PackProgramPlan(
     ) {
         this(program, stages, interfacePlan, stageInterfaces, varyingLocations, targetPlan,
                 convertedFragment, convertedVertex, vertexLayout, deviations, executable, null, null, null, null, null,
-                null, null, null, null);
+                null, null);
     }
 
-    /** The converted stages the program runs between its vertex and fragment stages. */
-    public BetweenStages betweenStages() {
-        return new BetweenStages(convertedTessControl, convertedTessEvaluation, convertedGeometry);
+    /** The converted geometry stage, or null. */
+    public String convertedGeometry() {
+        return betweenStages.geometry();
+    }
+
+    /** The converted tessellation control stage, or null; never without its evaluation stage. */
+    public String convertedTessControl() {
+        return betweenStages.tessControl();
+    }
+
+    /** The converted tessellation evaluation stage, or null; never without its control stage. */
+    public String convertedTessEvaluation() {
+        return betweenStages.tessEvaluation();
     }
 
     /** The authored cloud program provably draws nothing (see AuthoredOutput). */

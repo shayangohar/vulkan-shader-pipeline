@@ -76,7 +76,6 @@ public final class PackFeatureFlags {
         return missing;
     }
 
-
     /** Whether the pack lists {@code flag} as required or optional: Iris's active features (ShaderPack.hasFeature). */
     static boolean active(Collection<String> required, Collection<String> optional, String flag) {
         return required.stream().anyMatch(value -> canonical(value).equals(flag))
