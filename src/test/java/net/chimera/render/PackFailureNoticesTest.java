@@ -1,9 +1,14 @@
 package net.chimera.render;
 
+import net.chimera.shaderpack.MixinBytecode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.FieldInsnNode;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -175,6 +180,24 @@ final class PackFailureNoticesTest {
                 PackFailureNotices.Outcome.SKIPPED, "compile error: 'bloom' : undeclared identifier", "info"));
         PackFailureNotices.publish();
         assertEquals(2, PackFailureNotices.held().size(), "a new failure of the same program is told");
+    }
+
+    /**
+     * Shaders off after a pack: the no-pack load drops that pack's conformance report. Kept, it was
+     * written as the no-pack load's conformance file, and its skipped programs told again under "?".
+     */
+    @Test
+    void shadersOffDropsTheLastPacksReport() throws IOException {
+        var lifecycle = MixinBytecode.nativeClass("net/chimera/render/PackSessionLifecycle");
+        AbstractInsnNode previous = null;
+        boolean drops = false;
+        for (AbstractInsnNode instruction : MixinBytecode.instructionsThrough(lifecycle, "loadPackConfig")) {
+            drops |= instruction instanceof FieldInsnNode put && put.getOpcode() == Opcodes.PUTFIELD
+                    && put.name.equals("conformanceReport") && previous != null
+                    && previous.getOpcode() == Opcodes.ACONST_NULL;
+            previous = instruction;
+        }
+        assertTrue(drops, "loadPackConfig with no pack sets the pass's conformanceReport to null");
     }
 
     @Test

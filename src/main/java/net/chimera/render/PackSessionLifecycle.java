@@ -554,6 +554,9 @@ final class PackSessionLifecycle {
         if (dir == null || pass.packFrameUnsupported != null) {
             if (dir == null) {
                 LOGGER.info("[chimera] no shader pack selected; vanilla rendering");
+                // No pack, no report. The last pack's would be written as this load's conformance
+                // file and its skipped programs told again under no pack.
+                pass.conformanceReport = null;
                 // The status command and F3 stop listing the last pack's failures.
                 PackFailureNotices.beginLoad(null, null);
             }
