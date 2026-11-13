@@ -32,7 +32,10 @@ public final class PackResourcePlan {
      * every DH depth name (DHCompat.getDepthTex and getDepthTexNoTranslucent return 0).
      */
     public static final String GENERATED_UNBOUND = "generated-unbound";
-    /** A resource key two different pack textures share (keyConflicts); the corpus gate fails on it. */
+    /**
+     * A resource key two different pack textures share (keyConflicts), a pack deviation in the report
+     * (PackProbe checks the programs' and pass computes' bindings together); the corpus gate fails on it.
+     */
     public static final String KEY_CONFLICT = "PACK_RESOURCE_KEY_CONFLICT";
     /** The resource dhDepthTex and its alias dhDepthTex0 read; dhDepthTex1 is Iris's other registration. */
     static final String DH_DEPTH = "dhDepthTex";
@@ -143,9 +146,6 @@ public final class PackResourcePlan {
                 deviations.addAll(binding.deviations());
             }
             bindings.put(programPlan.name(), List.copyOf(programBindings));
-        }
-        for (String key : keyConflicts(bindings.values().stream().flatMap(List::stream).toList())) {
-            deviations.add(KEY_CONFLICT + ":" + key);
         }
         return new PackResourcePlan(bindings, declarations, deviations);
     }

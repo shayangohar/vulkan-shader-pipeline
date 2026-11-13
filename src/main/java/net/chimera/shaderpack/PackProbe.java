@@ -144,6 +144,12 @@ public final class PackProbe {
             ConformanceReport report = conformanceReport();
             inventoryAliases(packPlan);
             PassComputePlan passComputes = PassComputePlan.build(packPlan, shadersDir);
+            // PackResourceOwner makes one image per resource key for programs and pass computes alike.
+            List<PackResourceBinding> bindings = new ArrayList<>();
+            resourcePlan.bindings().values().forEach(bindings::addAll);
+            passComputes.computes().forEach(compute -> bindings.addAll(compute.textures()));
+            PackResourcePlan.keyConflicts(bindings)
+                    .forEach(key -> report.addDeviation(PackResourcePlan.KEY_CONFLICT + ":" + key));
             PackPlan planned = packPlan;
             PackWorkers.map(List.copyOf(inventories.values()), inventory -> ProgramReportRules.reportRow(inventory,
                     packConfig, planned.program(inventory.name), resourcePlan, planned, passComputes))

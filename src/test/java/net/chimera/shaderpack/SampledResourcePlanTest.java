@@ -358,6 +358,19 @@ final class SampledResourcePlanTest {
                 List.of(composite, noise("deferred", "tex/a.png", "linear", PackResourceStatus.PACK_FILE))));
         assertEquals(Set.of(), PackResourcePlan.keyConflicts(
                 List.of(composite, noise("deferred", "tex/b.png", "nearest", PackResourceStatus.UNAVAILABLE))));
+        // The generated noise and a game texture are made or looked up by key too.
+        PackResourceBinding generated = noise("final", "generated-noise:256", "linear", PackResourceStatus.GENERATED);
+        assertEquals(Set.of("noisetex"), PackResourcePlan.keyConflicts(List.of(composite, generated)));
+        PackResourceBinding game = noise("final", "minecraft:textures/a.png", "nearest",
+                PackResourceStatus.GAME_RESOURCE);
+        assertEquals(Set.of("noisetex"), PackResourcePlan.keyConflicts(List.of(composite, game)));
+        PackResourceBinding clamped = new PackResourceBinding("final", "noisetex", "noisetex", PackResourceKind.NOISE,
+                "tex/a.png", 7, "nearest", "clamp", PackResourceStatus.PACK_FILE, List.of());
+        assertEquals(Set.of("noisetex"), PackResourcePlan.keyConflicts(List.of(composite, clamped)));
+        PackResourceBinding asTexture = new PackResourceBinding("final", "noisetex", "noisetex",
+                PackResourceKind.PACK_TEXTURE, "tex/a.png", 7, "nearest", "repeat", PackResourceStatus.PACK_FILE,
+                List.of());
+        assertEquals(Set.of("noisetex"), PackResourcePlan.keyConflicts(List.of(composite, asTexture)));
     }
 
     private static PackResourceBinding noise(String program, String source, String filter, PackResourceStatus status) {
