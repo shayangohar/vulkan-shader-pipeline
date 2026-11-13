@@ -223,23 +223,30 @@ public final class ChimeraRenderer {
                 + ShadowSectionQueue.sectionCounts() + ", " + ChimeraShadowCasters.counts());
     }
 
-    /** Applies pending pack work before VulkanMod begins a new main command buffer. */
+    /**
+     * Applies pending pack work before VulkanMod begins a new main command buffer. The frame records
+     * after this, so a pack change's idle window ends here (HandleRetirement).
+     */
     public static void beforeMainCommandBuffer() {
         if (!ready || chimeraPass == null) {
             return;
         }
-        // VulkanMod copies RenderSystem's texture matrix into VRenderSystem.TextureMatrix only when it is
-        // set or reset on the render thread, and allocates that copy uninitialized. Pack entity and hand
-        // stages read it as gl_TextureMatrix[0], which Iris serves from RenderSystem.getTextureMatrix():
-        // until the first glint draw Solas's hand sampled its skin through a zero matrix and drew black.
-        VRenderSystem.setTextureMatrix(RenderSystem.getTextureMatrix());
-        // Material companions are independent of shader-pack state: atlas
-        // uploads arrive whether or not a pack is installed.
-        chimeraPass.pumpMaterialMapBuilds();
-        chimeraPass.resources.refreshWorldResourcesIfDue();
-        ChimeraTerrainPipelines.rebuildingOnce(ChimeraRenderer::changePackAtFrameBoundary);
-        // After any pack change above, so a replaced pack's teardown and install upload the atlas once.
-        PackAtlasMipmaps.reconcile();
+        try {
+            // VulkanMod copies RenderSystem's texture matrix into VRenderSystem.TextureMatrix only when it
+            // is set or reset on the render thread, and allocates that copy uninitialized. Pack entity and
+            // hand stages read it as gl_TextureMatrix[0], which Iris serves from RenderSystem.getTextureMatrix():
+            // until the first glint draw Solas's hand sampled its skin through a zero matrix and drew black.
+            VRenderSystem.setTextureMatrix(RenderSystem.getTextureMatrix());
+            // Material companions are independent of shader-pack state: atlas
+            // uploads arrive whether or not a pack is installed.
+            chimeraPass.pumpMaterialMapBuilds();
+            chimeraPass.resources.refreshWorldResourcesIfDue();
+            ChimeraTerrainPipelines.rebuildingOnce(ChimeraRenderer::changePackAtFrameBoundary);
+            // After any pack change above, so a replaced pack's teardown and install upload the atlas once.
+            PackAtlasMipmaps.reconcile();
+        } finally {
+            HandleRetirement.recording();
+        }
     }
 
     /** Hands a pending pack change or dimension variant to the host, applies it, and resumes Chimera. */

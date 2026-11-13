@@ -287,8 +287,8 @@ public final class PackDepthTargets {
     public void cleanUp() {
         for (VulkanImage image : images) if (image != null) image.free();
         if (conversionPipeline != null) conversionPipeline.cleanUp();
-        // VulkanImage.free() is deferred by VulkanMod, but this view is a raw
-        // handle owned by Chimera; destroy() waits for idle first.
+        // VulkanImage.free() is deferred by VulkanMod; this view is a raw handle owned by
+        // Chimera, which HandleRetirement destroys once no frame can sample it.
         this.depthSampleView.destroy();
         Arrays.fill(images, null);
         Arrays.fill(valid, false);

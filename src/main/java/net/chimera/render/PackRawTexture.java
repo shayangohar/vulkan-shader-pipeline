@@ -253,15 +253,18 @@ final class PackRawTexture extends VulkanImage implements PackResourceOwner.Load
         free();
     }
 
+    /** Retires the texture with its view and sampler once no frame can use them (HandleRetirement). */
     @Override
     public void free() {
         if (freed) return;
         freed = true;
-        if (sampler != 0L) {
-            vkDestroySampler(Vulkan.getVkDevice(), sampler, null);
-            sampler = 0L;
-        }
-        vkDestroyImageView(Vulkan.getVkDevice(), view, null);
-        vmaDestroyImage(Vulkan.getAllocator(), getId(), allocation);
+        long ownSampler = sampler;
+        long image = getId();
+        sampler = 0L;
+        HandleRetirement.retire(() -> {
+            if (ownSampler != 0L) vkDestroySampler(Vulkan.getVkDevice(), ownSampler, null);
+            vkDestroyImageView(Vulkan.getVkDevice(), view, null);
+            vmaDestroyImage(Vulkan.getAllocator(), image, allocation);
+        });
     }
 }

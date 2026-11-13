@@ -1,7 +1,6 @@
 package net.chimera.render;
 
 import net.vulkanmod.vulkan.Vulkan;
-import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 
 import java.util.IdentityHashMap;
@@ -63,9 +62,9 @@ public final class TargetFormatViews {
     }
 
     /**
-     * Frees {@code image} and the views it owns once every recorded use has finished on the GPU.
-     * MemoryManager.initFrame frees retired images before it runs frame ops, so an image with views
-     * is retired from the frame op that destroys them, after them.
+     * Frees {@code image} and the views it owns once every recorded use has finished on the GPU
+     * (HandleRetirement). MemoryManager.initFrame frees retired images before it runs frame ops, so
+     * an image with views is handed to VulkanMod's free after its views are destroyed.
      */
     static void free(VulkanImage image) {
         Map<Integer, Long> views = VIEWS.remove(image);
@@ -73,7 +72,7 @@ public final class TargetFormatViews {
             image.free();
             return;
         }
-        MemoryManager.getInstance().addFrameOp(() -> {
+        HandleRetirement.retire(() -> {
             views.values().forEach(view -> vkDestroyImageView(Vulkan.getVkDevice(), view, null));
             image.free();
         });

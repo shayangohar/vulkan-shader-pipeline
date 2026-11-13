@@ -20,6 +20,7 @@ import org.lwjgl.vulkan.VkSamplerCreateInfo;
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -347,17 +348,21 @@ final class PackStorageImage extends VulkanImage {
     @Override
     public long getSampler() { return sampler; }
 
+    /** Retires the image with its views and sampler once no frame can use them (HandleRetirement). */
     @Override
     public void free() {
         if (freed) return;
         freed = true;
-        if (sampler != 0L) {
-            vkDestroySampler(Vulkan.getVkDevice(), sampler, null);
-            sampler = 0L;
-        }
-        vkDestroyImageView(Vulkan.getVkDevice(), view, null);
-        views.values().forEach(alias -> vkDestroyImageView(Vulkan.getVkDevice(), alias, null));
+        long ownSampler = sampler;
+        List<Long> aliases = List.copyOf(views.values());
+        long image = getId();
+        sampler = 0L;
         views.clear();
-        vmaDestroyImage(Vulkan.getAllocator(), getId(), allocation);
+        HandleRetirement.retire(() -> {
+            if (ownSampler != 0L) vkDestroySampler(Vulkan.getVkDevice(), ownSampler, null);
+            vkDestroyImageView(Vulkan.getVkDevice(), view, null);
+            aliases.forEach(alias -> vkDestroyImageView(Vulkan.getVkDevice(), alias, null));
+            vmaDestroyImage(Vulkan.getAllocator(), image, allocation);
+        });
     }
 }

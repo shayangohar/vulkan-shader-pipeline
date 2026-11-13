@@ -523,9 +523,11 @@ final class PackSessionLifecycle {
         ChimeraSkyBridge.setEnabled(false);
     }
 
+    /** Idles the device; until the next frame records, retired handles go at once (HandleRetirement). */
     void waitForImmediateDestruction(String reason) {
         LOGGER.debug("[chimera] GPU idle: {}", reason);
         Vulkan.waitIdle();
+        HandleRetirement.idleUntilRecording();
     }
 
     void markPackVariantFallback() {
