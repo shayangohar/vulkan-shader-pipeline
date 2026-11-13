@@ -519,8 +519,6 @@ public final class ChimeraMainPass implements MainPass {
         }
         Renderer.getInstance().endRenderPass(commandBuffer);
 
-        this.postChain.nanTripwire.finishFrame(commandBuffer);
-
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VulkanImage outputColor = this.targets.compositeFramebuffer.getColorAttachment();
             trace("presentRead", "outputColor", outputColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -851,7 +849,6 @@ public final class ChimeraMainPass implements MainPass {
         // previous valid companions instead of destroying them.
         if (this.materials.materialMapOwner != null) this.materials.materialMapOwner.close();
         this.materials.materialMapOwner = null;
-        this.postChain.nanTripwire.close();
         targets.cleanUpFramebuffersAndPasses();
         cleanUpPipelines();
         ChimeraTerrainPipelines.cleanUp();
@@ -900,9 +897,6 @@ public final class ChimeraMainPass implements MainPass {
 
     @Override
     public void onResize() {
-        // Renderer idles the device before resize and may change its frames-in-flight
-        // count. Recreate the diagnostic ring at this same safe boundary.
-        this.postChain.nanTripwire.close();
         if (resources.serveSwapchain()) return;
         resources.createResources();
     }

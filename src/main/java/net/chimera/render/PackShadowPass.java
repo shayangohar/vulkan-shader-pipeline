@@ -404,6 +404,7 @@ final class PackShadowPass {
      * intact and turns the casters off for the session.
      */
     void renderShadowCasters(double cameraX, double cameraY, double cameraZ) {
+        ChimeraShadowCasters.clearCounts();
         if (pass.pipelines.shadowEntities == null || this.shadowCastersFailed
                 || pass.packPlan == null || pass.packConfig == null) {
             return;
