@@ -101,7 +101,7 @@ final class GraphicsImageScan {
         // Vulkan GLSL needs a binding for every opaque declaration, even one nothing reads (Solas
         // declares voxelSampler in terrain but only the shadow pass writes voxel_img). An image
         // declaration nothing reachable reads is already gone, with any dead code that read it
-        // (ProgramStageSources.withoutInactiveImages); samplers stay. Give every declared pack
+        // (PackPlanBuilder.withoutInactiveImages); samplers stay. Give every declared pack
         // image and every declared or referenced pack image sampler a descriptor. Runtime
         // eligibility remains based on the live uses in usesAdvancedResource.
         // The pattern opens with optional parts, so it is tried at every character; a stage

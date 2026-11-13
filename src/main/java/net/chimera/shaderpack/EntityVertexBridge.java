@@ -46,7 +46,7 @@ public final class EntityVertexBridge {
      * only for an invariant output (GLSL 4.60, 4.8.1). Without it NVIDIA put Insanity's entity and
      * glint ftransform() one ulp apart, so the glint speckled as the camera moved. Iris declares
      * nothing; its GL driver happened to agree. Interface blocks are flattened before conversion
-     * (ProgramStageSources), so no gl_PerVertex redeclaration follows this one.
+     * (PackPlanBuilder.prepareStages), so no gl_PerVertex redeclaration follows this one.
      */
     static final String INVARIANT_POSITION = "invariant gl_Position;\n";
 

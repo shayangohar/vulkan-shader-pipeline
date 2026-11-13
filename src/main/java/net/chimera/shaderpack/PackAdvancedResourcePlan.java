@@ -754,7 +754,7 @@ public final class PackAdvancedResourcePlan {
     /**
      * Inventory real storage blocks, and images of real opaque types that the stage references, not
      * image-prefixed identifiers. An image the stage only declares is inactive, as GL leaves it,
-     * and stage preparation drops its declaration (ProgramStageSources.withoutInactiveImages).
+     * and stage preparation drops its declaration (PackPlanBuilder.withoutInactiveImages).
      */
     static boolean containsAdvancedDeclarations(String source) {
         if (containsStorageBlock(source)) return true;
