@@ -120,7 +120,7 @@ final class PackFamilyWindows {
 
     public boolean beginPackFamilyWindow(GeometryOutputPlan outputs) {
         if (outputs == null || !outputs.requiresDynamicAttachments()
-                || !pass.packTargetResourcesReady || pass.shadowPass.shadowPassActive
+                || !pass.session.packTargetResourcesReady || pass.shadowPass.shadowPassActive
                 || pass.targets.hdrFramebuffer == null
                 || pass.targets.hdrFramebuffer.getDepthAttachment() == null
                 || !pass.packPostTargets.isConfigured()) {

@@ -335,28 +335,37 @@ final class ComputeKernel implements AutoCloseable {
                 size.get(2));
     }
 
+    /** Retires the kernel's pipeline, layouts, pool, module and uniform blocks once no frame can use them. */
     @Override
     public void close() {
-        if (pipeline != 0L) vkDestroyPipeline(Vulkan.getVkDevice(), pipeline, null);
-        if (pipelineLayout != 0L) vkDestroyPipelineLayout(Vulkan.getVkDevice(), pipelineLayout, null);
-        if (descriptorPool != 0L) vkDestroyDescriptorPool(Vulkan.getVkDevice(), descriptorPool, null);
-        if (setLayout != 0L) vkDestroyDescriptorSetLayout(Vulkan.getVkDevice(), setLayout, null);
-        if (shaderModule != 0L) vkDestroyShaderModule(Vulkan.getVkDevice(), shaderModule, null);
-        for (FrameSlot frame : frames) {
-            if (frame == null) continue;
-            if (frame.uniformMappedByChimera && frame.uniformAllocation != 0L) {
-                Vma.vmaUnmapMemory(Vulkan.getAllocator(), frame.uniformAllocation);
-            }
-            if (frame.uniformBuffer != 0L) {
-                Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.uniformBuffer, frame.uniformAllocation);
-            }
-        }
+        long ownPipeline = pipeline;
+        long ownPipelineLayout = pipelineLayout;
+        long ownPool = descriptorPool;
+        long ownSetLayout = setLayout;
+        long ownModule = shaderModule;
+        FrameSlot[] ownFrames = frames;
         pipeline = 0L;
         pipelineLayout = 0L;
         descriptorPool = 0L;
         setLayout = 0L;
         shaderModule = 0L;
         frames = new FrameSlot[0];
+        HandleRetirement.retire(() -> {
+            if (ownPipeline != 0L) vkDestroyPipeline(Vulkan.getVkDevice(), ownPipeline, null);
+            if (ownPipelineLayout != 0L) vkDestroyPipelineLayout(Vulkan.getVkDevice(), ownPipelineLayout, null);
+            if (ownPool != 0L) vkDestroyDescriptorPool(Vulkan.getVkDevice(), ownPool, null);
+            if (ownSetLayout != 0L) vkDestroyDescriptorSetLayout(Vulkan.getVkDevice(), ownSetLayout, null);
+            if (ownModule != 0L) vkDestroyShaderModule(Vulkan.getVkDevice(), ownModule, null);
+            for (FrameSlot frame : ownFrames) {
+                if (frame == null) continue;
+                if (frame.uniformMappedByChimera && frame.uniformAllocation != 0L) {
+                    Vma.vmaUnmapMemory(Vulkan.getAllocator(), frame.uniformAllocation);
+                }
+                if (frame.uniformBuffer != 0L) {
+                    Vma.vmaDestroyBuffer(Vulkan.getAllocator(), frame.uniformBuffer, frame.uniformAllocation);
+                }
+            }
+        });
         LOGGER.debug("[chimera] {} compute kernel closed", label);
     }
 }

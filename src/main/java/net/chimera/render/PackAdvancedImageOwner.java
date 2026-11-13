@@ -3,7 +3,6 @@ package net.chimera.render;
 import net.chimera.ChimeraMod;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
-import net.vulkanmod.vulkan.memory.MemoryManager;
 import net.vulkanmod.vulkan.texture.VulkanImage;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.VK10;
@@ -116,7 +115,7 @@ public final class PackAdvancedImageOwner implements AutoCloseable {
             return false;
         }
         failedRefits.remove(spec.name());
-        if (current != null) MemoryManager.getInstance().addFrameOp(current::free);
+        if (current != null) current.free();
         images.put(spec.name(), replacement);
         return true;
     }

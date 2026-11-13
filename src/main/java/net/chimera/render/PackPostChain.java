@@ -29,7 +29,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -47,16 +46,8 @@ final class PackPostChain {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private final ChimeraMainPass pass;
 
-    /** All discovered post programs, including static fallback stages. */
-    final List<PackPostExecution> packPostExecution = new ArrayList<>();
-
-    /** Identity-boundary diagnostics are emitted once per pack session. */
-    final Set<String> packPostBoundaryLogged = new HashSet<>();
-    /** The stages that threw while recording this pack session, which now run as identity. */
-    final PostStageFailures stageFailures = new PostStageFailures();
     /** The stage whose failure a window's abort is about to turn into the pack's fallback; null for none. */
     private String escalatedStage;
-    PackPostExecution packFinalExecution;
 
     PackPostChain(ChimeraMainPass pass) {
         this.pass = pass;
@@ -84,7 +75,7 @@ final class PackPostChain {
         VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
         pass.packPostTargets.beginFrame(commandBuffer, hdrColor, colortex0Clear);
         pass.packPostFrameStarted = true;
-        if (pass.coverage.packCoverageRuntimeEnabled() && pass.packPostChainActive) {
+        if (pass.coverage.packCoverageRuntimeEnabled() && pass.session.packPostChainActive) {
             pass.packPostTargets.prepareGeometryTarget(commandBuffer);
             pass.coverage.packCoverageOwner.beginFrame(commandBuffer);
             pass.coverage.packCoverageState.beginFrame();
@@ -148,7 +139,7 @@ final class PackPostChain {
                 if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
             }
             if (windowDue(window)) runPackPostWindow(commandBuffer, hdrColor, window);
-            if (pass.packPostChainActive) {
+            if (pass.session.packPostChainActive) {
                 pass.packPostTargets.enterWorld(commandBuffer, window, hdrColor);
             }
             hdrColor.transitionImageLayout(stack, commandBuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
@@ -166,7 +157,7 @@ final class PackPostChain {
             pass.packEarlyPostCompleted = true;
         }
         runPackPostWindow(commandBuffer, hdrColor, PackFrameSchedulePlan.PostWindow.LATE);
-        if (pass.packPostChainActive) pass.packPostTargets.enterFinal(commandBuffer);
+        if (pass.session.packPostChainActive) pass.packPostTargets.enterFinal(commandBuffer);
         commitPostFrame();
     }
 
@@ -184,7 +175,7 @@ final class PackPostChain {
             VulkanImage hdrColor,
             PackFrameSchedulePlan.PostWindow window
     ) {
-        if (!pass.packPostChainActive || !pass.packPostTargets.isConfigured()) {
+        if (!pass.session.packPostChainActive || !pass.packPostTargets.isConfigured()) {
             return;
         }
         ChimeraMainPass.PackRenderState previousState = pass.capturePackRenderState();
@@ -195,10 +186,12 @@ final class PackPostChain {
             pass.packPostTargets.requireFrameStarted();
             pass.packPostTargets.openPostWindow(commandBuffer, window);
             ChimeraMainPass.preparePackFullscreenState();
-            for (PackPostExecution stage : this.packPostExecution) {
+            for (PackPostExecution stage : pass.session.packPostExecution) {
                 if (!scheduledIn(stage, window)) continue;
                 if (stage.post() == null && computeOnly(stage.name())) {
-                    if (!this.stageFailures.skipped(stage.name())) runComputeOnlyStage(commandBuffer, hdrColor, stage);
+                    if (!pass.session.stageFailures.skipped(stage.name())) {
+                        runComputeOnlyStage(commandBuffer, hdrColor, stage);
+                    }
                     continue;
                 }
                 if (!stageRunnable(stage)) continue;
@@ -228,7 +221,7 @@ final class PackPostChain {
             markPostStageIdentityBoundary(stage, "not installed");
             return false;
         }
-        if (this.stageFailures.skipped(stage.name())) {
+        if (pass.session.stageFailures.skipped(stage.name())) {
             markPostStageIdentityBoundary(stage, "threw earlier this session");
             return false;
         }
@@ -272,7 +265,7 @@ final class PackPostChain {
      * back to vanilla instead (PostStageFailures); the window's abort then tells that.
      */
     private void isolateOrRethrow(String stage, RuntimeException failure) {
-        if (!this.stageFailures.isolate(stage, failure)) {
+        if (!pass.session.stageFailures.isolate(stage, failure)) {
             this.escalatedStage = stage;
             throw failure;
         }
@@ -346,7 +339,7 @@ final class PackPostChain {
     /** Turns the pack off for the session after post stage {@code subject} failed, and says so in chat. */
     private void fallBackToVanilla(String deviation, String subject, RuntimeException failure) {
         turnPackOff(deviation, subject, PostStageFailures.deviceLevel(failure) ? "the device failed"
-                : this.stageFailures.count() >= PostStageFailures.VANILLA_AT
+                : pass.session.stageFailures.count() >= PostStageFailures.VANILLA_AT
                 ? PostStageFailures.VANILLA_AT + " passes failed" : "it threw while recording a frame", failure);
     }
 
@@ -371,7 +364,7 @@ final class PackPostChain {
         if (pass.packDepthTargets.isConfigured()) {
             pass.packDepthTargets.commitFrame();
         }
-        if (pass.pipelines.finalPost == null || !pass.packPostChainActive || !finalStageRunnable()) {
+        if (pass.pipelines.finalPost == null || !pass.session.packPostChainActive || !finalStageRunnable()) {
             pass.packFinalApplied = true;
             return;
         }
@@ -404,11 +397,12 @@ final class PackPostChain {
 
     /** True when final's graph step is executable and its inputs are live; otherwise marks its boundary. */
     private boolean finalStageRunnable() {
-        if (this.packFinalExecution != null && this.stageFailures.skipped(this.packFinalExecution.name())) {
-            markPostStageIdentityBoundary(this.packFinalExecution, "threw earlier this session");
+        PackPostExecution finalExecution = pass.session.packFinalExecution;
+        if (finalExecution != null && pass.session.stageFailures.skipped(finalExecution.name())) {
+            markPostStageIdentityBoundary(finalExecution, "threw earlier this session");
             return false;
         }
-        TargetStep finalGraphStep = postGraphStep(this.packFinalExecution);
+        TargetStep finalGraphStep = postGraphStep(pass.session.packFinalExecution);
         boolean finalGraphExecutable = finalGraphStep != null && finalGraphStep.executable();
         boolean finalInputsAvailable = finalGraphExecutable
                 && pass.packPostTargets.areInputsAvailable(pass.pipelines.finalPost.requiredColorInputs())
@@ -416,11 +410,11 @@ final class PackPostChain {
         if (finalInputsAvailable) {
             return true;
         }
-        if (this.packFinalExecution != null) {
+        if (pass.session.packFinalExecution != null) {
             if (!finalGraphExecutable) {
-                markPostGraphIdentityBoundary(this.packFinalExecution, finalGraphStep);
+                markPostGraphIdentityBoundary(pass.session.packFinalExecution, finalGraphStep);
             } else {
-                markPostStageIdentityBoundary(this.packFinalExecution,
+                markPostStageIdentityBoundary(pass.session.packFinalExecution,
                         unavailablePostInputs(pass.pipelines.finalPost));
             }
         }
@@ -474,7 +468,7 @@ final class PackPostChain {
 
     /** Converts a static graph rejection into a per-stage identity boundary. */
     void markPostGraphIdentityBoundary(PackPostExecution stage, TargetStep step) {
-        if (this.packPostBoundaryLogged.contains(stage.name())) {
+        if (pass.session.packPostBoundaryLogged.contains(stage.name())) {
             if (!stage.finalStage()) {
                 pass.packPostTargets.invalidateOutputs(step == null
                         ? stage.outputTargets() : step.outputTargets());
@@ -565,7 +559,7 @@ final class PackPostChain {
         if (!finalStage) {
             pass.packPostTargets.invalidateOutputs(outputTargets);
         }
-        if (!this.packPostBoundaryLogged.add(name)) {
+        if (!pass.session.packPostBoundaryLogged.add(name)) {
             return;
         }
         String boundary = "POST_STAGE_IDENTITY_BOUNDARY:" + name;
@@ -583,7 +577,7 @@ final class PackPostChain {
 
     /** Disables all pack post seams while retaining objects for safe teardown. */
     void disablePackPostChain(String reason) {
-        pass.packTargetResourcesReady = false;
+        pass.session.packTargetResourcesReady = false;
         pass.packPostFrameStarted = false;
         pass.windows.restorePackResourceWindow();
         if (PackGeometryContext.active()) PackGeometryContext.close();
@@ -593,7 +587,7 @@ final class PackPostChain {
         ChimeraTerrainPipelines.setTranslucentOverride(null);
         ChimeraEntityBridge.setEnabled(false);
         ChimeraSkyBridge.setEnabled(false);
-        pass.packPostChainActive = false;
+        pass.session.packPostChainActive = false;
         pass.pipelines.compositePipeline = null;
         pass.pipelines.compositeSlots = null;
         pass.pipelines.compositeSamplerNames = List.of();
@@ -601,7 +595,7 @@ final class PackPostChain {
         pass.pipelines.finalSlots = null;
         pass.pipelines.finalSamplerNames = List.of();
         pass.pipelines.finalPost = null;
-        pass.packPostChainRejected = true;
+        pass.session.packPostChainRejected = true;
         if (pass.conformanceReport != null) {
             pass.conformanceReport.addDeviation(reason);
             for (PackPipelines.PackPost post : pass.pipelines.postStages) {
@@ -684,7 +678,7 @@ final class PackPostChain {
     }
 
     void configurePackPostTargets(int width, int height) {
-        if (pass.packPostChainRejected) {
+        if (pass.session.packPostChainRejected) {
             return;
         }
         try {
@@ -719,23 +713,24 @@ final class PackPostChain {
                     pass.packPlan.activePrograms(), pass.packTargetGraph, computeDepthReads());
             pass.packNeedsHdrDepth = pass.packTargetGraph.depth().any();
             pass.packDepthTargets.configure(width, height, pass.packTargetGraph.depth());
-            pass.packTargetResourcesReady = pass.packPostTargets.configure(pass.packTargetGraph, storageTargets());
-            pass.packPostChainActive = pass.packTargetResourcesReady && runsChain(pass.packTargetGraph,
+            pass.session.packTargetResourcesReady =
+                    pass.packPostTargets.configure(pass.packTargetGraph, storageTargets());
+            pass.session.packPostChainActive = pass.session.packTargetResourcesReady && runsChain(pass.packTargetGraph,
                     pass.packPassComputes != null && pass.packPassComputes.runInPostChain());
             // New targets, at load or after a resize: Iris runs its setup computes again.
             if (pass.packPassComputes != null) pass.packPassComputes.requestSetup();
-            if (pass.packPostChainActive) logSchedule();
+            if (pass.session.packPostChainActive) logSchedule();
         } catch (RuntimeException e) {
             pass.packPostTargets.cleanUp();
             pass.packDepthTargets.cleanUp();
             pass.coverage.packCoverageOwner.close();
             pass.coverage.packCoverageState.endFrame();
             pass.coverage.packCoveragePlan = PackCoveragePlan.disabled();
-            pass.packPostChainActive = false;
-            pass.packTargetResourcesReady = false;
+            pass.session.packPostChainActive = false;
+            pass.session.packTargetResourcesReady = false;
             pass.packTargetGraph = null;
             pass.packFrameSchedule = PackFrameSchedulePlan.empty();
-            pass.packPostChainRejected = true;
+            pass.session.packPostChainRejected = true;
             discardPackPostPipelines();
             if (pass.conformanceReport != null) {
                 pass.conformanceReport.addDeviation("POST_RESOURCE_ALLOCATION_FAILED");
@@ -838,8 +833,8 @@ final class PackPostChain {
 
     /** Builds the immutable post execution order once for the active pack. */
     void buildPackPostExecutionPlan() {
-        this.packPostExecution.clear();
-        this.packFinalExecution = null;
+        pass.session.packPostExecution.clear();
+        pass.session.packFinalExecution = null;
         if (pass.packPrograms == null) {
             return;
         }
@@ -877,9 +872,9 @@ final class PackPostChain {
             }
             PackPostExecution execution = new PackPostExecution(
                     program.name(), outputs, installed, program.name().equals("final"));
-            this.packPostExecution.add(execution);
+            pass.session.packPostExecution.add(execution);
             if (execution.finalStage()) {
-                this.packFinalExecution = execution;
+                pass.session.packFinalExecution = execution;
             }
         }
         addComputeOnlyExecutions();
@@ -888,11 +883,11 @@ final class PackPostChain {
     /** A pass with computes and no program runs them at its place (CompositeRenderer.ComputeOnlyPass). */
     private void addComputeOnlyExecutions() {
         for (String computePass : computePasses()) {
-            if (this.packPostExecution.stream().noneMatch(stage -> stage.name().equals(computePass))) {
-                this.packPostExecution.add(new PackPostExecution(computePass, List.of(), null, false));
+            if (pass.session.packPostExecution.stream().noneMatch(stage -> stage.name().equals(computePass))) {
+                pass.session.packPostExecution.add(new PackPostExecution(computePass, List.of(), null, false));
             }
         }
-        this.packPostExecution.sort(Comparator.comparing(PackPostExecution::name,
+        pass.session.packPostExecution.sort(Comparator.comparing(PackPostExecution::name,
                 PostTargetPlan.programComparator()));
     }
 
@@ -907,11 +902,11 @@ final class PackPostChain {
             }
         }
         pass.pipelines.postStages.clear();
-        this.packPostExecution.clear();
-        this.packPostBoundaryLogged.clear();
-        this.stageFailures.clear();
+        pass.session.packPostExecution.clear();
+        pass.session.packPostBoundaryLogged.clear();
+        pass.session.stageFailures.clear();
         pass.pipelines.finalPost = null;
-        this.packFinalExecution = null;
+        pass.session.packFinalExecution = null;
         pass.pipelines.compositePipeline = null;
         pass.pipelines.compositeSlots = null;
         pass.pipelines.compositeSamplerNames = List.of();

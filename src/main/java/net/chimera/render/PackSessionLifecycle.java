@@ -25,7 +25,6 @@ import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackSource;
 import net.chimera.shaderpack.ParticleDirectives;
-import net.chimera.shaderpack.PassComputePlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.SelectorNamespace;
 import net.chimera.shaderpack.ShadowPassUse;
@@ -57,8 +56,6 @@ import static org.lwjgl.vulkan.VK10.*;
 final class PackSessionLifecycle {
     private static final Logger LOGGER = LoggerFactory.getLogger("chimera");
     private final ChimeraMainPass pass;
-    /** The loaded pack's pass computes, as its analysis translated them. */
-    private PassComputePlan passComputes = PassComputePlan.empty();
 
     /** Original pack path used to select another dimension variant in place. */
     Path packPath;
@@ -197,7 +194,6 @@ final class PackSessionLifecycle {
         // Restore the host values before any pack-owned image is destroyed.
         pass.windows.restorePackResourceWindow();
         pass.images.programImages.clear();
-        pass.shadowPass.loggedShadowSamplerPrograms.clear();
         // Clear every selector that may still refer to a retired pack image.
         // The host rebinds its normal slots during the next draw window.
         SelectorNamespace.clearOwned(slot -> VTextureSelector.bindTexture(slot, null));
@@ -221,8 +217,6 @@ final class PackSessionLifecycle {
             pass.packStorageBufferOwner.close();
         }
         pass.packStorageBufferOwner = null;
-        pass.packStorageInitializationLogged = false;
-        pass.packTargetFrameNotStartedLogged = false;
         if (pass.packResourceOwner != null) pass.packResourceOwner.close();
         pass.packResourceOwner = null;
         if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.close();
@@ -230,26 +224,16 @@ final class PackSessionLifecycle {
         if (pass.packCenterDepth != null) pass.packCenterDepth.close();
         pass.packCenterDepth = null;
         pass.pipelines.clear();
-        pass.postChain.packPostExecution.clear();
-        pass.postChain.packPostBoundaryLogged.clear();
-        pass.postChain.stageFailures.clear();
-        pass.postChain.packFinalExecution = null;
-        pass.shadowPass.shadowCastersFailed = false;
+        // Every session flag, once-only log and plan no owner closes starts clear (PackSessionState).
+        pass.session = new PackSessionState();
         pass.shadowPass.composites.resetSession();
-        pass.shadowPass.shadowCutoutDispositionLogged = false;
         pass.shadowPass.shadowFrameReady = false;
-        pass.shadowPass.shadowTransitionFallbackLogged = false;
-        pass.packPipelinesLoaded = false;
-        pass.packPostChainActive = false;
-        pass.packPostChainRejected = false;
         pass.packPostFrameStarted = false;
         pass.packEarlyPostCompleted = false;
         pass.packWorldResolved = false;
         pass.packFinalApplied = false;
         pass.packConfig = null;
         pass.packPlan = null;
-        pass.shadowPass.shadowCulling = null;
-        pass.shadowPass.shadowUse = ShadowPassUse.ALWAYS;
         pass.screenOverlays = null;
         pass.skyDirectives = null;
         pass.weatherDirectives = null;
@@ -387,7 +371,11 @@ final class PackSessionLifecycle {
         PackFailureNotices.publish();
     }
 
-    /** Clears all pack-owned objects and closes the current source after the idle wait. */
+    /**
+     * Clears all pack-owned objects and closes the current source: after an idle wait for a pack
+     * change, or with no wait for its rollback, whose failed load may have submitted uploads the
+     * idle wait never saw (their handles then wait for their frames, HandleRetirement).
+     */
     void preparePackSessionReplacement(boolean waitForIdle) {
         pass.packFrameUnsupported = null;
         clearPackOverrides();
@@ -395,8 +383,13 @@ final class PackSessionLifecycle {
         pass.pendingDepthClear = false;
         pass.shadowPass.shadowPending = false;
         if (waitForIdle) {
-            waitForImmediateDestruction("pack replacement");
+            waitForImmediateDestruction("pack replacement", this::tearDownPackSession);
+        } else {
+            tearDownPackSession();
         }
+    }
+
+    private void tearDownPackSession() {
         cleanUpPackVariant();
         pass.targets.cleanUpFramebuffersAndPasses();
         pass.cleanUpPipelines();
@@ -458,8 +451,7 @@ final class PackSessionLifecycle {
             pass.levelPhase = false;
             pass.pendingDepthClear = false;
             pass.shadowPass.shadowPending = false;
-            waitForImmediateDestruction("dimension variant " + requested);
-            cleanUpPackVariant();
+            waitForImmediateDestruction("dimension variant " + requested, this::cleanUpPackVariant);
             pass.packFrameUnsupported = null;
             pass.packSource.selectDimension(requested);
             pass.resources.createResources();
@@ -523,9 +515,11 @@ final class PackSessionLifecycle {
         ChimeraSkyBridge.setEnabled(false);
     }
 
-    void waitForImmediateDestruction(String reason) {
+    /** Idles the device, then runs {@code teardown}, whose retired handles go at once (HandleRetirement). */
+    void waitForImmediateDestruction(String reason, Runnable teardown) {
         LOGGER.debug("[chimera] GPU idle: {}", reason);
         Vulkan.waitIdle();
+        HandleRetirement.whileIdle(teardown);
     }
 
     void markPackVariantFallback() {
@@ -629,7 +623,7 @@ final class PackSessionLifecycle {
         }
         if (fresh) logPackOptions(dir, options);
         pass.conformanceReport = analysis.report();
-        this.passComputes = analysis.passComputes();
+        pass.session.passComputes = analysis.passComputes();
         pass.packPrograms = analysis.plan() == null ? result.programs()
                 : analysis.plan().programs().stream().map(PackProgramPlan::program).toList();
         pass.packConfig = analysis.config() != null
@@ -657,15 +651,15 @@ final class PackSessionLifecycle {
 
     /** Hands the plan's shadow culling, terrain material and terrain shading to the host. */
     private void installTerrainDirectives() {
-        pass.shadowPass.shadowCulling = pass.packPlan.shadowCulling();
+        pass.session.shadowCulling = pass.packPlan.shadowCulling();
         int renderDistance = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
         LOGGER.debug("[chimera] shadow culling: state={}, terrain={}, entities={} (render distance {}){}",
-                pass.shadowPass.shadowCulling.state(), pass.shadowPass.shadowCulling.terrain(renderDistance).describe(),
-                pass.shadowPass.shadowCulling.entities(renderDistance).describe(), renderDistance,
-                pass.shadowPass.shadowCulling.deviations().isEmpty() ? "" : " "
-                        + pass.shadowPass.shadowCulling.deviations());
-        ShadowPassUse shadowUse = ShadowPassUse.of(pass.packPlan, this.passComputes);
-        pass.shadowPass.shadowUse = shadowUse;
+                pass.session.shadowCulling.state(), pass.session.shadowCulling.terrain(renderDistance).describe(),
+                pass.session.shadowCulling.entities(renderDistance).describe(), renderDistance,
+                pass.session.shadowCulling.deviations().isEmpty() ? "" : " "
+                        + pass.session.shadowCulling.deviations());
+        ShadowPassUse shadowUse = ShadowPassUse.of(pass.packPlan, pass.session.passComputes);
+        pass.session.shadowUse = shadowUse;
         LOGGER.debug("[chimera] shadow pass: runs={}, entityShadowsReplaced={} (shadow.enabled={}, readers={}, "
                 + "writers={}){}", shadowUse.runs(), shadowUse.replacesEntityShadows(), shadowUse.enabled(),
                 shadowUse.readers(), shadowUse.writers(),
@@ -728,11 +722,11 @@ final class PackSessionLifecycle {
         int width = Math.max(window.getWidth(), 1);
         int height = Math.max(window.getHeight(), 1);
         pass.packAdvancedImageOwner = PackAdvancedImageOwner.load(pass.packPlan.advancedResources(), width, height,
-                passComputes.imageFormats());
+                pass.session.passComputes.imageFormats());
         pass.packCenterDepth = PackCenterDepth.create(pass.packPlan);
         pass.packStorageBufferOwner = PackStorageBufferOwner.load(pass.packPlan.advancedResources(), width, height,
-                passComputes.storageBuffers());
-        pass.packPassComputes = PackPassComputes.load(passComputes, pass.packResourceOwner,
+                pass.session.passComputes.storageBuffers());
+        pass.packPassComputes = PackPassComputes.load(pass.session.passComputes, pass.packResourceOwner,
                 pass.packAdvancedImageOwner, pass.packStorageBufferOwner);
         for (String compute : pass.packPassComputes.installedNames()) {
             if (pass.conformanceReport != null && pass.conformanceReport.program(compute) != null) {

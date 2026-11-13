@@ -47,7 +47,7 @@ public final class PreSkyPasses {
                 Vec3 position = camera.getPosition();
                 pass.renderShadowSegment(position.x, position.y, position.z);
             }
-            if (pass.packPostChainActive && pass.postChain.hasPrepareWork()) {
+            if (pass.session.packPostChainActive && pass.postChain.hasPrepareWork()) {
                 pass.postChain.runPrepareWindow(Renderer.getCommandBuffer());
             }
         } finally {

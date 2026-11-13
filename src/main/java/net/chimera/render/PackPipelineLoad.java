@@ -41,7 +41,7 @@ final class PackPipelineLoad {
      * never break the frame.
      */
     void loadPackPipelines() {
-        if (pass.packPipelinesLoaded) {
+        if (pass.session.packPipelinesLoaded) {
             // Pack pipelines are pass-agnostic (VulkanMod builds pipeline
             // variants from the state at bind, render pass included), so a
             // retained object stays correct across createResources' pass
@@ -84,20 +84,20 @@ final class PackPipelineLoad {
         logPackStoragePath("pipelines-installed");
     }
 
-    /** Clears the previous session's pipelines and per-session runtime flags, and marks this load. */
+    /**
+     * Clears the previous session's pipelines and marks this load. The session's flags and logs
+     * start clear: cleanUpPackVariant replaced them (PackSessionState) before any load. All but one:
+     * createResources configures the post targets before it loads the pipelines, so a target
+     * allocation that failed just now has already marked the chain rejected. The load clears that
+     * mark, so the world programs, entity bridge and pack shadows still run without post, as
+     * PackPostChain's failure notice says; a later failure, mid-session, keeps the mark.
+     */
     private void resetSessionPipelines() {
         pass.pipelines.clear();
-        pass.postChain.packPostExecution.clear();
-        pass.postChain.packPostBoundaryLogged.clear();
-        pass.postChain.stageFailures.clear();
-        pass.postChain.packFinalExecution = null;
-        pass.packPostChainRejected = false;
         pass.windows.restorePackResourceWindow();
         pass.packTranslucentSuspended = false;
-        pass.packTranslucentSuspendLogged = false;
-        pass.shadowPass.shadowCastersFailed = false;
-        pass.shadowPass.shadowCutoutDispositionLogged = false;
-        pass.packPipelinesLoaded = true;
+        pass.session.packPostChainRejected = false;
+        pass.session.packPipelinesLoaded = true;
     }
 
     /** Hands the installed entity, block, hand, particle and caster pipelines to the family bridge. */
@@ -227,7 +227,8 @@ final class PackPipelineLoad {
         }
         LOGGER.warn("[chimera] pack frame unsupported: {}; vanilla rendering for {}",
                 reason, PackSessionLifecycle.packLabel(pass.sessions.packPath));
-        // Nothing built this session has been submitted yet, so release it directly.
+        // Nothing built this session has drawn yet, but a raw texture's upload may still be running:
+        // its handles wait for their frames (HandleRetirement), outside any idle teardown.
         pass.sessions.cleanUpPackVariant();
         String pack = PackSessionLifecycle.packLabel(pass.sessions.packPath);
         PackFailureNotices.record(new PackFailureNotices.Failure(pack, "pack", "load",

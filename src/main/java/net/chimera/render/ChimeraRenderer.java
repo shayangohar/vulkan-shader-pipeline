@@ -215,11 +215,11 @@ public final class ChimeraRenderer {
      */
     public static List<String> shadowDebugLines() {
         if (!packProjectionActive()) return List.of();
-        PackShadowPass shadows = chimeraPass.shadowPass;
-        if (!shadows.shadowUse.runs() || !shadows.shadowMap.isInitialized()) {
+        ChimeraShadowMap shadowMap = chimeraPass.shadowPass.shadowMap;
+        if (!chimeraPass.session.shadowUse.runs() || !shadowMap.isInitialized()) {
             return List.of("", "[Chimera] Shadows: not used by pack");
         }
-        return List.of("", "[Chimera] Shadows: " + shadows.shadowMap.debugInfo() + ", C: "
+        return List.of("", "[Chimera] Shadows: " + shadowMap.debugInfo() + ", C: "
                 + ShadowSectionQueue.sectionCounts() + ", " + ChimeraShadowCasters.counts());
     }
 
