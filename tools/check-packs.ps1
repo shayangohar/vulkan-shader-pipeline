@@ -5,7 +5,7 @@ The frozen Fabric 1.21.11 line (CHIMERA instance) runs from the fabric/1.21.11 b
   .\tools\check-packs.ps1                          the full gate: check build
   .\tools\check-packs.ps1 packTest                 one task
   .\tools\check-packs.ps1 -Corpus optionSweep      also the corpus packs in testpacks\corpus\packs
-  .\tools\check-packs.ps1 -Corpus -Device amd packTest --tests '*PackCompileTest*'
+  .\tools\check-packs.ps1 -Corpus -Device amd packTest --tests '*CorpusShard*'
                                                    compile for another GPU profile: nvidia (default), amd, intel
 
 Every value becomes a -Pchimera.* property, which build.gradle passes to the tests.

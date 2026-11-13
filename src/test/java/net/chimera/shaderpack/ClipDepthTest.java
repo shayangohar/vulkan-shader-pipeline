@@ -1,7 +1,5 @@
 package net.chimera.shaderpack;
 
-import net.chimera.testing.TestPacks;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -32,35 +30,28 @@ final class ClipDepthTest {
     }
 
     /**
-     * Every corpus program's stages before the rasterizer, as converted: at most one conversion, in
-     * the last of them, and exactly one where they work in GL's range: a shadow program, the hand
-     * and sky draws (their preamble's chimeraHandProjection or chimeraSkyProjection), and any stage
-     * that takes the host's clip position into GL's range (chimeraGlClip). A glint drawn in the
-     * hand converts once too.
+     * Every program of a corpus pack (CorpusChecks): its stages before the rasterizer, as converted:
+     * at most one conversion, in the last of them, and exactly one where they work in GL's range: a
+     * shadow program, the hand and sky draws (their preamble's chimeraHandProjection or
+     * chimeraSkyProjection), and any stage that takes the host's clip position into GL's range
+     * (chimeraGlClip). A glint drawn in the hand converts once too. Returns the paths it checked.
      */
-    @Test
-    @Tag("packs")
-    void everyCorpusPathConvertsTheClipDepthOnceAtMost() throws Exception {
-        List<Path> packs = new ArrayList<>(TestPacks.extra());
-        packs.add(TestPacks.complementary());
-        packs.add(TestPacks.bsl());
-        List<String> failures = new ArrayList<>();
+    static int checkPack(Path pack, PackProbe.Analysis analysis, List<String> failures) {
         int paths = 0;
         int converting = 0;
-        for (Path pack : packs) {
-            for (PackProgramPlan plan : PackProbe.analyze(pack).plan().programs()) {
-                UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(plan.name());
-                if (!plan.executable() || stage == UniformRegistry.Stage.POST || plan.convertedVertex() == null) {
-                    continue;
-                }
-                paths++;
-                String failure = pathFailure(plan, stage);
-                if (failure != null) failures.add(pack.getFileName() + " " + plan.name() + ": " + failure);
-                if (conversions(chain(plan)) == 1) converting++;
+        for (PackProgramPlan plan : analysis.plan().programs()) {
+            UniformRegistry.Stage stage = FamilyAdapterRegistry.stageFor(plan.name());
+            if (!plan.executable() || stage == UniformRegistry.Stage.POST || plan.convertedVertex() == null) {
+                continue;
             }
+            paths++;
+            String failure = pathFailure(plan, stage);
+            if (failure != null) failures.add(pack.getFileName() + " " + plan.name() + ": " + failure);
+            if (conversions(chain(plan)) == 1) converting++;
         }
-        System.out.printf("[chimera] clip depth: %d paths, %d convert in GL's range%n", paths, converting);
-        assertTrue(paths > 0 && failures.isEmpty(), String.join("\n", failures));
+        System.out.printf("[chimera] clip depth %s: %d paths, %d convert in GL's range%n", pack.getFileName(),
+                paths, converting);
+        return paths;
     }
 
     /** What is wrong with a program's path to the rasterizer, or null. */

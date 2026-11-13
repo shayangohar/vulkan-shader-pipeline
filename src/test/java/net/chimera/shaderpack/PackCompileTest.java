@@ -10,7 +10,6 @@ import net.chimera.render.shader.GlslCompiler;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
 import org.junit.jupiter.api.Tag;
-import org.junit.jupiter.api.Test;
 import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.util.shaderc.Shaderc;
 
@@ -18,9 +17,12 @@ import java.io.IOException;
 import java.lang.reflect.Type;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -490,77 +492,91 @@ final class PackCompileTest {
     }
 
     /**
-     * Gate: every program the named packs install must compile, and the set each pack's plan
-     * rejects must match the recorded admission baseline. Compiling only admitted programs cannot
-     * see a program the plan newly rejects (MakeUp 9.5g terrain fell back in game while every
-     * admitted program compiled). The packs are the
-     * locked pair plus {@code chimera.pack.extra}; {@code -Pchimera.packCompile.updateAdmission=true}
-     * rewrites the baseline after review. Every compiled shader must also match its
-     * converted-output baseline ({@link ConvertedOutputSnapshot}); {@code -Pchimera.snapshot.update=true}
-     * rewrites that, and {@code -Pchimera.snapshot.spirvOnly=true} compares SPIR-V alone.
-     * {@code -Pchimera.device=amd} or {@code intel} compiles for that GPU (PackDevice), whose
-     * vendor paths differ, against its own admission baseline and without converted output.
+     * The compile gate's check of one pack (CorpusChecks runs it): every program the pack installs
+     * must compile, and the set its plan rejects must match the recorded admission baseline.
+     * Compiling only admitted programs cannot see a program the plan newly rejects (MakeUp 9.5g
+     * terrain fell back in game while every admitted program compiled).
+     * {@code -Pchimera.packCompile.updateAdmission=true} records the rejected set in {@code recorded}
+     * instead, for {@link #writeBaseline}. Every compiled shader must also match its converted-output
+     * baseline ({@link ConvertedOutputSnapshot}); {@code -Pchimera.snapshot.update=true} rewrites
+     * that, and {@code -Pchimera.snapshot.spirvOnly=true} compares SPIR-V alone.
+     * {@code -Pchimera.device=amd} or {@code intel} compiles for that GPU (PackDevice), whose vendor
+     * paths differ, against its own admission baseline and without converted output.
      */
-    @Test
-    void compileLockedPacks() throws Exception {
-        List<Path> packs = new ArrayList<>(List.of(TestPacks.complementary(), TestPacks.bsl()));
-        packs.addAll(TestPacks.extra());
-        // Each device profile admits its own programs; converted output is recorded for the default, NVIDIA.
+    static void checkPack(Path pack, PackProbe.Analysis analysis, Map<String, TreeSet<String>> baseline,
+                          Map<String, TreeSet<String>> recorded, List<String> failures) {
+        String key = pack.getFileName().toString();
+        boolean defaultProfile = PackDevice.current().profile().equals(PackDevice.DEFAULT_PROFILE);
+        ConvertedOutputSnapshot snapshot = defaultProfile ? new ConvertedOutputSnapshot(key) : null;
+        Result result = run(pack, analysis, snapshot);
+        if (snapshot != null) {
+            failures.addAll(snapshot.compareWithBaseline(Boolean.getBoolean("chimera.snapshot.update"),
+                    Boolean.getBoolean("chimera.snapshot.spirvOnly")));
+        }
+        SortedSet<String> rejected = rejectedPrograms(pack, analysis);
+        System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected,"
+                + " pass computes %s%n", key, result.compiled(), result.failures().size(), rejected.size(),
+                result.passComputes());
+        System.out.printf("[chimera] pack skips told %s: %s%n", key, toldSkips(analysis, rejected));
+        if (result.compiled() == 0) failures.add(key + ": no program compiled");
+        result.failures().forEach(failure -> failures.add(key + " " + failure));
+        if (Boolean.getBoolean("chimera.packCompile.updateAdmission")) {
+            recorded.put(key, new TreeSet<>(rejected));
+        } else {
+            failures.addAll(admissionChanges(key, rejected, baseline.get(key), analysis));
+        }
+    }
+
+    /** The admission baseline of the current device profile: each pack's rejected programs. */
+    static Path baselinePath() {
         String profile = PackDevice.current().profile();
-        boolean defaultProfile = profile.equals(PackDevice.DEFAULT_PROFILE);
-        Path baselinePath = TestPacks.baseline(defaultProfile ? "pack_admission" : "pack_admission-" + profile);
-        boolean update = Boolean.getBoolean("chimera.packCompile.updateAdmission");
-        Gson gson = new GsonBuilder().setPrettyPrinting().create();
-        Type baselineType =
-                new TypeToken<TreeMap<String, TreeSet<String>>>() {}.getType();
-        TreeMap<String, TreeSet<String>> baseline = Files.isRegularFile(baselinePath)
-                ? gson.fromJson(Files.readString(baselinePath), baselineType)
-                : new TreeMap<>();
+        return TestPacks.baseline(profile.equals(PackDevice.DEFAULT_PROFILE)
+                ? "pack_admission" : "pack_admission-" + profile);
+    }
+
+    private static List<String> admissionChanges(String key, Set<String> rejected, Set<String> expected,
+                                                 PackProbe.Analysis analysis) {
         List<String> failures = new ArrayList<>();
-        for (Path pack : packs) {
-            String key = pack.getFileName().toString();
-            PackProbe.Analysis analysis = PackProbe.analyze(pack);
-            ConvertedOutputSnapshot snapshot = defaultProfile ? new ConvertedOutputSnapshot(key) : null;
-            Result result = run(pack, analysis, snapshot);
-            if (snapshot != null) {
-                failures.addAll(snapshot.compareWithBaseline(Boolean.getBoolean("chimera.snapshot.update"),
-                        Boolean.getBoolean("chimera.snapshot.spirvOnly")));
-            }
-            SortedSet<String> rejected = rejectedPrograms(pack, analysis);
-            System.out.printf("[chimera] pack compile %s: %d programs compile, %d failures, %d rejected,"
-                    + " pass computes %s%n", key, result.compiled(), result.failures().size(), rejected.size(),
-                    result.passComputes());
-            System.out.printf("[chimera] pack skips told %s: %s%n", key, toldSkips(analysis, rejected));
-            if (result.compiled() == 0) failures.add(key + ": no program compiled");
-            result.failures().forEach(failure -> failures.add(key + " " + failure));
-            if (update) {
-                baseline.put(key, new TreeSet<>(rejected));
-                continue;
-            }
-            Set<String> expected = baseline.get(key);
-            if (expected == null) {
-                failures.add(key + ": no admission baseline; rejected=" + rejected
-                        + " (run with -Pchimera.packCompile.updateAdmission=true after reviewing)");
-                continue;
-            }
-            for (String program : rejected) {
-                if (!expected.contains(program)) {
-                    failures.add(key + " " + program + " newly rejected: " + rejectionReasons(analysis, program));
-                }
-            }
-            for (String program : expected) {
-                if (!rejected.contains(program)) {
-                    failures.add(key + " " + program
-                            + " is now admitted; record it with -Pchimera.packCompile.updateAdmission=true");
-                }
+        if (expected == null) {
+            failures.add(key + ": no admission baseline; rejected=" + rejected
+                    + " (run with -Pchimera.packCompile.updateAdmission=true after reviewing)");
+            return failures;
+        }
+        for (String program : rejected) {
+            if (!expected.contains(program)) {
+                failures.add(key + " " + program + " newly rejected: " + rejectionReasons(analysis, program));
             }
         }
-        if (update) {
-            Files.writeString(baselinePath, gson.toJson(baseline) + System.lineSeparator());
-            System.out.println("[chimera] pack admission baseline written: " + baselinePath);
+        for (String program : expected) {
+            if (!rejected.contains(program)) {
+                failures.add(key + " " + program
+                        + " is now admitted; record it with -Pchimera.packCompile.updateAdmission=true");
+            }
         }
-        if (!failures.isEmpty()) {
-            throw new AssertionError("pack compile gate failed:\n  " + String.join("\n  ", failures));
+        return failures;
+    }
+
+    private static final Type BASELINE_TYPE = new TypeToken<TreeMap<String, TreeSet<String>>>() {}.getType();
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+
+    static TreeMap<String, TreeSet<String>> readBaseline(Path path) throws IOException {
+        return Files.isRegularFile(path) ? GSON.fromJson(Files.readString(path), BASELINE_TYPE) : new TreeMap<>();
+    }
+
+    /** Merges one shard's packs into the baseline; the shards write one at a time, under a file lock. */
+    static void writeBaseline(Path path, Map<String, TreeSet<String>> recorded) throws IOException {
+        // In build/, kept: a shard waiting on the lock holds the file open, so it is never deleted.
+        Path lock = Files.createDirectories(Path.of("build")).resolve(path.getFileName() + ".lock");
+        try (FileChannel channel = FileChannel.open(lock, StandardOpenOption.CREATE, StandardOpenOption.WRITE)) {
+            FileLock held = channel.lock();
+            try {
+                TreeMap<String, TreeSet<String>> baseline = readBaseline(path);
+                baseline.putAll(recorded);
+                Files.writeString(path, GSON.toJson(baseline) + System.lineSeparator());
+            } finally {
+                held.release();
+            }
         }
+        System.out.println("[chimera] pack admission baseline written: " + path);
     }
 }

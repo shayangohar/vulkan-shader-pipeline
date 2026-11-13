@@ -1,8 +1,11 @@
 package net.chimera.testing;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -42,6 +45,41 @@ public final class TestPacks {
     public static List<Path> extra() {
         return Arrays.stream(System.getProperty("chimera.pack.extra", "").split(";"))
                 .map(String::strip).filter(value -> !value.isEmpty()).map(TestPacks::existing).toList();
+    }
+
+    /** The corpus a pack gate covers: the locked pair, then {@link #extra}. */
+    public static List<Path> corpus() {
+        List<Path> packs = new ArrayList<>(List.of(complementary(), bsl()));
+        packs.addAll(extra());
+        return packs;
+    }
+
+    /**
+     * The packs shard {@code shard} of {@code shards} takes: largest first, each to the shard with
+     * the fewest bytes so far, so the shards' work is about even and a pack always lands in the same
+     * shard. Every pack lands in exactly one shard.
+     */
+    public static List<Path> shard(List<Path> packs, int shard, int shards) {
+        List<Path> sorted = new ArrayList<>(packs);
+        sorted.sort(Comparator.comparingLong(TestPacks::size).reversed()
+                .thenComparing(path -> path.getFileName().toString()));
+        long[] load = new long[shards];
+        List<Path> mine = new ArrayList<>();
+        for (Path pack : sorted) {
+            int target = 0;
+            for (int index = 1; index < shards; index++) if (load[index] < load[target]) target = index;
+            load[target] += Math.max(1L, size(pack));
+            if (target == shard) mine.add(pack);
+        }
+        return mine;
+    }
+
+    private static long size(Path pack) {
+        try {
+            return Files.isRegularFile(pack) ? Files.size(pack) : 0L;
+        } catch (IOException unreadable) {
+            return 0L;
+        }
     }
 
     /** A path the run must name, such as an evidence log; fails with the flag to set when it is missing. */
