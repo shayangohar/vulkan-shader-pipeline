@@ -18,7 +18,8 @@ final class GlslStorageBufferParser {
      * One storage block. {@code laidOut} is whether Vulkan lays it out as GL does: std430, std140,
      * or no packing qualifier, which glslang lays out std430 for Vulkan in every stage alike, as GL
      * lays out an unqualified (shared) block alike in every program. Shrimple qualifies none of its
-     * blocks. Explicit shared or packed has no Vulkan layout.
+     * blocks. Explicit shared or packed has no Vulkan layout. A block with no {@code layout(...)} at
+     * all is not laid out and has no binding (-1).
      */
     record Block(
             String blockName,

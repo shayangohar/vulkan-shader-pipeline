@@ -163,7 +163,7 @@ public final class FamilyAdapterRegistry {
         return name.equals("gbuffers_terrain") || name.equals("gbuffers_water") || isShadowTerrain(name);
     }
 
-    /** Programs whose modern sources are normalized like terrain: terrain, water and both shadow lanes. */
+    /** Programs whose modern sources are normalized like terrain: terrain, water and every shadow-pass program. */
     static boolean isTerrainMaterialFamily(String name) {
         return name.equals("gbuffers_terrain") || name.equals("gbuffers_water") || isShadowFamily(name);
     }

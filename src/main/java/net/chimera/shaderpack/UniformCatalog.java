@@ -106,8 +106,9 @@ final class UniformCatalog {
     }
 
     /**
-     * The host's core-shader uniforms (MVP, the Fog block, ScreenSize and the rest), then the
-     * lowercase spellings of the fog and size ones.
+     * The host's core-shader uniforms (MVP, the Fog block, ScreenSize and the rest), then Iris's fog
+     * uniforms and their iris_ forms, cloudTime, gtextureSize, blendFunc, the selected block's id and
+     * position, and screenSize.
      */
     static void addHostShaderUniforms(Map<String, UniformRegistry.UniformDescriptor> specs) {
         addLive(specs, "MVP", "mat4");

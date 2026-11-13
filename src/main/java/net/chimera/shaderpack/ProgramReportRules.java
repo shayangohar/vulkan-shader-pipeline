@@ -204,8 +204,7 @@ final class ProgramReportRules {
     private static boolean runsUnsupportedStage(PackProbe.Inventory inventory, PackPlan packPlan,
                                                 PackProgramPlan programPlan) {
         boolean passCompute = PassComputePlan.isPassComputeProgram(inventory.name);
-        boolean tessellation = packPlan != null && packPlan.settings() != null
-                && packPlan.settings().readsTessellation();
+        boolean tessellation = packPlan != null && packPlan.settings().readsTessellation();
         Set<String> converted = programPlan == null ? Set.of() : programPlan.betweenStages().present().stream()
                 .map(BetweenStages.Stage::name).collect(Collectors.toSet());
         return inventory.stages.stream().anyMatch(stage -> PackProgram.runsBetweenStages(stage, tessellation)
@@ -717,17 +716,17 @@ final class ProgramReportRules {
                 && SEVERE_PREFIXES.stream().anyMatch(deviation::startsWith);
     }
 
-    /**
-     * Labels a program whose conversion failed: a version outside the one rule
-     * (GlslVersion), or syntax beyond the legacy subset. A validated conversion
-     * clears it, so the version number alone never rejects a program.
-     */
     /** Syntax the post and entity converters cannot take; their stage declarations convert. */
     private static final Set<String> CONVERTED_STAGE_SYNTAX = Set.of("layout", "buffer", "shared", "subroutine");
     /** Syntax beyond the legacy subset in the other families. */
     private static final Set<String> MODERN_STAGE_SYNTAX = Set.of("layout", "in", "out", "flat", "noperspective",
             "buffer");
 
+    /**
+     * Labels a program whose conversion failed: a version outside the one rule
+     * (GlslVersion), or syntax beyond the legacy subset. A validated conversion
+     * clears it, so the version number alone never rejects a program.
+     */
     static boolean usesUnsupportedModernGlsl(String source, boolean post, boolean entity) {
         if (!GlslVersion.supportedIfDeclared(source)) {
             return true;

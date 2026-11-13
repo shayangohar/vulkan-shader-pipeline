@@ -400,10 +400,10 @@ final class PackDescriptorContracts {
         return sourceStage == 0 || (binding.stageMask() & sourceStage) == sourceStage;
     }
 
-    /** The admitted image a storage binding writes; an unsupported one fails the rewrite. */
     /**
      * The pack image a storage binding names; null for a colour target's colorimgN, whose binding
-     * carries the format it is declared in (GraphicsImageScan.addTargetWriter).
+     * carries the format it is declared in (GraphicsImageScan.addTargetWriter). A missing or
+     * unsupported image fails the rewrite.
      */
     private static PackAdvancedResourcePlan.ImageSpec supportedImage(
             PackAdvancedResourcePlan advancedResources, PackAdvancedResourcePlan.GraphicsImageBinding binding) {

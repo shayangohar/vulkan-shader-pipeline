@@ -584,7 +584,7 @@ public class ChimeraShadowMap {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             for (int index : indices) {
                 if (index >= this.shadowColors.size()) continue;
-                VulkanImage copy = this.passReadCopies.computeIfAbsent(index, this::createPassReadCopy);
+                VulkanImage copy = this.passReadCopies.computeIfAbsent(index, this::createLevelZeroTarget);
                 ShadowTargetDirectives.ColorTarget target = this.targets.color(index);
                 if (target.clear()) {
                     PackTargetImages.clearImage(stack, commandBuffer, copy, target.clearColor());
@@ -607,7 +607,8 @@ public class ChimeraShadowMap {
         this.passReadsOpen = false;
     }
 
-    private VulkanImage createPassReadCopy(int index) {
+    /** Another image of shadowcolor{@code index}, at its format, size and clear, with mip level 0 only. */
+    private VulkanImage createLevelZeroTarget(int index) {
         TargetSpec spec = colorSpec(index);
         return createColorTarget(new TargetSpec(index, spec.format(), spec.width(), spec.height(),
                 spec.clear(), spec.clearColor(), false, false, false, spec.paddedAlpha(), List.of()));
@@ -630,9 +631,7 @@ public class ChimeraShadowMap {
         if (this.flippedColors.contains(index)) return drawn;
         VulkanImage alternate = this.alternateColors.get(index);
         if (alternate == null) {
-            TargetSpec spec = colorSpec(index);
-            alternate = createColorTarget(new TargetSpec(index, spec.format(), spec.width(), spec.height(),
-                    spec.clear(), spec.clearColor(), false, false, false, spec.paddedAlpha(), List.of()));
+            alternate = createLevelZeroTarget(index);
             PackTargetImages.clearImage(stack, commandBuffer, alternate, this.targets.color(index).clearColor());
             this.alternateColors.put(index, alternate);
         }

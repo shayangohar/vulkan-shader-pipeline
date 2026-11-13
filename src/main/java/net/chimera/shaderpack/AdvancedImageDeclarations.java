@@ -13,18 +13,20 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * Reads a pack's advanced images and compute stages: each image.<name> declaration and its
- * dimensions, the compute programs that write them, and the memory budget they must fit.
+ * Reads a pack's advanced images: each image.<name> declaration and its dimensions, Iris's limit
+ * of 16 images, whether a stage reads or writes one, and the type and format a declaration binds it in.
  */
 final class AdvancedImageDeclarations {
     /** The sampler name ShaderProperties reads as no sampler. */
     private static final String NO_SAMPLER = "none";
     /** Iris's image limit (ShaderProperties). */
     static final int MAX_IMAGES = 16;
+    private static final Pattern SAMPLER_3D =
+            Pattern.compile("\\b(?:sampler3D|isampler3D|usampler3D)\\s+([A-Za-z_]\\w*)");
 
     private AdvancedImageDeclarations() {}
 
-    /** Parses every image.<name> property, then admits the supported images the memory budget fits. */
+    /** Parses every image.<name> property and marks each supported image applied (ADVANCED_IMAGE_APPLIED). */
     static Map<String, PackAdvancedResourcePlan.ImageSpec> parseImages(
             PackSettingsPlan settings, List<String> deviations) {
         Map<String, PackAdvancedResourcePlan.ImageSpec> images = new TreeMap<>();
@@ -236,8 +238,7 @@ final class AdvancedImageDeclarations {
         GlslResourceUsage.Analysis usage = GlslResourceUsage.analyze(source, injectedSamplers);
         if (!usage.successful()) return true;
         if (!usage.liveImages().isEmpty()) return true;
-        Matcher sampler3D = Pattern.compile("\\b(?:sampler3D|isampler3D|usampler3D)\\s+([A-Za-z_]\\w*)")
-                .matcher(source);
+        Matcher sampler3D = SAMPLER_3D.matcher(source);
         while (sampler3D.find()) {
             String name = sampler3D.group(1);
             if (usage.liveSamplers().contains(name) && !packVolume.test(name)) return true;

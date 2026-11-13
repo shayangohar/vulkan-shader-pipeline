@@ -160,7 +160,7 @@ public record PackPlan(
     public boolean isProgramDisabled(String name) {
         PackProgramResolution value = resolution.resolution(name);
         if (value != null) return !value.enabled();
-        return settings != null && !settings.enabled(selectedSourceFolder(), name);
+        return !settings.enabled(selectedSourceFolder(), name);
     }
 
     /**

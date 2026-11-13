@@ -126,10 +126,10 @@ public final class PackResourcePlan {
             Set<Integer> deactivatedOverrides = writtenEarlier.getOrDefault(programPlan.name(), Set.of());
             List<PackResourceBinding> programBindings = new ArrayList<>();
             boolean waterShadow = declaresWaterShadow(samplers);
+            PackProgramResolution resolved = plan.resolution().resolution(programPlan.name());
+            String sourceProgram = resolved == null || resolved.selectedProgram().isBlank()
+                    ? programPlan.name() : resolved.selectedProgram();
             for (UniformRegistry.SamplerBinding sampler : samplers) {
-                PackProgramResolution resolved = plan.resolution().resolution(programPlan.name());
-                String sourceProgram = resolved == null || resolved.selectedProgram().isBlank()
-                        ? programPlan.name() : resolved.selectedProgram();
                 PackResourceBinding binding = resolve(sourceProgram, sampler, waterShadow, declarations,
                         shadersDir, settings == null ? Map.of() : settings.propertyValues(), deactivatedOverrides,
                         false);
@@ -263,17 +263,11 @@ public final class PackResourcePlan {
         return declaration != null && declaration.kind() == PackResourceKind.RAW_TEXTURE;
     }
 
+    /** The pack declaration that serves this sampler in a program, images aside, if any. */
     private static PackResourceDeclaration declaration(String program, String sampler, String samplerType,
                                                        Map<String, PackResourceDeclaration> declarations) {
-        return declarationFor(program, new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations,
-                Set.of(), new ArrayList<>());
-    }
-
-    /** The pack declaration that serves this sampler in a program, images aside, if any. */
-    private static PackResourceDeclaration declarationFor(String program, UniformRegistry.SamplerBinding sampler,
-                                                          Map<String, PackResourceDeclaration> declarations,
-                                                          Set<Integer> deactivatedOverrides, List<String> deviations) {
-        return choose(program, sampler, declarations, null, deactivatedOverrides, false, deviations).declaration();
+        return choose(program, new UniformRegistry.SamplerBinding(sampler, 0, samplerType), declarations, null,
+                Set.of(), false, new ArrayList<>()).declaration();
     }
 
     /** The pack's binding of a sampler Iris binds: a declaration, an image, or neither (the built-in). */

@@ -455,12 +455,16 @@ public final class PackProbe {
         return settings.withSamplerSlots(settings.customSamplerSlots(live));
     }
 
+    private static final Pattern INDEX_DEVIATION = Pattern.compile("POST_TARGET_INDEX_UNSUPPORTED:(\\d+)");
+    private static final Pattern TARGET_DEVIATION = Pattern.compile("POST_TARGET_[A-Z_]+:colortex(\\d+)");
+
+    /** The colortex a target deviation names, or null; the report reads it for every program's deviations. */
     static Integer targetIndex(String deviation) {
-        Matcher index = Pattern.compile("POST_TARGET_INDEX_UNSUPPORTED:(\\d+)").matcher(deviation);
+        Matcher index = INDEX_DEVIATION.matcher(deviation);
         if (index.matches()) {
             return Integer.parseInt(index.group(1));
         }
-        Matcher format = Pattern.compile("POST_TARGET_[A-Z_]+:colortex(\\d+)").matcher(deviation);
+        Matcher format = TARGET_DEVIATION.matcher(deviation);
         if (format.find()) {
             return Integer.parseInt(format.group(1));
         }

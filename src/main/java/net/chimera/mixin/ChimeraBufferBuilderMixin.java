@@ -21,7 +21,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.List;
 
-/** Initializes and finalizes the three appended entity vertex elements. */
+/**
+ * Initializes and finalizes the appended entity vertex elements: EntityIds, MidTexCoord and Tangent,
+ * and Normal where the format appends one (ChimeraVertexFormats.appendsNormal, EXTENDED_GLYPH).
+ */
 @Mixin(BufferBuilder.class)
 public abstract class ChimeraBufferBuilderMixin {
     @Shadow

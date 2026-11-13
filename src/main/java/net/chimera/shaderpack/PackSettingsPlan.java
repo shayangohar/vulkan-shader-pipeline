@@ -121,10 +121,10 @@ record PackSettingsPlan(
         }
 
         Map<String, String> overrides = normalizeOverrides(explicitOverrides, deviations);
-        // Iris writes toggle options as true/false. On is the plain define
-        // (Chimera's "1", as for an active source define); off means the
-        // macro is undefined, so it leaves the defaults and is locked out of
-        // the source below (overriddenNames without a value).
+        // Iris writes toggle options as true/false. On is the plain define,
+        // which Chimera writes as "1" (an active bare source define is
+        // empty); off means the macro is undefined, so it leaves the defaults
+        // and is locked out of the source below (overriddenNames without a value).
         Set<String> disabled = applyToggleOverrides(overrides);
         for (Map.Entry<String, String> override : overrides.entrySet()) {
             options.put(override.getKey(), new Option(override.getKey(), "chimera.option",

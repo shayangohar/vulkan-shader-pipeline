@@ -14,7 +14,8 @@ import java.util.function.BooleanSupplier;
 /**
  * Draws a host mesh that a pack program serves with that program, inside the program's pack
  * outputs: the sky and clouds (ChimeraSkyBridge) and the host-layout lanes (particles,
- * weather, lines, glint, lightning, leads, text backgrounds and the shadow lanes). The
+ * weather, lines, glint, lightning, leads, text backgrounds, the textured and textured_color
+ * lanes, and the shadow lanes). The
  * program is chosen by the draw's shader and vertex format; the host's state and draw call stay,
  * and the ShaderInstance pipeline seam answers with the open draw's pipeline. In the shadow pass a
  * draw no shadow lane serves stays out of the shadow map. Without a gbuffers_skybasic the horizon
