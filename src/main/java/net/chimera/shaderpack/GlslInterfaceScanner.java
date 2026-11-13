@@ -36,7 +36,9 @@ public final class GlslInterfaceScanner {
      * element per vertex of its primitive ({@code in vec2 texcoord[]}); the scan reads each as the
      * value one vertex passes, so it pairs with the vertex stage's output of that type. The
      * tessellation stages' inputs are arrays the same way, and so are the control stage's outputs,
-     * one element per vertex of its output patch.
+     * one element per vertex of its output patch. A {@code patch in} or {@code patch out} variable
+     * is refused (PROGRAM_INTERFACE_DECLARATION_UNSUPPORTED), array or not: per-patch varyings are
+     * not carried between the stages, and read per vertex an array one took the wrong shape.
      */
     public enum Stage {
         VERTEX, TESS_CONTROL, TESS_EVALUATION, GEOMETRY, FRAGMENT;
@@ -427,6 +429,11 @@ public final class GlslInterfaceScanner {
                 ? keyword(tree, qualifiers, storage[1] - 1) : null;
         boolean input = direction.equals("in") || varying && stage == Stage.FRAGMENT;
         boolean output = direction.equals("out") || varying && stage == Stage.VERTEX;
+        // A per-patch varying is not carried between the tessellation stages: refuse it, array or not,
+        // rather than read it per vertex.
+        for (int index = 0; index < qualifiers.size(); index++) {
+            if (keyword(tree, qualifiers, index).equals("patch")) return null;
+        }
         return new InterfaceType(type, interpolation, input, output, typeSlots,
                 input && stage.perVertexInputs() || output && stage == Stage.TESS_CONTROL);
     }
