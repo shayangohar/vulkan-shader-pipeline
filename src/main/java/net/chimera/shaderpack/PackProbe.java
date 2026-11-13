@@ -84,6 +84,7 @@ public final class PackProbe {
      * runtime marks.
      */
     public static Analysis analyze(Path packPath, PackSource.LoadResult loaded) {
+        loaded.pinLoadInputs();
         PackSource.AnalyzedDimension known = loaded.analyzed();
         if (known != null) {
             loaded.restore(known);

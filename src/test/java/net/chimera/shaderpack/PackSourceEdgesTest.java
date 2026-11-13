@@ -255,6 +255,26 @@ final class PackSourceEdgesTest {
         }
     }
 
+    /**
+     * Iris reads MC_MIPMAP_LEVEL once per pack load. A load analyses every dimension at the level it
+     * began with, even if the level is set again while it lives, and leaves that level for the id
+     * maps read after it (audit FD10, proposal 4).
+     */
+    @Test
+    void aLoadAnalysesEveryDimensionAtTheMipmapLevelItBeganWith(@TempDir Path root) throws IOException {
+        Path shaders = Files.createDirectories(root.resolve("shaders"));
+        Files.writeString(shaders.resolve("final.fsh"), "#version 120\nvoid main() { gl_FragColor = vec4(1.0); }\n");
+        PackEngineDefines.setMipmapLevel(4);
+        try (PackSource.LoadResult loaded = PackSource.loadResult(root)) {
+            PackProbe.analyze(root, loaded);
+            PackEngineDefines.setMipmapLevel(0);
+            loaded.selectDimension("minecraft:the_nether");
+            PackProbe.analyze(root, loaded);
+            assertEquals("4", loaded.analyzed().macros().get("MC_MIPMAP_LEVEL"));
+            assertEquals("4", PackEngineDefines.standard().get("MC_MIPMAP_LEVEL"));
+        }
+    }
+
     @Test
     void preparedSourceEdges(@TempDir Path root) throws IOException {
         Path shaders = root.resolve("shaders");
