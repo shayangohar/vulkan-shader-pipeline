@@ -20,8 +20,6 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -117,30 +115,6 @@ public final class PackUniformProvider {
     /** The frame's celestial frame, shared with the shadow matrix builder. */
     public static Vector3f currentSunLightVector() {
         return INSTANCE.frameState.sunLightVector();
-    }
-
-    /**
-     * Debug: every bound float uniform whose current value holds NaN or infinity, as
-     * {@code name[component]=value}, sorted. These are the exact values the pack programs read.
-     */
-    public static List<String> nonFiniteUniforms() {
-        List<String> result = new ArrayList<>();
-        for (Binding binding : INSTANCE.bindings.values()) {
-            if (!"float".equals(UniformRegistry.pipelineType(binding.type))
-                    && !"mat4".equals(binding.type)) {
-                continue;
-            }
-            int count = UniformRegistry.pipelineCount(binding.type);
-            for (int i = 0; i < count; i++) {
-                float value = binding.buffer.getFloat(i * 4);
-                if (!Float.isFinite(value)) {
-                    result.add(binding.descriptor.name() + "[" + i + "]=" + value);
-                    break;
-                }
-            }
-        }
-        Collections.sort(result);
-        return result;
     }
 
     /** The shadow caster rotation derived with the celestial uniforms this frame. */

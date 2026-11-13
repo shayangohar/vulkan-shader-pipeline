@@ -6,7 +6,6 @@ import com.mojang.brigadier.context.CommandContext;
 import net.chimera.config.ChimeraConfig;
 import net.chimera.config.ShaderpackDirectory;
 import net.chimera.render.ChimeraRenderer;
-import net.chimera.render.PackNanTripwire;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -37,16 +36,7 @@ public final class ChimeraCommands {
                         .then(Commands.literal("off")
                                 .executes(ChimeraCommands::turnPackOff))
                         .then(Commands.literal("status")
-                                .executes(ChimeraCommands::packStatus)))
-                .then(Commands.literal("debug")
-                        .then(Commands.literal("nan")
-                                .then(Commands.literal("on")
-                                        .executes(context -> setNanTripwire(context, true)))
-                                .then(Commands.literal("off")
-                                        .executes(context -> setNanTripwire(context, false)))
-                                .then(Commands.literal("test")
-                                        .executes(ChimeraCommands::nanTripwireSelfTest))
-                                .executes(ChimeraCommands::nanTripwireStatus))));
+                                .executes(ChimeraCommands::packStatus))));
     }
 
     private static void feedback(CommandContext<CommandSourceStack> context, Component message) {
@@ -125,27 +115,6 @@ public final class ChimeraCommands {
     private static int packStatus(CommandContext<CommandSourceStack> context) {
         feedback(context, Component.literal(ChimeraRenderer.packStatus()));
         return 0;
-    }
-
-    private static int setNanTripwire(CommandContext<CommandSourceStack> context, boolean on) {
-        PackNanTripwire.setEnabled(on);
-        feedback(context, Component.literal(on
-                ? "NaN tripwire on."
-                : "NaN tripwire off."));
-        return on ? 1 : 0;
-    }
-
-    private static int nanTripwireSelfTest(CommandContext<CommandSourceStack> context) {
-        PackNanTripwire.requestSelfTest();
-        feedback(context, Component.literal(
-                "NaN tripwire self-test queued."));
-        return 1;
-    }
-
-    private static int nanTripwireStatus(CommandContext<CommandSourceStack> context) {
-        feedback(context, Component.literal(
-                "NaN tripwire " + (PackNanTripwire.enabled() ? "on." : "off.")));
-        return PackNanTripwire.enabled() ? 1 : 0;
     }
 
     private static int reportRequest(

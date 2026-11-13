@@ -58,9 +58,6 @@ final class PackPostChain {
     private String escalatedStage;
     PackPostExecution packFinalExecution;
 
-    /** Debug NaN detector over pack targets; idle unless enabled. */
-    final PackNanTripwire nanTripwire = new PackNanTripwire();
-
     PackPostChain(ChimeraMainPass pass) {
         this.pass = pass;
     }
@@ -80,49 +77,13 @@ final class PackPostChain {
     }
 
     /**
-     * Debug: scans every committed colortex, its history side, and the float depth copies, so
-     * the first dirty check after a clean one names where a NaN entered. Also snapshots the
-     * frame's uniforms once.
-     */
-    void sweepNanTripwire(VkCommandBuffer commandBuffer, String when) {
-        if (!PackNanTripwire.enabled()) return;
-        this.nanTripwire.checkUniforms();
-        for (int target = 0; target <= PackTargetGraphPlan.MAX_TARGET; target++) {
-            VulkanImage active = pass.packPostTargets.activeTarget(target);
-            this.nanTripwire.check(commandBuffer, when + ": colortex" + target, active);
-            VulkanImage history = pass.packPostTargets.previousTarget(target);
-            if (history != null && history != active) {
-                this.nanTripwire.check(commandBuffer, when + ": colortex" + target + " history", history);
-            }
-        }
-        if (pass.packDepthTargets.isConfigured()) {
-            for (String name : List.of("depthtex0", "depthtex1", "depthtex2")) {
-                if (pass.packDepthTargets.currentAvailable(name)) {
-                    this.nanTripwire.check(commandBuffer, when + ": " + name, pass.packDepthTargets.image(name));
-                }
-            }
-        }
-    }
-
-    /** Debug: scans what one post stage just wrote. */
-    void checkNanTripwireOutputs(VkCommandBuffer commandBuffer, PackPostExecution stage) {
-        if (!PackNanTripwire.enabled()) return;
-        for (int target : stage.outputTargets()) {
-            this.nanTripwire.check(commandBuffer, stage.name() + " -> colortex" + target,
-                    pass.packPostTargets.activeTarget(target));
-        }
-    }
-
-    /**
-     * Opens the frame's target executor, with colortex0's clear colour this frame, and the NaN
-     * tripwire, and scene coverage when it runs.
+     * Opens the frame's target executor, with colortex0's clear colour this frame, and scene
+     * coverage when it runs.
      */
     void beginPostFrame(VkCommandBuffer commandBuffer, float[] colortex0Clear) {
         VulkanImage hdrColor = pass.targets.hdrFramebuffer.getColorAttachment();
         pass.packPostTargets.beginFrame(commandBuffer, hdrColor, colortex0Clear);
         pass.packPostFrameStarted = true;
-        this.nanTripwire.beginFrame(commandBuffer,
-                pass.sessions.packPath == null ? "?" : String.valueOf(pass.sessions.packPath.getFileName()));
         if (pass.coverage.packCoverageRuntimeEnabled() && pass.packPostChainActive) {
             pass.packPostTargets.prepareGeometryTarget(commandBuffer);
             pass.coverage.packCoverageOwner.beginFrame(commandBuffer);
@@ -234,7 +195,6 @@ final class PackPostChain {
             pass.packPostTargets.requireFrameStarted();
             pass.packPostTargets.openPostWindow(commandBuffer, window);
             ChimeraMainPass.preparePackFullscreenState();
-            boolean tripwireSwept = false;
             for (PackPostExecution stage : this.packPostExecution) {
                 if (!scheduledIn(stage, window)) continue;
                 if (stage.post() == null && computeOnly(stage.name())) {
@@ -242,10 +202,6 @@ final class PackPostChain {
                     continue;
                 }
                 if (!stageRunnable(stage)) continue;
-                if (!tripwireSwept) {
-                    tripwireSwept = true;
-                    sweepNanTripwire(commandBuffer, "before " + window);
-                }
                 runPostStage(commandBuffer, hdrColor, stage);
             }
         } catch (RuntimeException e) {
@@ -358,7 +314,6 @@ final class PackPostChain {
             pass.packPostTargets.prepare(post, commandBuffer);
             pass.drawFullscreen(commandBuffer, post.pipeline());
             pass.packPostTargets.finish(commandBuffer);
-            checkNanTripwireOutputs(commandBuffer, stage);
         } catch (RuntimeException stageFailure) {
             if (attempted) {
                 pass.packPostTargets.abortStep(commandBuffer);
@@ -423,7 +378,6 @@ final class PackPostChain {
 
         try {
             VulkanImage finalColor = renderPackFinal(commandBuffer);
-            this.nanTripwire.check(commandBuffer, "final", finalColor);
             pass.resolveWorldToOutput(commandBuffer, finalColor);
             pass.packFinalApplied = true;
         } catch (RuntimeException failure) {
