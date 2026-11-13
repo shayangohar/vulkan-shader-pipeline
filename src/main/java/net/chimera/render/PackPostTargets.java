@@ -1,17 +1,13 @@
 package net.chimera.render;
 
 import net.chimera.render.shader.MrtPipelineContext;
-import net.chimera.shaderpack.PackConfig;
 import net.chimera.shaderpack.PackFlipPlan;
 import net.chimera.shaderpack.PackFrameSchedulePlan;
 import net.chimera.shaderpack.PackPipelines;
-import net.chimera.shaderpack.PackProgram;
-import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackTargetGraphPlan;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.TargetSpec;
 import net.chimera.shaderpack.TargetStep;
-import net.chimera.shaderpack.UniformRegistry;
 import net.vulkanmod.vulkan.Renderer;
 import net.vulkanmod.vulkan.device.DeviceManager;
 import net.vulkanmod.vulkan.framebuffer.Framebuffer;
@@ -90,15 +86,11 @@ public final class PackPostTargets {
     private TargetStep currentStep;
     private PostTargetPlan currentPlan;
 
-    /** Installs the validated graph and allocates only required physical sides. */
-    public boolean configure(PackTargetGraphPlan graph) {
-        return configure(graph, Map.of());
-    }
-
     /**
-     * As {@link #configure(PackTargetGraphPlan)}, with the targets a pass compute writes allowing
-     * storage in the formats it binds them in (PackPassComputes.storageTargets). Each target gets
-     * main, and alt when the flip plan flips or writes it; the first frame clears every side.
+     * Installs the validated graph and allocates only the physical sides it needs, the targets a pass
+     * compute writes allowing storage in the formats it binds them in (PackPassComputes.storageTargets).
+     * Each target gets main, and alt when the flip plan flips or writes it; the first frame clears
+     * every side.
      */
     public boolean configure(PackTargetGraphPlan graph, Map<Integer, Set<Integer>> storageTargets) {
         trace("configure begin oldTarget0=" + imageId(this.images[0][0])
@@ -137,40 +129,6 @@ public final class PackPostTargets {
         trace("configure done target0=" + imageId(this.images[0][0])
                 + " target0Alt=" + imageId(this.images[1][0]));
         return true;
-    }
-
-    /** Compatibility entry point retained for earlier callers. */
-    public boolean configure(
-            List<PackPipelines.PackPost> posts,
-            Map<Integer, Integer> declaredFormats,
-            int width,
-            int height
-    ) {
-        if (posts == null || posts.isEmpty()) return false;
-        List<PackProgramPlan> plans = posts.stream().map(post -> {
-            List<UniformRegistry.SamplerBinding> samplers = new ArrayList<>();
-            for (int index = 0; index < post.samplerNames().size(); index++) {
-                samplers.add(new UniformRegistry.SamplerBinding(
-                        post.samplerNames().get(index), post.samplerSlots()[index]));
-            }
-            UniformRegistry.ProgramInterface stage = new UniformRegistry.ProgramInterface(
-                    UniformRegistry.Stage.POST, List.of(), samplers, List.of());
-            UniformRegistry.ProgramInterfacePlan interfacePlan =
-                    new UniformRegistry.ProgramInterfacePlan(
-                            Map.of("fragment", stage), List.of(), samplers, List.of());
-            PackProgram program = new PackProgram(post.name(), "", null);
-            return new PackProgramPlan(program, Map.of(), interfacePlan, Map.of(), Map.of(),
-                    post.targetPlan(), post.convertedFragment(), null, null, List.of(), true);
-        }).toList();
-        PackConfig.PackConfigData config = new PackConfig.PackConfigData(
-                declaredFormats == null ? Map.of() : declaredFormats, 1,
-                new PackConfig.ShadowSettings(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION,
-                        PackConfig.DEFAULT_SHADOW_DISTANCE, Map.of(), List.of()),
-                List.of());
-        int maxAttachments = deviceMaxColorAttachments();
-        PackTargetGraphPlan legacy = PackTargetGraphPlan.build(
-                plans, config, width, height, maxAttachments, Integer.MAX_VALUE);
-        return configure(legacy);
     }
 
     /**
@@ -780,10 +738,6 @@ public final class PackPostTargets {
 
     public boolean currentTargetAvailable(int target) {
         return isTargetAvailable(target);
-    }
-
-    public void resetTemporalState() {
-        this.temporal.reset();
     }
 
     static boolean deviceSupportsMrt(int attachments, int maxColorAttachments) {

@@ -385,13 +385,9 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         return true;
     }
 
-    public boolean attached(String program) {
-        return plan.storageBuffers(program).isEmpty() || attachedPrograms.contains(program);
-    }
-
     /** Records that the runtime installed the pipeline after descriptor attachment. */
     public void markPipelineInstalled(String program) {
-        if (program != null && attached(program) && layoutVerified(program)) {
+        if (program != null && descriptorAttached(program) && layoutVerified(program)) {
             installedPrograms.add(program);
         }
     }
@@ -442,15 +438,6 @@ public final class PackStorageBufferOwner implements AutoCloseable {
         if (!descriptorAttached(reader)) return "MISSING_READER:" + reader;
         if (!pipelineInstalled(writer)) return "MISSING_WRITER_PIPELINE";
         return "MISSING_READER:" + reader;
-    }
-
-    public boolean storagePathReady(String writer, String reader) {
-        Set<Integer> shared = logicalBuffers(writer);
-        shared.retainAll(logicalBuffers(reader));
-        return !shared.isEmpty() && shared.stream().allMatch(buffers::containsKey)
-                && initialized && descriptorAttached(writer) && descriptorAttached(reader)
-                && pipelineInstalled(writer) && pipelineInstalled(reader)
-                && layoutVerified(writer) && layoutVerified(reader);
     }
 
     private Set<Integer> logicalBuffers(String program) {

@@ -120,19 +120,7 @@ public class ChimeraShadowMap {
     /** True only until the newly created images receive their first read layout. */
     private boolean needsInitialSamplingLayout;
 
-    public void init() {
-        init(PackConfig.DEFAULT_SHADOW_MAP_RESOLUTION, PackConfig.DEFAULT_SHADOW_DISTANCE);
-    }
-
-    public void init(int resolution, float distance) {
-        init(new PackConfig.ShadowSettings(resolution, distance, Map.of(), List.of()));
-    }
-
-    public void init(PackConfig.ShadowSettings settings) {
-        init(settings, Map.of());
-    }
-
-    /** As {@link #init(PackConfig.ShadowSettings)}, with the shadowcolor targets pass computes bind. */
+    /** Makes the shadow map for the pack's shadow settings, with the shadowcolor targets pass computes bind. */
     public void init(PackConfig.ShadowSettings settings, Map<Integer, Set<Integer>> computeTargets) {
         if (this.initialized) return;
         this.computeTargets = Map.copyOf(computeTargets);

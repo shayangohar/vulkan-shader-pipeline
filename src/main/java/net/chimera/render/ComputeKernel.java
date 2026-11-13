@@ -142,12 +142,8 @@ final class ComputeKernel implements AutoCloseable {
                 && createPipeline(stack);
     }
 
-    int frameCount() { return frames.length; }
-
     /** The work group size the compiled module declares, as Iris reads it from GL; null when it declares none. */
     int[] localSize() { return localSize == null ? null : localSize.clone(); }
-
-    FrameSlot frame(int index) { return frames[index]; }
 
     /** This frame slot's fence has signalled, so its set and block are free to rewrite. */
     FrameSlot currentFrame() { return frames[currentFrameIndex()]; }
