@@ -232,7 +232,7 @@ final class CorpusCompileFixesTest {
                 """, List.of());
         assertFalse(stripped.contains("maxLuminance") || stripped.contains("spare"), stripped);
         assertTrue(stripped.contains("uniform float used;"), stripped);
-        assertTrue(UniformRegistry.isLocallyDeclared("vec3 a, lightDir = vec3(0.0);", "lightDir"),
+        assertTrue(InterfacePlanner.isLocallyDeclared("vec3 a, lightDir = vec3(0.0);", "lightDir"),
                 "a later name of a declarator list is declared");
     }
 
@@ -607,7 +607,7 @@ final class CorpusCompileFixesTest {
                 + "void main() {}\n";
         UniformRegistry.ProgramInterface plan = InterfacePlanner.planInternal(source, UniformRegistry.Stage.POST,
                 false, true);
-        String removed = UniformRegistry.removeUniformDeclarations(source, plan);
+        String removed = InterfacePlanner.removeUniformDeclarations(source, plan);
         assertFalse(removed.contains("layout(location = 3)") || removed.contains("wetness"), removed);
         assertTrue(removed.contains("const bool clear = false;"), removed);
     }
@@ -624,9 +624,9 @@ final class CorpusCompileFixesTest {
                 uniform sampler2D image0Sampler;
                 void main() { gl_Position = environment.sky; }
                 """;
-        EntityVertexFeatureCheck.rejectEntityVertexFeatures(vertex, true, true, Set.of());
+        EntityVertexBridge.rejectEntityVertexFeatures(vertex, true, true, Set.of());
         IllegalArgumentException refused = assertThrows(
-                IllegalArgumentException.class, () -> EntityVertexFeatureCheck.rejectEntityVertexFeatures(
+                IllegalArgumentException.class, () -> EntityVertexBridge.rejectEntityVertexFeatures(
                         vertex.replace("uniform sampler2D image0Sampler;", "layout(rgba8) uniform image2D img;")
                                 .replace("environment.sky", "imageLoad(img, ivec2(0))"), true, true, Set.of()));
         assertTrue(refused.getMessage().contains("unsupported entity vertex"), refused.getMessage());

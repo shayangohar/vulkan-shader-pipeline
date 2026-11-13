@@ -86,7 +86,7 @@ final class WaterProgramTest {
     /** The water stage serves the terrain uniforms and its translucent inputs. */
     @Test
     void liveInterface() {
-        UniformRegistry.ProgramInterface water = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface water = InterfacePlanner.plan(
                 WATER_FRAGMENT, UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(water.executable(), "water interface is not executable: " + water.deviations());
         assertTrue(water.deviations().contains("LIVE_UNIFORM_BRIDGE"),
@@ -109,14 +109,14 @@ final class WaterProgramTest {
     /** Inputs a translucent draw cannot read stay fail-closed with named reasons. */
     @Test
     void rejectedInputs() {
-        UniformRegistry.ProgramInterface current = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface current = InterfacePlanner.plan(
                 "uniform sampler2D colortex0; void main() { gl_FragColor = texture2D(colortex0, vec2(0.0)); }",
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!current.executable()
                         && current.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:colortex0"),
                 "water accepted colortex0, which aliases a host selector: " + current.deviations());
         // depthtex0 is a capture taken before the layer draws (KNOW-760), never the depth it writes.
-        UniformRegistry.ProgramInterface depth = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface depth = InterfacePlanner.plan(
                 "uniform sampler2D depthtex0; void main() { gl_FragColor = texture2D(depthtex0, vec2(0.0)); }",
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(depth.executable() && depth.samplers().stream().anyMatch(sampler ->

@@ -9,7 +9,6 @@ import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.shaderpack.ConformanceReport;
 import net.chimera.shaderpack.FamilyAdapterRegistry;
 import net.chimera.shaderpack.PackAdvancedResourcePlan;
-import net.chimera.shaderpack.PackFamilyPipelines;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PackPlan;
 import net.chimera.shaderpack.PackProgram;
@@ -511,7 +510,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_entities_translucent or gbuffers_spidereyes; the translucent program also gets its text layout. */
     void installWorldEntity(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity entity = PackFamilyPipelines.buildEntityFamily(programPlan,
+        PackPipelines.PackEntity entity = PackPipelines.buildEntityFamily(programPlan,
                 advancedResources(), storage);
         if (entity == null) {
             markFamilyPipelineFallback(name, "ENTITY_PIPELINE_BUILD_FAILED");
@@ -544,7 +543,7 @@ final class PackPipelineInstaller {
      * (Iris MOVING_BLOCK). Block entities' text draws with gbuffers_block_translucent.
      */
     void installBlock(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity block = PackFamilyPipelines.buildBlock(programPlan,
+        PackPipelines.PackEntity block = PackPipelines.buildBlock(programPlan,
                 advancedResources(), storage);
         if (block == null) {
             if (report != null) {
@@ -587,7 +586,7 @@ final class PackPipelineInstaller {
      * Iris's GLYPH text layout, its text (TEXT_BE). A layout that fails to build keeps its host draw.
      */
     void installBlockTranslucent(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity models = PackFamilyPipelines.buildEntityFamily(programPlan,
+        PackPipelines.PackEntity models = PackPipelines.buildEntityFamily(programPlan,
                 advancedResources(), storage);
         if (models != null && !attachPackStoragePipeline(name, models.pipeline(), models.imageBindings())) {
             models.pipeline().cleanUp();
@@ -605,7 +604,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_damagedblock on the crumbling overlay's widened block layout. */
     void installDamagedBlock(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackEntity damaged = PackFamilyPipelines.buildDamagedBlock(programPlan,
+        PackPipelines.PackEntity damaged = PackPipelines.buildDamagedBlock(programPlan,
                 advancedResources(), storage);
         if (damaged == null) {
             markFamilyPipelineFallback(name, "DAMAGED_BLOCK_PIPELINE_BUILD_FAILED");
@@ -621,7 +620,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_beaconbeam on the beam's block layout, widened as Iris widens it to TERRAIN. */
     void installBeaconBeam(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackParticle beam = PackFamilyPipelines.buildHostLayout(programPlan,
+        PackPipelines.PackParticle beam = PackPipelines.buildHostLayout(programPlan,
                 advancedResources(), storage);
         if (beam == null) {
             markFamilyPipelineFallback(name, "BEACON_BEAM_PIPELINE_BUILD_FAILED");
@@ -637,7 +636,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_hand or gbuffers_hand_water, one pipeline per native hand mesh shape. */
     void installHand(String name, PackProgramPlan programPlan) {
-        var hand = PackFamilyPipelines.buildHand(programPlan,
+        var hand = PackPipelines.buildHand(programPlan,
                 advancedResources(),
                 storage);
         if (hand == null) {
@@ -659,7 +658,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_particles on the host particle format. */
     void installParticles(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackParticle particle = PackFamilyPipelines.buildParticle(programPlan,
+        PackPipelines.PackParticle particle = PackPipelines.buildParticle(programPlan,
                 advancedResources(), storage);
         if (particle == null) {
             if (report != null) {
@@ -692,7 +691,7 @@ final class PackPipelineInstaller {
 
     /** gbuffers_particles_translucent on the host particle format. */
     void installTranslucentParticles(String name, PackProgramPlan programPlan) {
-        PackPipelines.PackParticle particle = PackFamilyPipelines.buildParticleFamily(programPlan,
+        PackPipelines.PackParticle particle = PackPipelines.buildParticleFamily(programPlan,
                 advancedResources(), storage);
         if (particle == null) {
             markFamilyPipelineFallback(name, "PARTICLE_PIPELINE_BUILD_FAILED");
@@ -741,7 +740,7 @@ final class PackPipelineInstaller {
      */
     PackPipelines.PackEntity buildLayoutVariant(String name, PackProgramPlan programPlan, VertexFormat host,
                                                 String layout) {
-        PackPipelines.PackEntity variant = PackFamilyPipelines.buildLayoutVariant(programPlan, host, layout,
+        PackPipelines.PackEntity variant = PackPipelines.buildLayoutVariant(programPlan, host, layout,
                 advancedResources(), storage);
         if (variant == null) {
             LOGGER.warn("[chimera] pack {}: {} layout variant unavailable", name, layout);
@@ -766,9 +765,9 @@ final class PackPipelineInstaller {
         PackAdvancedResourcePlan advanced = advancedResources();
         for (HostLayoutLane lane : HostLayoutLane.forProgram(name)) {
             PackPipelines.PackParticle built = switch (lane) {
-                case WEATHER -> PackFamilyPipelines.buildParticleFamily(programPlan, advanced, storage);
-                case HAND_GLINT -> PackFamilyPipelines.buildHandGlint(programPlan, advanced, storage);
-                default -> PackFamilyPipelines.buildHostLayout(programPlan, advanced, storage);
+                case WEATHER -> PackPipelines.buildParticleFamily(programPlan, advanced, storage);
+                case HAND_GLINT -> PackPipelines.buildHandGlint(programPlan, advanced, storage);
+                default -> PackPipelines.buildHostLayout(programPlan, advanced, storage);
             };
             if (built == null) {
                 if (lane.pass() == HostLayoutLane.Pass.HAND) {

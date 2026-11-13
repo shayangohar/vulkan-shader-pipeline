@@ -118,8 +118,8 @@ final class PackSessionLifecycle {
                 || hasPendingPackChange()) {
             return false;
         }
-        pass.resources.ensureOutputResources();
-        return pass.resources.outputResourcesReady && pass.targets.outputResourcesLive();
+        pass.targets.ensureOutputResources();
+        return pass.targets.outputResourcesReady && pass.targets.outputResourcesLive();
     }
 
     /** Called before Renderer begins a fresh main command buffer. */
@@ -313,7 +313,7 @@ final class PackSessionLifecycle {
             this.currentDimension = previousDimension;
             this.changingPack = true;
             try {
-                pass.resources.createResources();
+                pass.targets.createResources();
             } finally {
                 this.changingPack = false;
             }
@@ -335,7 +335,7 @@ final class PackSessionLifecycle {
                 // Still the pack change: its message says what runs, not a second one for the rollback.
                 this.changingPack = true;
                 try {
-                    pass.resources.createResources();
+                    pass.targets.createResources();
                 } finally {
                     this.changingPack = false;
                 }
@@ -454,7 +454,7 @@ final class PackSessionLifecycle {
             waitForImmediateDestruction("dimension variant " + requested, this::cleanUpPackVariant);
             pass.packFrameUnsupported = null;
             pass.packSource.selectDimension(requested);
-            pass.resources.createResources();
+            pass.targets.createResources();
             this.pendingPackDimension = null;
             this.loggedPendingPackDimension = null;
             LOGGER.debug("[chimera] pack dimension variant installed: {} ({})",
@@ -470,7 +470,7 @@ final class PackSessionLifecycle {
                 pass.targets.cleanUpFramebuffersAndPasses();
                 pass.cleanUpPipelines();
                 pass.packSource.selectDimension(previous);
-                pass.resources.createResources();
+                pass.targets.createResources();
                 this.pendingPackDimension = null;
                 this.loggedPendingPackDimension = null;
                 if (pass.conformanceReport != null) {
@@ -829,5 +829,58 @@ final class PackSessionLifecycle {
         if (pass.packPlan == null) return String.valueOf(this.currentDimension);
         String folder = pass.packPlan.selectedSourceFolder();
         return pass.packPlan.selectedDimension() + (folder == null || folder.isBlank() ? "" : " (" + folder + ")");
+    }
+
+    /**
+     * The pack change an in-game command requested, applied at the next safe frame boundary. A newer
+     * request replaces an older one, and asking for the pack already active or already pending does
+     * nothing unless the request forces a reload.
+     */
+    static final class PackChangeQueue {
+        /** A complete pack replacement requested by an in-game command. */
+        record PendingPackChange(Path path, boolean forceReload) {}
+
+        private PendingPackChange pending;
+
+        boolean request(Path activePath, Path requestedPath, boolean forceReload) {
+            if (!forceReload && pending == null && samePath(activePath, requestedPath)) {
+                return false;
+            }
+            if (!forceReload && pending != null && samePath(pending.path(), requestedPath)) {
+                return false;
+            }
+            pending = new PendingPackChange(requestedPath, forceReload);
+            return true;
+        }
+
+        private static boolean samePath(Path first, Path second) {
+            if (first == second) {
+                return true;
+            }
+            if (first == null || second == null) {
+                return false;
+            }
+            return first.toAbsolutePath().normalize().equals(second.toAbsolutePath().normalize());
+        }
+
+        PendingPackChange pending() {
+            return pending;
+        }
+
+        boolean hasPending() {
+            return pending != null;
+        }
+
+        Path pendingPath() {
+            return pending == null ? null : pending.path();
+        }
+
+        boolean pendingForced() {
+            return pending != null && pending.forceReload();
+        }
+
+        void clear() {
+            pending = null;
+        }
     }
 }

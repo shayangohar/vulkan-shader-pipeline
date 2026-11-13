@@ -761,7 +761,7 @@ final class StorageBufferPlanTest {
                 + "vec4 unreachable() { return texture2D(helperSampler, vec2(0.0)); }\n"
                 + "void main() { gl_FragColor = vec4(1.0); }\n";
         PostTargetPlan.ParseResult targetResult = PostTargetPlan.parse("composite", deadHelperSource);
-        UniformRegistry.ProgramInterface deadPlan = UniformRegistry.planPreparedPost(
+        UniformRegistry.ProgramInterface deadPlan = InterfacePlanner.planPreparedPost(
                 deadHelperSource, targetResult.plan());
         String deadConverted = FragmentConverter.convertPostFragment(
                 deadHelperSource, null, deadPlan, targetResult.plan());
@@ -776,7 +776,7 @@ final class StorageBufferPlanTest {
                 + "uniform sampler2D helperSampler;\n"
                 + "vec4 reachable() { return texture2D(helperSampler, vec2(0.0)); }\n"
                 + "void main() { gl_FragColor = reachable(); }\n";
-        UniformRegistry.ProgramInterface livePlan = UniformRegistry.planPreparedPost(
+        UniformRegistry.ProgramInterface livePlan = InterfacePlanner.planPreparedPost(
                 liveHelperSource, PostTargetPlan.parse("composite", liveHelperSource).plan());
         assertTrue(livePlan.deviations().contains("SAMPLER_NOT_MAPPED:helperSampler"),
                 "reachable unmapped sampler did not fail closed");
@@ -850,7 +850,7 @@ final class StorageBufferPlanTest {
                                 + "textureSize(textureAtlas, 0)\nvoid main() {}",
                         Set.of("textureSize", "textureAtlas")).isEmpty(),
                 "continued preprocessor text was treated as executable uniform use");
-        UniformRegistry.ProgramInterface callablePlan = UniformRegistry.planPreparedPost(
+        UniformRegistry.ProgramInterface callablePlan = InterfacePlanner.planPreparedPost(
                 "#version 120\nuniform sampler2D textureAtlas;\n"
                         + "void main() { ivec2 size = textureSize(textureAtlas, 0); "
                         + "gl_FragColor = vec4(float(size.x)); }",
@@ -875,7 +875,7 @@ final class StorageBufferPlanTest {
                         && normalizedFog.source().contains("uniform float iris_FogStart;")
                         && normalizedFog.source().contains("uniform float iris_FogEnd;"),
                 "legacy gl_Fog fields were not normalized");
-        UniformRegistry.ProgramInterface fogPlan = UniformRegistry.planPreparedPost(
+        UniformRegistry.ProgramInterface fogPlan = InterfacePlanner.planPreparedPost(
                 normalizedFog.source(),
                 PostTargetPlan.parse("composite", fogSource).plan());
         assertTrue(fogPlan.uniforms().stream().anyMatch(value -> value.name().equals("iris_FogStart"))

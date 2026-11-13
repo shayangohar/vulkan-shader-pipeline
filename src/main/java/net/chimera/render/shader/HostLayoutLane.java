@@ -116,8 +116,8 @@ public enum HostLayoutLane {
     /** Iris AlphaTests of the lane's ShaderKey. */
     private enum AlphaTest {
         OFF(0.0F),
-        NON_ZERO(HostAlphaTest.NON_ZERO_ALPHA),
-        ONE_TENTH(HostAlphaTest.ONE_TENTH_ALPHA);
+        NON_ZERO(IrisShaderKeys.NON_ZERO_ALPHA),
+        ONE_TENTH(IrisShaderKeys.ONE_TENTH_ALPHA);
 
         private final float reference;
 

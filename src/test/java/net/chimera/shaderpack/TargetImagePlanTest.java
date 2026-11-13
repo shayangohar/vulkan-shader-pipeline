@@ -125,7 +125,7 @@ final class TargetImagePlanTest {
                         binding.target(), binding.selectorSlot()));
         PackProgramPlan hand = plan.program("gbuffers_hand");
         PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(hand, advanced, UniformRegistry.Stage.HAND,
-                PackFamilyPipelines.familyVertex(hand));
+                PackPipelines.familyVertex(hand));
         PackPipelines.prepareLayout(prepared, hand.name(), advanced);
         String geometry = prepared.between().geometry();
         assertTrue(geometry.contains("layout(rgba16f, binding = " + layout.imageBase()

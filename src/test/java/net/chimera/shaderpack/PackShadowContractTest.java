@@ -104,7 +104,7 @@ final class PackShadowContractTest {
                 + "  gl_Position.z *= 0.2;\n"
                 + "}\n";
         String fragment = "#version 120\nvoid main(){gl_FragColor=vec4(1.0);}";
-        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan plan = InterfacePlanner.planProgram(
                 fragment, vertex, UniformRegistry.Stage.SHADOW, null, true);
         UniformRegistry.ProgramInterface vertexInterface =
                 plan.project("vertex", UniformRegistry.Stage.SHADOW);

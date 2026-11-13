@@ -227,11 +227,11 @@ final class PackCompileTest {
         }
 
         /**
-         * The vertex the runtime draws the program with (a family's own inputs, PackFamilyPipelines),
+         * The vertex the runtime draws the program with (a family's own inputs, PackPipelines),
          * or Chimera's fixed vertex where the pack has none.
          */
         private String pairedVertex(PackProgramPlan program, UniformRegistry.Stage stage) {
-            if (program.convertedVertex() != null) return PackFamilyPipelines.familyVertex(program);
+            if (program.convertedVertex() != null) return PackPipelines.familyVertex(program);
             if (stage == UniformRegistry.Stage.POST) return fixedPostVertex;
             if (stage == UniformRegistry.Stage.GEOMETRY || stage == UniformRegistry.Stage.TRANSLUCENT) {
                 return fixedTerrainVertex;

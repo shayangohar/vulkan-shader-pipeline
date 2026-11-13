@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -49,7 +50,7 @@ public final class PackTemporaryRoots {
             HELD.put(root, channel);
             return root;
         } catch (IOException | RuntimeException failure) {
-            PackSource.deleteTree(root);
+            deleteTree(root);
             throw failure;
         }
     }
@@ -65,7 +66,7 @@ public final class PackTemporaryRoots {
                 LOGGER.warn("[chimera] pack: cannot release {}: {}", root, failure.getMessage());
             }
         }
-        PackSource.deleteTree(root);
+        deleteTree(root);
     }
 
     /** Removes, off the render thread, the folders earlier games left in the system temporary directory. */
@@ -82,7 +83,7 @@ public final class PackTemporaryRoots {
         try (DirectoryStream<Path> roots = Files.newDirectoryStream(directory, PREFIX + "*")) {
             for (Path root : roots) {
                 if (Files.isDirectory(root) && !HELD.containsKey(root) && abandoned(root)) {
-                    PackSource.deleteTree(root);
+                    deleteTree(root);
                     removed++;
                 }
             }
@@ -109,6 +110,23 @@ public final class PackTemporaryRoots {
             }
         } catch (IOException | OverlappingFileLockException held) {
             return false;
+        }
+    }
+
+    private static void deleteTree(Path root) {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (var paths = Files.walk(root)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (IOException e) {
+                    LOGGER.warn("[chimera] pack: cannot remove temporary path {}: {}", path, e.getMessage());
+                }
+            });
+        } catch (IOException e) {
+            LOGGER.warn("[chimera] pack: cannot clean temporary root {}: {}", root, e.getMessage());
         }
     }
 }

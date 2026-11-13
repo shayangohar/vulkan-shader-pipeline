@@ -49,7 +49,8 @@ final class IrisCoreProfile {
         /**
          * A pack's own gbuffers_line: VANILLA in core mode whatever its stages' versions
          * (TransformPatcher's isLine). A compatibility stage still keeps its own variables of
-         * the core names it does not declare as uniforms (PackPlanBuilder.irisCoreMode).
+         * the core names it does not declare as uniforms (coreMode, asked per stage by
+         * PackPlanBuilder.prepareIrisCoreProfile).
          */
         LINES
     }
@@ -269,7 +270,7 @@ final class IrisCoreProfile {
         src = renameMain(src);
         String globals = GlslVertexPreambles.LINE_WIDEN_GLOBALS;
         Set<String> declared = new HashSet<>();
-        UniformRegistry.scanUniformDeclarations(stripComments(src)).forEach(value -> declared.add(value.name()));
+        InterfacePlanner.scanUniformDeclarations(stripComments(src)).forEach(value -> declared.add(value.name()));
         if (!declared.contains("viewWidth")) globals += "uniform float viewWidth;\n";
         if (!declared.contains("viewHeight")) globals += "uniform float viewHeight;\n";
         return insertAfterHeader(src, globals) + GlslVertexPreambles.LINE_WIDEN_MAIN;
@@ -310,7 +311,7 @@ final class IrisCoreProfile {
         for (EntityDeclarations.IdentityDeclaration declaration
                 : EntityDeclarations.identityDeclarations(stripComments(source))) {
             for (String name : declaration.names()) {
-                if (EntityVertexBridge.ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.type());
+                if (EntityIdRewrites.ENTITY_ID_NAMES.contains(name)) types.put(name, declaration.type());
             }
         }
         if (types.isEmpty()) return source;

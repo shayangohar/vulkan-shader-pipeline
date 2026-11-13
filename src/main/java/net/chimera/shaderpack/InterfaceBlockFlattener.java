@@ -20,7 +20,7 @@ import java.util.TreeSet;
  * varyings: {@code vIn[i].color} reads {@code VertexData_color[i]}. GL matches each pair of stages
  * on its own, so a stage between the vertex and fragment stages may read one {@code VertexData}
  * and write another of the same name (Shrimple's shadow.gsh reads an int blockId and writes a uint
- * one). Each name therefore carries a suffix for the stage that writes it (ProgramStageSources):
+ * one). Each name therefore carries a suffix for the stage that writes it (PackPlanBuilder.prepareStages):
  * none for the vertex stage's outputs, so a vertex and fragment pair flattens as it always has.</p>
  */
 final class InterfaceBlockFlattener {

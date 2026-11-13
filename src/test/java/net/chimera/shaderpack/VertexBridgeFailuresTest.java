@@ -142,7 +142,7 @@ final class VertexBridgeFailuresTest {
                 out vec2 uv;
                 void main() { uv = vec2(float(gl_VertexID & 3)); gl_Position = vec4(vaPosition, 1.0); }
                 """;
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planProgram(fragment, vertex,
+        UniformRegistry.ProgramInterface interfacePlan = InterfacePlanner.planProgram(fragment, vertex,
                         UniformRegistry.Stage.GEOMETRY, null, false)
                 .project("vertex", UniformRegistry.Stage.GEOMETRY);
         String converted = TerrainVertexBridge.convertModernTerrainVertexOrThrow(vertex, null, fragment,
@@ -230,7 +230,7 @@ final class VertexBridgeFailuresTest {
 
     /** The modern terrain bridge's first failure for a pair, or an empty string when it converts. */
     private static String failure(String vertex, String fragment) {
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.planProgram(fragment, vertex,
+        UniformRegistry.ProgramInterface interfacePlan = InterfacePlanner.planProgram(fragment, vertex,
                         UniformRegistry.Stage.GEOMETRY, null, false)
                 .project("vertex", UniformRegistry.Stage.GEOMETRY);
         try {

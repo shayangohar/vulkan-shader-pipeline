@@ -88,7 +88,7 @@ final class MaterialPlanTest {
                 UniformRegistry.Stage.ENTITY, UniformRegistry.Stage.BLOCK,
                 UniformRegistry.Stage.HAND, UniformRegistry.Stage.PARTICLE, UniformRegistry.Stage.SKY,
                 UniformRegistry.Stage.CLOUD, UniformRegistry.Stage.SHADOW, UniformRegistry.Stage.SHADOW_ENTITY)) {
-            UniformRegistry.ProgramInterface plan = UniformRegistry.plan(MATERIAL_SNIPPET, stage);
+            UniformRegistry.ProgramInterface plan = InterfacePlanner.plan(MATERIAL_SNIPPET, stage);
             assertEquals(25, slotOf(plan, "normals"), "normals slot in " + stage);
             assertEquals(26, slotOf(plan, "specular"), "specular slot in " + stage);
             assertTrue(plan.deviations().stream().noneMatch(value ->
@@ -96,7 +96,7 @@ final class MaterialPlanTest {
                     "material stage rejected material names in " + stage + ": " + plan.deviations());
         }
         for (UniformRegistry.Stage stage : List.of(UniformRegistry.Stage.POST)) {
-            UniformRegistry.ProgramInterface plan = UniformRegistry.plan(MATERIAL_SNIPPET, stage);
+            UniformRegistry.ProgramInterface plan = InterfacePlanner.plan(MATERIAL_SNIPPET, stage);
             assertTrue(plan.samplers().stream().noneMatch(value ->
                             value.name().equals("normals") || value.name().equals("specular")),
                     "non-material stage kept material samplers in " + stage);
@@ -393,7 +393,7 @@ final class MaterialPlanTest {
 
     @Test
     void entityVertexConversion() {
-        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan plan = InterfacePlanner.planProgram(
                 ENTITY_FRAGMENT_SNIPPET, ENTITY_VERTEX_SNIPPET,
                 UniformRegistry.Stage.ENTITY, null, true);
         UniformRegistry.ProgramInterface fragment = plan.effective(UniformRegistry.Stage.ENTITY);
@@ -482,7 +482,7 @@ final class MaterialPlanTest {
                 "isElytraFlying is not an Iris 1.21.1 uniform");
         // The entity fragment conversion requires the paired vertex layout, so both stages come
         // from one snippet pair.
-        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan plan = InterfacePlanner.planProgram(
                 ELYTRA_SNIPPET, ELYTRA_VERTEX_SNIPPET, UniformRegistry.Stage.ENTITY, null, true);
         UniformRegistry.ProgramInterface fragment = plan.effective(UniformRegistry.Stage.ENTITY);
         assertTrue(fragment.executable(), "elytra interface not executable: " + fragment.deviations());

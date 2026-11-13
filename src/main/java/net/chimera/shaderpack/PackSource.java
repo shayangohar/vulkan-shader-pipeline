@@ -884,21 +884,4 @@ public final class PackSource {
                 || dimension.equals("minecraft:the_nether") || dimension.equals("the_nether")
                 || dimension.equals("minecraft:the_end") || dimension.equals("the_end");
     }
-
-    static void deleteTree(Path root) {
-        if (root == null || !Files.exists(root)) {
-            return;
-        }
-        try (var paths = Files.walk(root)) {
-            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
-                try {
-                    Files.deleteIfExists(path);
-                } catch (IOException e) {
-                    LOGGER.warn("[chimera] pack: cannot remove temporary path {}: {}", path, e.getMessage());
-                }
-            });
-        } catch (IOException e) {
-            LOGGER.warn("[chimera] pack: cannot clean temporary root {}: {}", root, e.getMessage());
-        }
-    }
 }

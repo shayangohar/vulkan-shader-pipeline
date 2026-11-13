@@ -417,7 +417,7 @@ final class GeometryStageBridgeTest {
                 && geometry.contains("layout(binding = 2) uniform ChimeraEntityUniforms")
                 && geometry.contains("gl_Position.z = 0.5 * (gl_Position.z + gl_Position.w);\n"), geometry);
         PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(hand, analysis.plan().advancedResources(),
-                UniformRegistry.Stage.HAND, PackFamilyPipelines.familyVertex(hand));
+                UniformRegistry.Stage.HAND, PackPipelines.familyVertex(hand));
         PackPipelines.prepareLayout(prepared, hand.name(), analysis.plan().advancedResources());
         assertNull(PackCompileTest.compile(prepared.vertex(), true), prepared.vertex());
         assertNull(PackCompileTest.compileBetween(prepared.between().geometry(), "geometry"),
@@ -478,7 +478,7 @@ final class GeometryStageBridgeTest {
         assertTrue(!GlslTokenRewriter.containsIdentifier(geometry, "projectionMatrix")
                 && geometry.contains("chimeraHandProjection()"), geometry);
         PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(hand, analysis.plan().advancedResources(),
-                UniformRegistry.Stage.HAND, PackFamilyPipelines.familyVertex(hand));
+                UniformRegistry.Stage.HAND, PackPipelines.familyVertex(hand));
         PackPipelines.prepareLayout(prepared, hand.name(), analysis.plan().advancedResources());
         assertNull(PackCompileTest.compileBetween(prepared.between().geometry(), "geometry"),
                 prepared.between().geometry());

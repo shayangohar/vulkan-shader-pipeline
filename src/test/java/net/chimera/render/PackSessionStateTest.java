@@ -42,8 +42,8 @@ final class PackSessionStateTest {
      */
     @Test
     void theLoadClearsATargetRejectionItsOwnConfigureSet() throws IOException {
-        var resources = MixinBytecode.nativeClass("net/chimera/render/MainPassResources");
-        String order = String.join(",", MixinBytecode.instructionsThrough(resources, "createResources").stream()
+        var targets = MixinBytecode.nativeClass("net/chimera/render/MainPassTargets");
+        String order = String.join(",", MixinBytecode.instructionsThrough(targets, "createResources").stream()
                 .filter(instruction -> instruction instanceof MethodInsnNode)
                 .map(instruction -> ((MethodInsnNode) instruction).name)
                 .filter(name -> name.equals("configurePackPostTargets") || name.equals("loadPackPipelines"))

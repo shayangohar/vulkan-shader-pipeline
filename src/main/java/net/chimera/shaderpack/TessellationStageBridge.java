@@ -175,7 +175,7 @@ final class TessellationStageBridge {
         String converted = TerrainVertexBridge.withoutUnreachableFunctions(
                 LegacyGlslConverter.withoutVersionLines(stage.source()));
         converted = stage.plan() == null ? TerrainVertexBridge.stripShadowUniformDeclarations(converted)
-                : UniformRegistry.removeUniformDeclarations(converted, stage.plan());
+                : InterfacePlanner.removeUniformDeclarations(converted, stage.plan());
         requireSupported(converted, allowStorageBuffers);
         converted = located(converted, stage.kind(), inputs, outputs);
         return WorldBetweenStages.builtins(converted, stage.plan(), hand);

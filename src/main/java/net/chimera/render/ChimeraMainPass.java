@@ -81,7 +81,6 @@ public final class ChimeraMainPass implements MainPass {
     final PackShadowPass shadowPass = new PackShadowPass(this);
     final PackSceneCoverage coverage = new PackSceneCoverage(this);
     final PackImageBindings images = new PackImageBindings(this);
-    final MainPassResources resources = new MainPassResources(this);
     final PackPipelineLoad load = new PackPipelineLoad(this);
     final OpaqueDepthCapture depth = new OpaqueDepthCapture(this);
     final MaterialMapRuntime materials = new MaterialMapRuntime(this);
@@ -209,7 +208,7 @@ public final class ChimeraMainPass implements MainPass {
         this.sessions.packPath = initialPackPath;
         this.levelPhase = true;
         PackFailureNotices.setReporter(new PackFailureReporter(this));
-        resources.createResources();
+        targets.createResources();
         // VulkanMod already resizes the current main pass; this covers the
         // frames where the host owns it, so Chimera's targets follow the
         // swapchain without being rebuilt twice.
@@ -236,7 +235,7 @@ public final class ChimeraMainPass implements MainPass {
     /**
      * Mirrors Beryl's setScreen contract: keep the stable output target alive
      * for GUI/post work and retire only internal world resources at the next
-     * frame boundary (MainPassResources.refreshWorldResourcesIfDue).
+     * frame boundary (MainPassTargets.refreshWorldResourcesIfDue).
      */
     public void scheduleScreenResourceReset() {
         this.earlyOutputPass = true;
@@ -244,7 +243,7 @@ public final class ChimeraMainPass implements MainPass {
             LOGGER.info("[chimera] scheduled world attachment reset frame={} hdrId={}",
                     Renderer.getCurrentFrame(), targets.hdrImageId());
         }
-        this.resources.worldRefreshDue = true;
+        this.targets.worldRefreshDue = true;
     }
 
      boolean prepareForInstall() {
@@ -276,7 +275,7 @@ public final class ChimeraMainPass implements MainPass {
     // ------------------------------------------------------------------
 
     public void openLevelSegment(double cameraX, double cameraY, double cameraZ, float[] fogColor) {
-        resources.ensureWorldResources();
+        targets.ensureWorldResources();
         Renderer.getInstance().endRenderPass();
         if (this.packStorageBufferOwner != null) {
             this.packStorageBufferOwner.beginExecutionFrame();
@@ -482,7 +481,7 @@ public final class ChimeraMainPass implements MainPass {
 
     @Override
     public void begin(VkCommandBuffer commandBuffer, MemoryStack stack) {
-        resources.ensureOutputResources();
+        targets.ensureOutputResources();
         this.currentFramebuffer = this.targets.compositeFramebuffer;
         this.levelPhase = false;
         this.pendingDepthClear = false;
@@ -894,8 +893,8 @@ public final class ChimeraMainPass implements MainPass {
 
     @Override
     public void onResize() {
-        if (resources.serveSwapchain()) return;
-        resources.createResources();
+        if (targets.serveSwapchain()) return;
+        targets.createResources();
     }
 
     static int deviceMaxColorAttachments() {

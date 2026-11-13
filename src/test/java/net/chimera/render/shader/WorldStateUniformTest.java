@@ -262,10 +262,10 @@ final class WorldStateUniformTest {
     /** Iris 1.8.14 CommonUniforms.isEyeInWater has no spectator case: a spectator in lava reads 2. */
     @Test
     void eyeInWaterFollowsTheCameraFluidAlone() {
-        assertEquals(1, CameraEffects.eyeInWater(FogType.WATER));
-        assertEquals(2, CameraEffects.eyeInWater(FogType.LAVA));
-        assertEquals(3, CameraEffects.eyeInWater(FogType.POWDER_SNOW));
-        assertEquals(0, CameraEffects.eyeInWater(FogType.NONE));
+        assertEquals(1, PackFrameState.eyeInWater(FogType.WATER));
+        assertEquals(2, PackFrameState.eyeInWater(FogType.LAVA));
+        assertEquals(3, PackFrameState.eyeInWater(FogType.POWDER_SNOW));
+        assertEquals(0, PackFrameState.eyeInWater(FogType.NONE));
     }
 
     private static int biomeId(String namespace, String path) {

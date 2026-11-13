@@ -11,14 +11,17 @@ import net.chimera.shaderpack.UniformRegistry;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.core.BlockPos;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LightningBolt;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.material.FogType;
 import net.minecraft.world.phys.Vec3;
 import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.shader.PipelineState;
@@ -32,16 +35,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.function.DoubleSupplier;
 import java.util.function.IntToDoubleFunction;
-
-import static net.chimera.render.shader.FrameValues.componentOf;
-import static net.chimera.render.shader.FrameValues.floats;
-import static net.chimera.render.shader.FrameValues.ints;
-import static net.chimera.render.shader.FrameValues.matrix;
-import static net.chimera.render.shader.FrameValues.put;
-import static net.chimera.render.shader.FrameValues.scalar;
-import static net.chimera.render.shader.FrameValues.vector;
-import static net.chimera.render.shader.FrameValues.writeDefault;
 
 /**
  * One render-thread snapshot shared by every pack supplier in a frame.
@@ -272,6 +267,75 @@ final class PackFrameState {
         return Map.copyOf(table);
     }
 
+    // Builds and writes the frame-value table: each served uniform name, its width and its component source.
+    private static void scalar(Map<String, FrameValue> table, DoubleSupplier value, String... names) {
+        serve(table, new FrameValue(1, component -> value.getAsDouble()), names);
+    }
+
+    private static void vector(Map<String, FrameValue> table, int width, IntToDoubleFunction component,
+                               String... names) {
+        serve(table, new FrameValue(width, component), names);
+    }
+
+    private static void vector(Map<String, FrameValue> table, Vector3f value, String... names) {
+        vector(table, 3, component -> componentOf(value.x, value.y, value.z, component), names);
+    }
+
+    private static void ints(Map<String, FrameValue> table, int[] values, String... names) {
+        vector(table, values.length, component -> values[component], names);
+    }
+
+    private static void floats(Map<String, FrameValue> table, float[] values, String... names) {
+        vector(table, values.length, component -> values[component], names);
+    }
+
+    private static void matrix(Map<String, FrameValue> table, Matrix4f matrix, String... names) {
+        vector(table, 16, component -> matrix.get(component / 4, component % 4), names);
+    }
+
+    private static void serve(Map<String, FrameValue> table, FrameValue value, String... names) {
+        for (String name : names) {
+            if (table.put(name, value) != null) throw new IllegalStateException("frame value served twice: " + name);
+        }
+    }
+
+    private static void put(MappedBuffer target, int component, double value, boolean integral) {
+        if (integral) {
+            target.putInt(component * 4, (int) value);
+        } else {
+            target.putFloat(component * 4, (float) value);
+        }
+    }
+
+    private static double componentOf(float x, float y, float z, int component) {
+        return component == 0 ? x : component == 1 ? y : z;
+    }
+
+    private static void writeDefault(UniformRegistry.DefaultPolicy policy,
+                                     String type, MappedBuffer target) {
+        if (type.equals("mat4")) {
+            for (int i = 0; i < 16; i++) {
+                target.putFloat(i * 4, i % 5 == 0 ? 1.0f : 0.0f);
+            }
+            return;
+        }
+        if (type.startsWith("i")) {
+            for (int i = 0; i < UniformRegistry.pipelineCount(type); i++) {
+                target.putInt(i * 4, 0);
+            }
+            return;
+        }
+        float value = switch (policy) {
+            case ONE -> 1.0f;
+            case CLOUD_HEIGHT -> 192.0f;
+            case NEAR_CLIP -> 0.05f;
+            default -> 0.0f;
+        };
+        for (int i = 0; i < UniformRegistry.pipelineCount(type); i++) {
+            target.putFloat(i * 4, value);
+        }
+    }
+
     /** Returns true and resets temporal state when the level identity changes. */
     boolean prepareLevel(ClientLevel level) {
         if (level == this.lastLevel) {
@@ -346,8 +410,8 @@ final class PackFrameState {
                     ? living.getViewVector(partialTick) : cameraEntity.getForward();
             this.playerLookVector.set((float) look.x, (float) look.y, (float) look.z);
             if (cameraEntity instanceof LivingEntity living) {
-                this.blindness = CameraEffects.blindness(living);
-                this.darknessFactor = CameraEffects.darknessFactor(living, partialTick);
+                this.blindness = blindness(living);
+                this.darknessFactor = darknessFactor(living, partialTick);
             } else {
                 this.blindness = 0.0f;
                 this.darknessFactor = 0.0f;
@@ -357,9 +421,9 @@ final class PackFrameState {
         this.relativeEyePosition.set((float) position.x - this.eyePosition.x,
                 (float) position.y - this.eyePosition.y,
                 (float) position.z - this.eyePosition.z);
-        this.isEyeInWater = CameraEffects.eyeInWater(camera.getFluidInCamera());
-        this.nightVision = CameraEffects.nightVision(minecraft, cameraEntity, partialTick);
-        this.darknessLightFactor = CameraEffects.darknessLightFactor(minecraft, partialTick);
+        this.isEyeInWater = eyeInWater(camera.getFluidInCamera());
+        this.nightVision = nightVision(minecraft, cameraEntity, partialTick);
+        this.darknessLightFactor = darknessLightFactor(minecraft, partialTick);
         this.screenBrightness = minecraft.options.gamma().get().floatValue();
         this.glintAlpha = minecraft.options.glintStrength().get().floatValue();
 
@@ -472,6 +536,59 @@ final class PackFrameState {
             return -(value - (value % CAMERA_WALK_RANGE));
         }
         return 0.0;
+    }
+
+    // The camera entity's effects as Iris's CommonUniforms reads them: night vision, darkness, blindness, fluid.
+    private static float nightVision(Minecraft minecraft, Entity cameraEntity, float partialTick) {
+        if (cameraEntity instanceof LivingEntity living
+                && living.hasEffect(MobEffects.NIGHT_VISION)) {
+            return clamp(GameRenderer.getNightVisionScale(living, partialTick), 0.0f, 1.0f);
+        }
+        if (minecraft.player != null && minecraft.player.getWaterVision() > 0.0f
+                && minecraft.player.hasEffect(MobEffects.CONDUIT_POWER)) {
+            return clamp(minecraft.player.getWaterVision(), 0.0f, 1.0f);
+        }
+        return 0.0f;
+    }
+
+    private static float darknessLightFactor(Minecraft minecraft, float partialTick) {
+        if (minecraft.player == null) {
+            return 0.0f;
+        }
+        float scale = minecraft.options.darknessEffectScale().get().floatValue();
+        float gamma = darknessFactor(minecraft.player, partialTick) * scale;
+        float darkness = Math.max(0.0f,
+                (float) Math.cos((minecraft.player.tickCount - partialTick)
+                        * (float) Math.PI * 0.025f) * 0.45f * gamma);
+        return darkness * scale;
+    }
+
+    /** The darkness effect's blend, as Iris CommonUniforms reads it: 0 without the effect. */
+    private static float darknessFactor(LivingEntity living, float partialTick) {
+        var effect = living.getEffect(MobEffects.DARKNESS);
+        return effect == null ? 0.0F : effect.getBlendFactor(living, partialTick);
+    }
+
+    private static float blindness(LivingEntity living) {
+        var effect = living.getEffect(MobEffects.BLINDNESS);
+        if (effect == null) {
+            return 0.0f;
+        }
+        return effect.isInfiniteDuration() ? 1.0f
+                : clamp(effect.getDuration() / 20.0f, 0.0f, 1.0f);
+    }
+
+    /**
+     * Iris 1.8.14 CommonUniforms.isEyeInWater: the camera's fluid, a spectator's lava included
+     * (newer Iris leaves a spectator's lava at 0).
+     */
+    static int eyeInWater(FogType type) {
+        return switch (type) {
+            case WATER -> 1;
+            case LAVA -> 2;
+            case POWDER_SNOW -> 3;
+            default -> 0;
+        };
     }
 
     static float smooth(float current, float target, float halfLifeUp,
@@ -995,5 +1112,75 @@ final class PackFrameState {
 
     private static float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    /**
+     * The camera position packs see. Like Iris, the origin moves by whole multiples of 30,000 blocks
+     * once the camera walks past that range or teleports, so pack-facing coordinates stay small
+     * enough for float precision. The raw values keep the world position for block and biome lookups.
+     */
+    private static final class CameraOrigin {
+        double rawX;
+        double rawY;
+        double rawZ;
+        double previousRawX;
+        double previousRawY;
+        double previousRawZ;
+        float x;
+        float y;
+        float z;
+        float previousX;
+        float previousY;
+        float previousZ;
+        double shiftX;
+        double shiftZ;
+        boolean seeded;
+
+        void advance(double nextX, double nextY, double nextZ) {
+            previousRawX = rawX;
+            previousRawY = rawY;
+            previousRawZ = rawZ;
+            rawX = nextX;
+            rawY = nextY;
+            rawZ = nextZ;
+            double currentShiftedX = rawX + shiftX;
+            double currentShiftedZ = rawZ + shiftZ;
+            double previousShiftedX = previousRawX + shiftX;
+            double previousShiftedZ = previousRawZ + shiftZ;
+            if (!seeded) {
+                previousRawX = rawX;
+                previousRawY = rawY;
+                previousRawZ = rawZ;
+                previousShiftedX = currentShiftedX;
+                previousShiftedZ = currentShiftedZ;
+                seeded = true;
+            }
+            double deltaX = cameraShift(currentShiftedX, previousShiftedX);
+            double deltaZ = cameraShift(currentShiftedZ, previousShiftedZ);
+            shiftX += deltaX;
+            shiftZ += deltaZ;
+            x = (float) (rawX + shiftX);
+            y = (float) rawY;
+            z = (float) (rawZ + shiftZ);
+            previousX = (float) (previousRawX + shiftX);
+            previousY = (float) previousRawY;
+            previousZ = (float) (previousRawZ + shiftZ);
+        }
+
+        void reset() {
+            rawX = rawY = rawZ = previousRawX = previousRawY = previousRawZ = 0.0;
+            x = y = z = previousX = previousY = previousZ = 0.0f;
+            shiftX = shiftZ = 0.0;
+            seeded = false;
+        }
+
+        void seedPreviousFromCurrent() {
+            previousRawX = rawX;
+            previousRawY = rawY;
+            previousRawZ = rawZ;
+            previousX = x;
+            previousY = y;
+            previousZ = z;
+        }
     }
 }

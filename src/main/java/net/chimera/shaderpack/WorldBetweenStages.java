@@ -81,7 +81,7 @@ final class WorldBetweenStages {
 
         static PassedOn of(LegacyGlslConverter.TerrainVaryingLayout vertexLayout) {
             List<String> names = new ArrayList<>();
-            EntityVertexBridge.ENTITY_ID_NAMES.forEach(name -> names.add(EntityVertexBridge.entityIdVarying(name)));
+            EntityIdRewrites.ENTITY_ID_NAMES.forEach(name -> names.add(EntityIdRewrites.entityIdVarying(name)));
             EntityVertexBridge.ForwardedVarying.ALL.forEach(varying -> names.add(varying.name()));
             Map<String, String> types = new LinkedHashMap<>();
             Map<String, String> qualifiers = new LinkedHashMap<>();

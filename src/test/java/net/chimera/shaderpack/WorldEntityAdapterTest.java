@@ -6,6 +6,7 @@ import com.google.gson.JsonParser;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraEntityBridge.Family;
+import net.chimera.render.shader.IrisShaderKeys;
 import net.chimera.render.vertex.ChimeraEntityVertexData;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import net.chimera.testing.TestPacks;
@@ -113,30 +114,30 @@ final class WorldEntityAdapterTest {
         var entityFormat = DefaultVertexFormat.NEW_ENTITY;
         for (Route route : routes) {
             String shader = "rendertype_" + route.shader();
-            assertEquals(route.entity(), ChimeraEntityBridge.worldFamily(shader, entityFormat, Family.ENTITY), shader);
-            assertEquals(route.blockEntity(), ChimeraEntityBridge.worldFamily(shader, entityFormat, Family.BLOCK),
+            assertEquals(route.entity(), IrisShaderKeys.worldFamily(shader, entityFormat, Family.ENTITY), shader);
+            assertEquals(route.blockEntity(), IrisShaderKeys.worldFamily(shader, entityFormat, Family.BLOCK),
                     shader + " in a block entity");
-            assertEquals(route.shadow(), ChimeraEntityBridge.shadowFamily(shader, entityFormat, Family.ENTITY),
+            assertEquals(route.shadow(), IrisShaderKeys.shadowFamily(shader, entityFormat, Family.ENTITY),
                     shader + " casting a shadow");
             assertEquals(route.blockEntityShadow(),
-                    ChimeraEntityBridge.shadowFamily(shader, entityFormat, Family.BLOCK),
+                    IrisShaderKeys.shadowFamily(shader, entityFormat, Family.BLOCK),
                     shader + " casting a block entity's shadow");
         }
-        assertEquals(null, ChimeraEntityBridge.worldFamily(null, entityFormat, Family.ENTITY),
+        assertEquals(null, IrisShaderKeys.worldFamily(null, entityFormat, Family.ENTITY),
                 "a render type without a shader keeps its host draw");
         var block = DefaultVertexFormat.BLOCK;
         for (String type : List.of("solid", "cutout_mipped", "cutout", "translucent", "translucent_moving_block",
                 "tripwire")) {
             String shader = "rendertype_" + type;
             for (Family context : List.of(Family.ENTITY, Family.BLOCK)) {
-                assertEquals(Family.MOVING_BLOCK, ChimeraEntityBridge.worldFamily(shader, block, context), shader);
-                assertEquals(Family.SHADOW_ENTITIES, ChimeraEntityBridge.shadowFamily(shader, block, context), shader);
+                assertEquals(Family.MOVING_BLOCK, IrisShaderKeys.worldFamily(shader, block, context), shader);
+                assertEquals(Family.SHADOW_ENTITIES, IrisShaderKeys.shadowFamily(shader, block, context), shader);
             }
-            assertEquals(null, ChimeraEntityBridge.shadowFamily(shader, block, null), "terrain casts no entity shadow");
+            assertEquals(null, IrisShaderKeys.shadowFamily(shader, block, null), "terrain casts no entity shadow");
         }
-        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_crumbling", block, Family.BLOCK),
+        assertEquals(null, IrisShaderKeys.worldFamily("rendertype_crumbling", block, Family.BLOCK),
                 "crumbling is no block entity's model");
-        assertEquals(null, ChimeraEntityBridge.worldFamily("rendertype_beacon_beam", block, Family.BLOCK), "beams");
+        assertEquals(null, IrisShaderKeys.worldFamily("rendertype_beacon_beam", block, Family.BLOCK), "beams");
     }
 
     /** Iris widens every BLOCK buffer to TERRAIN, so the crumbling overlay is its own lane wherever it is written. */
@@ -171,7 +172,7 @@ final class WorldEntityAdapterTest {
         } finally {
             ChimeraEntityBridge.endContext();
         }
-        assertEquals(null, ChimeraEntityBridge.shadowFamily("rendertype_beacon_beam", block, Family.BLOCK),
+        assertEquals(null, IrisShaderKeys.shadowFamily("rendertype_beacon_beam", block, Family.BLOCK),
                 "Iris cancels beacon beams in the shadow pass");
     }
 
@@ -272,7 +273,7 @@ final class WorldEntityAdapterTest {
                     gl_FragColor = vec4(float(entityId) + float(frameCounter) + entityUv.x);
                 }
                 """;
-        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan plan = InterfacePlanner.planProgram(
                 fragment, vertex, UniformRegistry.Stage.ENTITY, null, false);
         LegacyGlslConverter.TerrainVertexConversion convertedVertex =
                 EntityVertexBridge.convertEntityVertex(vertex, null, fragment,
@@ -348,7 +349,7 @@ final class WorldEntityAdapterTest {
                     gl_FragColor = vec4(portal, float(blockEntityId), 0.0, 1.0);
                 }
                 """;
-        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan plan = InterfacePlanner.planProgram(
                 fragment, vertex, UniformRegistry.Stage.BLOCK, null, false);
         assertTrue(plan.executable(), "blockEntityId was not treated as vertex data");
         LegacyGlslConverter.TerrainVertexConversion convertedVertex =
@@ -418,7 +419,7 @@ final class WorldEntityAdapterTest {
                 flat varying int material;
                 void main() { gl_FragColor = vec4(float(material)); }
                 """;
-        UniformRegistry.ProgramInterfacePlan plan = UniformRegistry.planProgram(
+        UniformRegistry.ProgramInterfacePlan plan = InterfacePlanner.planProgram(
                 fragment, vertex, UniformRegistry.Stage.ENTITY, null, false);
         assertTrue(plan.executable(), "currentRenderedItemId was not treated as vertex data: "
                 + plan.effective(UniformRegistry.Stage.ENTITY).deviations());

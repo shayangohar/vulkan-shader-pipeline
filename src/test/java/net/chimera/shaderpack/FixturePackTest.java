@@ -266,7 +266,7 @@ final class FixturePackTest {
                 "live composite deviations");
         assertEquals(List.of(), report.deviations(), "live global deviations");
 
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface interfacePlan = InterfacePlanner.plan(
                 Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.POST);
         assertEquals(List.of(
@@ -311,46 +311,46 @@ final class FixturePackTest {
 
     @Test
     void uniformInterfaceEdgeCases() {
-        UniformRegistry.ProgramInterface array = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface array = InterfacePlanner.plan(
                 "uniform float wetness[2];", UniformRegistry.Stage.POST);
         assertTrue(!array.executable(), "uniform arrays were accepted");
         assertTrue(array.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:wetness"),
                 "array deviation is missing");
 
-        UniformRegistry.ProgramInterface struct = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface struct = InterfacePlanner.plan(
                 "uniform PackValues { float wetness; };", UniformRegistry.Stage.POST);
         assertTrue(!struct.executable(), "uniform blocks were accepted");
         assertTrue(struct.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:PackValues"),
                 "uniform block deviation is missing");
 
         // Iris leaves a uniform it does not provide unset, so GL reads zero and the program runs.
-        UniformRegistry.ProgramInterface unknown = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface unknown = InterfacePlanner.plan(
                 "uniform float arbitraryValue; void main() { gl_FragColor = vec4(arbitraryValue); }",
                 UniformRegistry.Stage.POST);
         assertTrue(unknown.executable(), "a name Iris does not serve must run on zero");
         assertTrue(unknown.deviations().contains("UNIFORM_UNSET_ZERO:arbitraryValue"),
                 "unset uniform deviation is missing");
         // An Iris name Chimera does not serve yet must not run on a zero Iris would never give.
-        UniformRegistry.ProgramInterface unserved = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface unserved = InterfacePlanner.plan(
                 "uniform float alphaTestRef; void main() { gl_FragColor = vec4(alphaTestRef); }",
                 UniformRegistry.Stage.POST);
         assertTrue(!unserved.executable(), "unserved Iris uniform was accepted");
         assertTrue(unserved.deviations().contains("UNIFORM_NAME_UNSUPPORTED:alphaTestRef"),
                 "unserved Iris uniform deviation is missing");
 
-        UniformRegistry.ProgramInterface conflict = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface conflict = InterfacePlanner.plan(
                 "uniform float wetness; uniform int wetness;", UniformRegistry.Stage.POST);
         assertTrue(!conflict.executable(), "conflicting uniform declarations were accepted");
         assertTrue(conflict.deviations().contains("UNIFORM_CONFLICT:wetness"),
                 "conflicting uniform deviation is missing");
 
-        UniformRegistry.ProgramInterface alias = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface alias = InterfacePlanner.plan(
                 "uniform sampler2D colortex1;", UniformRegistry.Stage.POST);
         assertTrue(alias.hasSampler("colortex1"), "colortex1 alias was not mapped");
         assertTrue(alias.deviations().contains("COLORTEX_ALIAS_TO_SEAM"),
                 "colortex alias deviation is missing");
 
-        UniformRegistry.ProgramInterface distinctResources = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface distinctResources = InterfacePlanner.plan(
                 "uniform sampler2D colortex3; uniform sampler2D shadowcolor0;",
                 UniformRegistry.Stage.POST);
         assertTrue(distinctResources.executable(), "Independent color and shadow resources were rejected");
@@ -370,7 +370,7 @@ final class FixturePackTest {
         assertTrue(composite.deviations().contains("UNIFORM_TYPE_UNSUPPORTED:unsupportedToggle"),
                 "unsupported uniform type deviation is missing");
         assertTrue(!report.shouldAttempt("composite"), "unsupported composite must not execute");
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface interfacePlan = InterfacePlanner.plan(
                 Files.readString(pack.resolve("shaders/composite.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.POST);
         assertTrue(!interfacePlan.executable(), "unsupported interface was accepted");
@@ -439,7 +439,7 @@ final class FixturePackTest {
         assertTrue(compositePlan.requiresMrt(), "composite must require MRT");
         String converted = FragmentConverter.convertPostFragment(
                 composite, pack.resolve("shaders/composite.fsh"),
-                UniformRegistry.planPost(composite, compositePlan), compositePlan);
+                InterfacePlanner.planPost(composite, compositePlan), compositePlan);
         assertTrue(converted != null, "multi-target conversion failed");
         assertTrue(converted.contains("layout(location = 0) out vec4 chimeraFragColor0"),
                 "output location 0 is missing");
@@ -542,7 +542,7 @@ final class FixturePackTest {
                 .orElseThrow(() -> new AssertionError("water source is missing"));
         assertTrue(waterProgram.vertexSource() != null, "water vertex source is missing");
 
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface interfacePlan = InterfacePlanner.plan(
                 waterProgram.fragmentSource(), UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(interfacePlan.executable(), "water interface is not executable");
         // Water plans on the terrain contract, so its uniforms are the
@@ -592,27 +592,27 @@ final class FixturePackTest {
     void translucentInterfaceEdgeCases() {
         // A sampler nothing reads is inactive in GL, so each probe reads the one it tests. Iris gives
         // water all three depth textures (addWorldDepthSamplers); depthtex0 is a capture (KNOW-760).
-        UniformRegistry.ProgramInterface depth = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface depth = InterfacePlanner.plan(
                 "uniform sampler2D texture; uniform sampler2D depthtex0; uniform sampler2D depthtex2;"
                         + " void main() { gl_FragColor = texture2D(depthtex0, vec2(0.5))"
                         + " + texture2D(depthtex2, vec2(0.5)); }",
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(depth.executable(), "depth inputs were refused: " + depth.deviations());
         // Terrain, sky and clouds read them too (Mellow's terrain reads depthtex1).
-        UniformRegistry.ProgramInterface terrain = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface terrain = InterfacePlanner.plan(
                 "uniform sampler2D depthtex1; void main() { gl_FragColor = texture2D(depthtex1, vec2(0.5)); }",
                 UniformRegistry.Stage.GEOMETRY);
         assertTrue(terrain.executable() && terrain.samplers().stream().anyMatch(sampler ->
                 sampler.name().equals("depthtex1") && sampler.slot() == 12), terrain.deviations().toString());
 
-        UniformRegistry.ProgramInterface unknownSampler = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface unknownSampler = InterfacePlanner.plan(
                 "uniform sampler2D noise; void main() { gl_FragColor = texture2D(noise, vec2(0.5)); }",
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!unknownSampler.executable(), "unknown water sampler was accepted");
         assertTrue(unknownSampler.deviations().contains("TRANSLUCENT_SAMPLER_UNSUPPORTED:noise"),
                 "unknown water sampler deviation is missing");
 
-        UniformRegistry.ProgramInterface unknownUniform = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface unknownUniform = InterfacePlanner.plan(
                 "uniform float alphaTestRef; void main() { gl_FragColor = vec4(alphaTestRef); }",
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!unknownUniform.executable(), "unserved Iris water uniform was accepted");
@@ -639,7 +639,7 @@ final class FixturePackTest {
                 "entity family must not execute");
         assertPostPassThrough(pack, "unsupported water");
 
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface interfacePlan = InterfacePlanner.plan(
                 Files.readString(pack.resolve("shaders/gbuffers_water.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.TRANSLUCENT);
         assertTrue(!interfacePlan.executable(), "unsupported water interface was accepted");
@@ -717,7 +717,7 @@ final class FixturePackTest {
 
     /** The shadow program's sampler interface, terrain vertex bridge and fragment bindings. */
     private static void verifyShadowConversion(PackProgram shadowProgram) {
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface interfacePlan = InterfacePlanner.plan(
                 shadowProgram.fragmentSource(), UniformRegistry.Stage.SHADOW);
         assertEquals(List.of(new UniformRegistry.SamplerBinding("texture", 0),
                         new UniformRegistry.SamplerBinding("lightmap", 2)),
@@ -765,11 +765,11 @@ final class FixturePackTest {
         assertTrue(report.deviations().contains("SHADOW_SETTING_DEFAULTED:shadowMapResolution"),
                 "invalid resolution default is missing");
 
-        UniformRegistry.ProgramInterface interfacePlan = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface interfacePlan = InterfacePlanner.plan(
                 Files.readString(pack.resolve("shaders/shadow.fsh"), StandardCharsets.UTF_8),
                 UniformRegistry.Stage.SHADOW);
         assertTrue(!interfacePlan.executable(), "unsupported shadow interface was accepted");
-        UniformRegistry.ProgramInterface colorInput = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface colorInput = InterfacePlanner.plan(
                 "uniform sampler2D texture; uniform sampler2D shadowcolor0;"
                         + " void main() { gl_FragColor = texture2D(shadowcolor0, vec2(0.5)); }",
                 UniformRegistry.Stage.SHADOW);
@@ -779,7 +779,7 @@ final class FixturePackTest {
                                 && sampler.slot() == SelectorNamespace.shadowColorSlot(0)),
                 "a shadow program binds the shadowcolor target it reads: " + colorInput);
         // shadowtex1 is the opaque copy, never the attachment the pass draws (Glimmer's shadow reads it).
-        UniformRegistry.ProgramInterface opaque = UniformRegistry.plan(
+        UniformRegistry.ProgramInterface opaque = InterfacePlanner.plan(
                 "uniform sampler2D shadowtex1; void main() { gl_FragColor = texture2D(shadowtex1, vec2(0.5)); }",
                 UniformRegistry.Stage.SHADOW);
         assertTrue(opaque.executable() && opaque.samplers().stream().anyMatch(sampler ->

@@ -6,8 +6,8 @@ import net.chimera.render.ChimeraHandRenderer;
 import net.chimera.render.shader.ChimeraEntityBridge;
 import net.chimera.render.shader.ChimeraEntityBridge.Family;
 import net.chimera.render.shader.ChimeraSkyBridge;
-import net.chimera.render.shader.HostAlphaTest;
 import net.chimera.render.shader.HostLayoutLane;
+import net.chimera.render.shader.IrisShaderKeys;
 import net.chimera.render.vertex.ChimeraVertexFormats;
 import org.joml.Matrix4f;
 import org.joml.Vector4f;
@@ -284,23 +284,23 @@ final class HostFamilyTest {
     void entityAlphaReferences() {
         var eyes = "rendertype_eyes";
         var solid = "rendertype_entity_solid";
-        assertEquals(0.0001F, HostAlphaTest.reference(eyes, ChimeraEntityBridge.Family.SPIDER_EYES, false),
+        assertEquals(0.0001F, IrisShaderKeys.reference(eyes, ChimeraEntityBridge.Family.SPIDER_EYES, false),
                 "ENTITIES_EYES tests NON_ZERO_ALPHA");
-        assertEquals(0.1F, HostAlphaTest.reference("rendertype_entity_translucent_emissive",
+        assertEquals(0.1F, IrisShaderKeys.reference("rendertype_entity_translucent_emissive",
                 ChimeraEntityBridge.Family.SPIDER_EYES, false), "ENTITIES_EYES_TRANS tests ONE_TENTH_ALPHA");
-        assertEquals(0.1F, HostAlphaTest.reference(eyes, ChimeraEntityBridge.Family.BLOCK, false),
+        assertEquals(0.1F, IrisShaderKeys.reference(eyes, ChimeraEntityBridge.Family.BLOCK, false),
                 "a block entity's eyes are BLOCK_ENTITY, ONE_TENTH_ALPHA");
-        assertEquals(0.0F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.ENTITY, false),
+        assertEquals(0.0F, IrisShaderKeys.reference(solid, ChimeraEntityBridge.Family.ENTITY, false),
                 "ENTITIES_SOLID_DIFFUSE draws untested");
-        assertEquals(0.1F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.BLOCK, false),
+        assertEquals(0.1F, IrisShaderKeys.reference(solid, ChimeraEntityBridge.Family.BLOCK, false),
                 "BLOCK_ENTITY_DIFFUSE tests ONE_TENTH_ALPHA");
-        assertEquals(-1.0F, HostAlphaTest.reference("rendertype_entity_alpha", ChimeraEntityBridge.Family.ENTITY,
+        assertEquals(-1.0F, IrisShaderKeys.reference("rendertype_entity_alpha", ChimeraEntityBridge.Family.ENTITY,
                 false), "ENTITIES_ALPHA tests the vertex alpha (AlphaTests.VERTEX_ALPHA)");
-        assertEquals(0.1F, HostAlphaTest.reference("rendertype_energy_swirl", ChimeraEntityBridge.Family.ENTITY, false),
-                "ENTITIES_CUTOUT tests ONE_TENTH_ALPHA");
-        assertEquals(0.1F, HostAlphaTest.reference("rendertype_solid", ChimeraEntityBridge.Family.MOVING_BLOCK, false),
+        assertEquals(0.1F, IrisShaderKeys.reference("rendertype_energy_swirl", ChimeraEntityBridge.Family.ENTITY,
+                false), "ENTITIES_CUTOUT tests ONE_TENTH_ALPHA");
+        assertEquals(0.1F, IrisShaderKeys.reference("rendertype_solid", ChimeraEntityBridge.Family.MOVING_BLOCK, false),
                 "MOVING_BLOCK tests ONE_TENTH_ALPHA");
-        assertEquals(0.1F, HostAlphaTest.reference(solid, ChimeraEntityBridge.Family.SHADOW_BLOCK, true),
+        assertEquals(0.1F, IrisShaderKeys.reference(solid, ChimeraEntityBridge.Family.SHADOW_BLOCK, true),
                 "SHADOW_BLOCK tests ONE_TENTH_ALPHA");
     }
 
@@ -630,7 +630,7 @@ final class HostFamilyTest {
                         "weather keeps the particle conversion");
             } else {
                 assertTrue(adapter.vertexContract().hostLayout(), lane.program() + " must be a host-layout program");
-                assertEquals(lane.format(), PackFamilyPipelines.hostLayoutFormat(adapter.vertexContract()),
+                assertEquals(lane.format(), PackPipelines.hostLayoutFormat(adapter.vertexContract()),
                         lane + " pack layout and host layout disagree");
                 servedPrograms.add(lane.program());
             }
@@ -646,7 +646,7 @@ final class HostFamilyTest {
                         && FamilyAdapterRegistry.isHostLayoutFamily("gbuffers_beaconbeam"),
                 "beacon beams convert as Iris BEACON and batch on the widened block layout");
         assertEquals(ChimeraVertexFormats.EXTENDED_BLOCK,
-                PackFamilyPipelines.hostLayoutFormat(FamilyAdapterPlan.VertexContract.HOST_BEACON));
+                PackPipelines.hostLayoutFormat(FamilyAdapterPlan.VertexContract.HOST_BEACON));
         var widened = ChimeraVertexFormats.EXTENDED_BLOCK.getElementAttributeNames();
         assertEquals(List.of(2, 4, 6, 7), List.of(widened.indexOf("UV0"), widened.indexOf("Normal"),
                 widened.indexOf("MidTexCoord"), widened.indexOf("Tangent")),
@@ -673,7 +673,7 @@ final class HostFamilyTest {
         for (var lane : List.of(HostLayoutLane.LINE, HostLayoutLane.LIGHTNING, HostLayoutLane.LEASH)) {
             assertEquals(0.0F, lane.alphaReference(), "Iris LINES, LIGHTNING and LEASH use AlphaTests.OFF");
         }
-        assertEquals(0.0F, HostAlphaTest.reference("rendertype_beacon_beam", ChimeraEntityBridge.Family.BEACON_BEAM,
+        assertEquals(0.0F, IrisShaderKeys.reference("rendertype_beacon_beam", ChimeraEntityBridge.Family.BEACON_BEAM,
                 false), "Iris BEACON uses AlphaTests.OFF");
         // Iris TEXTURED tests NON_ZERO_ALPHA and TEXTURED_COLOR ONE_TENTH_ALPHA (ShaderKey), with
         // their texture on unit 0; the sun and moon stay with the sky keys.
@@ -731,8 +731,8 @@ final class HostFamilyTest {
             Files.writeString(shaders.resolve(name + ".fsh"), fragment);
         }
         PackProbe.Analysis analysis = PackProbe.analyze(root);
-        String eyes = PackFamilyPipelines.familyVertex(executablePlan(analysis, "gbuffers_spidereyes", "eyes"));
-        String entities = PackFamilyPipelines.familyVertex(executablePlan(analysis, "gbuffers_entities", "entities"));
+        String eyes = PackPipelines.familyVertex(executablePlan(analysis, "gbuffers_spidereyes", "eyes"));
+        String entities = PackPipelines.familyVertex(executablePlan(analysis, "gbuffers_entities", "entities"));
         assertTrue(eyes.contains("const ivec2 UV2 = ivec2(240);") && !eyes.contains("in ivec2 UV2;"), eyes);
         assertTrue(entities.contains("in ivec2 UV2;"), entities);
     }
@@ -915,14 +915,14 @@ final class HostFamilyTest {
     void particleAndTextAlphaReferences() {
         for (var family : List.of(ChimeraEntityBridge.Family.PARTICLE,
                 ChimeraEntityBridge.Family.PARTICLE_TRANSLUCENT)) {
-            assertEquals(0.1F, HostAlphaTest.reference("particle", family, false),
+            assertEquals(0.1F, IrisShaderKeys.reference("particle", family, false),
                     "particle fixed core cutout must not depend on an absent ALPHA_CUTOUT define");
         }
         assertEquals(0.1F, HostLayoutLane.WEATHER.alphaReference(), "Iris WEATHER tests ONE_TENTH_ALPHA");
         for (String shader : List.of("rendertype_text", "rendertype_text_see_through")) {
-            assertEquals(0.1F, HostAlphaTest.reference(shader, ChimeraEntityBridge.Family.ENTITY_TRANSLUCENT, false),
+            assertEquals(0.1F, IrisShaderKeys.reference(shader, ChimeraEntityBridge.Family.ENTITY_TRANSLUCENT, false),
                     "world text tests ONE_TENTH_ALPHA as Iris TEXT/TEXT_BE; untested glyph quads fill solid");
-            assertEquals(0.0001F, HostAlphaTest.reference(shader, ChimeraEntityBridge.Family.HAND, false),
+            assertEquals(0.0001F, IrisShaderKeys.reference(shader, ChimeraEntityBridge.Family.HAND, false),
                     "first-person text tests NON_ZERO_ALPHA as Iris HAND_TEXT");
         }
         assertEquals(0.1F, HostLayoutLane.TEXT_BG.alphaReference(), "Iris TEXT_BG tests ONE_TENTH_ALPHA");
@@ -930,13 +930,13 @@ final class HostFamilyTest {
         // TrueType glyphs (Iris TEXT_INTENSITY and TEXT_INTENSITY_BE) read their RRRR page alike.
         for (String text : List.of("rendertype_text", "rendertype_text_see_through", "position_color_tex_lightmap",
                 "rendertype_text_intensity", "rendertype_text_intensity_see_through")) {
-            assertTrue(ChimeraEntityBridge.worldFamily(text, glyphs, ChimeraEntityBridge.Family.ENTITY)
+            assertTrue(IrisShaderKeys.worldFamily(text, glyphs, ChimeraEntityBridge.Family.ENTITY)
                             == ChimeraEntityBridge.Family.ENTITY_TRANSLUCENT
-                            && ChimeraEntityBridge.worldFamily(text, glyphs, ChimeraEntityBridge.Family.BLOCK)
+                            && IrisShaderKeys.worldFamily(text, glyphs, ChimeraEntityBridge.Family.BLOCK)
                             == ChimeraEntityBridge.Family.BLOCK_TRANSLUCENT,
                     text + " must draw as Iris TEXT and TEXT_BE");
         }
-        assertEquals(0.0001F, HostAlphaTest.reference("rendertype_text_intensity", ChimeraEntityBridge.Family.HAND,
+        assertEquals(0.0001F, IrisShaderKeys.reference("rendertype_text_intensity", ChimeraEntityBridge.Family.HAND,
                 false), "first-person TrueType text tests NON_ZERO_ALPHA as Iris HAND_TEXT_INTENSITY");
         assertEquals(HostLayoutLane.SHADOW_TEXT, HostLayoutLane.forDraw("rendertype_text_intensity", glyphs,
                 HostLayoutLane.Pass.SHADOW), "TrueType text casts with shadow_text (Iris SHADOW_TEXT_INTENSITY)");
