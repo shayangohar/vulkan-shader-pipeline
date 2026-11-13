@@ -237,7 +237,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack shadow: fallback=IDENTITY (build failed)");
+            logBuildFallback(name, "build failed");
             return;
         }
         if (!attachPackStoragePipeline(name, shadow.pipeline(), shadow.imageBindings())) {
@@ -303,7 +303,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (build failed)", name);
+            logBuildFallback(name, "build failed");
             return;
         }
         if (!attachPackStoragePipeline(name, post.pipeline(), post.imageBindings())) {
@@ -352,7 +352,7 @@ final class PackPipelineInstaller {
                             "TERRAIN_VERTEX_PIPELINE_BUILD_FAILED");
                 }
             }
-            LOGGER.warn("[chimera] pack gbuffers_terrain: fallback=IDENTITY (build failed)");
+            logBuildFallback(name, "build failed");
             return;
         }
         pipelines.terrainRoute = terrain;
@@ -391,7 +391,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack gbuffers_water: fallback=IDENTITY (build failed)");
+            logBuildFallback(name, "build failed");
             return;
         }
         pipelines.waterRoute = water;
@@ -474,8 +474,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "ENTITY_PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack gbuffers_entities: fallback=IDENTITY "
-                    + "(ENTITY_PIPELINE_BUILD_FAILED)");
+            logBuildFallback(name, "ENTITY_PIPELINE_BUILD_FAILED");
             return;
         }
         pipelines.entity = entity;
@@ -553,8 +552,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "BLOCK_PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack gbuffers_block: fallback=IDENTITY "
-                    + "(BLOCK_PIPELINE_BUILD_FAILED)");
+            logBuildFallback(name, "BLOCK_PIPELINE_BUILD_FAILED");
             return;
         }
         pipelines.block = block;
@@ -669,8 +667,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "PARTICLE_PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack gbuffers_particles: fallback=IDENTITY "
-                    + "(PARTICLE_PIPELINE_BUILD_FAILED)");
+            logBuildFallback(name, "PARTICLE_PIPELINE_BUILD_FAILED");
             return;
         }
         pipelines.particle = particle;
@@ -819,6 +816,18 @@ final class PackPipelineInstaller {
         }
         ConformanceReport.ProgramReport row = report == null ? null : report.program(name);
         if (row != null && SkippedPrograms.expected(row)) {
+            LOGGER.debug("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
+        } else {
+            logBuildFallback(name, reason);
+        }
+    }
+
+    /**
+     * A program whose build failure already warned, with its error (PackPipelines.handleBuildFailure),
+     * logs its fallback at debug: one failure, one line in latest.log. Any other fallback warns.
+     */
+    private static void logBuildFallback(String name, String reason) {
+        if (PackFailureNotices.current().stream().anyMatch(failure -> failure.subject().equals(name))) {
             LOGGER.debug("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
         } else {
             LOGGER.warn("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);

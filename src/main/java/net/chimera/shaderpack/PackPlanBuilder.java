@@ -97,7 +97,8 @@ public final class PackPlanBuilder {
     static PackProgramPlan planningFailed(PackProgram program, PackConfig.PackConfigData config,
                                           Throwable failure) {
         String name = program.name();
-        LOGGER.warn("[chimera] pack {}: planning failed, program skipped", name, failure);
+        LOGGER.warn("[chimera] {} skipped: planning failed ({})", name, failure.toString());
+        LOGGER.debug("[chimera] {} planning failure", name, failure);
         PostTargetPlan targets;
         try {
             targets = PostTargetPlan.forFullscreenProgram(name, program.executableFragmentSource(), config);

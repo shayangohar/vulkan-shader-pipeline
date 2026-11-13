@@ -49,6 +49,9 @@ final class CompileFailureNoticeCorpusTest {
                     + "lib/effect/visual/lens/mainlens.glsl:79"), info);
             assertEquals("compile error: 'lenscolor' : redefinition", PackPipelines.compileError(failure.getMessage()),
                     "the chat line's reason");
+            String warning = PackPipelines.errorSummary(failure.getMessage());
+            assertTrue(warning.matches("pack_final\\.fsh:\\d+: error: 'lenscolor' : redefinition \\(\\+1 more\\)"),
+                    "the log's one line: " + warning);
         }
     }
 }

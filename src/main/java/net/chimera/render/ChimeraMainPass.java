@@ -693,7 +693,8 @@ public final class ChimeraMainPass implements MainPass {
     void logPackRuntimeFailure(String phase, RuntimeException failure) {
         String reason = runtimeFailureReason(phase, failure);
         if (shouldLogPackRuntimeFailure(reason)) {
-            LOGGER.warn("[chimera] pack runtime fallback ({})", reason, failure);
+            LOGGER.warn("[chimera] pack runtime fallback ({})", reason);
+            LOGGER.debug("[chimera] pack runtime failure", failure);
         }
     }
 

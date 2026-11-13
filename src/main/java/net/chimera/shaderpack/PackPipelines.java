@@ -210,10 +210,12 @@ public final class PackPipelines {
                 : failure.getMessage() == null || failure.getMessage().isBlank()
                 ? "UNEXPECTED_BUILD_FAILURE" : failure.getMessage();
         Throwable cause = failure.getCause() == null ? failure : failure.getCause();
-        LOGGER.warn("[chimera] pack {}: build failed phase={} exception={} reason={}",
-                pipeline, phase, cause.getClass().getName(), reason, cause);
         HostPipelineLayout.ShaderCompilationFailure compile =
                 cause instanceof HostPipelineLayout.ShaderCompilationFailure shaderc ? shaderc : null;
+        // One line in latest.log; the stack trace goes to debug.log, the detail to Copy Info and the report.
+        LOGGER.warn("[chimera] {} skipped: {}", pipeline,
+                compile == null ? phase + " failed (" + reason + ")" : errorSummary(compile.getMessage()));
+        LOGGER.debug("[chimera] {} build failure", pipeline, cause);
         String pack = PackFailureNotices.currentPack();
         String detail = compile == null ? cause.toString() : CompileErrorLocation.describe(compile.getMessage(),
                 compile.source(), PackFailureNotices.currentShadersDir());
@@ -228,11 +230,21 @@ public final class PackPipelines {
      * before errors in shaderc's report.
      */
     static String compileError(String report) {
-        String text = report == null ? "" : report.strip();
-        String first = text.lines().filter(line -> line.contains(": error: ")).findFirst()
-                .orElse(text.lines().findFirst().orElse(""));
+        String first = firstError(report);
         int error = first.indexOf(": error: ");
         return "compile error: " + (error < 0 ? first : first.substring(error + ": error: ".length()));
+    }
+
+    /** A compiler report's first error with its file and line, and how many more it has. */
+    static String errorSummary(String report) {
+        long errors = report == null ? 0 : report.lines().filter(line -> line.contains(": error: ")).count();
+        return firstError(report) + (errors > 1 ? " (+" + (errors - 1) + " more)" : "");
+    }
+
+    private static String firstError(String report) {
+        String text = report == null ? "" : report.strip();
+        return text.lines().filter(line -> line.contains(": error: ")).findFirst()
+                .orElse(text.lines().findFirst().orElse(""));
     }
     /**
      * A successfully built pack post pipeline plus the slots its samplers occupy, the frame

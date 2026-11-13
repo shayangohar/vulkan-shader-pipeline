@@ -44,7 +44,8 @@ final class ProgramReportRules {
         try {
             return toProgram(inventory, packConfig, programPlan, resourcePlan, packPlan, passComputes);
         } catch (RuntimeException | StackOverflowError failure) {
-            LOGGER.warn("[chimera] pack {}: report rules failed, program skipped", inventory.name, failure);
+            LOGGER.warn("[chimera] {} skipped: report rules failed ({})", inventory.name, failure.toString());
+            LOGGER.debug("[chimera] {} report rules failure", inventory.name, failure);
             TreeSet<String> deviations = new TreeSet<>(inventory.deviations);
             if (programPlan != null) deviations.addAll(programPlan.deviations());
             deviations.add(REPORT_FAILED + ":" + PackPlanBuilder.failureReason(failure));
