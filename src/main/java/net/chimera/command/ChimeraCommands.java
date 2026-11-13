@@ -87,12 +87,13 @@ public final class ChimeraCommands {
         if (result != ChimeraRenderer.PackRequestResult.NOT_READY) {
             rememberSelection(resolution.path(), true);
         }
-        return reportRequest(context, result, "pack " + resolution.path().getFileName());
+        String name = resolution.path().getFileName().toString();
+        return reportRequest(context, result, "Loading " + name + ".", name + " is already loaded.");
     }
 
     private static int reloadPack(CommandContext<CommandSourceStack> context) {
         ChimeraRenderer.PackRequestResult result = ChimeraRenderer.reloadPack();
-        return reportRequest(context, result, "current pack");
+        return reportRequest(context, result, "Reloading the pack.", "Reloading the pack.");
     }
 
     private static int turnPackOff(CommandContext<CommandSourceStack> context) {
@@ -101,15 +102,7 @@ public final class ChimeraCommands {
             ChimeraConfig config = ChimeraConfig.get();
             config.setSelection(config.shaderPack().orElse(null), false);
         }
-        switch (result) {
-            case QUEUED -> feedback(context, Component.literal(
-                    "Chimera shader pack off queued; vanilla rendering resumes at the next safe frame boundary."));
-            case ALREADY_ACTIVE -> feedback(context, Component.literal(
-                    "No Chimera shader pack is loaded; rendering is already vanilla."));
-            case NOT_READY -> failure(context, Component.literal(
-                    "Chimera is not ready; no pack change was queued."));
-        }
-        return result == ChimeraRenderer.PackRequestResult.NOT_READY ? -1 : 0;
+        return reportRequest(context, result, "Shaders off.", "Shaders are already off.");
     }
 
     /**
@@ -158,15 +151,13 @@ public final class ChimeraCommands {
     private static int reportRequest(
             CommandContext<CommandSourceStack> context,
             ChimeraRenderer.PackRequestResult result,
-            String target
+            String queued,
+            String alreadyActive
     ) {
         switch (result) {
-            case QUEUED -> feedback(context, Component.literal(
-                    "Chimera " + target + " change queued; it will apply at the next safe frame boundary."));
-            case ALREADY_ACTIVE -> feedback(context, Component.literal(
-                    "Chimera " + target + " is already active."));
-            case NOT_READY -> failure(context, Component.literal(
-                    "Chimera is not ready; no pack change was queued."));
+            case QUEUED -> feedback(context, Component.literal(queued));
+            case ALREADY_ACTIVE -> feedback(context, Component.literal(alreadyActive));
+            case NOT_READY -> failure(context, Component.literal("Chimera is not ready."));
         }
         return result == ChimeraRenderer.PackRequestResult.NOT_READY ? -1 : 0;
     }

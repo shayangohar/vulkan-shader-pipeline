@@ -324,8 +324,8 @@ final class PackPostChain {
         String pack = PackFailureNotices.currentPack();
         PackFailureNotices.record(new PackFailureNotices.Failure(pack, stage, "runtime",
                 PackFailureNotices.Outcome.SKIPPED, failure.getClass().getSimpleName() + ": " + failure.getMessage(),
-                "Chimera skipped " + stage + " in " + pack + ": it threw while recording a frame, and now runs as an"
-                        + " identity pass.\n" + ChimeraMainPass.runtimeFailureReason("post-stage:" + stage, failure),
+                "Chimera skipped " + stage + " in " + pack + ": it threw while recording.\n"
+                        + ChimeraMainPass.runtimeFailureReason("post-stage:" + stage, failure),
                 failure));
         PackFailureNotices.publish();
     }
@@ -791,8 +791,8 @@ final class PackPostChain {
             // The world programs still draw; nothing runs after them, which the frame shows.
             String pack = PackFailureNotices.currentPack();
             PackFailureNotices.record(new PackFailureNotices.Failure(pack, "the post passes", "post targets",
-                    PackFailureNotices.Outcome.SKIPPED, "their render targets could not be made ("
-                            + e.getClass().getSimpleName() + ": " + e.getMessage() + ")",
+                    PackFailureNotices.Outcome.SKIPPED, "render targets failed: "
+                            + e.getClass().getSimpleName() + ": " + e.getMessage(),
                     "Chimera skipped every post pass of " + pack + ": their render targets could not be made.\n"
                             + ChimeraMainPass.runtimeFailureReason("post-resource-allocation", e), e));
             PackFailureNotices.publish();

@@ -221,8 +221,9 @@ public final class PackPipelines {
                 compile.source(), PackFailureNotices.currentShadersDir());
         PackFailureNotices.record(new PackFailureNotices.Failure(pack, program, phase,
                 PackFailureNotices.Outcome.SKIPPED, compile == null ? reason : compileError(compile.getMessage()),
-                "Chimera skipped " + program + " in " + pack + ": its pipeline " + pipeline + " did not build ("
-                        + phase + ", " + reason + ").\n" + detail, cause));
+                "Chimera skipped " + program + (pipeline.equals(program) ? "" : " (" + pipeline + ")") + " in "
+                        + pack + ": " + phase + " failed" + (compile == null ? " (" + reason + ")" : "") + ".\n"
+                        + detail, cause));
     }
 
     /**

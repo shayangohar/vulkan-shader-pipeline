@@ -42,7 +42,7 @@ final class PackFailureNoticesTest {
         PackFailureNotices.publish();
         List<PackFailureNotices.Line> held = PackFailureNotices.held();
         assertEquals(1, held.size());
-        assertEquals("[Chimera] RedHat v34.3.1: Chimera skipped final (compile error: 'lenscolor' : redefinition). ",
+        assertEquals("[Chimera] RedHat v34.3.1: skipped final (compile error: 'lenscolor' : redefinition) ",
                 held.get(0).text());
         assertFalse(held.get(0).severe(), "a skip is a warning; the pack still runs");
         assertTrue(held.get(0).info().contains("'lenscolor' : redefinition"), held.get(0).info());
@@ -61,11 +61,11 @@ final class PackFailureNoticesTest {
         PackFailureNotices.beginLoad("Insanity", null);
         PackFailureNotices.record(skipped("Insanity", "gbuffers_entities", "shader-compilation"));
         PackFailureNotices.record(new PackFailureNotices.Failure("Insanity", "pack", "load",
-                PackFailureNotices.Outcome.VANILLA, "it is not supported yet (entity could not load).", "info"));
+                PackFailureNotices.Outcome.VANILLA, "entity could not load", "info"));
         PackFailureNotices.publish();
         List<PackFailureNotices.Line> held = PackFailureNotices.held();
         assertEquals(1, held.size(), "no \"skipped\" line beside the fallback");
-        assertEquals("[Chimera] Insanity fell back to vanilla: it is not supported yet (entity could not load). ",
+        assertEquals("[Chimera] Insanity fell back to vanilla: entity could not load ",
                 held.get(0).text());
         assertTrue(held.get(0).severe());
         assertTrue(held.get(0).info().contains("Skipped before it:\n- gbuffers_entities: pack_gbuffers_entities.fsh"),
@@ -83,7 +83,7 @@ final class PackFailureNoticesTest {
         PackFailureNotices.beginLoad("Insanity", null);
         PackFailureNotices.record(skipped("Insanity", "gbuffers_entities", "shader-compilation"));
         PackFailureNotices.record(new PackFailureNotices.Failure("Insanity", "pack", "load",
-                PackFailureNotices.Outcome.VANILLA, "it is not supported yet (entity could not load).", "info"));
+                PackFailureNotices.Outcome.VANILLA, "entity could not load", "info"));
         PackFailureNotices.publish();
         List<PackFailureNotices.Line> held = PackFailureNotices.held();
         assertEquals(2, held.size());
@@ -150,7 +150,7 @@ final class PackFailureNoticesTest {
         List<PackFailureNotices.Line> held = PackFailureNotices.held();
         assertEquals(PackFailureNotices.LINES_PER_PUBLISH, held.size());
         PackFailureNotices.Line folded = held.get(held.size() - 1);
-        assertEquals("[Chimera] Pack: 3 more failures; /chimera pack status lists them.", folded.text());
+        assertEquals("[Chimera] Pack: 3 more failures; see /chimera pack status", folded.text());
         assertNull(folded.info(), "the folded line has no Copy Info of its own");
         assertEquals(5, PackFailureNotices.statusLines().size());
     }
@@ -257,7 +257,7 @@ final class PackFailureNoticesTest {
         assertEquals(" (2 skipped)", PackFailureNotices.label("Pack"));
         assertEquals("", PackFailureNotices.label("Other"), "another pack's failures are not this one's");
         PackFailureNotices.record(new PackFailureNotices.Failure("Pack", "pack", "load",
-                PackFailureNotices.Outcome.VANILLA, "it is not supported yet.", "info"));
+                PackFailureNotices.Outcome.VANILLA, "entity could not load", "info"));
         assertEquals(" (fallback)", PackFailureNotices.label("Pack"), "as Iris labels a pack that fell back");
         PackFailureNotices.beginLoad("Pack", null);
         assertEquals("", PackFailureNotices.label("Pack"), "a new load starts clean");

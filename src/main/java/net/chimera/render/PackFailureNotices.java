@@ -211,7 +211,7 @@ public final class PackFailureNotices {
         }
         if (shown < told.size()) {
             lines.add(new Line("[Chimera] " + told.get(shown).pack() + ": " + (told.size() - shown)
-                    + " more failures; /chimera pack status lists them.", false, null, null));
+                    + " more failures; see /chimera pack status", false, null, null));
         }
         synchronized (LOCK) {
             held.addAll(lines);
@@ -279,8 +279,8 @@ public final class PackFailureNotices {
     static Line line(Failure failure, Path report, Reporter writer) {
         String info = failure.info() + (report == null ? "" : "\nReport: chimera/reports/" + report.getFileName());
         String text = switch (failure.outcome()) {
-            case SKIPPED -> "[Chimera] " + failure.pack() + ": Chimera skipped " + failure.subject() + " ("
-                    + failure.reason() + "). ";
+            case SKIPPED -> "[Chimera] " + failure.pack() + ": skipped " + failure.subject() + " ("
+                    + failure.reason() + ") ";
             case VANILLA -> "[Chimera] " + failure.pack() + " fell back to vanilla"
                     + (failure.subject().equals("pack") ? "" : " after " + failure.subject() + " failed") + ": "
                     + failure.reason() + " ";

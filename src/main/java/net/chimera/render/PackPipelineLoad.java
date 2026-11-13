@@ -176,7 +176,7 @@ final class PackPipelineLoad {
             List<String> refusals = SkippedPrograms.refusals(row.deviations());
             PackFailureNotices.record(new PackFailureNotices.Failure(pack, row.name(), "load",
                     PackFailureNotices.Outcome.SKIPPED, SkippedPrograms.reason(row.deviations()),
-                    "Chimera skipped " + row.name() + " in " + pack + " when it loaded the pack.\nWhy: "
+                    "Chimera skipped " + row.name() + " in " + pack + " at load: "
                             + (refusals.isEmpty() ? "not installed" : String.join(", ", refusals))));
         }
     }
@@ -199,7 +199,7 @@ final class PackPipelineLoad {
         }
         String families = String.join(", ", missing);
         renderVanilla(families, "PACK_FRAME_UNSUPPORTED:" + String.join(",", missing),
-                "is not supported yet (" + families + " could not load)");
+                families + " could not load");
         return false;
     }
 
@@ -214,7 +214,7 @@ final class PackPipelineLoad {
         }
         String features = missing.stream().map(PackFeatureFlags::readableName).collect(Collectors.joining(", "));
         renderVanilla("required features " + features, "PACK_FRAME_UNSUPPORTED:" + String.join(",", missing),
-                "needs features Chimera does not support (" + features + ")");
+                "needs unsupported features (" + features + ")");
         return false;
     }
 
@@ -231,8 +231,8 @@ final class PackPipelineLoad {
         pass.sessions.cleanUpPackVariant();
         String pack = PackSessionLifecycle.packLabel(pass.sessions.packPath);
         PackFailureNotices.record(new PackFailureNotices.Failure(pack, "pack", "load",
-                PackFailureNotices.Outcome.VANILLA, "it " + chatReason + ".",
-                "Chimera renders vanilla for " + pack + ": it " + chatReason + ".\nDeviation: " + deviation));
+                PackFailureNotices.Outcome.VANILLA, chatReason,
+                "Chimera renders vanilla for " + pack + ": " + chatReason + ".\n" + deviation));
         PackFailureNotices.publish();
     }
 

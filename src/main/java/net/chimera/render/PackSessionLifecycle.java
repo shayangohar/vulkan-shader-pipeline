@@ -167,14 +167,14 @@ final class PackSessionLifecycle {
         String active = packLabel(this.packPath);
         PackChangeQueue.PendingPackChange pendingRequest = this.packChangeQueue.pending();
         String pending = pendingRequest == null
-                ? (hasPendingPackVariant() ? "dimension " + this.pendingPackDimension : "none")
+                ? (hasPendingPackVariant() ? "dimension " + this.pendingPackDimension : null)
                 : packLabel(pendingRequest.path());
         if (pass.packFrameUnsupported != null) {
             active += " (unsupported: " + pass.packFrameUnsupported + ")";
         }
         return "Chimera pack: active=" + active
                 + ", dimension=" + this.currentDimension
-                + ", pending=" + pending;
+                + (pending == null ? "" : ", pending=" + pending);
     }
 
     static String packLabel(Path path) {

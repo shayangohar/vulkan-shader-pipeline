@@ -78,7 +78,7 @@ final class PackFailureReport {
             text.append("Name: ").append(pack.name()).append('\n')
                     .append("SHA-256: ").append(pack.hash()).append('\n')
                     .append("Profile: ").append(pack.profile()).append('\n')
-                    .append("Options changed from the pack's defaults:");
+                    .append("Changed options:");
             if (pack.options().isEmpty()) text.append(" none");
             new TreeMap<>(pack.options()).forEach((name, value) ->
                     text.append("\n  ").append(name).append('=').append(value));
