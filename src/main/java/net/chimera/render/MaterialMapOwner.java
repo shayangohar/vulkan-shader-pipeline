@@ -261,7 +261,7 @@ public final class MaterialMapOwner implements AutoCloseable {
             normals.texture().close();
             throw failure;
         }
-        LOGGER.info("[chimera] material maps: flat fallbacks ready normals={} specular={}",
+        LOGGER.debug("[chimera] material maps: flat fallbacks ready normals={} specular={}",
                 normals.image().getId(), specular.image().getId());
         return new MaterialMapOwner(normals.texture(), normals.image(),
                 specular.texture(), specular.image(), MaterialCompanionPixels::buildGpuCompanions,
@@ -455,7 +455,7 @@ public final class MaterialMapOwner implements AutoCloseable {
             simpleCompanions.clear();
             simpleMisses.clear();
             wantedSimple.clear();
-            LOGGER.info("[chimera] material maps: generation {} started, {} simple sets retired",
+            LOGGER.debug("[chimera] material maps: generation {} started, {} simple sets retired",
                     generation, retiredCompanions.size());
             return generation;
         }
@@ -665,7 +665,7 @@ public final class MaterialMapOwner implements AutoCloseable {
             }
             simpleCompanions.put(albedo, new SimpleCompanion(sets, labPbr));
         }
-        LOGGER.info("[chimera] material maps: simple {} kinds={} dims={} labpbr={} generation={}",
+        LOGGER.debug("[chimera] material maps: simple {} kinds={} dims={} labpbr={} generation={}",
                 matchId, sets.keySet(), dims.values(), labPbr, generation);
     }
 
@@ -721,11 +721,10 @@ public final class MaterialMapOwner implements AutoCloseable {
         }
         long millis = (System.nanoTime() - started) / 1_000_000L;
         if (sets.isEmpty()) {
-            LOGGER.info("[chimera] material maps: atlas {} has no material sprites, "
-                    + "fallbacks stay bound ({}x{}, {} mips)",
+            LOGGER.debug("[chimera] material maps: atlas {} has none; fallbacks bound ({}x{}, {} mips)",
                     upload.location(), upload.width(), upload.height(), upload.mipLevels());
         } else {
-            LOGGER.info("[chimera] material maps: atlas {} kinds={} sprites={}/{} animated={} {}x{} {} mips "
+            LOGGER.debug("[chimera] material maps: atlas {} kinds={} sprites={}/{} animated={} {}x{} {} mips "
                     + "labpbr={} base={} generation={} in {}ms",
                     upload.location(), sets.keySet(), mappedSprites, upload.sprites().size(),
                     animated.size(), upload.width(), upload.height(), upload.mipLevels(), labPbr,

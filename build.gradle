@@ -54,11 +54,28 @@ dependencies {
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
+// The commit a jar is built from, for failure reports (PackFailureReport.commit); "unknown" without git.
+def chimeraCommit = {
+    try {
+        def commit = providers.exec {
+            commandLine 'git', 'rev-parse', '--short=8', 'HEAD'
+            ignoreExitValue = true
+        }.standardOutput.asText.get().trim()
+        return commit ?: 'unknown'
+    } catch (Exception ignored) {
+        return 'unknown'
+    }
+}()
+
 processResources {
     inputs.property 'version', project.version
+    inputs.property 'commit', chimeraCommit
 
     filesMatching('META-INF/neoforge.mods.toml') {
         expand 'version': project.version
+    }
+    filesMatching('chimera-build.properties') {
+        expand 'commit': chimeraCommit
     }
 }
 

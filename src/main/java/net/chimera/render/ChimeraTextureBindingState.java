@@ -44,7 +44,7 @@ public final class ChimeraTextureBindingState {
             samplerProfiles.put(0, profile);
             if (image.getId() != loggedTerrainImage) {
                 loggedTerrainImage = image.getId();
-                LOGGER.info("[chimera] pack terrain binding: image={} sampler={} key={} atlasMipLevels={}",
+                LOGGER.debug("[chimera] pack terrain binding: image={} sampler={} key={} atlasMipLevels={}",
                         image.getId(), profile.id(), profile.key(), image.mipLevels);
             }
         }

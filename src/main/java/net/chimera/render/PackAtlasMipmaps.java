@@ -51,8 +51,8 @@ public final class PackAtlasMipmaps {
         try {
             int sprites = LEVELS.swap(wanted, atlas.getTextures().values().stream()
                     .map(TextureAtlasSprite::contents).toList(), PackAtlasMipmaps::levels, PackAtlasMipmaps::upload);
-            LOGGER.info("[chimera] pack atlas mipmaps: {} for {} sprites ({} ms)",
-                    wanted ? "alpha-weighted levels, as Iris setups build" : "VulkanMod's levels restored",
+            LOGGER.debug("[chimera] atlas mipmaps: {} for {} sprites ({} ms)",
+                    wanted ? "alpha-weighted, as Iris" : "VulkanMod's restored",
                     sprites, (System.nanoTime() - start) / 1_000_000);
         } catch (RuntimeException failure) {
             LOGGER.warn("[chimera] pack atlas mipmaps: {} failed", wanted ? "rewrite" : "restore", failure);

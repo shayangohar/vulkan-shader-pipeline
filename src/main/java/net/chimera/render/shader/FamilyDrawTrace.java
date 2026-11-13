@@ -30,7 +30,7 @@ final class FamilyDrawTrace {
 
     static void noteDraw(Family family, String shader, VertexFormat format) {
         if (drawn.add(family)) {
-            ChimeraMod.LOGGER.info("[chimera] family bridge: lane={} drawing shader={} stride={}B",
+            ChimeraMod.LOGGER.debug("[chimera] family bridge: lane={} drawing shader={} stride={}B",
                     family.name().toLowerCase(), shader, format.getVertexSize());
         }
     }
@@ -46,7 +46,7 @@ final class FamilyDrawTrace {
     /** A shadow-pass draw no shadow lane serves, left out of the shadow map as Iris draws none like it. */
     static void noteShadowDropped(String shader) {
         if (dropped.add(String.valueOf(shader))) {
-            ChimeraMod.LOGGER.info("[chimera] family bridge: shadow pass left out shader={}", shader);
+            ChimeraMod.LOGGER.debug("[chimera] family bridge: shadow pass left out shader={}", shader);
         }
     }
 }

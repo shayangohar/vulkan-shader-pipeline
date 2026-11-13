@@ -8,8 +8,7 @@ import net.chimera.shaderpack.PackAdvancedResourcePlan;
 import net.chimera.shaderpack.PackFeatureFlags;
 import net.chimera.shaderpack.PackPipelines;
 import net.chimera.shaderpack.PostTargetPlan;
-import net.minecraft.client.Minecraft;
-import net.minecraft.network.chat.Component;
+import net.chimera.shaderpack.SkippedPrograms;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,7 +65,7 @@ final class PackPipelineLoad {
         }
         new PackPipelineInstaller(pass).installPrograms();
         installFamilyBridge();
-        LOGGER.info("[chimera] pack stages: {}", CompiledStages.endLoad());
+        LOGGER.debug("[chimera] pack stages: {}", CompiledStages.endLoad());
         if (!enforceMaskCriticalFamilyContract()) {
             return;
         }
@@ -77,7 +76,7 @@ final class PackPipelineLoad {
                 PackPipelines.PackPost::name, PostTargetPlan.programComparator()));
         pass.postChain.buildPackPostExecutionPlan();
         if (pass.coverage.packCoveragePlan.enabled()) {
-            LOGGER.info("[chimera] scene seed: direct HDR composition active; coverage merge deferred families={}",
+            LOGGER.debug("[chimera] scene seed: direct HDR; coverage merge deferred for {}",
                     pass.coverage.packCoveragePlan.families());
         }
         reportShadowFallbacks();
@@ -90,6 +89,7 @@ final class PackPipelineLoad {
         pass.pipelines.clear();
         pass.postChain.packPostExecution.clear();
         pass.postChain.packPostBoundaryLogged.clear();
+        pass.postChain.stageFailures.clear();
         pass.postChain.packFinalExecution = null;
         pass.packPostChainRejected = false;
         pass.windows.restorePackResourceWindow();
@@ -103,7 +103,7 @@ final class PackPipelineLoad {
     /** Hands the installed entity, block, hand, particle and caster pipelines to the family bridge. */
     private void installFamilyBridge() {
         ChimeraEntityBridge.install(pass.pipelines.lanes(pass.packPlan == null ? null : pass.packPlan.entityIds()));
-        LOGGER.info("[chimera] family bridge: targets entity={}, block={}",
+        LOGGER.debug("[chimera] family bridge: targets entity={}, block={}",
                 familyTargets(pass.pipelines.entity), familyTargets(pass.pipelines.block));
     }
 
@@ -144,16 +144,40 @@ final class PackPipelineLoad {
             if (pass.conformanceReport != null) {
                 pass.conformanceReport.addDeviation("SHADOW_PROGRAM_MISSING");
             }
-            LOGGER.warn("[chimera] pack shadow: fallback=IDENTITY (SHADOW_PROGRAM_MISSING)");
+            // A pack without a shadow program has no shadow pass in Iris either: nothing changes.
+            LOGGER.debug("[chimera] pack shadow: fallback=IDENTITY (SHADOW_PROGRAM_MISSING)");
         }
     }
 
-    /** Marks every program never attempted as a fallback and logs the session's conformance report. */
+    /**
+     * Marks every program never attempted as a fallback, logs the session's conformance report, and
+     * tells in chat of each program skipped where Iris would have run it (SkippedPrograms).
+     */
     private void reportConformance() {
         if (pass.conformanceReport != null) {
             pass.conformanceReport.markUnattemptedAsFallback();
-            LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
-            pass.sessions.logConformanceSummary();
+            pass.sessions.logConformance();
+            recordSkippedPrograms(pass.conformanceReport);
+        }
+        PackFailureNotices.publish();
+    }
+
+    /**
+     * Records each program the load skipped where Iris would have run it. A program that did not
+     * build was recorded with its compiler's message first, and keeps that record.
+     */
+    static void recordSkippedPrograms(ConformanceReport report) {
+        String pack = PackFailureNotices.currentPack();
+        for (ConformanceReport.ProgramReport row : report.programs()) {
+            if (row.runtime() != ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK
+                    || SkippedPrograms.expected(row)) {
+                continue;
+            }
+            List<String> refusals = SkippedPrograms.refusals(row.deviations());
+            PackFailureNotices.record(new PackFailureNotices.Failure(pack, row.name(), "load",
+                    PackFailureNotices.Outcome.SKIPPED, SkippedPrograms.reason(row.deviations()),
+                    "Chimera skipped " + row.name() + " in " + pack + " at load: "
+                            + (refusals.isEmpty() ? "not installed" : String.join(", ", refusals))));
         }
     }
 
@@ -169,13 +193,13 @@ final class PackPipelineLoad {
     boolean enforceMaskCriticalFamilyContract() {
         List<String> missing = maskCriticalFamilyFallback();
         if (missing.isEmpty()) {
-            LOGGER.info("[chimera] family bridge: mask-critical contract holds "
+            LOGGER.debug("[chimera] family bridge: mask-critical contract holds "
                     + "(entity and block installed or not authored)");
             return true;
         }
         String families = String.join(", ", missing);
         renderVanilla(families, "PACK_FRAME_UNSUPPORTED:" + String.join(",", missing),
-                "is not supported yet (" + families + " could not load)");
+                families + " could not load");
         return false;
     }
 
@@ -190,7 +214,7 @@ final class PackPipelineLoad {
         }
         String features = missing.stream().map(PackFeatureFlags::readableName).collect(Collectors.joining(", "));
         renderVanilla("required features " + features, "PACK_FRAME_UNSUPPORTED:" + String.join(",", missing),
-                "needs features Chimera does not support (" + features + ")");
+                "needs unsupported features (" + features + ")");
         return false;
     }
 
@@ -199,19 +223,17 @@ final class PackPipelineLoad {
         pass.packFrameUnsupported = reason;
         if (pass.conformanceReport != null) {
             pass.conformanceReport.markFrameFallback(deviation, "PACK_FRAME_UNSUPPORTED");
-            LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
-            pass.sessions.logConformanceSummary();
+            pass.sessions.logConformance();
         }
         LOGGER.warn("[chimera] pack frame unsupported: {}; vanilla rendering for {}",
                 reason, PackSessionLifecycle.packLabel(pass.sessions.packPath));
         // Nothing built this session has been submitted yet, so release it directly.
         pass.sessions.cleanUpPackVariant();
-        Minecraft minecraft = Minecraft.getInstance();
-        if (minecraft.gui != null) {
-            minecraft.gui.getChat().addMessage(Component.literal("[Chimera] "
-                    + PackSessionLifecycle.packLabel(pass.sessions.packPath) + " " + chatReason
-                    + ". Rendering vanilla. See latest.log."));
-        }
+        String pack = PackSessionLifecycle.packLabel(pass.sessions.packPath);
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, "pack", "load",
+                PackFailureNotices.Outcome.VANILLA, chatReason,
+                "Chimera renders vanilla for " + pack + ": " + chatReason + ".\n" + deviation));
+        PackFailureNotices.publish();
     }
 
     /**
@@ -242,7 +264,7 @@ final class PackPipelineLoad {
         String status = storageRequired
                 ? pass.packStorageBufferOwner.storagePathStatus("shadow", "composite")
                 : "storage=0,required=false,ready=true,missing=none";
-        LOGGER.info("[chimera] storage path: phase={},plannedBytes={},allocatedBytes={},initializedBytes={},{}",
+        LOGGER.debug("[chimera] storage path: phase={},plannedBytes={},allocatedBytes={},initializedBytes={},{}",
                 phase, pass.packStorageBufferOwner.plannedBytes(),
                 pass.packStorageBufferOwner.allocatedBytes(),
                 pass.packStorageBufferOwner.initializedBytes(), status);

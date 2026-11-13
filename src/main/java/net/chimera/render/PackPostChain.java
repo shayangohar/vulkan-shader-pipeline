@@ -52,6 +52,10 @@ final class PackPostChain {
 
     /** Identity-boundary diagnostics are emitted once per pack session. */
     final Set<String> packPostBoundaryLogged = new HashSet<>();
+    /** The stages that threw while recording this pack session, which now run as identity. */
+    final PostStageFailures stageFailures = new PostStageFailures();
+    /** The stage whose failure a window's abort is about to turn into the pack's fallback; null for none. */
+    private String escalatedStage;
     PackPostExecution packFinalExecution;
 
     /** Debug NaN detector over pack targets; idle unless enabled. */
@@ -234,7 +238,7 @@ final class PackPostChain {
             for (PackPostExecution stage : this.packPostExecution) {
                 if (!scheduledIn(stage, window)) continue;
                 if (stage.post() == null && computeOnly(stage.name())) {
-                    runComputeOnlyStage(commandBuffer, hdrColor, stage);
+                    if (!this.stageFailures.skipped(stage.name())) runComputeOnlyStage(commandBuffer, hdrColor, stage);
                     continue;
                 }
                 if (!stageRunnable(stage)) continue;
@@ -268,6 +272,10 @@ final class PackPostChain {
             markPostStageIdentityBoundary(stage, "not installed");
             return false;
         }
+        if (this.stageFailures.skipped(stage.name())) {
+            markPostStageIdentityBoundary(stage, "threw earlier this session");
+            return false;
+        }
         TargetStep graphStep = postGraphStep(stage);
         if (graphStep == null || !graphStep.executable()) {
             markPostGraphIdentityBoundary(stage, graphStep);
@@ -287,13 +295,47 @@ final class PackPostChain {
      * now, then the barrier Iris's renderAll records after them, and nothing drawn or flipped.
      */
     private void runComputeOnlyStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
-        pass.packPostTargets.beginStep(commandBuffer, stage.name());
-        pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(commandBuffer),
-                hdrColor.width, hdrColor.height);
-        if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
+        try {
+            pass.packPostTargets.beginStep(commandBuffer, stage.name());
+            pass.packPassComputes.dispatchBefore(stage.name(), commandBuffer, computeSources(commandBuffer),
+                    hdrColor.width, hdrColor.height);
+            if (pass.packAdvancedImageOwner != null) pass.packAdvancedImageOwner.afterImageWrites(commandBuffer);
+        } catch (RuntimeException failure) {
+            // Isolated as a drawing stage is (runPostStage): it opened no rendering to abort.
+            String reason = ChimeraMainPass.runtimeFailureReason("post-stage:" + stage.name(), failure);
+            if (pass.conformanceReport != null) {
+                pass.conformanceReport.markRuntime(stage.name(), ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
+                        "POST_RUNTIME_STAGE_FAILED:" + stage.name() + ":" + reason);
+            }
+            isolateOrRethrow(stage.name(), failure);
+        }
     }
 
-    /** Draws one post stage into its graph targets; a failure aborts the targets it opened and rethrows. */
+    /**
+     * Isolates {@code stage}'s failure and tells it in chat, or rethrows it when the pack must fall
+     * back to vanilla instead (PostStageFailures); the window's abort then tells that.
+     */
+    private void isolateOrRethrow(String stage, RuntimeException failure) {
+        if (!this.stageFailures.isolate(stage, failure)) {
+            this.escalatedStage = stage;
+            throw failure;
+        }
+        pass.logPackRuntimeFailure("post-stage:" + stage, failure);
+        String pack = PackFailureNotices.currentPack();
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, stage, "runtime",
+                PackFailureNotices.Outcome.SKIPPED, failure.getClass().getSimpleName() + ": " + failure.getMessage(),
+                "Chimera skipped " + stage + " in " + pack + ": it threw while recording.\n"
+                        + ChimeraMainPass.runtimeFailureReason("post-stage:" + stage, failure),
+                failure));
+        PackFailureNotices.publish();
+    }
+
+    /**
+     * Draws one post stage into its graph targets. A stage that throws aborts its own step, which
+     * then passes through as one that did not run, and runs as identity for the rest of the
+     * session while the chain goes on (TASK-922). A device-level failure, or the stage that makes
+     * too many (PostStageFailures), is rethrown and turns the pack off.
+     */
     private void runPostStage(VkCommandBuffer commandBuffer, VulkanImage hdrColor, PackPostExecution stage) {
         PackPipelines.PackPost post = stage.post();
         ProgramImageBindingTransaction<ChimeraTextureBindingState.Snapshot> previous = null;
@@ -319,10 +361,10 @@ final class PackPostChain {
             checkNanTripwireOutputs(commandBuffer, stage);
         } catch (RuntimeException stageFailure) {
             if (attempted) {
-                pass.packPostTargets.abort(commandBuffer);
+                pass.packPostTargets.abortStep(commandBuffer);
             }
             markPostStageFailure(post, stageFailure);
-            throw stageFailure;
+            isolateOrRethrow(post.name(), stageFailure);
         } finally {
             if (previous != null) previous.close();
         }
@@ -340,8 +382,28 @@ final class PackPostChain {
             pass.logPackRuntimeFailure("post-abort:" + window, abortFailure);
         }
         String reason = ChimeraMainPass.runtimeFailureReason("post-window:" + window, failure);
-        disablePackPostChain("POST_RUNTIME_FAILED:" + reason);
+        String stage = this.escalatedStage != null ? this.escalatedStage : "the " + window + " post window";
+        this.escalatedStage = null;
+        fallBackToVanilla("POST_RUNTIME_FAILED:" + reason, stage, failure);
         pass.logPackRuntimeFailure("post-window:" + window, failure);
+    }
+
+    /** Turns the pack off for the session after post stage {@code subject} failed, and says so in chat. */
+    private void fallBackToVanilla(String deviation, String subject, RuntimeException failure) {
+        turnPackOff(deviation, subject, PostStageFailures.deviceLevel(failure) ? "the device failed"
+                : this.stageFailures.count() >= PostStageFailures.VANILLA_AT
+                ? PostStageFailures.VANILLA_AT + " passes failed" : "it threw while recording a frame", failure);
+    }
+
+    /** Turns the pack off for the session because {@code subject} failed ({@code why}), and says so in chat. */
+    void turnPackOff(String deviation, String subject, String why, RuntimeException failure) {
+        disablePackPostChain(deviation);
+        String pack = PackFailureNotices.currentPack();
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, subject, "runtime",
+                PackFailureNotices.Outcome.VANILLA, why + " (" + failure.getClass().getSimpleName() + ": "
+                        + failure.getMessage() + ")",
+                "Chimera turned " + pack + " off after " + subject + " failed: " + why + ".\n" + deviation, failure));
+        PackFailureNotices.publish();
     }
 
     /** Runs the pack final stage after world post passes and before host hand. */
@@ -365,6 +427,7 @@ final class PackPostChain {
             pass.resolveWorldToOutput(commandBuffer, finalColor);
             pass.packFinalApplied = true;
         } catch (RuntimeException failure) {
+            String finalName = pass.pipelines.finalPost.name();
             markPostStageFailure(pass.pipelines.finalPost, failure);
             try {
                 Renderer.getInstance().endRenderPass(commandBuffer);
@@ -373,12 +436,24 @@ final class PackPostChain {
                 pass.logPackRuntimeFailure("final-identity-resolve", fallbackFailure);
             }
             pass.packFinalApplied = true;
-            pass.logPackRuntimeFailure("final", failure);
+            // As any other stage: identity from now on, or the pack off (PostStageFailures).
+            try {
+                isolateOrRethrow(finalName, failure);
+            } catch (RuntimeException escalated) {
+                this.escalatedStage = null;
+                fallBackToVanilla("POST_RUNTIME_FAILED:"
+                        + ChimeraMainPass.runtimeFailureReason("post-stage:" + finalName, failure), finalName, failure);
+                pass.logPackRuntimeFailure("final", failure);
+            }
         }
     }
 
     /** True when final's graph step is executable and its inputs are live; otherwise marks its boundary. */
     private boolean finalStageRunnable() {
+        if (this.packFinalExecution != null && this.stageFailures.skipped(this.packFinalExecution.name())) {
+            markPostStageIdentityBoundary(this.packFinalExecution, "threw earlier this session");
+            return false;
+        }
         TargetStep finalGraphStep = postGraphStep(this.packFinalExecution);
         boolean finalGraphExecutable = finalGraphStep != null && finalGraphStep.executable();
         boolean finalInputsAvailable = finalGraphExecutable
@@ -460,6 +535,15 @@ final class PackPostChain {
             pass.conformanceReport.addDeviation(code);
             pass.conformanceReport.markRuntime(stage.name(),
                     ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, code);
+        }
+        if (step != null) {
+            // An installed pass whose targets Chimera cannot lay out: Iris would have run it.
+            String pack = PackFailureNotices.currentPack();
+            PackFailureNotices.record(new PackFailureNotices.Failure(pack, stage.name(), "target graph",
+                    PackFailureNotices.Outcome.SKIPPED, graphRejectionCode(stage.name(), step),
+                    "Chimera skipped " + stage.name() + " in " + pack + ": its render targets could not be laid out.\n"
+                            + String.join(", ", step.deviations())));
+            PackFailureNotices.publish();
         }
         markPostStageIdentityBoundary(
                 stage.name(),
@@ -574,8 +658,7 @@ final class PackPostChain {
                             ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, reason);
                 }
             }
-            LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
-            pass.sessions.logConformanceSummary();
+            pass.sessions.logConformance();
         }
     }
 
@@ -672,10 +755,10 @@ final class PackPostChain {
                 } finally {
                     MrtPipelineContext.end();
                 }
-                LOGGER.info("[chimera] scene seed: planned families={} deviations={}",
+                LOGGER.debug("[chimera] scene seed: planned families={} deviations={}",
                         pass.coverage.packCoveragePlan.families(), pass.coverage.packCoveragePlan.deviations());
             } else if (!pass.coverage.packCoveragePlan.deviations().isEmpty()) {
-                LOGGER.info("[chimera] scene seed: fallback deviations={}",
+                LOGGER.debug("[chimera] scene seed: fallback deviations={}",
                         pass.coverage.packCoveragePlan.deviations());
             }
             pass.packFrameSchedule = PackFrameSchedulePlan.build(
@@ -702,9 +785,17 @@ final class PackPostChain {
             discardPackPostPipelines();
             if (pass.conformanceReport != null) {
                 pass.conformanceReport.addDeviation("POST_RESOURCE_ALLOCATION_FAILED");
-                LOGGER.info("[chimera] conformance {}", pass.conformanceReport.toJson());
+                pass.sessions.logConformance();
             }
             pass.logPackRuntimeFailure("post-resource-allocation", e);
+            // The world programs still draw; nothing runs after them, which the frame shows.
+            String pack = PackFailureNotices.currentPack();
+            PackFailureNotices.record(new PackFailureNotices.Failure(pack, "the post passes", "post targets",
+                    PackFailureNotices.Outcome.SKIPPED, "render targets failed: "
+                            + e.getClass().getSimpleName() + ": " + e.getMessage(),
+                    "Chimera skipped every post pass of " + pack + ": their render targets could not be made.\n"
+                            + ChimeraMainPass.runtimeFailureReason("post-resource-allocation", e), e));
+            PackFailureNotices.publish();
         }
     }
 
@@ -725,10 +816,10 @@ final class PackPostChain {
             windows.put(window, pass.packFrameSchedule.stages(window).stream()
                     .map(PackFrameSchedulePlan.PostStage::name).toList());
         }
-        LOGGER.info("[chimera] pack frame schedule: phases={}, windows={}, depth={}, deviations={}",
+        LOGGER.debug("[chimera] pack frame schedule: phases={}, windows={}, depth={}, deviations={}",
                 pass.packFrameSchedule.phases(), windows, pass.packTargetGraph.depth().names(),
                 pass.packFrameSchedule.deviations());
-        LOGGER.info("[chimera] pack target graph: targets={}, steps={}, depth={}, "
+        LOGGER.debug("[chimera] pack target graph: targets={}, steps={}, depth={}, "
                 + "maxAttachments={}, fingerprint={}",
                 pass.packTargetGraph.targets().size(), pass.packTargetGraph.steps().size(),
                 pass.packTargetGraph.depth().names(), pass.packTargetGraph.maxAttachments(),
@@ -864,6 +955,7 @@ final class PackPostChain {
         pass.pipelines.postStages.clear();
         this.packPostExecution.clear();
         this.packPostBoundaryLogged.clear();
+        this.stageFailures.clear();
         pass.pipelines.finalPost = null;
         this.packFinalExecution = null;
         pass.pipelines.compositePipeline = null;

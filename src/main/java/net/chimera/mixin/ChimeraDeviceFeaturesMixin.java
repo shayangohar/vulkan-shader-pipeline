@@ -91,14 +91,12 @@ public abstract class ChimeraDeviceFeaturesMixin {
             chimera$features.add("drawIndirectFirstInstance");
         } else if (DeviceManager.supportsFastIndirectDraw()) {
             // Without fast indirect draw VulkanMod draws terrain directly, where firstInstance needs no feature.
-            LOGGER.warn("[chimera] no drawIndirectFirstInstance: with Indirect Draw on, the driver may "
-                    + "ignore each terrain section's offset and draw it out of place");
+            LOGGER.warn("[chimera] no drawIndirectFirstInstance; with Indirect Draw on, terrain may draw out of place");
         }
         // A pack's blend directives and the buffers a program leaves unwritten differ per attachment.
         ChimeraDevice.setIndependentBlend(enabled.independentBlend());
         if (!enabled.independentBlend()) {
-            LOGGER.warn("[chimera] no independentBlend: a pass whose attachments resolve to different "
-                    + "blends draws unblended, and every attachment takes color writes");
+            LOGGER.warn("[chimera] no independentBlend; a pass with per-attachment blends draws unblended");
         }
         // A pack program's .gsh stage; Iris's Vulkan path refuses one without the feature too.
         ChimeraDevice.setGeometryShader(enabled.geometryShader());
@@ -187,8 +185,8 @@ public abstract class ChimeraDeviceFeaturesMixin {
         }
         PackDevice packDevice = ChimeraDevice.describe(DeviceManager.physicalDevice, chimera$features, names);
         PackDevice.set(packDevice);
-        LOGGER.info("[chimera] device extensions added for shader packs: {}", added);
-        LOGGER.info("[chimera] pack device {} (vendor 0x{}, driver {}): features {}, subgroup stages 0x{}"
+        LOGGER.debug("[chimera] device extensions added: {}", added);
+        LOGGER.debug("[chimera] pack device {} (vendor 0x{}, driver {}): features {}, subgroup stages 0x{}"
                         + " operations 0x{}", packDevice.name(), Integer.toHexString(packDevice.vendorId()),
                 packDevice.driverId(), packDevice.features(), Integer.toHexString(packDevice.subgroupStages()),
                 Integer.toHexString(packDevice.subgroupOperations()));

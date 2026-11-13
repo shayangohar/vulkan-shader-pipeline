@@ -113,10 +113,9 @@ public final class ChimeraTerrainPipelines {
             return;
         }
         shading = next;
-        ChimeraMod.LOGGER.info("[chimera] terrain shading: directional shading {}, ambient occlusion {} at level {}"
-                        + ", light-block voxels {}",
-                next.disablesDirectionalShading() ? "off (pack lights faces)" : "vanilla",
-                next.separateAo() ? "in vertex alpha (separateAo)" : "in vertex RGB", next.ambientOcclusionLevel(),
+        ChimeraMod.LOGGER.debug("[chimera] terrain shading: directional={}, ao={} at {}, lightVoxels={}",
+                next.disablesDirectionalShading() ? "off" : "vanilla",
+                next.separateAo() ? "alpha" : "rgb", next.ambientOcclusionLevel(),
                 next.voxelizeLightBlocks());
         if (initialized && extendedMode) {
             // Build the matching fixed pipeline here rather than on first draw.
@@ -133,7 +132,7 @@ public final class ChimeraTerrainPipelines {
     public static void setGeometryOverride(GraphicsPipeline pipeline) {
         // Logged when it changes: the no-pack load clears it on every window resize.
         if (pipeline != geometryOverride) {
-            ChimeraMod.LOGGER.info("[chimera] terrain override: {}", pipeline != null ? "installed" : "cleared");
+            ChimeraMod.LOGGER.debug("[chimera] terrain override: {}", pipeline != null ? "installed" : "cleared");
         }
         geometryOverride = pipeline;
         if (!initialized) {
@@ -168,7 +167,7 @@ public final class ChimeraTerrainPipelines {
                 "chimera_terrain", false);
         initialized = true;
 
-        ChimeraMod.LOGGER.info("chimera terrain pipeline ready: stride={}B attributes={}",
+        ChimeraMod.LOGGER.debug("[chimera] terrain pipeline ready: stride={}B attributes={}",
                 ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN.getVertexSize(),
                 ChimeraVertexFormats.EXTENDED_COMPRESSED_TERRAIN.getElementAttributeNames());
     }
@@ -261,7 +260,7 @@ public final class ChimeraTerrainPipelines {
     /** Installs/clears the pack water override without affecting opaque terrain. */
     public static void setTranslucentOverride(GraphicsPipeline pipeline) {
         if (pipeline != translucentOverride) {
-            ChimeraMod.LOGGER.info("[chimera] translucent override: {}", pipeline != null ? "installed" : "cleared");
+            ChimeraMod.LOGGER.debug("[chimera] translucent override: {}", pipeline != null ? "installed" : "cleared");
         }
         translucentOverride = pipeline;
         translucentOverrideSuspended = false;
@@ -340,7 +339,7 @@ public final class ChimeraTerrainPipelines {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level != null && minecraft.levelRenderer != null) {
             minecraft.levelRenderer.allChanged();
-            ChimeraMod.LOGGER.info("[chimera] {}: live level rebuilt (extended={})", reason, extendedMode);
+            ChimeraMod.LOGGER.debug("[chimera] {}: live level rebuilt (extended={})", reason, extendedMode);
         }
     }
 

@@ -3,6 +3,7 @@ package net.chimera.gui;
 import net.chimera.ChimeraMod;
 import net.chimera.config.ShaderpackDirectory;
 import net.chimera.gui.options.OptionLook;
+import net.chimera.render.PackFailureNotices;
 import net.minecraft.ChatFormatting;
 import net.minecraft.Util;
 import net.minecraft.client.Minecraft;
@@ -321,13 +322,15 @@ public final class ShaderPackSelectionList extends ObjectSelectionList<ShaderPac
             if (hovered) {
                 drawButton(graphics, x - 2, y - 2, width, height + 4, true, false);
             }
-            String name = this.packName;
+            boolean enabled = shadersEnabled();
+            // The applied pack says it fell back or lost programs, as Iris's "(fallback)" does.
+            String name = this.packName
+                    + (enabled && this.packName.equals(applied) ? PackFailureNotices.label(this.packName) : "");
             if (font.width(Component.literal(name).withStyle(ChatFormatting.BOLD)) > getRowWidth() - 3) {
                 name = font.plainSubstrByWidth(name, getRowWidth() - 8) + "...";
             }
             MutableComponent text = Component.literal(name);
             if (hovered) text = text.withStyle(ChatFormatting.BOLD);
-            boolean enabled = shadersEnabled();
             int color = 0xFFFFFFFF;
             if (enabled && this.packName.equals(applied)) color = APPLIED_COLOR;
             if (!enabled && !hovered) color = DISABLED_COLOR;

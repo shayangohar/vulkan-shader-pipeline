@@ -16,6 +16,7 @@ import net.chimera.shaderpack.PackProgram;
 import net.chimera.shaderpack.PackProgramPlan;
 import net.chimera.shaderpack.PackResourcePlan;
 import net.chimera.shaderpack.PassComputePlan;
+import net.chimera.shaderpack.SkippedPrograms;
 import net.chimera.shaderpack.PostTargetPlan;
 import net.chimera.shaderpack.ProgramImageBindingManifest;
 import net.chimera.shaderpack.TargetSpec;
@@ -236,7 +237,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack shadow: fallback=IDENTITY (build failed)");
+            logBuildFallback(name, "build failed");
             return;
         }
         if (!attachPackStoragePipeline(name, shadow.pipeline(), shadow.imageBindings())) {
@@ -258,7 +259,7 @@ final class PackPipelineInstaller {
         if (storage != null) {
             storage.markPipelineInstalled(name);
         }
-        LOGGER.info("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(shadow.samplerSlots()));
+        LOGGER.debug("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(shadow.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack shadow converted fragment:\n{}", shadow.convertedFragment());
         }
@@ -302,7 +303,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack {}: fallback=IDENTITY (build failed)", name);
+            logBuildFallback(name, "build failed");
             return;
         }
         if (!attachPackStoragePipeline(name, post.pipeline(), post.imageBindings())) {
@@ -327,7 +328,7 @@ final class PackPipelineInstaller {
         if (storage != null) {
             storage.markPipelineInstalled(name);
         }
-        LOGGER.info("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(post.samplerSlots()));
+        LOGGER.debug("[chimera] pack {}: ok (samplers={})", name, Arrays.toString(post.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack {} converted fragment:\n{}", name, post.convertedFragment());
         }
@@ -351,7 +352,7 @@ final class PackPipelineInstaller {
                             "TERRAIN_VERTEX_PIPELINE_BUILD_FAILED");
                 }
             }
-            LOGGER.warn("[chimera] pack gbuffers_terrain: fallback=IDENTITY (build failed)");
+            logBuildFallback(name, "build failed");
             return;
         }
         pipelines.terrainRoute = terrain;
@@ -367,12 +368,12 @@ final class PackPipelineInstaller {
             report.markRuntime(name,
                     ConformanceReport.RuntimeDisposition.INSTALLED, null);
         }
-        LOGGER.info("[chimera] pack gbuffers_terrain: ok (geometry, samplers={})",
+        LOGGER.debug("[chimera] pack gbuffers_terrain: ok (geometry, samplers={})",
                 Arrays.toString(terrain.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack gbuffers_terrain converted fragment:\n{}", terrain.convertedFragment());
         }
-        LOGGER.info("[chimera] pack gbuffers_terrain: outputs={} dynamicAttachments={}",
+        LOGGER.debug("[chimera] pack gbuffers_terrain: outputs={} dynamicAttachments={}",
                 terrain.outputPlan() == null ? List.of(0) : terrain.outputPlan().targetSlots(),
                 terrain.requiresDynamicAttachments());
     }
@@ -390,7 +391,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack gbuffers_water: fallback=IDENTITY (build failed)");
+            logBuildFallback(name, "build failed");
             return;
         }
         pipelines.waterRoute = water;
@@ -406,13 +407,13 @@ final class PackPipelineInstaller {
             report.markRuntime(name,
                     ConformanceReport.RuntimeDisposition.INSTALLED, null);
         }
-        LOGGER.info("[chimera] pack gbuffers_water: ok (translucent, samplers={})",
+        LOGGER.debug("[chimera] pack gbuffers_water: ok (translucent, samplers={})",
                 Arrays.toString(water.samplerSlots()));
         if (TRACE_TRANSITIONS) {
             LOGGER.info("[chimera] pack gbuffers_water converted fragment:\n{}",
                     water.convertedFragment());
         }
-        LOGGER.info("[chimera] pack gbuffers_water: outputs={} dynamicAttachments={}",
+        LOGGER.debug("[chimera] pack gbuffers_water: outputs={} dynamicAttachments={}",
                 water.outputPlan() == null ? List.of(0) : water.outputPlan().targetSlots(),
                 water.requiresDynamicAttachments());
     }
@@ -441,7 +442,7 @@ final class PackPipelineInstaller {
             return;
         }
         markFamilyPipelineInstalled(name, "SKY_PIPELINE_INSTALLED");
-        LOGGER.info("[chimera] pack {}: ok (sky installed, native layouts={})", name, sky.variants().size());
+        LOGGER.debug("[chimera] pack {}: ok (sky installed, native layouts={})", name, sky.variants().size());
     }
 
     /** The cloud program. */
@@ -459,7 +460,7 @@ final class PackPipelineInstaller {
             return;
         }
         markFamilyPipelineInstalled(name, "CLOUD_PIPELINE_INSTALLED");
-        LOGGER.info("[chimera] pack gbuffers_clouds: ok (cloud pipeline installed, samplers={})",
+        LOGGER.debug("[chimera] pack gbuffers_clouds: ok (cloud pipeline installed, samplers={})",
                 Arrays.toString(cloud.samplerSlots()));
     }
 
@@ -473,8 +474,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "ENTITY_PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack gbuffers_entities: fallback=IDENTITY "
-                    + "(ENTITY_PIPELINE_BUILD_FAILED)");
+            logBuildFallback(name, "ENTITY_PIPELINE_BUILD_FAILED");
             return;
         }
         pipelines.entity = entity;
@@ -497,7 +497,7 @@ final class PackPipelineInstaller {
                     ConformanceReport.RuntimeDisposition.INSTALLED,
                     "ENTITY_BATCH_ORIGIN_SPLIT");
         }
-        LOGGER.info("[chimera] pack gbuffers_entities: ok (entity pipeline installed, "
+        LOGGER.debug("[chimera] pack gbuffers_entities: ok (entity pipeline installed, "
                 + "stride={}, samplers={})",
                 ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                 Arrays.toString(entity.samplerSlots()));
@@ -552,8 +552,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "BLOCK_PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack gbuffers_block: fallback=IDENTITY "
-                    + "(BLOCK_PIPELINE_BUILD_FAILED)");
+            logBuildFallback(name, "BLOCK_PIPELINE_BUILD_FAILED");
             return;
         }
         pipelines.block = block;
@@ -576,7 +575,7 @@ final class PackPipelineInstaller {
                     ConformanceReport.RuntimeDisposition.INSTALLED,
                     "ENTITY_STATE_FIXED_TO_HOST");
         }
-        LOGGER.info("[chimera] pack gbuffers_block: ok (block adapter installed, "
+        LOGGER.debug("[chimera] pack gbuffers_block: ok (block adapter installed, "
                 + "stride={}, samplers={})",
                 ChimeraVertexFormats.EXTENDED_ENTITY.getVertexSize(),
                 Arrays.toString(block.samplerSlots()));
@@ -668,8 +667,7 @@ final class PackPipelineInstaller {
                         ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK,
                         "PARTICLE_PIPELINE_BUILD_FAILED");
             }
-            LOGGER.warn("[chimera] pack gbuffers_particles: fallback=IDENTITY "
-                    + "(PARTICLE_PIPELINE_BUILD_FAILED)");
+            logBuildFallback(name, "PARTICLE_PIPELINE_BUILD_FAILED");
             return;
         }
         pipelines.particle = particle;
@@ -686,7 +684,7 @@ final class PackPipelineInstaller {
                     ConformanceReport.RuntimeDisposition.INSTALLED,
                     "PARTICLE_STATE_FIXED_TO_HOST");
         }
-        LOGGER.info("[chimera] pack gbuffers_particles: ok (particle adapter installed, "
+        LOGGER.debug("[chimera] pack gbuffers_particles: ok (particle adapter installed, "
                 + "stride={}, samplers={})",
                 DefaultVertexFormat.PARTICLE.getVertexSize(),
                 Arrays.toString(particle.samplerSlots()));
@@ -753,7 +751,7 @@ final class PackPipelineInstaller {
             variant.pipeline().cleanUp();
             return null;
         }
-        LOGGER.info("[chimera] pack {}: {} layout variant installed (stride={})", name, layout,
+        LOGGER.debug("[chimera] pack {}: {} layout variant installed (stride={})", name, layout,
                 ChimeraVertexFormats.extendedLayout(host).getVertexSize());
         return variant;
     }
@@ -789,7 +787,7 @@ final class PackPipelineInstaller {
             }
             pipelines.hostLayout.put(lane.family(), built);
             if (lane.pass() == HostLayoutLane.Pass.HAND) {
-                LOGGER.info("[chimera] pack {}: {} variant installed", name, lane.name().toLowerCase());
+                LOGGER.debug("[chimera] pack {}: {} variant installed", name, lane.name().toLowerCase());
             } else {
                 markFamilyPipelineInstalled(name, lane + "_PIPELINE_INSTALLED");
             }
@@ -804,14 +802,35 @@ final class PackPipelineInstaller {
         if (storage != null) {
             storage.markPipelineInstalled(name);
         }
-        LOGGER.info("[chimera] pack {}: ok ({})", name, deviation);
+        LOGGER.debug("[chimera] pack {}: ok ({})", name, deviation);
     }
 
+    /**
+     * Records a program that will not run. The log warns only of one that changes the frame: one
+     * the pack switched off, or Iris would not run either, logs at debug (SkippedPrograms).
+     */
     void markFamilyPipelineFallback(String name, String reason) {
         if (report != null) {
             report.markRuntime(name,
                     ConformanceReport.RuntimeDisposition.IDENTITY_FALLBACK, reason);
         }
-        LOGGER.warn("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
+        ConformanceReport.ProgramReport row = report == null ? null : report.program(name);
+        if (row != null && SkippedPrograms.expected(row)) {
+            LOGGER.debug("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
+        } else {
+            logBuildFallback(name, reason);
+        }
+    }
+
+    /**
+     * A program whose build failure already warned, with its error (PackPipelines.handleBuildFailure),
+     * logs its fallback at debug: one failure, one line in latest.log. Any other fallback warns.
+     */
+    private static void logBuildFallback(String name, String reason) {
+        if (PackFailureNotices.current().stream().anyMatch(failure -> failure.subject().equals(name))) {
+            LOGGER.debug("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
+        } else {
+            LOGGER.warn("[chimera] pack {}: fallback=IDENTITY ({})", name, reason);
+        }
     }
 }

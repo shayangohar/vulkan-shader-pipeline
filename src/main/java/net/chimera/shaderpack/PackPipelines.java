@@ -2,6 +2,7 @@ package net.chimera.shaderpack;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import net.chimera.render.PackFailureNotices;
 import net.chimera.render.PackStorageBufferOwner;
 import net.chimera.render.shader.ChimeraShaderLoader;
 import net.chimera.render.shader.HostPipelineLayout;
@@ -191,6 +192,15 @@ public final class PackPipelines {
 
     /** All build families share the same fallback boundary. Contract defects remain fatal. */
     static void handleBuildFailure(String program, Exception failure) {
+        handleBuildFailure(program, program, failure);
+    }
+
+    /**
+     * The same for one of {@code program}'s pipelines, such as a sky format or an entity layout,
+     * named {@code pipeline} in the log and Copy Info. The notice names the program: the load's
+     * skip of it is then the same failure, told once (PackFailureNotices).
+     */
+    static void handleBuildFailure(String program, String pipeline, Exception failure) {
         if (failure instanceof PreparationFailure typed
                 && !(typed.phase.equals("shader-compilation") && typed.reason.equals("SHADER_COMPILATION_FAILED"))) {
             throw typed;
@@ -200,8 +210,42 @@ public final class PackPipelines {
                 : failure.getMessage() == null || failure.getMessage().isBlank()
                 ? "UNEXPECTED_BUILD_FAILURE" : failure.getMessage();
         Throwable cause = failure.getCause() == null ? failure : failure.getCause();
-        LOGGER.warn("[chimera] pack {}: build failed phase={} exception={} reason={}",
-                program, phase, cause.getClass().getName(), reason, cause);
+        HostPipelineLayout.ShaderCompilationFailure compile =
+                cause instanceof HostPipelineLayout.ShaderCompilationFailure shaderc ? shaderc : null;
+        // One line in latest.log; the stack trace goes to debug.log, the detail to Copy Info and the report.
+        LOGGER.warn("[chimera] {} skipped: {}", pipeline,
+                compile == null ? phase + " failed (" + reason + ")" : errorSummary(compile.getMessage()));
+        LOGGER.debug("[chimera] {} build failure", pipeline, cause);
+        String pack = PackFailureNotices.currentPack();
+        String detail = compile == null ? cause.toString() : CompileErrorLocation.describe(compile.getMessage(),
+                compile.source(), PackFailureNotices.currentShadersDir());
+        PackFailureNotices.record(new PackFailureNotices.Failure(pack, program, phase,
+                PackFailureNotices.Outcome.SKIPPED, compile == null ? reason : compileError(compile.getMessage()),
+                "Chimera skipped " + program + (pipeline.equals(program) ? "" : " (" + pipeline + ")") + " in "
+                        + pack + ": " + phase + " failed" + (compile == null ? " (" + reason + ")" : "") + ".\n"
+                        + detail, cause));
+    }
+
+    /**
+     * A compiler report's first error, without the translated file and line it names. Warnings come
+     * before errors in shaderc's report.
+     */
+    static String compileError(String report) {
+        String first = firstError(report);
+        int error = first.indexOf(": error: ");
+        return "compile error: " + (error < 0 ? first : first.substring(error + ": error: ".length()));
+    }
+
+    /** A compiler report's first error with its file and line, and how many more it has. */
+    static String errorSummary(String report) {
+        long errors = report == null ? 0 : report.lines().filter(line -> line.contains(": error: ")).count();
+        return firstError(report) + (errors > 1 ? " (+" + (errors - 1) + " more)" : "");
+    }
+
+    private static String firstError(String report) {
+        String text = report == null ? "" : report.strip();
+        return text.lines().filter(line -> line.contains(": error: ")).findFirst()
+                .orElse(text.lines().findFirst().orElse(""));
     }
     /**
      * A successfully built pack post pipeline plus the slots its samplers occupy, the frame
@@ -453,7 +497,7 @@ public final class PackPipelines {
                     fragmentSource, imageBindings, attachmentFormats, attachmentBlends, blendFuncOverride(plan, stage));
             return new BuiltGeometry(pipeline, slots, vertexSource, fragmentSource, outputPlan, imageBindings);
         } catch (Exception e) {
-            handleBuildFailure(pipelineName, e);
+            handleBuildFailure(plan.name(), pipelineName, e);
             return null;
         }
     }

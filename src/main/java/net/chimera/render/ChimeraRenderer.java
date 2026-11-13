@@ -18,6 +18,8 @@ import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.pass.MainPass;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * Owns the main-pass takeover lifecycle:
@@ -72,11 +74,11 @@ public final class ChimeraRenderer {
 
         MainPass current = renderer.getMainPass();
         if (current == null) {
-            ChimeraMod.LOGGER.warn("VulkanMod Renderer ready but no main pass installed; chimera idle");
+            ChimeraMod.LOGGER.warn("[chimera] VulkanMod has no main pass; Chimera stays idle");
             return;
         }
         if (!ChimeraDevice.dynamicRendering()) {
-            ChimeraMod.LOGGER.error("The Vulkan device has no dynamic rendering; chimera idle, vanilla rendering");
+            ChimeraMod.LOGGER.debug("[chimera] no dynamic rendering; Chimera stays idle");
             return;
         }
 
@@ -89,7 +91,7 @@ public final class ChimeraRenderer {
 
         ChimeraTerrainPipelines.init();
 
-        ChimeraMod.LOGGER.info("Captured host main pass: {}", hostPass.getClass().getName());
+        ChimeraMod.LOGGER.debug("[chimera] host main pass: {}", hostPass.getClass().getName());
         chimeraEnabled = true;
         install();
     }
@@ -181,7 +183,40 @@ public final class ChimeraRenderer {
         if (!ready || chimeraPass == null) {
             return "Chimera pack: renderer not ready";
         }
-        return chimeraPass.packStatus() + ", renderer=" + (installed ? "chimera" : "vanilla");
+        String status = chimeraPass.packStatus() + ", renderer=" + (installed ? "chimera" : "vanilla");
+        List<String> failures = PackFailureNotices.statusLines();
+        return failures.isEmpty() ? status : status + "\nFailures this load:\n" + String.join("\n", failures);
+    }
+
+    /**
+     * F3's lines below the system information, as Iris's MixinDebugScreenOverlay: the version, the
+     * pack with whether it fell back or lost programs (PackFailureNotices.label), and its profile.
+     */
+    public static List<String> debugLines() {
+        List<String> lines = new ArrayList<>(List.of("",
+                "[Chimera] Version: " + ChimeraMod.version() + " (" + ChimeraMod.commit() + ")", ""));
+        Path pack = selectedPackPath();
+        if (pack == null) {
+            lines.add("[Chimera] Shaders are disabled");
+            return lines;
+        }
+        String name = PackSessionLifecycle.packLabel(pack);
+        lines.add("[Chimera] Shaderpack: " + name + PackFailureNotices.label(name));
+        LoadedPack loaded = loadedPack();
+        if (loaded != null && loaded.path().equals(pack)) lines.add("[Chimera] " + loaded.options().profileInfo());
+        return lines;
+    }
+
+    /**
+     * F3's lines below the game information, as Iris's shadow lines (IrisRenderingPipeline and
+     * ShadowRenderer.addDebugText): the shadow map's half plane and resolution, or that the pack
+     * uses none. Nothing while the world is not pack-rendered.
+     */
+    public static List<String> shadowDebugLines() {
+        if (!packProjectionActive()) return List.of();
+        PackShadowPass shadows = chimeraPass.shadowPass;
+        return List.of("", "[Chimera] Shadow Maps: " + (shadows.shadowUse.runs() && shadows.shadowMap.isInitialized()
+                ? shadows.shadowMap.debugInfo() : "not used by shader pack"));
     }
 
     /** Applies pending pack work before VulkanMod begins a new main command buffer. */
@@ -212,7 +247,7 @@ public final class ChimeraRenderer {
             ChimeraSkyBridge.setEnabled(false);
             installed = false;
             resumeAfterVariant = chimeraEnabled;
-            ChimeraMod.LOGGER.info("Pack change handed to host at safe boundary");
+            ChimeraMod.LOGGER.debug("[chimera] host renders during the pack change");
         }
         if (!chimeraPass.applyPendingPackVariantAtFrameBoundary()) {
             return;
@@ -225,7 +260,7 @@ public final class ChimeraRenderer {
             if (install()) {
                 resumeAfterVariant = false;
                 screenMode = false;
-                ChimeraMod.LOGGER.info("Safe frame boundary - chimera resumed");
+                ChimeraMod.LOGGER.debug("[chimera] resumed");
             }
         }
     }
@@ -302,7 +337,7 @@ public final class ChimeraRenderer {
             return false;
         }
         if (!Renderer.isRecording()) {
-            ChimeraMod.LOGGER.info("[chimera] level segment: resuming a frame submitted by a nested tick");
+            ChimeraMod.LOGGER.debug("[chimera] level segment: resuming a frame a nested tick submitted");
             Renderer.getInstance().beginFrame();
         }
         return segmentsActive();
@@ -321,7 +356,7 @@ public final class ChimeraRenderer {
             // Chimera's own terrain shading and shadow map are not applied.
             if (!noPackLogged) {
                 noPackLogged = true;
-                ChimeraMod.LOGGER.info("No shader pack loaded - vanilla rendering");
+                ChimeraMod.LOGGER.info("[chimera] Shaders are disabled");
             }
             resumeAfterVariant = false;
             return false;
@@ -332,7 +367,7 @@ public final class ChimeraRenderer {
             // still recording. Keep the request alive so the pre-command-buffer
             // hook retries it at the next safe boundary.
             resumeAfterVariant = true;
-            ChimeraMod.LOGGER.warn("Chimera install deferred; host main pass remains active");
+            ChimeraMod.LOGGER.debug("[chimera] install deferred to the next frame");
             return false;
         }
         Renderer.getInstance().setMainPass(chimeraPass);
@@ -341,7 +376,7 @@ public final class ChimeraRenderer {
         ChimeraSkyBridge.setEnabled(!chimeraPass.packRuntimeRejected() && ChimeraSkyBridge.isInstalled());
         installed = true;
         noPackLogged = false;
-        ChimeraMod.LOGGER.info("Chimera renderer active for the loaded shader pack");
+        ChimeraMod.LOGGER.debug("[chimera] installed");
         return true;
     }
 
@@ -402,7 +437,7 @@ public final class ChimeraRenderer {
         screenMode = false;
         resumeAfterVariant = false;
         chimeraEnabled = false;
-        ChimeraMod.LOGGER.warn("Chimera variant fallback - host main pass restored");
+        ChimeraMod.LOGGER.warn("[chimera] pack variant failed; rendering vanilla");
     }
 
     public static void enterScreenMode() {
@@ -411,7 +446,7 @@ public final class ChimeraRenderer {
             // its barriers, Renderer's endRenderPass is null-safe when nothing
             // is recording, and encoder draws targeting the main RT rebind our
             // aux pass - the blur chain composes with the live frame.
-            ChimeraMod.LOGGER.info("Screen open - chimera keeps rendering (shaded GUI backgrounds)");
+            ChimeraMod.LOGGER.debug("[chimera] screen open; rendering continues");
             return;
         }
 
@@ -422,14 +457,14 @@ public final class ChimeraRenderer {
             return;
         }
         legacyUnhand();
-        ChimeraMod.LOGGER.info("Screen mode: host renderer in charge until screen closes");
+        ChimeraMod.LOGGER.debug("[chimera] screen without a level; host renders until it closes");
     }
 
     public static void exitScreenMode() {
         if (!screenMode) {
             return;
         }
-        ChimeraMod.LOGGER.info("Screen closed - chimera resume deferred to the next safe frame boundary");
+        ChimeraMod.LOGGER.debug("[chimera] screen closed; resuming at the next frame boundary");
     }
 
     /** Level went away mid-screen: host takes over until a live level returns. */
@@ -440,7 +475,7 @@ public final class ChimeraRenderer {
         }
 
         legacyUnhand();
-        ChimeraMod.LOGGER.info("Level unloaded - host renderer in charge (loading transition)");
+        ChimeraMod.LOGGER.debug("[chimera] level unloaded; host renders");
     }
 
     /** Live level returned while a screen is still up: restore parity behind it. */
@@ -458,6 +493,6 @@ public final class ChimeraRenderer {
             return;
         }
 
-        ChimeraMod.LOGGER.info("Level loaded - chimera resume deferred to the next safe frame boundary");
+        ChimeraMod.LOGGER.debug("[chimera] level loaded; resuming at the next frame boundary");
     }
 }

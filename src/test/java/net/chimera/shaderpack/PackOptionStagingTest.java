@@ -67,6 +67,8 @@ final class PackOptionStagingTest {
             assertEquals(Map.of("RP_MODE", "3", "WATER_STYLE", "2", "WAVES", "true", "shadowMapResolution", "4096"),
                     options.pack().values().changes(), "the menu sees the option file alone");
             assertEquals("HIGH", options.profileName());
+            assertEquals("Profile: HIGH (+3 options changed by user)", options.profileInfo(),
+                    "Iris counts only the changes beyond the profile's RP_MODE=3");
             assertFalse(loaded.shadersDir().startsWith(pack), "a folder pack is copied before it is edited");
             String staged = Files.readString(loaded.shadersDir().resolve("settings.glsl"));
             assertTrue(staged.contains("#define WATER_STYLE 3 //") && staged.contains("\n#define WAVES\n")
@@ -89,6 +91,7 @@ final class PackOptionStagingTest {
             assertEquals(pack.resolve("shaders"), loaded.shadersDir());
             assertTrue(loaded.options().applied().changes().isEmpty());
             assertEquals("Custom", loaded.options().profileName(), "RP_MODE=1 matches neither profile");
+            assertEquals("Profile: Custom (+0 options changed by user)", loaded.options().profileInfo());
         }
     }
 
