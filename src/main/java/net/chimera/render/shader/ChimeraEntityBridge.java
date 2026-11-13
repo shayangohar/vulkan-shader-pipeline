@@ -476,16 +476,12 @@ public final class ChimeraEntityBridge {
 
     /**
      * The family a render type written in the world window batches with: the crumbling overlay and
-     * beacon beams wherever they are written, as Iris widens every BLOCK buffer to TERRAIN, and
-     * otherwise the entity or block entity drawing it (IrisShaderKeys.worldFamily).
+     * beacon beams wherever they are written (IrisShaderKeys.blockLayoutFamily), and otherwise the
+     * entity or block entity drawing it (IrisShaderKeys.worldFamily).
      */
     public static Family worldTypeFamily(String shader, VertexFormat format) {
-        if (format == DefaultVertexFormat.BLOCK && IrisShaderKeys.CRUMBLING_SHADER.equals(shader)) {
-            return Family.DAMAGED_BLOCK;
-        }
-        if (format == DefaultVertexFormat.BLOCK && IrisShaderKeys.BEACON_BEAM_SHADER.equals(shader)) {
-            return Family.BEACON_BEAM;
-        }
+        Family keyed = IrisShaderKeys.blockLayoutFamily(shader, format);
+        if (keyed != null) return keyed;
         Family context = context();
         return context == null ? null : IrisShaderKeys.worldFamily(shader, format, context);
     }

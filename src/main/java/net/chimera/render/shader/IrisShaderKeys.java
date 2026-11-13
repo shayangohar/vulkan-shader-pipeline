@@ -69,9 +69,9 @@ public final class IrisShaderKeys {
             Map.entry("rendertype_entity_translucent_emissive", EntityShader.EMISSIVE),
             Map.entry("rendertype_entity_alpha", EntityShader.ALPHA));
     /** The block-breaking overlay's shader (RenderType.CRUMBLING, ModelBakery.DESTROY_TYPES). */
-    static final String CRUMBLING_SHADER = "rendertype_crumbling";
+    private static final String CRUMBLING_SHADER = "rendertype_crumbling";
     /** The beam shader of RenderType.beaconBeam, which beacons and end gateways draw. */
-    static final String BEACON_BEAM_SHADER = "rendertype_beacon_beam";
+    private static final String BEACON_BEAM_SHADER = "rendertype_beacon_beam";
     /** The chunk shaders Iris draws as MOVING_BLOCK when an entity or block entity draws with them. */
     private static final Set<String> MOVING_BLOCK_SHADERS = Set.of("rendertype_solid", "rendertype_cutout_mipped",
             "rendertype_cutout", "rendertype_translucent", "rendertype_translucent_moving_block",
@@ -86,6 +86,17 @@ public final class IrisShaderKeys {
             "position_color_tex_lightmap", "rendertype_text_intensity", "rendertype_text_intensity_see_through");
 
     private IrisShaderKeys() {}
+
+    /**
+     * The family a world render type batches with whoever writes it: the crumbling overlay and beacon
+     * beams on the block layout, as Iris widens every BLOCK buffer to TERRAIN. Null for any other
+     * render type, whose family follows the entity or block entity drawing it (worldFamily).
+     */
+    static Family blockLayoutFamily(String shader, VertexFormat format) {
+        if (format != DefaultVertexFormat.BLOCK) return null;
+        if (CRUMBLING_SHADER.equals(shader)) return Family.DAMAGED_BLOCK;
+        return BEACON_BEAM_SHADER.equals(shader) ? Family.BEACON_BEAM : null;
+    }
 
     /**
      * The family Iris 1.21.1 draws a world render type with, by its shader and format, inside an
