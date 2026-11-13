@@ -630,7 +630,7 @@ final class HostFamilyTest {
                         "weather keeps the particle conversion");
             } else {
                 assertTrue(adapter.vertexContract().hostLayout(), lane.program() + " must be a host-layout program");
-                assertEquals(lane.format(), PackFamilyPipelines.hostLayoutFormat(adapter.vertexContract()),
+                assertEquals(lane.format(), PackPipelines.hostLayoutFormat(adapter.vertexContract()),
                         lane + " pack layout and host layout disagree");
                 servedPrograms.add(lane.program());
             }
@@ -646,7 +646,7 @@ final class HostFamilyTest {
                         && FamilyAdapterRegistry.isHostLayoutFamily("gbuffers_beaconbeam"),
                 "beacon beams convert as Iris BEACON and batch on the widened block layout");
         assertEquals(ChimeraVertexFormats.EXTENDED_BLOCK,
-                PackFamilyPipelines.hostLayoutFormat(FamilyAdapterPlan.VertexContract.HOST_BEACON));
+                PackPipelines.hostLayoutFormat(FamilyAdapterPlan.VertexContract.HOST_BEACON));
         var widened = ChimeraVertexFormats.EXTENDED_BLOCK.getElementAttributeNames();
         assertEquals(List.of(2, 4, 6, 7), List.of(widened.indexOf("UV0"), widened.indexOf("Normal"),
                 widened.indexOf("MidTexCoord"), widened.indexOf("Tangent")),
@@ -731,8 +731,8 @@ final class HostFamilyTest {
             Files.writeString(shaders.resolve(name + ".fsh"), fragment);
         }
         PackProbe.Analysis analysis = PackProbe.analyze(root);
-        String eyes = PackFamilyPipelines.familyVertex(executablePlan(analysis, "gbuffers_spidereyes", "eyes"));
-        String entities = PackFamilyPipelines.familyVertex(executablePlan(analysis, "gbuffers_entities", "entities"));
+        String eyes = PackPipelines.familyVertex(executablePlan(analysis, "gbuffers_spidereyes", "eyes"));
+        String entities = PackPipelines.familyVertex(executablePlan(analysis, "gbuffers_entities", "entities"));
         assertTrue(eyes.contains("const ivec2 UV2 = ivec2(240);") && !eyes.contains("in ivec2 UV2;"), eyes);
         assertTrue(entities.contains("in ivec2 UV2;"), entities);
     }

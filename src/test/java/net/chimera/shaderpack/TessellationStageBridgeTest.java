@@ -295,7 +295,7 @@ final class TessellationStageBridgeTest {
                 && hand.convertedTessEvaluation().contains("chimeraRenderedItemId = chimeraRenderedItemIdTC[0];")
                 && !hand.convertedTessControl().contains("ChimeraTerrainPackUniforms"), hand.convertedTessEvaluation());
         PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(hand, analysis.plan().advancedResources(),
-                UniformRegistry.Stage.HAND, PackFamilyPipelines.familyVertex(hand));
+                UniformRegistry.Stage.HAND, PackPipelines.familyVertex(hand));
         PackPipelines.prepareLayout(prepared, hand.name(), analysis.plan().advancedResources());
         assertNull(PackCompileTest.compile(prepared.vertex(), true), prepared.vertex());
         assertNull(PackCompileTest.compileBetween(prepared.between().tessControl(), "tess_control"));
@@ -356,7 +356,7 @@ final class TessellationStageBridgeTest {
         PackProgramPlan hand = analysis.plan().program("gbuffers_hand");
         assertTrue(hand.executable(), hand.deviations().toString());
         PackPipelines.PreparedPipeline prepared = PackPipelines.prepare(hand, analysis.plan().advancedResources(),
-                UniformRegistry.Stage.HAND, PackFamilyPipelines.familyVertex(hand));
+                UniformRegistry.Stage.HAND, PackPipelines.familyVertex(hand));
         PackPipelines.prepareLayout(prepared, hand.name(), analysis.plan().advancedResources());
         assertNull(PackCompileTest.compile(prepared.vertex(), true), prepared.vertex());
         assertNull(PackCompileTest.compileBetween(prepared.between().tessControl(), "tess_control"),

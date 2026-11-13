@@ -25,6 +25,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.function.UnaryOperator;
 import java.util.regex.Pattern;
 
 import static org.lwjgl.vulkan.VK10.VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -683,7 +684,7 @@ public final class PackPipelines {
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
         return plan == null ? null
-                : PackFamilyPipelines.buildEntityLike(plan, UniformRegistry.Stage.SHADOW_ENTITY, "pack_" + plan.name(),
+                : buildEntityLike(plan, UniformRegistry.Stage.SHADOW_ENTITY, "pack_" + plan.name(),
                 ChimeraVertexFormats.EXTENDED_ENTITY, advancedResources, storageOwner);
     }
 
@@ -691,10 +692,229 @@ public final class PackPipelines {
     public static PackEntity buildEntity(
             PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
     ) {
-        return PackFamilyPipelines.buildEntityLike(plan, UniformRegistry.Stage.ENTITY, "pack_gbuffers_entities",
+        return buildEntityLike(plan, UniformRegistry.Stage.ENTITY, "pack_gbuffers_entities",
                 ChimeraVertexFormats.EXTENDED_ENTITY, advancedResources, storageOwner);
     }
 
+
+    // The host geometry families a pack program can replace: entities, block entities, hands and their
+    // glint, particles, and the host-layout lanes.
+
+    /** Builds any world entity-family adapter with the family-specific host contract. */
+    public static PackEntity buildEntityFamily(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null) {
+            return null;
+        }
+        FamilyAdapterPlan.Family family = plan.familyAdapter().family();
+        UniformRegistry.Stage stage = switch (family) {
+            case BLOCK, BLOCK_TRANSLUCENT -> UniformRegistry.Stage.BLOCK;
+            case HAND, HAND_WATER -> UniformRegistry.Stage.HAND;
+            default -> UniformRegistry.Stage.ENTITY;
+        };
+        return buildEntityLike(plan, stage, "pack_" + plan.name(), ChimeraVertexFormats.EXTENDED_ENTITY,
+                advancedResources, storageOwner, familyVertex(plan));
+    }
+
+    /**
+     * The converted vertex a family draws with. The spider-eyes family is Iris's ENTITIES_EYES and
+     * ENTITIES_EYES_TRANS, fullbright keys, so its light reads (240, 240)
+     * (EntityVertexBridge.fullbrightLight).
+     */
+    static String familyVertex(PackProgramPlan plan) {
+        String vertex = plan.convertedVertex();
+        return vertex != null && plan.familyAdapter().family() == FamilyAdapterPlan.Family.SPIDER_EYES
+                ? EntityVertexBridge.fullbrightLight(vertex) : vertex;
+    }
+
+    /**
+     * gbuffers_damagedblock on the crumbling overlay's BLOCK buffers widened to EXTENDED_BLOCK, as Iris
+     * widens every BLOCK buffer to TERRAIN: the mid-coordinate and tangent come per quad, from the
+     * decal's own coordinates. The overlay draws fullbright, and its entity ids read 0
+     * (EntityVertexBridge.crumblingInputs).
+     */
+    public static PackEntity buildDamagedBlock(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return buildLayoutVariant(plan, DefaultVertexFormat.BLOCK, "crumbling", advancedResources, storageOwner,
+                EntityVertexBridge::crumblingInputs);
+    }
+
+    /** Builds the block-entity adapter on the same append-only host format. */
+    public static PackEntity buildBlock(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return buildEntityLike(plan, UniformRegistry.Stage.BLOCK, "pack_gbuffers_block",
+                ChimeraVertexFormats.EXTENDED_ENTITY, advancedResources, storageOwner);
+    }
+
+    /**
+     * The same entity or block program built for another native host layout, as Iris
+     * draws TEXT with IrisVertexFormats.GLYPH through gbuffers_entities_translucent,
+     * TEXT_BE through gbuffers_block_translucent (falling back to gbuffers_block) and
+     * MOVING_BLOCK with IrisVertexFormats.TERRAIN through gbuffers_block.
+     */
+    public static PackEntity buildLayoutVariant(
+            PackProgramPlan plan, VertexFormat host, String layout,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return buildLayoutVariant(plan, host, layout, advancedResources, storageOwner, UnaryOperator.identity());
+    }
+
+    /** {@link #buildLayoutVariant}, with {@code inputs} rewriting the layout's vertex inputs. */
+    private static PackEntity buildLayoutVariant(
+            PackProgramPlan plan, VertexFormat host, String layout, PackAdvancedResourcePlan advancedResources,
+            PackStorageBufferOwner storageOwner, UnaryOperator<String> inputs
+    ) {
+        VertexFormat extended = host == null ? null : ChimeraVertexFormats.extendedLayout(host);
+        if (plan == null || !plan.executable() || extended == null) return null;
+        try {
+            String vertex = inputs.apply(EntityVertexBridge.layoutVertexForFormat(plan.convertedVertex(), host));
+            return buildEntityLike(plan, plan.familyAdapter().stage(), "pack_" + plan.name() + "_" + layout,
+                    extended, advancedResources, storageOwner, vertex);
+        } catch (IllegalArgumentException unsupported) {
+            return null;
+        }
+    }
+
+    /** Builds the first-person hand adapter on the same append-only host format. */
+    public static PackHand buildHand(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null || !plan.executable()) return null;
+        Map<VertexFormat, PackEntity> variants = new LinkedHashMap<>();
+        boolean complete = false;
+        try {
+            for (var entry : ChimeraVertexFormats.handFormats().entrySet()) {
+                String vertex = EntityVertexBridge.handVertexForFormat(plan.convertedVertex(), entry.getKey());
+                PackEntity built = buildEntityLike(plan, UniformRegistry.Stage.HAND,
+                        "pack_" + plan.name() + "_" + variants.size(), entry.getValue(),
+                        advancedResources, storageOwner, vertex);
+                if (built == null) return null;
+                variants.put(entry.getKey(), built);
+            }
+            complete = true;
+            return new PackHand(variants);
+        } finally {
+            if (!complete) variants.values().forEach(value -> value.pipeline().cleanUp());
+        }
+    }
+
+    static PackEntity buildEntityLike(
+            PackProgramPlan plan,
+            UniformRegistry.Stage stage,
+            String pipelineName,
+            VertexFormat vertexFormat,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return buildEntityLike(plan, stage, pipelineName, vertexFormat, advancedResources, storageOwner,
+                plan == null ? null : plan.convertedVertex());
+    }
+
+    static PackEntity buildEntityLike(
+            PackProgramPlan plan, UniformRegistry.Stage stage, String pipelineName, VertexFormat vertexFormat,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner, String convertedVertex
+    ) {
+        BuiltGeometry built = buildGeometry(plan, stage, pipelineName, vertexFormat,
+                convertedVertex,
+                advancedResources, storageOwner);
+        return built == null ? null
+                : new PackEntity(built.pipeline(), built.samplerSlots(), built.vertexSource(),
+                built.fragmentSource(), built.outputPlan(), built.imageBindings());
+    }
+
+    /** Builds the particle family on the host DefaultVertexFormat.PARTICLE path. */
+    public static PackParticle buildParticle(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return buildParticle(plan, "pack_gbuffers_particles", DefaultVertexFormat.PARTICLE,
+                advancedResources, storageOwner);
+    }
+
+    /** Builds an independent opaque or translucent particle-family pipeline. */
+    public static PackParticle buildParticleFamily(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return plan == null ? null : buildParticle(plan, "pack_" + plan.name(),
+                DefaultVertexFormat.PARTICLE, advancedResources, storageOwner);
+    }
+
+    /**
+     * Builds a host-layout lane on the vertex format of its contract: in the main pass lines,
+     * glint, lightning, beacon beams and leads (Iris ShaderKey.LINES, GLINT, LIGHTNING, BEACON and
+     * LEASH); in the shadow pass the shadow keys Iris draws on those layouts, into the
+     * shadow map's attachments with the shadow blend (PackBlendPlan.shadowAttachments), as
+     * shadow_entities is built.
+     */
+    public static PackParticle buildHostLayout(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null) return null;
+        VertexFormat format = hostLayoutFormat(plan.familyAdapter().vertexContract());
+        if (!plan.familyAdapter().stage().shadowPass()) {
+            return buildParticle(plan, "pack_" + plan.name(), format, advancedResources, storageOwner);
+        }
+        PackEntity shadow = buildEntityLike(plan, UniformRegistry.Stage.SHADOW_ENTITY,
+                "pack_" + plan.name(),
+                format, advancedResources, storageOwner);
+        return shadow == null ? null : new PackParticle(shadow.pipeline(), shadow.samplerSlots(),
+                shadow.convertedVertex(), shadow.convertedFragment(), shadow.outputPlan(), shadow.imageBindings());
+    }
+
+    /**
+     * The vertex format a host-layout contract draws on: the host's own, and for beacon beams the
+     * block layout widened as Iris widens it to TERRAIN.
+     */
+    public static VertexFormat hostLayoutFormat(FamilyAdapterPlan.VertexContract contract) {
+        return switch (contract) {
+            case HOST_LINE -> DefaultVertexFormat.POSITION_COLOR_NORMAL;
+            case HOST_GLINT -> DefaultVertexFormat.POSITION_TEX;
+            case HOST_LIGHTNING -> DefaultVertexFormat.POSITION_COLOR;
+            case HOST_BEACON -> ChimeraVertexFormats.EXTENDED_BLOCK;
+            case HOST_LEASH, HOST_TEXT_BACKGROUND -> DefaultVertexFormat.POSITION_COLOR_LIGHTMAP;
+            case HOST_TEXT -> DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP;
+            case HOST_WATER_MASK -> DefaultVertexFormat.POSITION;
+            case HOST_POSITION_TEX -> DefaultVertexFormat.POSITION_TEX;
+            case HOST_POSITION_TEX_COLOR -> DefaultVertexFormat.POSITION_TEX_COLOR;
+            default -> throw new IllegalArgumentException("not a host-layout contract: " + contract);
+        };
+    }
+
+    /** The same glint program for first-person glint, under the hand projection. */
+    public static PackParticle buildHandGlint(
+            PackProgramPlan plan, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        if (plan == null || plan.convertedVertex() == null) return null;
+        String vertex;
+        try {
+            vertex = EntityVertexBridge.handGlintVertex(plan.convertedVertex());
+        } catch (IllegalArgumentException unsupported) {
+            return null;
+        }
+        return buildParticle(plan, "pack_" + plan.name() + "_hand",
+                DefaultVertexFormat.POSITION_TEX, vertex, advancedResources, storageOwner);
+    }
+
+    static PackParticle buildParticle(
+            PackProgramPlan plan, String pipelineName, VertexFormat format,
+            PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        return buildParticle(plan, pipelineName, format, plan == null ? null : plan.convertedVertex(),
+                advancedResources, storageOwner);
+    }
+
+    static PackParticle buildParticle(
+            PackProgramPlan plan, String pipelineName, VertexFormat format,
+            String convertedVertex, PackAdvancedResourcePlan advancedResources, PackStorageBufferOwner storageOwner
+    ) {
+        BuiltGeometry built = buildGeometry(plan, UniformRegistry.Stage.PARTICLE,
+                pipelineName, format,
+                convertedVertex, advancedResources, storageOwner);
+        return built == null ? null
+                : new PackParticle(built.pipeline(), built.samplerSlots(), built.vertexSource(),
+                built.fragmentSource(), built.outputPlan(), built.imageBindings());
+    }
     private static PackTerrain buildTerrainLikePlan(
             PackProgramPlan plan,
             String fixedVertexSource,
