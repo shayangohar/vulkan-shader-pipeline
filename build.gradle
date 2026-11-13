@@ -196,6 +196,51 @@ def metricsTask = { String name, String mode, String text ->
 metricsTask('metricsCheck', 'check', 'Fails when the sources regress past tools/metrics/baseline.txt.')
 metricsTask('metricsRecord', 'record', 'Rewrites tools/metrics/baseline.txt from the sources, keeping reasons.')
 
+// The bytecode comparison for a refactor that only moves code (tools/bytecode-diff). On the base
+// commit, bytecodeBaseline keeps the compiled main and test classes; on the refactor,
+// bytecodeDiff compares every method with them after the moves -Prules=<file> lists, and writes
+// build/bytecode-diff/report-main.txt and report-test.txt. It reads classes with the ASM the
+// tests already compile against.
+sourceSets {
+    bytecodeDiff {
+        java.srcDir 'tools/bytecode-diff'
+        compileClasspath += configurations.testCompileClasspath
+        runtimeClasspath += configurations.testRuntimeClasspath
+    }
+}
+
+tasks.register('bytecodeBaseline', Sync) {
+    group = 'verification'
+    description = 'Keeps the compiled main and test classes as the before side of bytecodeDiff.'
+    dependsOn tasks.named('compileJava'), tasks.named('compileTestJava')
+    from(layout.buildDirectory.dir('classes/java/main')) { into 'main' }
+    from(layout.buildDirectory.dir('classes/java/test')) { into 'test' }
+    into layout.buildDirectory.dir('bytecode-diff/before')
+}
+
+['main', 'test'].each { String set ->
+    tasks.register("bytecodeDiff${set.capitalize()}", JavaExec) {
+        group = 'verification'
+        description = "Compares the compiled ${set} classes with bytecodeBaseline's, method by method."
+        dependsOn tasks.named(set == 'main' ? 'compileJava' : 'compileTestJava')
+        classpath = sourceSets.bytecodeDiff.runtimeClasspath
+        mainClass = 'BytecodeDiff'
+        doFirst {
+            def out = layout.buildDirectory.dir('bytecode-diff').get().asFile
+            args = [new File(out, "before/${set}").path,
+                    layout.buildDirectory.dir("classes/java/${set}").get().asFile.path,
+                    findProperty('rules') ?: '-',
+                    new File(out, "report-${set}.txt").path]
+        }
+    }
+}
+
+tasks.register('bytecodeDiff') {
+    group = 'verification'
+    description = "Compares the compiled main and test classes with bytecodeBaseline's."
+    dependsOn tasks.named('bytecodeDiffMain'), tasks.named('bytecodeDiffTest')
+}
+
 tasks.named('check') {
     dependsOn tasks.named('packTest')
     dependsOn tasks.named('metricsCheck')
