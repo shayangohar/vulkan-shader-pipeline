@@ -18,6 +18,7 @@ import net.vulkanmod.vulkan.VRenderSystem;
 import net.vulkanmod.vulkan.pass.MainPass;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -188,14 +189,34 @@ public final class ChimeraRenderer {
     }
 
     /**
-     * F3's lines, below the system information where Iris puts its own: the pack, and whether it
-     * fell back to vanilla or Chimera skipped programs of it (PackFailureNotices.label).
+     * F3's lines below the system information, as Iris's MixinDebugScreenOverlay: the version, the
+     * pack with whether it fell back or lost programs (PackFailureNotices.label), and its profile.
      */
     public static List<String> debugLines() {
+        List<String> lines = new ArrayList<>(List.of("",
+                "[Chimera] Version: " + ChimeraMod.version() + " (" + ChimeraMod.commit() + ")", ""));
         Path pack = selectedPackPath();
-        if (pack == null) return List.of("", "[Chimera] Shaders are disabled");
+        if (pack == null) {
+            lines.add("[Chimera] Shaders are disabled");
+            return lines;
+        }
         String name = PackSessionLifecycle.packLabel(pack);
-        return List.of("", "[Chimera] Shaderpack: " + name + PackFailureNotices.label(name));
+        lines.add("[Chimera] Shaderpack: " + name + PackFailureNotices.label(name));
+        LoadedPack loaded = loadedPack();
+        if (loaded != null && loaded.path().equals(pack)) lines.add("[Chimera] " + loaded.options().profileInfo());
+        return lines;
+    }
+
+    /**
+     * F3's lines below the game information, as Iris's shadow lines (IrisRenderingPipeline and
+     * ShadowRenderer.addDebugText): the shadow map's half plane and resolution, or that the pack
+     * uses none. Nothing while the world is not pack-rendered.
+     */
+    public static List<String> shadowDebugLines() {
+        if (!packProjectionActive()) return List.of();
+        PackShadowPass shadows = chimeraPass.shadowPass;
+        return List.of("", "[Chimera] Shadow Maps: " + (shadows.shadowUse.runs() && shadows.shadowMap.isInitialized()
+                ? shadows.shadowMap.debugInfo() : "not used by shader pack"));
     }
 
     /** Applies pending pack work before VulkanMod begins a new main command buffer. */
